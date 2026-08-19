@@ -8,7 +8,7 @@ class LearningConfig:
     """Central defaults for the trainable learning substrate."""
 
     latent_dim: int = 256
-    action_dim: int = 8
+    action_dim: int = 9
     discount_factor: float = 0.99
 
     per_alpha: float = 0.6
@@ -31,6 +31,17 @@ class LearningConfig:
 
     checkpoint_dir: str = "data/checkpoints"
     experiment_dir: str = "data/experiments"
+
+    num_action_candidates: int = 4
+    world_model_train_every_n_steps: int = 4
+    world_model_batch_size: int = 8
+    world_model_lr: float = 1e-3
+    value_policy_train_every_n_steps: int = 4
+    value_policy_batch_size: int = 8
+    value_lr: float = 1e-3
+    policy_lr: float = 1e-3
+    priority_prediction_error_weight: float = 0.5
+    replay_capacity: int = 500
 
 
 DEFAULT_CONFIG = LearningConfig()

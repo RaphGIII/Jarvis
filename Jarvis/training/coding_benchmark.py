@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from statistics import mean
+
+from environments.coding.task import CodingTask
+from runtime.jarvis_runtime import JarvisRuntime
+from runtime.runtime_state import RuntimeMode
+
+
+@dataclass
+class BenchmarkResult:
+    episodes: int
+    success_rate: float
+    mean_reward: float
+    mean_steps_to_solution: float
+    tests_passed_delta: float
+    regression_rate: float
+    invalid_action_rate: float
+    world_model_prediction_loss: float
+    value_prediction_error: float
+
+    def to_dict(self) -> dict[str, float | int]:
+        return {
+            "episodes": self.episodes,
+            "success_rate": self.success_rate,
+            "mean_reward": self.mean_reward,
+            "mean_steps_to_solution": self.mean_steps_to_solution,
+            "tests_passed_delta": self.tests_passed_delta,
+            "regression_rate": self.regression_rate,
+            "invalid_action_rate": self.invalid_action_rate,
+            "world_model_prediction_loss": self.world_model_prediction_loss,
+            "value_prediction_error": self.value_prediction_error,
+        }
+
+
+class CodingBenchmark:
+    def evaluate(self, runtime: JarvisRuntime, tasks: list[CodingTask]) -> BenchmarkResult:
+        rewards = []
+        steps = []
+        successes = []
+        tests_passed = []
+        regressions = []
+        invalids = []
+        prediction_losses = []
+        value_errors = []
+        previous_mode = runtime.state.mode
+        for task in tasks:
+            metrics = runtime.run_episode(task, RuntimeMode.EVAL)
+            rewards.append(float(metrics["reward"]))
+            steps.append(float(metrics["steps"]))
+            successes.append(1.0 if metrics["success"] else 0.0)
+            latest = runtime.state.latest_metrics
+            tests_passed.append(float(latest.get("tests_passed", 0)))
+            regressions.append(1.0 if float(latest.get("tests_failed", 0)) > 0 and metrics["success"] is False else 0.0)
+            invalids.append(1.0 if latest.get("invalid_action", False) else 0.0)
+            transition_prediction = [
+                float(transition.metadata.get("prediction_error", 0.0))
+                for transition in runtime.state.trajectory.transitions
+            ]
+            transition_td = [
+                abs(float(transition.metadata.get("td_error", 0.0)))
+                for transition in runtime.state.trajectory.transitions
+            ]
+            prediction_losses.append(mean(transition_prediction) if transition_prediction else 0.0)
+            value_errors.append(mean(transition_td) if transition_td else 0.0)
+        runtime.state.mode = previous_mode
+        return BenchmarkResult(
+            episodes=len(tasks),
+            success_rate=mean(successes) if successes else 0.0,
+            mean_reward=mean(rewards) if rewards else 0.0,
+            mean_steps_to_solution=mean(steps) if steps else 0.0,
+            tests_passed_delta=mean(tests_passed) if tests_passed else 0.0,
+            regression_rate=mean(regressions) if regressions else 0.0,
+            invalid_action_rate=mean(invalids) if invalids else 0.0,
+            world_model_prediction_loss=mean(prediction_losses) if prediction_losses else 0.0,
+            value_prediction_error=mean(value_errors) if value_errors else 0.0,
+        )

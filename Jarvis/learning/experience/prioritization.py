@@ -19,6 +19,16 @@ def compute_priority(error: float, config: PriorityConfig = PriorityConfig()) ->
     return float((abs(error) + config.epsilon) ** config.alpha)
 
 
+def compute_learning_priority(
+    td_error: float,
+    prediction_error: float,
+    prediction_error_weight: float = 0.5,
+    config: PriorityConfig = PriorityConfig(),
+) -> float:
+    combined_error = abs(td_error) + prediction_error_weight * abs(prediction_error)
+    return compute_priority(combined_error, config)
+
+
 def sampling_probabilities(priorities: Tensor) -> Tensor:
     if priorities.numel() == 0:
         raise ValueError("priorities must not be empty")

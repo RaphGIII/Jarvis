@@ -215,3 +215,133 @@ Memory/statistics updates are labeled as memory or statistics. Parameter
 learning only refers to modules whose PyTorch weights change through gradient
 descent: the observation encoder/autoencoder, policy/value networks, and world
 model.
+
+## JARVIS RUNTIME
+
+`runtime/JarvisRuntime` is the first integrated living loop. `main.py` is now an
+interface layer; the runtime owns the coding environment, observation adapter,
+action generator, action selector, replay buffer, persistent experience store,
+world model, policy, value function, reward engine, self model, and scheduler.
+
+The CLI supports:
+
+```text
+/chat
+/train
+/eval
+/status
+/learning
+/brain
+/exit
+```
+
+Normal chat still uses Qwen, but Qwen is loaded lazily. Unit tests and coding
+learning do not load the foundation model.
+
+## REAL-WORLD LEARNING LOOP
+
+The controlled v0.1 environment is `CodingWorld`. It operates only inside a
+sandbox workspace and exposes a discrete action space:
+
+```text
+LIST_FILES, READ_FILE, SEARCH_TEXT, WRITE_FILE, PATCH_FILE,
+RUN_TESTS, RUN_PYTHON, INSPECT_ERROR, FINISH
+```
+
+No arbitrary shell is exposed. File paths are rejected if they are absolute,
+contain `..`, escape the sandbox, or traverse symlinks. Test subprocesses run
+with timeout and captured output.
+
+The closed loop is:
+
+```text
+Qwen or heuristic generator
+  |
+  v
+ActionCandidates
+  |
+  v
+Policy + WorldModel + risk/cost scoring
+  |
+  v
+Action
+  |
+  v
+CodingWorld
+  |
+  v
+Objective Reward
+  |
+  v
+Replay + SQLite Store
+  |
+  v
+WorldModel / Value / Policy training
+  |
+  +---- back to future action selection
+```
+
+Mathematically:
+
+```text
+z_t = Encoder(Adapter(o_t))
+
+pi_theta(a | z_t) = Policy(z_t)
+
+z_next_pred, r_pred = WorldModel(z_t, action_embedding(a_t))
+
+environment executes a_t
+
+transition = (z_t, a_t, r_t, z_(t+1), done)
+
+delta_t = r_t + gamma V_phi(z_(t+1)) - V_phi(z_t)
+
+L_value = delta_t^2
+
+L_policy = -log pi_theta(a_t | z_t) * stop_gradient(delta_t)
+
+L_world = lambda_state MSE(z_next_pred, z_(t+1))
+        + lambda_reward MSE(r_pred, r_t)
+```
+
+Replay priority is updated from actual learning error:
+
+```text
+priority = (|TD_error| + lambda_prediction * world_prediction_error + epsilon)^alpha
+```
+
+### Persistent Experience
+
+`learning/experience/persistent_store.py` stores transitions in SQLite:
+
+```text
+task_id, episode_id, step, observation, action, reward components,
+next observation, success, TD error, prediction error, priority,
+timestamps, model versions
+```
+
+The in-memory `ReplayBuffer` remains the fast sampler; SQLite preserves
+experience across process restarts.
+
+### Coding Demo
+
+Run:
+
+```bash
+python -m training.coding_learning_demo
+```
+
+The demo runs an identical before/after benchmark around controlled training
+episodes. It reports episodes, success rate, mean reward, world-model loss,
+value loss, policy loss, replay size, persistent experience count, and capability
+trend.
+
+The logs explicitly distinguish:
+
+```text
+PARAMETERS UPDATED:
+WorldModel, Policy, ValueFunction
+
+NOT UPDATED:
+Qwen foundation model
+```
