@@ -23,6 +23,7 @@ class BenchmarkResult:
     value_prediction_error: float
     q_prediction_error: float = 0.0
     hidden_verifier_runs: float = 0.0
+    episodes_with_invalid_action_rate: float = 0.0
 
     def to_dict(self) -> dict[str, float | int]:
         return {
@@ -37,6 +38,7 @@ class BenchmarkResult:
             "value_prediction_error": self.value_prediction_error,
             "q_prediction_error": self.q_prediction_error,
             "hidden_verifier_runs": self.hidden_verifier_runs,
+            "episodes_with_invalid_action_rate": self.episodes_with_invalid_action_rate,
         }
 
 
@@ -48,6 +50,7 @@ class CodingBenchmark:
         tests_passed = []
         regressions = []
         invalids = []
+        episode_invalids = []
         prediction_losses = []
         value_errors = []
         q_errors = []
@@ -68,9 +71,12 @@ class CodingBenchmark:
             for task in tasks:
                 metrics = runtime.run_episode(task, RuntimeMode.EVAL)
                 public_success = bool(metrics["success"])
-                if public_success:
+                if public_success and task.hidden_test_command is not None:
                     hidden_result = runtime.final_hidden_verification()
                     hidden_success = bool(hidden_result.get("success", False))
+                elif public_success:
+                    hidden_result = {"runs": 0}
+                    hidden_success = True
                 else:
                     hidden_result = {"runs": 0}
                     hidden_success = False
@@ -82,7 +88,14 @@ class CodingBenchmark:
                 latest = runtime.state.latest_metrics
                 tests_passed.append(float(latest.get("tests_passed", 0)))
                 regressions.append(1.0 if float(latest.get("tests_failed", 0)) > 0 and external_success is False else 0.0)
-                invalids.append(1.0 if latest.get("invalid_action", False) else 0.0)
+                transition_invalids = [
+                    1.0
+                    if (transition.metadata.get("objective_metrics") or {}).get("invalid_action", False)
+                    else 0.0
+                    for transition in runtime.state.trajectory.transitions
+                ]
+                invalids.extend(transition_invalids)
+                episode_invalids.append(1.0 if any(transition_invalids) else 0.0)
                 transition_prediction = [
                     float(transition.metadata.get("prediction_error", 0.0))
                     for transition in runtime.state.trajectory.transitions
@@ -113,4 +126,5 @@ class CodingBenchmark:
             value_prediction_error=mean(value_errors) if value_errors else 0.0,
             q_prediction_error=mean(q_errors) if q_errors else 0.0,
             hidden_verifier_runs=mean(hidden_runs) if hidden_runs else 0.0,
+            episodes_with_invalid_action_rate=mean(episode_invalids) if episode_invalids else 0.0,
         )

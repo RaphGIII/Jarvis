@@ -64,8 +64,9 @@ class QwenActionGenerator:
         latency_seconds = time.perf_counter() - started
         candidates, parse_metadata = parse_action_candidates(raw, return_metadata=True)
         result, diversity_metadata = dedupe_action_candidates(candidates, self.num_candidates)
-        if not result:
-            result = fallback_candidates(observation)[: self.num_candidates]
+        backfilled = 0
+        if len(result) < self.num_candidates:
+            result, backfilled = backfill_action_candidates(result, fallback_candidates(observation), self.num_candidates)
         self.last_generation_metadata = {
             "cache_key": cache_key,
             "cache_hit": False,
@@ -76,6 +77,7 @@ class QwenActionGenerator:
             "raw_response_hash": sha256(raw.encode("utf-8", errors="ignore")).hexdigest(),
             "valid_candidates": len(candidates),
             "returned_candidates": len(result),
+            "fallback_backfill_count": backfilled,
             **parse_metadata,
             **diversity_metadata,
         }
@@ -87,7 +89,7 @@ class QwenActionGenerator:
         return (
             "Return JSON only. You are generating concrete CodingWorld action candidates, not final prose.\n"
             f"Allowed action_type values: {allowed}\n"
-            "Return a JSON array with 4-8 diverse candidates when possible.\n"
+            f"Return a JSON array with up to {self.num_candidates} diverse candidates.\n"
             "Use this schema:\n"
             "[{\"reason\":\"short private summary\","
             "\"action_type\":\"PATCH_FILE\","
@@ -100,7 +102,7 @@ class QwenActionGenerator:
             "For WRITE_FILE, provide path and content. For READ_FILE/RUN_PYTHON, provide path.\n"
             "Include different strategies: inspect/test/minimal patch/alternative patch when useful.\n"
             "Do not claim private evaluator knowledge and do not modify tests.\n"
-            f"Return at most {self.num_candidates} candidates.\n"
+            f"Return at most {self.num_candidates} candidates; fewer is acceptable when only fewer actions are structurally plausible.\n"
             f"Goal: {goal}\n"
             f"Observation:\n{observation.to_text()}"
         )
@@ -228,6 +230,26 @@ def dedupe_action_candidates(candidates: list[ActionCandidate], limit: int) -> t
         if len(deduped) >= limit:
             break
     return deduped, {"duplicate_candidates": duplicates}
+
+
+def backfill_action_candidates(
+    candidates: list[ActionCandidate],
+    fallback: list[ActionCandidate],
+    limit: int,
+) -> tuple[list[ActionCandidate], int]:
+    result = list(candidates)
+    seen = {_candidate_diversity_key(candidate) for candidate in result}
+    added = 0
+    for candidate in fallback:
+        key = _candidate_diversity_key(candidate)
+        if key in seen:
+            continue
+        result.append(candidate)
+        seen.add(key)
+        added += 1
+        if len(result) >= limit:
+            break
+    return result, added
 
 
 def _candidate_diversity_key(candidate: ActionCandidate) -> str:

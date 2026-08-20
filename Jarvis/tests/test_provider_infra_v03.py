@@ -181,6 +181,57 @@ def test_embedding_provider_batches_candidate_texts_and_cache_works():
     assert torch.allclose(first, second)
 
 
+def test_qwen_action_generator_backfills_partial_candidate_sets(tmp_path):
+    provider = FakeProvider()
+    generator = QwenActionGenerator(provider, num_candidates=3)
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    observation = CodingEnvironment(task, backend=LocalTestSandboxBackend()).observe()
+    candidates = generator.generate(task.description, observation)
+    assert len(candidates) == 3
+    assert generator.last_generation_metadata["valid_candidates"] == 1
+    assert generator.last_generation_metadata["fallback_backfill_count"] == 2
+    assert len({json.dumps(candidate.to_dict(), sort_keys=True) for candidate in candidates}) == 3
+    assert "4-8" not in generator._prompt(task.description, observation)
+    assert "up to 3" in generator._prompt(task.description, observation)
+
+
+def test_runtime_feasibility_and_cold_start_weight(tmp_path):
+    runtime = JarvisRuntime(
+        brain=FakeProvider(),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10, warmup_experiences=5, train_exploration_epsilon=0.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.EVAL,
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    observation = runtime.start_task(task, RuntimeMode.EVAL)
+    assert runtime._learned_weight() == 0.0
+    finish = ActionCandidate(ActionType.FINISH, confidence=1.0, estimated_cost=0.1)
+    assert runtime._validate_candidate_feasibility(finish, observation) == (False, "public tests are not passing")
+    missing = ActionCandidate(ActionType.READ_FILE, {"path": "missing.py"}, confidence=1.0)
+    assert runtime._validate_candidate_feasibility(missing, observation) == (False, "path does not exist")
+    protected = ActionCandidate(ActionType.WRITE_FILE, {"path": "test_public.py", "content": ""}, confidence=1.0)
+    assert runtime._validate_candidate_feasibility(protected, observation) == (False, "path is protected")
+
+
+def test_profiler_breakdown_excludes_nested_totals():
+    from runtime.profiling import PerformanceProfiler
+
+    profiler = PerformanceProfiler()
+    profiler.add_time("brain_candidate_generation", 4.0)
+    profiler.add_time("docker_execution", 1.0)
+    profiler.add_time("total_step", 6.0)
+    profiler.add_time("total_episode", 10.0)
+    summary = profiler.summary()
+    assert summary["wall_time_seconds"] == 10.0
+    assert summary["breakdown"]["brain_candidate_generation"]["percent"] == 40.0
+    assert summary["breakdown"]["docker_execution"]["percent"] == 10.0
+    assert summary["breakdown"]["other"]["percent"] == 50.0
+    assert summary["timings"]["total_step"]["percent"] == 0.0
+
+
 def test_timing_and_smoke_mode_work(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     metrics = run_coding_brain_v03_demo(CodingBrainV03Config(smoke=True, train_episodes=2, mock_brain=True, quiet=True, seed=3))

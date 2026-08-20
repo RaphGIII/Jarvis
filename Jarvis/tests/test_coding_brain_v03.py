@@ -91,8 +91,9 @@ def test_v03_qwen_duplicate_patches_are_deduplicated(tmp_path):
     generator = QwenActionGenerator(StaticBrain(response), num_candidates=6)
     observation = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
     candidates = generator.generate(observation.description, CodingEnvironment(observation, backend=LocalTestSandboxBackend()).observe())
-    assert len(candidates) == 2
+    assert len(candidates) == 5
     assert generator.last_generation_metadata["duplicate_candidates"] == 1
+    assert generator.last_generation_metadata["fallback_backfill_count"] == 3
 
 
 def test_v03_malformed_qwen_output_falls_back_without_crashing(tmp_path):
@@ -291,6 +292,52 @@ def test_v03_benchmark_success_requires_public_and_hidden_pass(tmp_path):
         result = CodingBenchmark().evaluate(runtime, [task])
         assert result.success_rate == (1.0 if expected_success else 0.0)
         assert result.hidden_verifier_runs == expected_hidden_runs
+
+
+def test_v03_benchmark_public_success_is_success_without_hidden_verifier(tmp_path):
+    workspace = tmp_path / "public_only"
+    workspace.mkdir()
+    (workspace / "solution.py").write_text("def value():\n    return 1\n", encoding="utf-8")
+    (workspace / "test_public.py").write_text(
+        "import unittest\nfrom solution import value\n\n"
+        "class PublicTests(unittest.TestCase):\n"
+        "    def test_value(self):\n"
+        "        self.assertEqual(value(), 1)\n\n"
+        "if __name__ == '__main__':\n"
+        "    unittest.main()\n",
+        encoding="utf-8",
+    )
+    task = CodingTask(
+        description="Run public tests only.",
+        workspace=workspace,
+        test_command=[sys.executable, "-m", "unittest", "discover", "-v"],
+        task_id="public_only_success",
+        max_steps=1,
+    )
+    runtime = _runtime(tmp_path / "runtime_public_only", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    result = CodingBenchmark().evaluate(runtime, [task])
+    assert result.success_rate == 1.0
+    assert result.hidden_verifier_runs == 0.0
+
+
+def test_v03_benchmark_invalid_action_rate_counts_transitions(tmp_path):
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    task.max_steps = 2
+    runtime = _runtime(
+        tmp_path / "runtime_invalid",
+        StaticBrain(json.dumps([{"action_type": "READ_FILE", "arguments": {"path": "missing.py"}}])),
+        mode=RuntimeMode.EVAL,
+    )
+    class InvalidOnlyGenerator:
+        last_generation_metadata = {}
+
+        def generate(self, goal, observation):
+            return [ActionCandidate(ActionType.READ_FILE, {"path": "missing.py"})]
+
+    runtime.action_generator = InvalidOnlyGenerator()
+    result = CodingBenchmark().evaluate(runtime, [task])
+    assert result.invalid_action_rate == 1.0
+    assert result.episodes_with_invalid_action_rate == 1.0
 
 
 def _dummy_observation():

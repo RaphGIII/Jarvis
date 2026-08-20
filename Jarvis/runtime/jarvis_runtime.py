@@ -66,13 +66,16 @@ class JarvisRuntimeConfig:
     information_gain_weight: float = 0.2
     risk_weight: float = 0.8
     cost_weight: float = 0.15
-    confidence_weight: float = 0.15
+    confidence_weight: float = 1.0
+    feasibility_penalty: float = 1_000_000.0
+    warmup_experiences: int = 50
     train_exploration_epsilon: float = 0.15
     epsilon_min: float = DEFAULT_CONFIG.epsilon_min
     epsilon_decay: float = DEFAULT_CONFIG.epsilon_decay
     load_latest_checkpoints: bool = False
     replay_warm_start_size: int = DEFAULT_CONFIG.replay_warm_start_size
     tensorboard_subdir: str = "tensorboard"
+    trace_actions: bool = False
 
 
 @dataclass
@@ -86,6 +89,11 @@ class ScoredAction:
     risk: float
     uncertainty: float
     novelty: float
+    feasible: bool = True
+    feasibility_reason: str = ""
+    learned_weight: float = 1.0
+    heuristic_score: float = 0.0
+    learned_score: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +106,11 @@ class ScoredAction:
             "risk": self.risk,
             "uncertainty": self.uncertainty,
             "novelty": self.novelty,
+            "feasible": self.feasible,
+            "feasibility_reason": self.feasibility_reason,
+            "learned_weight": self.learned_weight,
+            "heuristic_score": self.heuristic_score,
+            "learned_score": self.learned_score,
         }
 
 
@@ -202,6 +215,7 @@ class JarvisRuntime:
         self.environment: CodingEnvironment | None = None
         self.events: list[RuntimeEvent] = []
         self.profiler = PerformanceProfiler()
+        self.trace_label = "EPISODE"
         self.known_latents: list[torch.Tensor] = []
         self._rng = random.Random(self.config.seed)
         if self.config.load_latest_checkpoints:
@@ -320,6 +334,10 @@ class JarvisRuntime:
         self.profiler.increment("brain_requests", 0.0 if getattr(self.action_generator, "last_generation_metadata", {}).get("cache_hit") else 1.0)
         self.profiler.increment("candidate_cache_hits", 1.0 if getattr(self.action_generator, "last_generation_metadata", {}).get("cache_hit") else 0.0)
         self.profiler.increment("candidates_generated", len(candidates))
+        generation_metadata = getattr(self.action_generator, "last_generation_metadata", {})
+        for key in ["valid_candidates", "malformed_items", "fallback_backfill_count", "duplicate_candidates"]:
+            if generation_metadata.get(key) is not None:
+                self.profiler.increment(key, float(generation_metadata.get(key) or 0))
         generated_tokens = getattr(self.action_generator, "last_generation_metadata", {}).get("generated_tokens")
         if generated_tokens is not None:
             self.profiler.increment("generated_tokens", float(generated_tokens))
@@ -388,6 +406,7 @@ class JarvisRuntime:
             "total_reward": self.state.total_reward,
         }
         self._log_step_metrics(training_report, environment_step.success)
+        self._trace_step(scored, selected, reward.total, environment_step)
         if environment_step.done:
             self._update_self_model(environment_step.success)
             self.events.append(
@@ -652,9 +671,11 @@ class JarvisRuntime:
         known = torch.stack(self.known_latents) if self.known_latents else None
         novelty = min(1.0, novelty_reward(latent, known))
         scored = []
+        learned_weight = self._learned_weight()
         with self.profiler.measure("semantic_action_encoding"):
             action_raw_batch = self.action_encoder.raw_features_batch(candidates)
         for candidate, action_raw in zip(candidates, action_raw_batch):
+            feasible, feasibility_reason = self._validate_candidate_feasibility(candidate, observation)
             with torch.no_grad():
                 action_embedding = self.action_encoder.forward_from_raw(action_raw).squeeze(0)
                 prediction = self.world_model(latent, action_embedding)
@@ -670,16 +691,22 @@ class JarvisRuntime:
                 novelty=novelty,
             ).total
             expected_information_gain = 0.5 * uncertainty + 0.5 * novelty
-            score = (
+            learned_score = (
                 self.config.policy_score_weight * policy_prior
                 + self.config.policy_log_score_weight * policy_score
                 + self.config.q_score_weight * q_value
                 + self.config.world_reward_weight * predicted_reward
                 + self.config.information_gain_weight * expected_information_gain
+            )
+            heuristic_score = (
                 + self.config.confidence_weight * candidate.confidence
+                + self._cold_start_workflow_score(candidate, observation)
                 - self.config.risk_weight * risk
                 - self.config.cost_weight * candidate.estimated_cost
             )
+            score = heuristic_score + learned_weight * learned_score
+            if not feasible:
+                score -= self.config.feasibility_penalty
             scored.append(
                 ScoredAction(
                     candidate=candidate,
@@ -691,9 +718,82 @@ class JarvisRuntime:
                     risk=float(risk),
                     uncertainty=float(uncertainty),
                     novelty=float(novelty),
+                    feasible=feasible,
+                    feasibility_reason=feasibility_reason,
+                    learned_weight=float(learned_weight),
+                    heuristic_score=float(heuristic_score),
+                    learned_score=float(learned_score),
                 )
             )
         return sorted(scored, key=lambda item: item.score, reverse=True)
+
+    def _learned_weight(self) -> float:
+        warmup = max(1, int(self.config.warmup_experiences))
+        return max(0.0, min(1.0, len(self.replay_buffer) / warmup))
+
+    def _validate_candidate_feasibility(self, candidate: ActionCandidate, observation: CodingObservation) -> tuple[bool, str]:
+        action_type = candidate.action_type
+        arguments = candidate.arguments
+        if action_type in {ActionType.LIST_FILES, ActionType.RUN_TESTS, ActionType.INSPECT_ERROR}:
+            return True, ""
+        if action_type == ActionType.SEARCH_TEXT:
+            return (True, "") if str(arguments.get("query", "")).strip() else (False, "query is empty")
+        if action_type == ActionType.FINISH:
+            public_passed = bool(
+                observation.test_state.get("ran", False)
+                and observation.test_state.get("passed", 0) > 0
+                and observation.test_state.get("failed", 0) == 0
+            )
+            return (True, "") if public_passed else (False, "public tests are not passing")
+        if action_type in {ActionType.READ_FILE, ActionType.RUN_PYTHON, ActionType.PATCH_FILE, ActionType.WRITE_FILE}:
+            path = str(arguments.get("path", "")).strip()
+            path_ok, path_reason = self._validate_relative_action_path(path)
+            if not path_ok:
+                return False, path_reason
+            if not self._candidate_path_editable(path) and action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE}:
+                return False, "path is protected"
+            if action_type in {ActionType.READ_FILE, ActionType.RUN_PYTHON, ActionType.PATCH_FILE} and path not in observation.workspace_tree:
+                return False, "path does not exist"
+            if action_type == ActionType.PATCH_FILE:
+                old = str(arguments.get("old", ""))
+                if not old:
+                    return False, "old text is empty"
+                if path in observation.relevant_file_excerpts and old not in observation.relevant_file_excerpts[path]:
+                    return False, "old text unavailable"
+            return True, ""
+        return False, "unsupported action type"
+
+    def _validate_relative_action_path(self, path: str) -> tuple[bool, str]:
+        if not path:
+            return False, "path is empty"
+        raw_path = Path(path)
+        if raw_path.is_absolute():
+            return False, "absolute path is not allowed"
+        if ".." in raw_path.parts:
+            return False, "parent traversal is not allowed"
+        return True, ""
+
+    def _candidate_path_editable(self, path: str) -> bool:
+        if self.environment is None:
+            return True
+        normalized = Path(path).as_posix()
+        name = Path(path).name
+        return normalized not in self.environment.task.protected_paths and not name.startswith("test_")
+
+    def _cold_start_workflow_score(self, candidate: ActionCandidate, observation: CodingObservation) -> float:
+        score = 0.0
+        tests_ran = bool(observation.test_state.get("ran", False))
+        tests_passing = bool(observation.test_state.get("passed", 0) > 0 and observation.test_state.get("failed", 0) == 0)
+        has_excerpts = bool(observation.relevant_file_excerpts)
+        if candidate.action_type == ActionType.RUN_TESTS and not tests_ran:
+            score += 0.35
+        if candidate.action_type == ActionType.READ_FILE and not has_excerpts:
+            score += 0.25
+        if candidate.action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE} and has_excerpts:
+            score += 0.15
+        if candidate.action_type == ActionType.FINISH and tests_passing:
+            score += 0.2
+        return score
 
     def _select(self, scored: list[ScoredAction]) -> ScoredAction:
         if self.state.mode == RuntimeMode.TRAIN:
@@ -728,6 +828,43 @@ class JarvisRuntime:
         ):
             risk += 1.0
         return risk
+
+    def _trace_step(
+        self,
+        scored: list[ScoredAction],
+        selected: ScoredAction,
+        reward: float,
+        environment_step: Any,
+    ) -> None:
+        if not self.config.trace_actions:
+            return
+        step = self.state.step_count
+        max_steps = self.environment.task.max_steps if self.environment is not None else step
+        print(f"[{self.trace_label} step {step}/{max_steps}]", flush=True)
+        for index, item in enumerate(scored, start=1):
+            candidate = item.candidate
+            path = str(candidate.arguments.get("path", ""))
+            print(
+                f"candidate {index}: {candidate.action_type.name}{(' ' + path) if path else ''}\n"
+                f"    feasible={item.feasible} reason=\"{item.feasibility_reason}\" total_score={item.score:.4f} "
+                f"learned_weight={item.learned_weight:.3f}",
+                flush=True,
+            )
+            if candidate.action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE}:
+                old = self._truncate_trace_text(str(candidate.arguments.get("old", "")))
+                new = self._truncate_trace_text(str(candidate.arguments.get("new", candidate.arguments.get("content", ""))))
+                if old or new:
+                    print(f"    old=\"{old}\" new=\"{new}\"", flush=True)
+        ok = "OK" if getattr(environment_step.action_result, "ok", False) else "FAIL"
+        print(f"selected: {selected.candidate.action_type.name}", flush=True)
+        print(f"result: {ok} | reward={reward:.3f}", flush=True)
+
+    @staticmethod
+    def _truncate_trace_text(text: str, limit: int = 120) -> str:
+        sanitized = " ".join(text.replace("\r", "\n").split())
+        if len(sanitized) > limit:
+            return sanitized[: limit - 3] + "..."
+        return sanitized
 
     def _make_transition(
         self,

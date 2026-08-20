@@ -38,6 +38,7 @@ class CodingBrainV03Config:
     quiet: bool = False
     brain_profile: str | None = None
     brain_provider: str | None = None
+    trace_actions: bool = False
 
 
 class MockAutonomousPatchBrain:
@@ -187,12 +188,13 @@ def _make_runtime(config: CodingBrainV03Config, data_dir: Path, brain, semantic_
             train_exploration_epsilon=0.35,
             q_score_weight=1.3,
             world_reward_weight=0.4,
-            confidence_weight=0.02,
+            confidence_weight=0.8,
             cost_weight=0.08,
             risk_weight=0.25,
             seed=config.seed,
             load_latest_checkpoints=config.resume,
             tensorboard_subdir="tensorboard/coding_v03",
+            trace_actions=config.trace_actions,
         ),
         data_dir=data_dir,
         mode=RuntimeMode.TRAIN,
@@ -274,9 +276,11 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
     log(f"[SETUP] train={len(train_tasks)} validation={len(validation_tasks)} holdout={len(baseline_holdout_tasks)} candidates={config.candidate_count} tokens={config.coding_max_tokens}")
 
     log(f"[BASELINE 1/{len(baseline_holdout_tasks)}] evaluating pristine holdout tasks...")
+    runtime.trace_label = "BASELINE"
     baseline_holdout = benchmark.evaluate(runtime, baseline_holdout_tasks)
     for episode, task in enumerate(train_tasks):
         log(f"[TRAIN {episode + 1}/{len(train_tasks)}] task={task.task_id} | running episode...")
+        runtime.trace_label = f"TRAIN {episode + 1}/{len(train_tasks)}"
         runtime.run_episode(task, RuntimeMode.TRAIN)
         log(
             f"[TRAIN {episode + 1}/{len(train_tasks)}] steps={runtime.state.step_count} "
@@ -289,6 +293,7 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         runtime.tensorboard.log_scalar("training/episode_length", float(runtime.state.step_count), episode + 1)
 
     log(f"[VALIDATION 1/{len(validation_tasks)}] evaluating no-grad validation tasks...")
+    runtime.trace_label = "VALIDATION"
     validation = benchmark.evaluate(runtime, validation_tasks)
     runtime.tensorboard.log_scalar("evaluation/validation_success_rate", validation.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/validation_reward", validation.mean_reward, runtime.scheduler.runtime_steps)
@@ -304,6 +309,7 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         for task in final_holdout_tasks:
             task.max_steps = min(task.max_steps, 4)
     log(f"[FINAL 1/{len(final_holdout_tasks)}] evaluating fresh pristine holdout tasks...")
+    runtime.trace_label = "HOLDOUT"
     final_holdout = benchmark.evaluate(runtime, final_holdout_tasks)
     runtime.tensorboard.log_scalar("evaluation/holdout_success_rate", final_holdout.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/holdout_reward", final_holdout.mean_reward, runtime.scheduler.runtime_steps)
@@ -361,6 +367,7 @@ def _parse_args() -> CodingBrainV03Config:
     parser.add_argument("--quiet", action="store_true", help="Suppress live progress output.")
     parser.add_argument("--brain-profile", default=None)
     parser.add_argument("--brain-provider", choices=["local_transformers", "openai_compatible"], default=None)
+    parser.add_argument("--trace-actions", action="store_true", help="Print safe per-step action scoring diagnostics.")
     args = parser.parse_args()
     train_episodes = args.train_episodes if args.train_episodes is not None else (1 if args.smoke else (4 if args.quick else 30))
     candidate_count = args.candidate_count
@@ -380,6 +387,7 @@ def _parse_args() -> CodingBrainV03Config:
         quiet=args.quiet,
         brain_profile=args.brain_profile,
         brain_provider=args.brain_provider,
+        trace_actions=args.trace_actions,
     )
 
 
