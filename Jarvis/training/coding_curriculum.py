@@ -320,7 +320,7 @@ class CodingTaskFactory:
             fn("validation_exception_lookup", "lookup_default", "Return default when a key is missing.", "mapping, key, default = args\nreturn mapping[key]", "self.assertEqual(lookup_default({}, 'x', 7), 7)", "assert lookup_default({'x': 1}, 'x', 0) == 1"),
         ]
         holdout = [
-            fn("holdout_parse_bool", "parse_bool", "Parse yes/no strings into booleans.", "text = args[0]\nreturn bool(text)", "self.assertTrue(parse_bool('yes'))", "assert parse_bool('no') is False"),
+            fn("holdout_parse_bool", "parse_bool", "Parse yes/no strings into booleans.", "text = args[0]\nreturn bool(text)", "self.assertFalse(parse_bool('no'))", "assert parse_bool('yes') is True"),
             fn("holdout_roman", "roman_one_to_three", "Convert 1..3 to roman numerals.", "n = args[0]\nreturn str(n)", "self.assertEqual(roman_one_to_three(2), 'II')", "assert roman_one_to_three(3) == 'III'"),
             fn("holdout_palindrome", "is_palindrome", "Ignore case and spaces when checking palindrome.", "text = args[0]\nreturn text == text[::-1]", "self.assertTrue(is_palindrome('Never odd or even'))", "assert not is_palindrome('jarvis')"),
             fn("holdout_chunks", "chunk_pairs", "Group values into pairs.", "values = args[0]\nreturn values", "self.assertEqual(chunk_pairs([1, 2, 3, 4]), [[1, 2], [3, 4]])", "assert chunk_pairs([1]) == [[1]]"),
@@ -331,14 +331,14 @@ class CodingTaskFactory:
             fn("holdout_title", "title_words", "Capitalize each word after trimming.", "text = args[0]\nreturn text.upper()", "self.assertEqual(title_words('hello world'), 'Hello World')", "assert title_words(' ada ') == 'Ada'"),
             fn("holdout_run_lengths", "run_lengths", "Return consecutive character run lengths.", "text = args[0]\nreturn []", "self.assertEqual(run_lengths('aabb'), [('a', 2), ('b', 2)])", "assert run_lengths('') == []"),
             fn("holdout_rotate", "rotate_left", "Rotate a list left by n positions.", "values, n = args\nreturn values", "self.assertEqual(rotate_left([1, 2, 3], 1), [2, 3, 1])", "assert rotate_left([], 3) == []"),
-            fn("holdout_mode", "most_common", "Return most common item.", "values = args[0]\nreturn values[0]", "self.assertEqual(most_common(['a', 'b', 'a']), 'a')", "assert most_common([2, 2, 3]) == 2"),
+            fn("holdout_mode", "most_common", "Return most common item.", "values = args[0]\nreturn values[0]", "self.assertEqual(most_common(['b', 'a', 'a']), 'a')", "assert most_common([3, 2, 2]) == 2"),
             fn("holdout_validate", "is_valid_port", "Return whether value is a valid TCP port.", "value = args[0]\nreturn value > 0", "self.assertFalse(is_valid_port(70000))", "assert is_valid_port(443)"),
             fn("holdout_dedupe", "dedupe_keep_order", "Remove duplicates while preserving order.", "values = args[0]\nreturn list(set(values))", "self.assertEqual(dedupe_keep_order([2, 1, 2]), [2, 1])", "assert dedupe_keep_order([]) == []"),
             fn("holdout_matrix", "transpose", "Transpose a rectangular matrix.", "matrix = args[0]\nreturn matrix", "self.assertEqual(transpose([[1, 2], [3, 4]]), [[1, 3], [2, 4]])", "assert transpose([]) == []"),
             raw("holdout_class_toggle", "Repair Toggle switch state behavior.", "class Toggle:\n    def __init__(self):\n        self.on = False\n\n    def flip(self):\n        self.on = False\n\n    def state(self):\n        return False\n", "import unittest\nfrom solution import Toggle\n\nclass PublicTests(unittest.TestCase):\n    def test_public(self):\n        t = Toggle(); t.flip(); self.assertTrue(t.state())\n\nif __name__ == '__main__':\n    unittest.main()\n", "from solution import Toggle\nt = Toggle(); t.flip(); t.flip(); assert t.state() is False"),
             fn("holdout_exception_int", "parse_optional_int", "Parse integer or return None.", "text = args[0]\nreturn int(text)", "self.assertIsNone(parse_optional_int('x'))", "assert parse_optional_int('7') == 7"),
             fn("holdout_algorithm_gcd", "gcd", "Compute greatest common divisor.", "a, b = args\nreturn min(a, b)", "self.assertEqual(gcd(12, 8), 4)", "assert gcd(7, 3) == 1"),
-            fn("holdout_algorithm_fib", "fib", "Compute fibonacci number.", "n = args[0]\nreturn n", "self.assertEqual(fib(5), 5)", "assert fib(0) == 0 and fib(1) == 1"),
+            fn("holdout_algorithm_fib", "fib", "Compute fibonacci number.", "n = args[0]\nreturn n", "self.assertEqual(fib(4), 3)", "assert fib(6) == 8"),
             fn("holdout_structure", "group_by_first", "Group words by first letter.", "words = args[0]\nreturn {}", "self.assertEqual(group_by_first(['ant', 'bat', 'ape']), {'a': ['ant', 'ape'], 'b': ['bat']})", "assert group_by_first([]) == {}"),
         ]
         return {DatasetSplit.TRAIN: train, DatasetSplit.VALIDATION: validation, DatasetSplit.HOLDOUT: holdout}

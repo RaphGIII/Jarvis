@@ -374,6 +374,79 @@ def test_select_all_infeasible_does_not_crash(tmp_path):
     assert selected.candidate.action_type == ActionType.PATCH_FILE
 
 
+class InfeasiblePatchGenerator:
+    last_generation_metadata = {"valid_candidates": 2}
+
+    def generate(self, goal, observation):
+        return [
+            ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "guessed old", "new": "new"}),
+            ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "another guess", "new": "new"}),
+        ]
+
+
+def test_runtime_all_generated_infeasible_uses_safe_feasible_fallback(tmp_path):
+    runtime = JarvisRuntime(
+        action_generator=InfeasiblePatchGenerator(),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10, train_exploration_epsilon=0.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.EVAL,
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    task.max_steps = 1
+    metrics = runtime.run_episode(task, RuntimeMode.EVAL)
+    selected = runtime.state.trajectory.transitions[0].metadata["scoring"]
+    assert metrics["steps"] == 1
+    assert selected["feasible"] is True
+    assert selected["candidate"]["action_type"] == "READ_FILE"
+    assert runtime.profiler.counters["post_feasibility_fallback_count"] > 0
+
+
+def test_runtime_never_executes_infeasible_patch(tmp_path):
+    runtime = JarvisRuntime(
+        action_generator=InfeasiblePatchGenerator(),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10, train_exploration_epsilon=0.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.EVAL,
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    original = (task.workspace / "solution.py").read_text(encoding="utf-8")
+    task.max_steps = 1
+    runtime.run_episode(task, RuntimeMode.EVAL)
+    action = runtime.state.trajectory.transitions[0].metadata["action"]
+    assert action["action_type"] != "PATCH_FILE"
+    assert (task.workspace / "solution.py").read_text(encoding="utf-8") == original
+
+
+def test_runtime_training_epsilon_cannot_bypass_post_feasibility_fallback(tmp_path):
+    runtime = JarvisRuntime(
+        action_generator=InfeasiblePatchGenerator(),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10, train_exploration_epsilon=1.0, epsilon_min=1.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.TRAIN,
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    task.max_steps = 1
+    runtime.run_episode(task, RuntimeMode.TRAIN)
+    selected = runtime.state.trajectory.transitions[0].metadata["scoring"]
+    assert selected["feasible"] is True
+    assert selected["candidate"]["action_type"] != "PATCH_FILE"
+
+
+def test_runtime_eval_cannot_bypass_post_feasibility_fallback(tmp_path):
+    runtime = JarvisRuntime(
+        action_generator=InfeasiblePatchGenerator(),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.EVAL,
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    task.max_steps = 1
+    runtime.run_episode(task, RuntimeMode.EVAL)
+    selected = runtime.state.trajectory.transitions[0].metadata["scoring"]
+    assert selected["feasible"] is True
+    assert selected["candidate"]["action_type"] == "READ_FILE"
+
+
 def test_timing_and_smoke_mode_work(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     metrics = run_coding_brain_v03_demo(CodingBrainV03Config(smoke=True, train_episodes=2, mock_brain=True, quiet=True, seed=3))

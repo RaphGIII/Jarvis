@@ -38,7 +38,7 @@ from learning.representations.semantic import (
 from learning.rewards.intrinsic import novelty_reward
 from learning.world_model.model import WorldModel, WorldModelConfig
 from learning.world_model.uncertainty import UncertaintyEstimator
-from runtime.action_generator import ActionGenerator, BrainProvider, HeuristicCodingActionGenerator, QwenActionGenerator
+from runtime.action_generator import ActionGenerator, BrainProvider, HeuristicCodingActionGenerator, QwenActionGenerator, fallback_candidates
 from runtime.checkpoints import RuntimeCheckpointManager
 from runtime.events import RuntimeEvent
 from runtime.learning_scheduler import LearningScheduler, LearningSchedulerConfig, TrainingReport
@@ -352,7 +352,9 @@ class JarvisRuntime:
             self.profiler.increment("generated_tokens", float(generated_tokens))
         with self.profiler.measure("policy_q_world_scoring"):
             scored = self._score_candidates(latent, candidates, previous_observation)
+            scored = self._ensure_feasible_scored(latent, scored, previous_observation)
         selected = self._select(scored)
+        assert selected.feasible, f"Invariant violation: selected infeasible action {selected.candidate.action_type.name}: {selected.feasibility_reason}"
         action_raw_features = self.action_encoder.raw_features(selected.candidate)
         with torch.no_grad():
             action_embedding = self.action_encoder.forward_from_raw(action_raw_features).squeeze(0).detach()
@@ -735,6 +737,23 @@ class JarvisRuntime:
                 )
             )
         return sorted(scored, key=lambda item: item.score, reverse=True)
+
+    def _ensure_feasible_scored(
+        self,
+        latent: torch.Tensor,
+        scored: list[ScoredAction],
+        observation: CodingObservation,
+    ) -> list[ScoredAction]:
+        if any(item.feasible for item in scored):
+            return scored
+        fallback = fallback_candidates(observation)
+        fallback_scored = self._score_candidates(latent, fallback, observation)
+        self.profiler.increment("post_feasibility_fallback_count", len(fallback_scored))
+        if any(item.feasible for item in fallback_scored):
+            return fallback_scored
+        safe_scored = self._score_candidates(latent, [ActionCandidate(ActionType.LIST_FILES, reasoning_summary="Safe inspection fallback.")], observation)
+        self.profiler.increment("post_feasibility_fallback_count", len(safe_scored))
+        return safe_scored
 
     def _learned_weight(self) -> float:
         warmup = max(1, int(self.config.warmup_experiences))

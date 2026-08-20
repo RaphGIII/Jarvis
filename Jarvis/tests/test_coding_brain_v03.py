@@ -350,8 +350,12 @@ def test_v03_benchmark_invalid_action_rate_counts_transitions(tmp_path):
 
     runtime.action_generator = InvalidOnlyGenerator()
     result = CodingBenchmark().evaluate(runtime, [task])
-    assert result.invalid_action_rate == 1.0
-    assert result.episodes_with_invalid_action_rate == 1.0
+    assert result.invalid_action_rate == 0.0
+    assert result.episodes_with_invalid_action_rate == 0.0
+    assert all(
+        transition.metadata["scoring"]["feasible"] is True
+        for transition in runtime.state.trajectory.transitions
+    )
 
 
 def _weak_public_hidden_task(tmp_path, task_id: str = "weak_public") -> CodingTask:
@@ -505,6 +509,26 @@ def test_v03_full_split_fingerprints_are_unique_and_disjoint(tmp_path):
     assert set(fingerprints[DatasetSplit.TRAIN]).isdisjoint(fingerprints[DatasetSplit.VALIDATION])
     assert set(fingerprints[DatasetSplit.TRAIN]).isdisjoint(fingerprints[DatasetSplit.HOLDOUT])
     assert set(fingerprints[DatasetSplit.VALIDATION]).isdisjoint(fingerprints[DatasetSplit.HOLDOUT])
+
+
+def test_v03_catalog_pristine_public_tests_all_fail_and_metadata_is_complete(tmp_path):
+    factory = CodingTaskFactory(tmp_path / "catalog")
+    failures = []
+    total = 0
+    for split in DatasetSplit:
+        for task in factory.make_v03_split_tasks(split):
+            total += 1
+            assert task.description.strip()
+            assert (task.workspace / "test_public.py").exists()
+            assert task.hidden_workspace is not None
+            assert task.hidden_test_command is not None
+            assert "test_public.py" in task.protected_paths
+            env = CodingEnvironment(task, backend=LocalTestSandboxBackend(), terminate_on_public_success=False)
+            result = env.step(ActionCandidate(ActionType.RUN_TESTS))
+            if result.success:
+                failures.append((split.value, task.task_id, task.metadata.get("family")))
+    assert total == 60
+    assert failures == []
 
 
 def test_v03_end_to_end_qwen_generated_patch_solves_synthetic_task(tmp_path):
