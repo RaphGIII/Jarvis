@@ -29,6 +29,7 @@ from learning.policy.value import NeuralValueFunction, ValueConfig
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import (
     DeterministicTextEncoder,
+    LightweightLocalEmbeddingProvider,
     ProjectionEncoder,
     QwenHiddenStateTextEncoder,
     SemanticObservationFeatures,
@@ -41,6 +42,7 @@ from runtime.action_generator import ActionGenerator, BrainProvider, HeuristicCo
 from runtime.checkpoints import RuntimeCheckpointManager
 from runtime.events import RuntimeEvent
 from runtime.learning_scheduler import LearningScheduler, LearningSchedulerConfig, TrainingReport
+from runtime.profiling import PerformanceProfiler
 from runtime.runtime_state import RuntimeMode, RuntimeState
 from runtime.tensorboard import TensorBoardLogger
 
@@ -56,6 +58,7 @@ class JarvisRuntimeConfig:
     data_dir: str = "data"
     seed: int = 13
     num_action_candidates: int = DEFAULT_CONFIG.num_action_candidates
+    coding_generation_max_tokens: int = 450
     policy_score_weight: float = 1.2
     q_score_weight: float = DEFAULT_CONFIG.score_q_weight
     policy_log_score_weight: float = DEFAULT_CONFIG.score_policy_log_weight
@@ -130,13 +133,9 @@ class JarvisRuntime:
         self.brain = brain
         self._freeze_brain_parameters(brain)
         self.sandbox_backend = sandbox_backend
-        self.text_encoder = semantic_text_encoder or (
-            QwenHiddenStateTextEncoder(brain)
-            if brain is not None
-            else DeterministicTextEncoder(self.config.semantic_embedding_dim)
-        )
+        self.text_encoder = semantic_text_encoder or LightweightLocalEmbeddingProvider(self.config.semantic_embedding_dim)
         self.action_generator = action_generator or (
-            QwenActionGenerator(brain, self.config.num_action_candidates)
+            QwenActionGenerator(brain, self.config.num_action_candidates, max_tokens=self.config.coding_generation_max_tokens)
             if brain is not None
             else HeuristicCodingActionGenerator(self.config.num_action_candidates)
         )
@@ -202,6 +201,7 @@ class JarvisRuntime:
         self.state = RuntimeState(mode=mode)
         self.environment: CodingEnvironment | None = None
         self.events: list[RuntimeEvent] = []
+        self.profiler = PerformanceProfiler()
         self.known_latents: list[torch.Tensor] = []
         self._rng = random.Random(self.config.seed)
         if self.config.load_latest_checkpoints:
@@ -214,7 +214,7 @@ class JarvisRuntime:
         *,
         semantic_text_encoder: SemanticTextEncoder | None = None,
         num_action_candidates: int | None = None,
-        max_tokens: int = 1200,
+        max_tokens: int | None = None,
     ) -> None:
         """Attach one loaded Qwen brain to generation and semantic encoding.
 
@@ -229,11 +229,11 @@ class JarvisRuntime:
         model = getattr(brain, "model", None)
         if model is not None:
             model.eval()
-        self.text_encoder = semantic_text_encoder or QwenHiddenStateTextEncoder(brain)
+        self.text_encoder = semantic_text_encoder or LightweightLocalEmbeddingProvider(self.config.semantic_embedding_dim)
         self.action_generator = QwenActionGenerator(
             brain,
             num_candidates=num_action_candidates or self.config.num_action_candidates,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens or self.config.coding_generation_max_tokens,
         )
         self._rebuild_text_dependent_modules()
 
@@ -306,17 +306,33 @@ class JarvisRuntime:
     def step(self, user_goal: str) -> RuntimeStepResult:
         if self.environment is None:
             raise RuntimeError("No CodingEnvironment is active. Call start_task first.")
+        with self.profiler.measure("total_step"):
+            result = self._step_inner(user_goal)
+        return result
+
+    def _step_inner(self, user_goal: str) -> RuntimeStepResult:
         previous_observation = self.environment.observe()
-        previous_features = self._observation_features(previous_observation)
+        with self.profiler.measure("semantic_observation_encoding"):
+            previous_features = self._observation_features(previous_observation)
         latent = self._encode_features(previous_features)
-        candidates = self.action_generator.generate(user_goal, previous_observation)
-        scored = self._score_candidates(latent, candidates, previous_observation)
+        with self.profiler.measure("brain_candidate_generation"):
+            candidates = self.action_generator.generate(user_goal, previous_observation)
+        self.profiler.increment("brain_requests", 0.0 if getattr(self.action_generator, "last_generation_metadata", {}).get("cache_hit") else 1.0)
+        self.profiler.increment("candidate_cache_hits", 1.0 if getattr(self.action_generator, "last_generation_metadata", {}).get("cache_hit") else 0.0)
+        self.profiler.increment("candidates_generated", len(candidates))
+        generated_tokens = getattr(self.action_generator, "last_generation_metadata", {}).get("generated_tokens")
+        if generated_tokens is not None:
+            self.profiler.increment("generated_tokens", float(generated_tokens))
+        with self.profiler.measure("policy_q_world_scoring"):
+            scored = self._score_candidates(latent, candidates, previous_observation)
         selected = self._select(scored)
         action_raw_features = self.action_encoder.raw_features(selected.candidate)
         with torch.no_grad():
             action_embedding = self.action_encoder.forward_from_raw(action_raw_features).squeeze(0).detach()
-        environment_step = self.environment.step(selected.candidate)
-        next_features = self._observation_features(environment_step.observation)
+        with self.profiler.measure("docker_execution"):
+            environment_step = self.environment.step(selected.candidate)
+        with self.profiler.measure("semantic_observation_encoding"):
+            next_features = self._observation_features(environment_step.observation)
         next_latent = self._encode_features(next_features)
         reward = self.reward_engine.compute(previous_observation, selected.candidate, environment_step)
         transition = self._make_transition(
@@ -361,10 +377,11 @@ class JarvisRuntime:
         self.state.step_count += 1
         self.state.total_reward += transition.reward
         self.known_latents.append(latent.detach())
-        training_report = self.scheduler.maybe_train(
-            self.replay_buffer,
-            train_mode=self.state.mode == RuntimeMode.TRAIN,
-        )
+        with self.profiler.measure("optimizer_training_update"):
+            training_report = self.scheduler.maybe_train(
+                self.replay_buffer,
+                train_mode=self.state.mode == RuntimeMode.TRAIN,
+            )
         self.state.latest_metrics = {
             **environment_step.objective_metrics,
             **training_report.to_dict(),
@@ -397,13 +414,14 @@ class JarvisRuntime:
         )
 
     def run_episode(self, task: CodingTask, mode: RuntimeMode | None = None) -> dict[str, float | int | bool]:
-        self.start_task(task, mode)
-        done = False
-        success = False
-        while not done:
-            result = self.step(task.description)
-            done = result.done
-            success = result.success
+        with self.profiler.measure("total_episode"):
+            self.start_task(task, mode)
+            done = False
+            success = False
+            while not done:
+                result = self.step(task.description)
+                done = result.done
+                success = result.success
         return {
             "success": success,
             "reward": self.state.total_reward,
@@ -415,6 +433,8 @@ class JarvisRuntime:
     def chat(self, message: str) -> str:
         if self.brain is None:
             return "Brain provider is not loaded. Use /train or /eval for CodingWorld."
+        if hasattr(self.brain, "generate"):
+            return self.brain.generate(message)
         return self.brain.think(message)
 
     def status(self) -> dict[str, Any]:
@@ -427,6 +447,7 @@ class JarvisRuntime:
             "replay_size": len(self.replay_buffer),
             "persistent_experience": self.experience_store.count(),
             "latest_metrics": self.state.latest_metrics,
+            "performance": self.profiler.summary(),
         }
 
     def learning_summary(self) -> dict[str, Any]:
@@ -441,6 +462,7 @@ class JarvisRuntime:
             },
             "not_updated": ["Qwen foundation model"],
             "tensorboard": self.tensorboard.command,
+            "performance": self.profiler.summary(),
             "capabilities": {
                 name: {
                     "attempts": estimate.attempts,
@@ -630,8 +652,9 @@ class JarvisRuntime:
         known = torch.stack(self.known_latents) if self.known_latents else None
         novelty = min(1.0, novelty_reward(latent, known))
         scored = []
-        for candidate in candidates:
-            action_raw = self.action_encoder.raw_features(candidate)
+        with self.profiler.measure("semantic_action_encoding"):
+            action_raw_batch = self.action_encoder.raw_features_batch(candidates)
+        for candidate, action_raw in zip(candidates, action_raw_batch):
             with torch.no_grad():
                 action_embedding = self.action_encoder.forward_from_raw(action_raw).squeeze(0)
                 prediction = self.world_model(latent, action_embedding)

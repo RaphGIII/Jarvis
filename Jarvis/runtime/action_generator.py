@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from hashlib import sha256
+import time
 from typing import Any, Protocol
 
 from environments.coding.actions import ActionCandidate, ActionType
@@ -10,6 +11,15 @@ from environments.coding.observation import CodingObservation
 
 
 class BrainProvider(Protocol):
+    provider_name: str
+    model_name: str
+
+    def generate(self, prompt: str, *, max_tokens: int = 700, temperature: float = 0.2, top_p: float | None = None) -> str:
+        ...
+
+    def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
+        ...
+
     def think(self, user_prompt: str, max_tokens: int = 700) -> str:
         ...
 
@@ -26,7 +36,7 @@ class QwenActionGenerator:
         self,
         brain: BrainProvider,
         num_candidates: int = 4,
-        max_tokens: int = 1200,
+        max_tokens: int = 450,
         temperature: float = 0.6,
         top_p: float = 0.9,
     ) -> None:
@@ -41,13 +51,17 @@ class QwenActionGenerator:
     def generate(self, goal: str, observation: CodingObservation) -> list[ActionCandidate]:
         cache_key = sha256(f"{goal}\n{observation.to_text()}".encode("utf-8", errors="ignore")).hexdigest()
         if cache_key in self._cache:
-            self.last_generation_metadata = {"cache_key": cache_key, "cache_hit": True}
+            self.last_generation_metadata = {"cache_key": cache_key, "cache_hit": True, "latency_seconds": 0.0}
             return list(self._cache[cache_key])
         prompt = self._prompt(goal, observation)
-        if hasattr(self.brain, "think_coding"):
+        started = time.perf_counter()
+        if hasattr(self.brain, "generate_coding"):
+            raw = self.brain.generate_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
+        elif hasattr(self.brain, "think_coding"):
             raw = self.brain.think_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
         else:
             raw = self.brain.think(prompt, max_tokens=self.max_tokens)
+        latency_seconds = time.perf_counter() - started
         candidates, parse_metadata = parse_action_candidates(raw, return_metadata=True)
         result, diversity_metadata = dedupe_action_candidates(candidates, self.num_candidates)
         if not result:
@@ -55,6 +69,10 @@ class QwenActionGenerator:
         self.last_generation_metadata = {
             "cache_key": cache_key,
             "cache_hit": False,
+            "latency_seconds": latency_seconds,
+            "provider": getattr(self.brain, "provider_name", self.brain.__class__.__name__),
+            "model": getattr(self.brain, "model_name", ""),
+            "generated_tokens": getattr(self.brain, "last_metadata", {}).get("generated_tokens"),
             "raw_response_hash": sha256(raw.encode("utf-8", errors="ignore")).hexdigest(),
             "valid_candidates": len(candidates),
             "returned_candidates": len(result),

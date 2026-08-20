@@ -4,13 +4,14 @@ from config import MAX_NEW_TOKENS, MODEL_ID, SYSTEM_PROMPT
 
 
 class JarvisBrain:
-    def __init__(self):
+    def __init__(self, model_id=MODEL_ID):
         print("Loading JARVIS brain...")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+        self.model_id = model_id
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
 
         self.model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID,
+            model_id,
             device_map="auto",
             torch_dtype="auto"
         )

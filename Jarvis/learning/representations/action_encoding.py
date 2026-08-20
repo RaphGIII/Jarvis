@@ -35,6 +35,57 @@ class SemanticActionEncoder(nn.Module):
         self.training_step = 0
 
     def raw_features(self, action_candidate: ActionCandidate) -> Tensor:
+        return self.raw_features_batch([action_candidate]).squeeze(0)
+
+    def raw_features_batch(self, action_candidates: list[ActionCandidate]) -> Tensor:
+        if not action_candidates:
+            return torch.empty((0, self.raw_dim), dtype=torch.float32)
+        vectors = torch.zeros((len(action_candidates), self.raw_dim), dtype=torch.float32)
+        texts: list[str] = []
+        numeric_rows: list[Tensor] = []
+        for row, action_candidate in enumerate(action_candidates):
+            arguments = action_candidate.arguments
+            vectors[row, action_candidate.action_index] = 1.0
+            path_text = str(arguments.get("path", ""))
+            args_text = json.dumps(arguments, sort_keys=True)
+            patch_text = "\n".join(
+                [
+                    str(arguments.get("old", "")),
+                    "=>",
+                    str(arguments.get("new", "")),
+                    str(arguments.get("content", ""))[:2000],
+                ]
+            )
+            texts.extend([path_text, args_text, patch_text])
+            numeric_rows.append(
+                torch.tensor(
+                    [
+                        max(0.0, min(1.0, action_candidate.confidence)),
+                        min(1.0, max(0.0, action_candidate.estimated_cost / 10.0)),
+                        min(1.0, len(path_text) / 160.0),
+                        min(1.0, len(str(arguments.get("old", ""))) / 1000.0),
+                        min(1.0, len(str(arguments.get("new", ""))) / 1000.0),
+                        min(1.0, len(arguments) / 8.0),
+                    ],
+                    dtype=torch.float32,
+                )
+            )
+        if hasattr(self.text_encoder, "encode_batch"):
+            encoded_texts = self.text_encoder.encode_batch(texts)
+        else:
+            encoded_texts = torch.stack([self.text_encoder.encode(text) for text in texts])
+        encoded_texts = encoded_texts.reshape(len(action_candidates), 3, self.semantic_dim)
+        offset = self.num_actions
+        vectors[:, offset : offset + self.semantic_dim] = encoded_texts[:, 0, :]
+        offset += self.semantic_dim
+        vectors[:, offset : offset + self.semantic_dim] = encoded_texts[:, 1, :]
+        offset += self.semantic_dim
+        vectors[:, offset : offset + self.semantic_dim] = encoded_texts[:, 2, :]
+        offset += self.semantic_dim
+        vectors[:, offset : offset + self.numeric_dim] = torch.stack(numeric_rows)
+        return vectors
+
+    def _legacy_raw_features(self, action_candidate: ActionCandidate) -> Tensor:
         arguments = action_candidate.arguments
         vector = torch.zeros(self.raw_dim, dtype=torch.float32)
         vector[action_candidate.action_index] = 1.0

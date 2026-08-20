@@ -14,6 +14,9 @@ class SemanticTextEncoder(Protocol):
     def encode(self, text: str) -> Tensor:
         ...
 
+    def encode_batch(self, texts: list[str]) -> Tensor:
+        ...
+
     def cache_key(self, text: str) -> str:
         ...
 
@@ -47,6 +50,39 @@ class DeterministicTextEncoder:
         vector = vector / norm
         self._cache[key] = vector
         return vector.clone()
+
+    def encode_batch(self, texts: list[str]) -> Tensor:
+        if not texts:
+            return torch.empty((0, self.embedding_dim), dtype=torch.float32)
+        return torch.stack([self.encode(text) for text in texts])
+
+
+class LightweightLocalEmbeddingProvider(DeterministicTextEncoder):
+    """CPU-friendly frozen embedding provider with batching and cache stats.
+
+    This intentionally avoids foundation-model forward passes in the online RL
+    loop. A small sentence-transformer can be added behind the same interface
+    later; the trainable ProjectionEncoder remains the learning component.
+    """
+
+    provider_name = "lightweight_local"
+
+    def __init__(self, embedding_dim: int = 128, model_name: str = "jarvis-hashing-code-text-v1") -> None:
+        super().__init__(embedding_dim=embedding_dim)
+        self.model_name = model_name
+        self.requests = 0
+        self.cache_hits = 0
+        self.batch_requests = 0
+
+    def encode(self, text: str) -> Tensor:
+        self.requests += 1
+        if self.cache_key(text) in self._cache:
+            self.cache_hits += 1
+        return super().encode(text)
+
+    def encode_batch(self, texts: list[str]) -> Tensor:
+        self.batch_requests += 1
+        return super().encode_batch(texts)
 
 
 class QwenHiddenStateTextEncoder:
@@ -85,6 +121,11 @@ class QwenHiddenStateTextEncoder:
         vector = pooled.squeeze(0).detach().float().cpu()
         self._cache[key] = vector
         return vector.clone()
+
+    def encode_batch(self, texts: list[str]) -> Tensor:
+        if not texts:
+            return torch.empty((0, self.embedding_dim), dtype=torch.float32)
+        return torch.stack([self.encode(text) for text in texts])
 
 
 @dataclass

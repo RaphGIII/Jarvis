@@ -3,6 +3,7 @@ from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.latent_state import BeliefState, LatentState
 from learning.representations.semantic import (
     DeterministicTextEncoder,
+    LightweightLocalEmbeddingProvider,
     ProjectionEncoder,
     QwenHiddenStateTextEncoder,
     SemanticObservationFeatures,
@@ -12,6 +13,7 @@ from learning.representations.semantic import (
 __all__ = [
     "BeliefState",
     "DeterministicTextEncoder",
+    "LightweightLocalEmbeddingProvider",
     "LatentState",
     "ObservationAutoencoder",
     "ObservationEncoder",
