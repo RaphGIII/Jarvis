@@ -345,3 +345,233 @@ WorldModel, Policy, ValueFunction
 NOT UPDATED:
 Qwen foundation model
 ```
+
+## SEMANTIC PERSISTENT CODING AGENT V0.2
+
+The productive `JarvisRuntime` can now use Qwen as the high-level action
+generator when a `JarvisBrain` is injected. Qwen remains frozen: it proposes
+structured `ActionCandidate` objects, but it does not receive rewards, hidden
+tests, expected solutions, or optimizer updates. The heuristic generator remains
+available for unit tests, fallback, and debugging.
+
+The v0.2 runtime adds semantic state and semantic action representations:
+
+```text
+                    QWEN (frozen)
+                         |
+                         v
+                Action Candidates
+                         |
+
+Observation -> Semantic Encoder -> z_t
+                              |
+                +-------------+-------------+
+                |             |             |
+                v             v             v
+              Policy        Q(z,a)      World Model
+                +-------------+-------------+
+                              |
+                              v
+                        Action Selection
+                              |
+                              v
+                        Coding Sandbox
+                              |
+                              v
+                         Real Outcome
+                              |
+                              v
+                            Reward
+                              |
+                              v
+                          Experience
+                         /          \
+                     SQLite        Replay
+                                      |
+                                      v
+                              Gradient Training
+                                      |
+                                      v
+                         learned small networks
+```
+
+### Semantic State
+
+`ObservationAdapter` now emits both numeric features and a structured text view
+of the task, workspace tree, source excerpts, test output, errors, previous
+actions, and budget state. The text is encoded through the `SemanticTextEncoder`
+interface:
+
+```text
+Task description
+Source excerpts
+Test output
+Error message
+Previous actions
+Workspace summary
+        |
+        v
+SemanticTextEncoder
+        |
+        v
+semantic vector
+        |
+numeric features
+        |
+        v
+ProjectionEncoder
+        |
+        v
+z_t
+```
+
+Production can use `QwenHiddenStateTextEncoder`, which reuses the already loaded
+local Qwen model in inference mode with hidden-state pooling and content-hash
+caching. Tests use `DeterministicTextEncoder`, so unit tests do not load Qwen.
+
+### Semantic Actions
+
+`SemanticActionEncoder` represents concrete actions, not only action types. It
+combines:
+
+```text
+action type one-hot
+path text embedding
+arguments text embedding
+patch/diff text embedding
+cost features
+        |
+        v
+ActionProjection
+        |
+        v
+a_t
+```
+
+This lets two `PATCH_FILE` actions with different diffs receive different
+representations, losses, and future values.
+
+### Concrete Action Value Learning
+
+`ActionValueNetwork` learns `Q(z_t, a_t)` for each concrete candidate. Action
+selection scores every Qwen candidate with policy prior, action value, world
+model prediction, uncertainty/risk, information gain, cost, and confidence:
+
+```text
+score(a_i) =
+  w_policy * log(pi(action_type_i | z_t) + eps)
++ w_q      * Q(z_t, a_i)
++ w_world  * predicted_reward(z_t, a_i)
++ w_info   * information_gain
+- w_risk   * risk
+- w_cost   * estimated_cost
+```
+
+Training mode may explore by epsilon-greedy or softmax selection over candidate
+scores. Evaluation mode is deterministic and greedy.
+
+### Losses
+
+Stored replay entries include the raw observation feature vectors and the
+reconstructable action features. During training, the current encoders are used
+again, so the projection encoders receive gradients:
+
+```text
+z_t = E(o_t)
+a_t = A(candidate_t)
+
+Q_target =
+  r_t + gamma V_target(z_next)
+
+L_Q =
+  (Q(z_t, a_t) - Q_target)^2
+
+L_value =
+  (V(z_t) - Q_target)^2
+
+L_world =
+  MSE(z_next_pred, z_next)
+  + lambda_r MSE(r_pred, r_t)
+
+L_policy =
+  -log pi(action_type_t | z_t) * stop_gradient(Q_target - V(z_t))
+```
+
+Replay priority is updated after learning:
+
+```text
+priority_i =
+  (abs(TD_error) + lambda_world * prediction_error + epsilon)^alpha
+```
+
+### Persistent Runtime
+
+The runtime stores continuing learning state below:
+
+```text
+data/runtime/
+data/checkpoints/
+data/experience/
+data/tensorboard/
+```
+
+Startup loads the latest valid checkpoint, optimizer state where available, the
+SQLite experience store, and a deduplicated warm replay sample containing recent,
+high-priority, failed, and successful transitions. Checkpoints are separated into
+`latest` and `best`; a candidate is promoted to `best` only when holdout metrics
+improve without safety regression.
+
+### Train, Eval, And TensorBoard
+
+Training and evaluation are separated:
+
+```text
+TRAIN:
+experience collection, exploration, replay writes, optimizer.step()
+
+EVAL:
+model.eval(), torch.no_grad(), greedy actions, no replay contamination,
+no curriculum update, no optimizer.step()
+```
+
+Run the v0.2 demo:
+
+```bash
+python -m training.coding_brain_v02_demo
+```
+
+TensorBoard logs are written under `data/tensorboard`:
+
+```bash
+tensorboard --logdir data/tensorboard
+```
+
+Logged metrics include train/eval reward, success rate, steps, replay size,
+world loss, value loss, Q loss, policy loss, and capability trends.
+
+### Sandbox Policy
+
+Productive generated code execution requires `DockerSandboxBackend`. The Docker
+backend is configured for no network, non-root execution, CPU and memory limits,
+PID limits, timeouts, read-only hidden verifier mounts, no privileged mode, no
+Docker socket, and a reduced environment. If a compatible container runtime is
+not available, unsafe code execution is disabled instead of falling back to host
+execution.
+
+`LocalTestSandboxBackend` exists only for explicit unit tests and controlled
+developer tests. It is not the production fallback.
+
+### Parameter Status
+
+```text
+Foundation model:
+Qwen: FROZEN
+
+Trainable:
+ObservationProjection: LEARNING
+ActionProjection: LEARNING
+WorldModel: LEARNING
+ValueFunction: LEARNING
+ActionValueNetwork: LEARNING
+NeuralPolicy: LEARNING
+```

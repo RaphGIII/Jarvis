@@ -7,6 +7,7 @@ from environments.coding.actions import ActionCandidate, ActionEncoder, ActionTy
 from environments.coding.environment import CodingEnvironment
 from environments.coding.observation import ObservationAdapter
 from environments.coding.reward import CodingRewardEngine
+from environments.coding.sandbox_backend import LocalTestSandboxBackend
 from environments.coding.task import CodingTask
 from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig
 from runtime.runtime_state import RuntimeMode
@@ -55,7 +56,7 @@ def make_task(tmp_path: Path, task_id="task", max_steps=8):
 
 def test_coding_environment_isolates_paths_and_executes_actions(tmp_path):
     task = make_task(tmp_path)
-    env = CodingEnvironment(task)
+    env = CodingEnvironment(task, backend=LocalTestSandboxBackend())
 
     list_step = env.step(ActionCandidate(ActionType.LIST_FILES))
     assert list_step.action_result.ok
@@ -81,7 +82,7 @@ def test_coding_environment_isolates_paths_and_executes_actions(tmp_path):
 
 def test_observation_and_action_encoding(tmp_path):
     task = make_task(tmp_path)
-    env = CodingEnvironment(task)
+    env = CodingEnvironment(task, backend=LocalTestSandboxBackend())
     observation = env.observe()
 
     features = ObservationAdapter(feature_dim=24).encode(observation)
@@ -94,7 +95,7 @@ def test_observation_and_action_encoding(tmp_path):
 
 def test_reward_from_test_improvement(tmp_path):
     task = make_task(tmp_path)
-    env = CodingEnvironment(task)
+    env = CodingEnvironment(task, backend=LocalTestSandboxBackend())
     reward_engine = CodingRewardEngine()
     before = env.observe()
     env.step(ActionCandidate(ActionType.PATCH_FILE, {"path": "calculator.py", "old": "return a - b", "new": "return a + b"}))
@@ -111,6 +112,7 @@ def test_runtime_step_transition_and_persistence(tmp_path):
         config=JarvisRuntimeConfig(latent_dim=16, hidden_dim=16, replay_capacity=20, train_exploration_epsilon=0.0),
         data_dir=tmp_path / "runtime_data",
         mode=RuntimeMode.EVAL,
+        sandbox_backend=LocalTestSandboxBackend(),
     )
     task = make_task(tmp_path, "runtime_task")
     runtime.start_task(task, RuntimeMode.EVAL)
@@ -118,8 +120,8 @@ def test_runtime_step_transition_and_persistence(tmp_path):
 
     assert result.transition.latent_state.shape == (16,)
     assert result.transition.metadata["action"]["action_type"] == "RUN_TESTS"
-    assert len(runtime.replay_buffer) == 1
-    assert runtime.experience_store.count() == 1
+    assert len(runtime.replay_buffer) == 0
+    assert runtime.experience_store.count() == 0
     assert result.training_report.did_update is False
 
 
@@ -129,6 +131,7 @@ def test_train_eval_separation_and_online_parameter_update(tmp_path):
         config=JarvisRuntimeConfig(latent_dim=16, hidden_dim=16, replay_capacity=50, train_exploration_epsilon=0.0),
         data_dir=tmp_path / "runtime_data",
         mode=RuntimeMode.TRAIN,
+        sandbox_backend=LocalTestSandboxBackend(),
     )
     runtime.scheduler.config.world_model_batch_size = 1
     runtime.scheduler.config.value_policy_batch_size = 1
@@ -157,6 +160,7 @@ def test_runtime_checkpoint_save_load(tmp_path):
         action_generator=ScriptedActionGenerator(),
         config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10),
         data_dir=tmp_path / "runtime_data",
+        sandbox_backend=LocalTestSandboxBackend(),
     )
     paths = runtime.save_checkpoints({"loss": 1.0})
     assert "Policy" in paths
@@ -165,6 +169,7 @@ def test_runtime_checkpoint_save_load(tmp_path):
         action_generator=ScriptedActionGenerator(),
         config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10),
         data_dir=tmp_path / "runtime_data",
+        sandbox_backend=LocalTestSandboxBackend(),
     )
     result = loaded.load_latest_checkpoints()
     assert result["Policy"]
@@ -177,6 +182,7 @@ def test_end_to_end_coding_loop_terminates_and_updates(tmp_path):
         config=JarvisRuntimeConfig(latent_dim=16, hidden_dim=16, replay_capacity=50, train_exploration_epsilon=0.0),
         data_dir=tmp_path / "runtime_data",
         mode=RuntimeMode.TRAIN,
+        sandbox_backend=LocalTestSandboxBackend(),
     )
     runtime.scheduler.config.world_model_batch_size = 1
     runtime.scheduler.config.value_policy_batch_size = 1
@@ -200,6 +206,7 @@ def test_max_step_termination(tmp_path):
         config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10, train_exploration_epsilon=0.0),
         data_dir=tmp_path / "runtime_data",
         mode=RuntimeMode.EVAL,
+        sandbox_backend=LocalTestSandboxBackend(),
     )
     task = make_task(tmp_path, "max_step_task", max_steps=2)
     metrics = runtime.run_episode(task, RuntimeMode.EVAL)

@@ -7,6 +7,8 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from learning.representations.semantic import SemanticObservationFeatures, SemanticTextEncoder
+
 
 @dataclass
 class CodingObservation:
@@ -51,6 +53,9 @@ class ObservationAdapter:
         self.feature_dim = feature_dim
 
     def encode(self, observation: CodingObservation) -> Tensor:
+        return self.numeric_features(observation)
+
+    def numeric_features(self, observation: CodingObservation) -> Tensor:
         tree = observation.workspace_tree
         excerpts = observation.relevant_file_excerpts
         tests = observation.test_state
@@ -81,6 +86,21 @@ class ObservationAdapter:
         if self.feature_dim > 16:
             features[16 + text_hash] = 1.0
         return features
+
+    def semantic_text(self, observation: CodingObservation) -> str:
+        return observation.to_text()
+
+    def encode_semantic(
+        self,
+        observation: CodingObservation,
+        text_encoder: SemanticTextEncoder,
+    ) -> SemanticObservationFeatures:
+        text = self.semantic_text(observation)
+        return SemanticObservationFeatures(
+            semantic=text_encoder.encode(text),
+            numeric=self.numeric_features(observation),
+            cache_key=text_encoder.cache_key(text),
+        )
 
     @staticmethod
     def _stable_bucket(text: str, buckets: int) -> int:

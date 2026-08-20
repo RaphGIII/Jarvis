@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from torch import Tensor
+import torch
 
 from learning.experience.transition import Transition
 
@@ -22,6 +23,12 @@ def _json_default(value: Any) -> Any:
 
 def _dumps(value: Any) -> str:
     return json.dumps(value, default=_json_default, sort_keys=True)
+
+
+def _loads(value: str | None) -> Any:
+    if value is None:
+        return None
+    return json.loads(value)
 
 
 @dataclass
@@ -39,6 +46,8 @@ class StoredTransition:
 class PersistentExperienceStore:
     """SQLite-backed experience store for replay across process restarts."""
 
+    SCHEMA_VERSION = 2
+
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +58,14 @@ class PersistentExperienceStore:
 
     def _init_schema(self) -> None:
         with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS transitions (
@@ -76,6 +93,10 @@ class PersistentExperienceStore:
             )
             connection.execute("CREATE INDEX IF NOT EXISTS idx_transitions_episode ON transitions(episode_id)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_transitions_priority ON transitions(priority)")
+            connection.execute(
+                "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES ('schema_version', ?)",
+                (str(self.SCHEMA_VERSION),),
+            )
 
     def add_transition(
         self,
@@ -164,3 +185,78 @@ class PersistentExperienceStore:
         with self._connect() as connection:
             row = connection.execute("SELECT COUNT(*) FROM transitions").fetchone()
         return int(row[0])
+
+    def warm_start_transitions(self, limit: int = 200) -> list[Transition]:
+        if limit <= 0:
+            return []
+        quotas = {
+            "priority": max(1, int(limit * 0.40)),
+            "recent": max(1, int(limit * 0.30)),
+            "failures": max(1, int(limit * 0.15)),
+            "successes": max(1, limit - int(limit * 0.40) - int(limit * 0.30) - int(limit * 0.15)),
+        }
+        queries = [
+            ("priority", "ORDER BY priority DESC, id DESC", ""),
+            ("recent", "ORDER BY id DESC", ""),
+            ("failures", "AND success = 0 ORDER BY id DESC", ""),
+            ("successes", "AND success = 1 ORDER BY id DESC", ""),
+        ]
+        rows_by_id: dict[int, sqlite3.Row] = {}
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            for name, ordering, predicate in queries:
+                rows = connection.execute(
+                    f"""
+                    SELECT *
+                    FROM transitions
+                    WHERE 1 = 1 {predicate}
+                    {ordering}
+                    LIMIT ?
+                    """,
+                    (quotas[name],),
+                ).fetchall()
+                for row in rows:
+                    rows_by_id[int(row["id"])] = row
+        ordered_rows = sorted(rows_by_id.values(), key=lambda row: int(row["id"]))[:limit]
+        return [self._row_to_transition(row) for row in ordered_rows]
+
+    def _row_to_transition(self, row: sqlite3.Row) -> Transition:
+        metadata = _loads(row["metadata_json"]) or {}
+        metadata["persistent_row_id"] = int(row["id"])
+        latent = self._tensor_from_json(row["latent_state_json"])
+        next_latent = self._tensor_from_json(row["next_latent_state_json"])
+        action_payload = _loads(row["action_json"]) or {}
+        action_name = action_payload.get("action_type", 0)
+        action_index = int(action_name) if isinstance(action_name, int) else metadata.get("action_type_index")
+        if action_index is None:
+            try:
+                from environments.coding.actions import ActionType
+
+                action_index = int(ActionType[str(action_name)])
+            except Exception:
+                action_index = 0
+        return Transition(
+            observation=_loads(row["observation_json"]),
+            latent_state=latent,
+            action=int(action_index),
+            reward=float(row["reward"]),
+            next_observation=_loads(row["next_observation_json"]),
+            next_latent_state=next_latent,
+            done=bool(row["done"]),
+            uncertainty=float(metadata.get("uncertainty", 0.0)),
+            novelty=float(metadata.get("novelty", 0.0)),
+            success=bool(row["success"]),
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _tensor_from_json(value: str | None) -> Tensor | None:
+        loaded = _loads(value)
+        if loaded is None:
+            return None
+        return torch.tensor(loaded, dtype=torch.float32)
+
+    def schema_version(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT value FROM schema_metadata WHERE key = 'schema_version'").fetchone()
+        return int(row[0]) if row else 0

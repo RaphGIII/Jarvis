@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,6 +9,7 @@ from typing import Any
 from environments.base import ActionResult, EnvironmentStep
 from environments.coding.actions import ActionCandidate, ActionType, coerce_action
 from environments.coding.observation import CodingObservation
+from environments.coding.sandbox_backend import DisabledSandboxBackend, SandboxBackend
 from environments.coding.task import CodingTask
 
 
@@ -20,10 +20,11 @@ class SandboxViolation(ValueError):
 class CodingEnvironment:
     """A controlled local coding environment scoped to one sandbox workspace."""
 
-    def __init__(self, task: CodingTask, timeout_seconds: float = 5.0) -> None:
+    def __init__(self, task: CodingTask, timeout_seconds: float = 5.0, backend: SandboxBackend | None = None) -> None:
         self.task = task
         self.workspace = task.workspace.resolve()
         self.timeout_seconds = timeout_seconds
+        self.backend = backend or DisabledSandboxBackend()
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.step_number = 0
         self.latest_action: dict[str, Any] | None = None
@@ -38,6 +39,9 @@ class CodingEnvironment:
             "failed": 0,
             "total": 0,
             "last_return_code": None,
+            "hidden_ran": False,
+            "hidden_passed": 0,
+            "hidden_failed": 0,
         }
 
     def observe(self) -> CodingObservation:
@@ -102,6 +106,7 @@ class CodingEnvironment:
             return ActionResult(True, f"Found {len(matches)} matches.", stdout="\n".join(matches), data={"matches": matches})
         if action_type == ActionType.WRITE_FILE:
             relative_path = str(arguments.get("path", ""))
+            self._assert_editable(relative_path)
             content = str(arguments.get("content", ""))
             path = self._safe_path(relative_path, allow_create=True)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,6 +130,7 @@ class CodingEnvironment:
 
     def _patch_file(self, arguments: dict[str, Any]) -> ActionResult:
         relative_path = str(arguments.get("path", ""))
+        self._assert_editable(relative_path)
         old = str(arguments.get("old", ""))
         new = str(arguments.get("new", ""))
         if not old:
@@ -141,24 +147,42 @@ class CodingEnvironment:
     def _run_tests(self) -> ActionResult:
         result = self._run_process(self.task.test_command, label="Ran tests.")
         self.test_state = self._parse_test_state(result.stdout, result.stderr, result.return_code)
+        if self._tests_passed() and self.task.hidden_test_command is not None:
+            hidden = self._run_process(
+                self.task.hidden_test_command,
+                label="Ran hidden verifier.",
+                cwd=self.task.hidden_workspace or self.workspace,
+                expose_output=False,
+            )
+            hidden_ok = hidden.return_code == 0
+            self.test_state["hidden_ran"] = True
+            self.test_state["hidden_passed"] = int(hidden_ok)
+            self.test_state["hidden_failed"] = int(not hidden_ok)
+            if not hidden_ok:
+                self.test_state["failed"] = int(self.test_state.get("failed", 0)) + 1
+                self.test_state["total"] = int(self.test_state.get("total", 0)) + 1
+                return ActionResult(False, "Hidden verifier failed.", stderr="Hidden verifier failed.", return_code=hidden.return_code)
         return result
 
-    def _run_process(self, command: list[str], label: str) -> ActionResult:
-        completed = subprocess.run(
+    def _run_process(
+        self,
+        command: list[str],
+        label: str,
+        cwd: Path | None = None,
+        expose_output: bool = True,
+    ) -> ActionResult:
+        completed = self.backend.run(
             command,
-            cwd=self.workspace,
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-            shell=False,
+            cwd=cwd or self.workspace,
+            timeout_seconds=self.timeout_seconds,
             env=self._subprocess_env(),
         )
         ok = completed.returncode == 0
         return ActionResult(
             ok,
             label if ok else f"{label} Return code {completed.returncode}.",
-            stdout=completed.stdout[-4000:],
-            stderr=completed.stderr[-4000:],
+            stdout=completed.stdout[-4000:] if expose_output else "",
+            stderr=completed.stderr[-4000:] if expose_output else ("Hidden verifier failed." if not ok else ""),
             return_code=completed.returncode,
         )
 
@@ -167,6 +191,12 @@ class CodingEnvironment:
         env.pop("PYTHONPATH", None)
         env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
         return env
+
+    def _assert_editable(self, relative_path: str) -> None:
+        normalized = Path(relative_path).as_posix()
+        name = Path(relative_path).name
+        if normalized in self.task.protected_paths or name.startswith("test_"):
+            raise SandboxViolation("Protected test/evaluator files cannot be modified.")
 
     def _safe_path(
         self,

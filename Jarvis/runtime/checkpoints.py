@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,8 @@ class RuntimeCheckpointManager:
     def __init__(self, directory: str | Path) -> None:
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
+        (self.directory / "latest").mkdir(exist_ok=True)
+        (self.directory / "best").mkdir(exist_ok=True)
 
     def save_module(
         self,
@@ -37,3 +41,34 @@ class RuntimeCheckpointManager:
         if not candidates:
             return None
         return load_module_checkpoint(module, candidates[0], optimizer=optimizer)
+
+    def save_category_metadata(self, category: str, metrics: dict[str, float], extra: dict[str, Any] | None = None) -> Path:
+        target_dir = self.directory / category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "category": category,
+            "metrics": metrics,
+            "extra": extra or {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        path = target_dir / "checkpoint_metadata.json"
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        return path
+
+    def should_promote(self, candidate: dict[str, float], best: dict[str, float] | None) -> bool:
+        if best is None:
+            return True
+        if candidate.get("regression_rate", 1.0) > best.get("regression_rate", 1.0):
+            return False
+        if candidate.get("success_rate", 0.0) > best.get("success_rate", 0.0):
+            return True
+        if candidate.get("success_rate", 0.0) == best.get("success_rate", 0.0):
+            if candidate.get("mean_reward", float("-inf")) > best.get("mean_reward", float("-inf")):
+                return True
+        return False
+
+    def best_metrics(self) -> dict[str, float] | None:
+        path = self.directory / "best" / "checkpoint_metadata.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8")).get("metrics")

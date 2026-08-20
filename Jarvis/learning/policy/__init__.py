@@ -8,6 +8,7 @@ from learning.policy.exploration import (
     SoftmaxExploration,
     UCBExploration,
 )
+from learning.policy.action_value import ActionValueConfig, ActionValueNetwork, soft_update
 from learning.policy.policy import NeuralPolicy, PolicyConfig, policy_gradient_loss
 from learning.policy.value import NeuralValueFunction, QNetwork, bellman_target, td_error
 
@@ -16,6 +17,8 @@ __all__ = [
     "CandidateActionScorer",
     "EpsilonGreedyExploration",
     "GreedyExploration",
+    "ActionValueConfig",
+    "ActionValueNetwork",
     "NeuralPolicy",
     "NeuralValueFunction",
     "PolicyConfig",
@@ -26,5 +29,6 @@ __all__ = [
     "UCBExploration",
     "bellman_target",
     "policy_gradient_loss",
+    "soft_update",
     "td_error",
 ]

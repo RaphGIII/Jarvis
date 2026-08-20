@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 
-from environments.coding.actions import ActionCandidate, ActionEncoder, ActionType
+from environments.coding.actions import ActionCandidate, ActionType
 from environments.coding.environment import CodingEnvironment
 from environments.coding.observation import CodingObservation, ObservationAdapter
 from environments.coding.reward import CodingRewardEngine, CodingRewardResult
+from environments.coding.sandbox_backend import SandboxBackend
 from environments.coding.task import CodingTask
 from learning.config import DEFAULT_CONFIG
 from learning.experience.persistent_store import PersistentExperienceStore
@@ -20,36 +22,52 @@ from learning.experience.replay_buffer import ReplayBuffer
 from learning.experience.transition import Transition
 from learning.meta.self_model import SelfModel
 from learning.objectives.optimizer import set_global_seeds
+from learning.policy.action_value import ActionValueConfig, ActionValueNetwork
 from learning.policy.policy import NeuralPolicy, PolicyConfig
 from learning.policy.value import NeuralValueFunction, ValueConfig
-from learning.representations.encoder import ObservationEncoder
+from learning.representations.action_encoding import SemanticActionEncoder
+from learning.representations.semantic import (
+    DeterministicTextEncoder,
+    ProjectionEncoder,
+    QwenHiddenStateTextEncoder,
+    SemanticObservationFeatures,
+    SemanticTextEncoder,
+)
 from learning.rewards.intrinsic import novelty_reward
 from learning.world_model.model import WorldModel, WorldModelConfig
 from learning.world_model.uncertainty import UncertaintyEstimator
-from runtime.action_generator import ActionGenerator, BrainProvider, HeuristicCodingActionGenerator
+from runtime.action_generator import ActionGenerator, BrainProvider, HeuristicCodingActionGenerator, QwenActionGenerator
 from runtime.checkpoints import RuntimeCheckpointManager
 from runtime.events import RuntimeEvent
 from runtime.learning_scheduler import LearningScheduler, LearningSchedulerConfig, TrainingReport
 from runtime.runtime_state import RuntimeMode, RuntimeState
+from runtime.tensorboard import TensorBoardLogger
 
 
 @dataclass(frozen=True)
 class JarvisRuntimeConfig:
     latent_dim: int = DEFAULT_CONFIG.latent_dim
     observation_feature_dim: int = 24
+    semantic_embedding_dim: int = DEFAULT_CONFIG.semantic_embedding_dim
+    action_embedding_dim: int = DEFAULT_CONFIG.action_embedding_dim
     hidden_dim: int = 64
     replay_capacity: int = DEFAULT_CONFIG.replay_capacity
     data_dir: str = "data"
     seed: int = 13
     num_action_candidates: int = DEFAULT_CONFIG.num_action_candidates
     policy_score_weight: float = 1.2
+    q_score_weight: float = DEFAULT_CONFIG.score_q_weight
+    policy_log_score_weight: float = DEFAULT_CONFIG.score_policy_log_weight
     world_reward_weight: float = 0.7
     information_gain_weight: float = 0.2
     risk_weight: float = 0.8
     cost_weight: float = 0.15
     confidence_weight: float = 0.15
     train_exploration_epsilon: float = 0.15
+    epsilon_min: float = DEFAULT_CONFIG.epsilon_min
+    epsilon_decay: float = DEFAULT_CONFIG.epsilon_decay
     load_latest_checkpoints: bool = False
+    replay_warm_start_size: int = DEFAULT_CONFIG.replay_warm_start_size
 
 
 @dataclass
@@ -57,6 +75,7 @@ class ScoredAction:
     candidate: ActionCandidate
     score: float
     policy_score: float
+    q_value: float
     predicted_reward: float
     expected_information_gain: float
     risk: float
@@ -68,6 +87,7 @@ class ScoredAction:
             "candidate": self.candidate.to_dict(),
             "score": self.score,
             "policy_score": self.policy_score,
+            "q_value": self.q_value,
             "predicted_reward": self.predicted_reward,
             "expected_information_gain": self.expected_information_gain,
             "risk": self.risk,
@@ -97,6 +117,8 @@ class JarvisRuntime:
         *,
         brain: BrainProvider | None = None,
         action_generator: ActionGenerator | None = None,
+        semantic_text_encoder: SemanticTextEncoder | None = None,
+        sandbox_backend: SandboxBackend | None = None,
         config: JarvisRuntimeConfig | None = None,
         data_dir: str | Path | None = None,
         mode: RuntimeMode = RuntimeMode.TRAIN,
@@ -104,11 +126,26 @@ class JarvisRuntime:
         self.config = config or JarvisRuntimeConfig()
         set_global_seeds(self.config.seed)
         self.brain = brain
-        self.action_generator = action_generator or HeuristicCodingActionGenerator(self.config.num_action_candidates)
+        self.sandbox_backend = sandbox_backend
+        self.text_encoder = semantic_text_encoder or (
+            QwenHiddenStateTextEncoder(brain)
+            if brain is not None
+            else DeterministicTextEncoder(self.config.semantic_embedding_dim)
+        )
+        self.action_generator = action_generator or (
+            QwenActionGenerator(brain, self.config.num_action_candidates)
+            if brain is not None
+            else HeuristicCodingActionGenerator(self.config.num_action_candidates)
+        )
         self.observation_adapter = ObservationAdapter(self.config.observation_feature_dim)
-        self.action_encoder = ActionEncoder(embedding_dim=len(ActionType))
-        self.encoder = ObservationEncoder(
-            input_dim=self.config.observation_feature_dim,
+        self.action_encoder = SemanticActionEncoder(
+            self.text_encoder,
+            action_embedding_dim=self.config.action_embedding_dim,
+            hidden_dim=self.config.hidden_dim,
+        )
+        self.encoder = ProjectionEncoder(
+            semantic_dim=self.text_encoder.embedding_dim,
+            numeric_dim=self.config.observation_feature_dim,
             latent_dim=self.config.latent_dim,
             hidden_dim=self.config.hidden_dim,
         )
@@ -122,10 +159,17 @@ class JarvisRuntime:
         self.value_function = NeuralValueFunction(
             ValueConfig(state_dim=self.config.latent_dim, hidden_dim=self.config.hidden_dim)
         )
+        self.action_value = ActionValueNetwork(
+            ActionValueConfig(
+                state_dim=self.config.latent_dim,
+                action_dim=self.config.action_embedding_dim,
+                hidden_dim=self.config.hidden_dim,
+            )
+        )
         self.world_model = WorldModel(
             WorldModelConfig(
                 latent_dim=self.config.latent_dim,
-                action_dim=len(ActionType),
+                action_dim=self.config.action_embedding_dim,
                 hidden_dim=self.config.hidden_dim,
             )
         )
@@ -134,10 +178,21 @@ class JarvisRuntime:
             world_model_batch_size=min(DEFAULT_CONFIG.world_model_batch_size, self.config.replay_capacity),
             value_policy_batch_size=min(DEFAULT_CONFIG.value_policy_batch_size, self.config.replay_capacity),
         )
-        self.scheduler = LearningScheduler(self.world_model, self.policy, self.value_function, scheduler_config)
+        self.scheduler = LearningScheduler(
+            self.world_model,
+            self.policy,
+            self.value_function,
+            scheduler_config,
+            observation_encoder=self.encoder,
+            action_encoder=self.action_encoder,
+            action_value=self.action_value,
+            persistent_store=None,
+        )
         root_data_dir = Path(data_dir or self.config.data_dir)
         self.checkpoint_manager = RuntimeCheckpointManager(root_data_dir / "checkpoints")
-        self.experience_store = PersistentExperienceStore(root_data_dir / "experience.sqlite")
+        self.experience_store = PersistentExperienceStore(root_data_dir / "experience" / "experience.sqlite")
+        self.scheduler.persistent_store = self.experience_store
+        self.tensorboard = TensorBoardLogger(root_data_dir / "tensorboard")
         self.reward_engine = CodingRewardEngine()
         self.uncertainty_estimator = UncertaintyEstimator()
         self.self_model = SelfModel()
@@ -148,9 +203,26 @@ class JarvisRuntime:
         self._rng = random.Random(self.config.seed)
         if self.config.load_latest_checkpoints:
             self.load_latest_checkpoints()
+        self.warm_start_replay(self.config.replay_warm_start_size)
+
+    def warm_start_replay(self, limit: int | None = None) -> int:
+        transitions = self.experience_store.warm_start_transitions(limit or self.config.replay_warm_start_size)
+        seen_rows: set[int] = set()
+        loaded = 0
+        for transition in transitions:
+            row_id = transition.metadata.get("persistent_row_id")
+            if row_id in seen_rows:
+                continue
+            seen_rows.add(row_id)
+            combined_error = abs(float(transition.metadata.get("td_error", 0.0))) + DEFAULT_CONFIG.priority_prediction_error_weight * abs(
+                float(transition.metadata.get("prediction_error", 0.0))
+            )
+            self.replay_buffer.add(transition, error=combined_error)
+            loaded += 1
+        return loaded
 
     def start_task(self, task: CodingTask, mode: RuntimeMode | None = None) -> CodingObservation:
-        self.environment = CodingEnvironment(task)
+        self.environment = CodingEnvironment(task, backend=self.sandbox_backend)
         if mode is not None:
             self.state.mode = mode
         episode_id = f"{task.task_id}-{uuid.uuid4().hex[:8]}"
@@ -162,25 +234,33 @@ class JarvisRuntime:
         if self.environment is None:
             raise RuntimeError("No CodingEnvironment is active. Call start_task first.")
         previous_observation = self.environment.observe()
-        latent = self._encode_observation(previous_observation)
+        previous_features = self._observation_features(previous_observation)
+        latent = self._encode_features(previous_features)
         candidates = self.action_generator.generate(user_goal, previous_observation)
         scored = self._score_candidates(latent, candidates, previous_observation)
         selected = self._select(scored)
-        action_embedding = self.action_encoder.encode(selected.candidate)
+        action_raw_features = self.action_encoder.raw_features(selected.candidate)
+        with torch.no_grad():
+            action_embedding = self.action_encoder.forward_from_raw(action_raw_features).squeeze(0).detach()
         environment_step = self.environment.step(selected.candidate)
-        next_latent = self._encode_observation(environment_step.observation)
+        next_features = self._observation_features(environment_step.observation)
+        next_latent = self._encode_features(next_features)
         reward = self.reward_engine.compute(previous_observation, selected.candidate, environment_step)
         transition = self._make_transition(
             previous_observation,
+            previous_features,
             latent,
             selected,
+            action_raw_features,
             action_embedding,
             reward,
             environment_step.observation,
+            next_features,
             next_latent,
             environment_step.done,
             environment_step.success,
             environment_step.objective_metrics,
+            scored,
         )
         combined_error = abs(float(transition.metadata.get("td_error", 0.0))) + DEFAULT_CONFIG.priority_prediction_error_weight * abs(
             float(transition.metadata.get("prediction_error", 0.0))
@@ -191,18 +271,19 @@ class JarvisRuntime:
             DEFAULT_CONFIG.priority_prediction_error_weight,
             self.replay_buffer.priority_config,
         )
-        self.replay_buffer.add(transition, error=combined_error)
-        row_id = self.experience_store.add_transition(
-            task_id=self.state.task_id or "unknown",
-            episode_id=self.state.episode_id or "unknown",
-            step=self.state.step_count,
-            transition=transition,
-            action_payload=selected.candidate.to_dict(),
-            reward_components=reward.components,
-            priority=priority,
-            model_versions=self._model_versions(),
-        )
-        transition.metadata["persistent_row_id"] = row_id
+        if self.state.mode == RuntimeMode.TRAIN:
+            self.replay_buffer.add(transition, error=combined_error)
+            row_id = self.experience_store.add_transition(
+                task_id=self.state.task_id or "unknown",
+                episode_id=self.state.episode_id or "unknown",
+                step=self.state.step_count,
+                transition=transition,
+                action_payload=selected.candidate.to_dict(),
+                reward_components=reward.components,
+                priority=priority,
+                model_versions=self._model_versions(),
+            )
+            transition.metadata["persistent_row_id"] = row_id
         self.state.trajectory.add(transition)
         self.state.step_count += 1
         self.state.total_reward += transition.reward
@@ -216,6 +297,7 @@ class JarvisRuntime:
             **training_report.to_dict(),
             "total_reward": self.state.total_reward,
         }
+        self._log_step_metrics(training_report, environment_step.success)
         if environment_step.done:
             self._update_self_model(environment_step.success)
             self.events.append(
@@ -280,9 +362,12 @@ class JarvisRuntime:
                 "WorldModel": self.world_model.training_step,
                 "Policy": self.policy.training_step,
                 "ValueFunction": self.value_function.training_step,
-                "ObservationEncoder": "not updated online in v0.1",
+                "ActionValueNetwork": self.action_value.training_step,
+                "ObservationProjection": self.encoder.training_step,
+                "ActionProjection": self.action_encoder.training_step,
             },
             "not_updated": ["Qwen foundation model"],
+            "tensorboard": self.tensorboard.command,
             "capabilities": {
                 name: {
                     "attempts": estimate.attempts,
@@ -313,38 +398,97 @@ class JarvisRuntime:
                 metrics=metrics,
             ),
             "ObservationEncoder": self.checkpoint_manager.save_module(
-                "observation_encoder",
+                "observation_projection",
                 self.encoder,
-                version="observation-encoder-0.1",
-                training_step=0,
+                version="observation-projection-0.2",
+                training_step=self.encoder.training_step,
                 metrics=metrics,
+                optimizer=self.scheduler.encoder_optimizer,
+            ),
+            "ActionProjection": self.checkpoint_manager.save_module(
+                "action_projection",
+                self.action_encoder,
+                version="action-projection-0.2",
+                training_step=self.action_encoder.training_step,
+                metrics=metrics,
+                optimizer=self.scheduler.action_encoder_optimizer,
+            ),
+            "ActionValueNetwork": self.checkpoint_manager.save_module(
+                "action_value",
+                self.action_value,
+                version=self.action_value.config.version,
+                training_step=self.action_value.training_step,
+                metrics=metrics,
+                optimizer=self.scheduler.q_optimizer,
             ),
         }
         return {name: str(path) for name, path in paths.items()}
 
     def load_latest_checkpoints(self) -> dict[str, bool]:
-        loaded = {
+        payloads = {
             "WorldModel": self.checkpoint_manager.load_latest_module(
                 "world_model", self.world_model, optimizer=self.scheduler.world_optimizer
-            )
-            is not None,
+            ),
             "Policy": self.checkpoint_manager.load_latest_module(
                 "policy", self.policy, optimizer=self.scheduler.policy_optimizer
-            )
-            is not None,
+            ),
             "ValueFunction": self.checkpoint_manager.load_latest_module(
                 "value", self.value_function, optimizer=self.scheduler.value_optimizer
-            )
-            is not None,
-            "ObservationEncoder": self.checkpoint_manager.load_latest_module("observation_encoder", self.encoder)
-            is not None,
+            ),
+            "ObservationProjection": self.checkpoint_manager.load_latest_module(
+                "observation_projection", self.encoder, optimizer=self.scheduler.encoder_optimizer
+            ),
+            "ActionProjection": self.checkpoint_manager.load_latest_module(
+                "action_projection", self.action_encoder, optimizer=self.scheduler.action_encoder_optimizer
+            ),
+            "ActionValueNetwork": self.checkpoint_manager.load_latest_module(
+                "action_value", self.action_value, optimizer=self.scheduler.q_optimizer
+            ),
         }
+        modules = {
+            "WorldModel": self.world_model,
+            "Policy": self.policy,
+            "ValueFunction": self.value_function,
+            "ObservationProjection": self.encoder,
+            "ActionProjection": self.action_encoder,
+            "ActionValueNetwork": self.action_value,
+        }
+        for name, payload in payloads.items():
+            if payload is not None and hasattr(modules[name], "training_step"):
+                modules[name].training_step = int(payload.get("training_step", 0))
+        loaded = {name: payload is not None for name, payload in payloads.items()}
+        self.scheduler.target_value.load_state_dict(self.value_function.state_dict())
+        if self.scheduler.target_action_value is not None:
+            self.scheduler.target_action_value.load_state_dict(self.action_value.state_dict())
         return loaded
 
-    def _encode_observation(self, observation: CodingObservation) -> torch.Tensor:
-        features = self.observation_adapter.encode(observation)
+    def _log_step_metrics(self, training_report: TrainingReport, success: bool) -> None:
+        step = max(1, self.scheduler.runtime_steps)
+        self.tensorboard.log_scalar("train/replay_size", len(self.replay_buffer), step)
+        if self.state.mode == RuntimeMode.TRAIN:
+            self.tensorboard.log_scalar("train/episode_reward", self.state.total_reward, step)
+            self.tensorboard.log_scalar("train/success_rate", 1.0 if success else 0.0, step)
+            self.tensorboard.log_scalar("train/steps", self.state.step_count, step)
+            for attr, tag in [
+                ("world_loss", "train/world_loss"),
+                ("value_loss", "train/value_loss"),
+                ("q_loss", "train/q_loss"),
+                ("policy_loss", "train/policy_loss"),
+            ]:
+                value = getattr(training_report, attr)
+                if value is not None:
+                    self.tensorboard.log_scalar(tag, value, step)
+        else:
+            self.tensorboard.log_scalar("eval/success_rate", 1.0 if success else 0.0, step)
+            self.tensorboard.log_scalar("eval/mean_reward", self.state.total_reward, step)
+            self.tensorboard.log_scalar("eval/mean_steps", self.state.step_count, step)
+
+    def _observation_features(self, observation: CodingObservation) -> SemanticObservationFeatures:
+        return self.observation_adapter.encode_semantic(observation, self.text_encoder)
+
+    def _encode_features(self, features: SemanticObservationFeatures) -> torch.Tensor:
         with torch.no_grad():
-            return self.encoder.encode(features).squeeze(0).detach()
+            return self.encoder.encode_features(features).squeeze(0).detach()
 
     def _score_candidates(
         self,
@@ -360,11 +504,14 @@ class JarvisRuntime:
         novelty = min(1.0, novelty_reward(latent, known))
         scored = []
         for candidate in candidates:
-            action_embedding = self.action_encoder.encode(candidate)
+            action_raw = self.action_encoder.raw_features(candidate)
             with torch.no_grad():
+                action_embedding = self.action_encoder.forward_from_raw(action_raw).squeeze(0)
                 prediction = self.world_model(latent, action_embedding)
                 predicted_reward = float(prediction.reward_pred.reshape(-1)[0].item()) if prediction.reward_pred is not None else 0.0
-            policy_score = float(policy_probs[candidate.action_index].item())
+                q_value = float(self.action_value(latent, action_embedding).reshape(-1)[0].item())
+            policy_prior = float(policy_probs[candidate.action_index].item())
+            policy_score = float(torch.log(torch.tensor(policy_prior + 1e-8)).item())
             risk = self._estimate_risk(candidate, observation)
             uncertainty = self.uncertainty_estimator.combine(
                 model_uncertainty=1.0 / max(1.0, len(self.replay_buffer) ** 0.5),
@@ -374,7 +521,9 @@ class JarvisRuntime:
             ).total
             expected_information_gain = 0.5 * uncertainty + 0.5 * novelty
             score = (
-                self.config.policy_score_weight * policy_score
+                self.config.policy_score_weight * policy_prior
+                + self.config.policy_log_score_weight * policy_score
+                + self.config.q_score_weight * q_value
                 + self.config.world_reward_weight * predicted_reward
                 + self.config.information_gain_weight * expected_information_gain
                 + self.config.confidence_weight * candidate.confidence
@@ -386,6 +535,7 @@ class JarvisRuntime:
                     candidate=candidate,
                     score=float(score),
                     policy_score=policy_score,
+                    q_value=q_value,
                     predicted_reward=predicted_reward,
                     expected_information_gain=float(expected_information_gain),
                     risk=float(risk),
@@ -396,8 +546,18 @@ class JarvisRuntime:
         return sorted(scored, key=lambda item: item.score, reverse=True)
 
     def _select(self, scored: list[ScoredAction]) -> ScoredAction:
-        if self.state.mode == RuntimeMode.TRAIN and self._rng.random() < self.config.train_exploration_epsilon:
-            return self._rng.choice(scored)
+        if self.state.mode == RuntimeMode.TRAIN:
+            epsilon = max(
+                self.config.epsilon_min,
+                self.config.train_exploration_epsilon
+                * torch.exp(torch.tensor(-self.config.epsilon_decay * max(0, self.scheduler.runtime_steps))).item(),
+            )
+            if self._rng.random() < epsilon:
+                return self._rng.choice(scored)
+            scores = torch.tensor([item.score for item in scored], dtype=torch.float32)
+            probabilities = F.softmax(scores, dim=0)
+            index = int(torch.multinomial(probabilities, 1).item())
+            return scored[index]
         return scored[0]
 
     def _estimate_risk(self, candidate: ActionCandidate, observation: CodingObservation) -> float:
@@ -422,15 +582,19 @@ class JarvisRuntime:
     def _make_transition(
         self,
         observation: CodingObservation,
+        observation_features: SemanticObservationFeatures,
         latent: torch.Tensor,
         selected: ScoredAction,
+        action_raw_features: torch.Tensor,
         action_embedding: torch.Tensor,
         reward: CodingRewardResult,
         next_observation: CodingObservation,
+        next_observation_features: SemanticObservationFeatures,
         next_latent: torch.Tensor,
         done: bool,
         success: bool,
         objective_metrics: dict[str, float | int | str | bool],
+        scored_candidates: list[ScoredAction],
     ) -> Transition:
         with torch.no_grad():
             predicted = self.world_model(latent, action_embedding)
@@ -451,7 +615,14 @@ class JarvisRuntime:
             success=success,
             metadata={
                 "action": selected.candidate.to_dict(),
+                "action_type_index": selected.candidate.action_index,
+                "observation_features": observation_features.to_metadata(),
+                "next_observation_features": next_observation_features.to_metadata(),
+                "semantic_text_cache_key": observation_features.cache_key,
+                "next_semantic_text_cache_key": next_observation_features.cache_key,
+                "action_raw_features": action_raw_features.detach().cpu().tolist(),
                 "action_embedding": action_embedding.detach().cpu().tolist(),
+                "candidate_scores": [item.to_dict() for item in scored_candidates],
                 "reward_components": reward.components,
                 "scoring": selected.to_dict(),
                 "prediction_error": float(prediction_error),
@@ -479,6 +650,8 @@ class JarvisRuntime:
             "WorldModel": self.world_model.config.version,
             "Policy": self.policy.config.version,
             "ValueFunction": self.value_function.config.version,
-            "ObservationEncoder": "observation-encoder-0.1",
+            "ActionValueNetwork": self.action_value.config.version,
+            "ObservationProjection": "observation-projection-0.2",
+            "ActionProjection": "action-projection-0.2",
             "Qwen": "not-updated",
         }

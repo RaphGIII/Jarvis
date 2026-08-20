@@ -1,6 +1,6 @@
 from brain.model import JarvisBrain
 from runtime.jarvis_runtime import JarvisRuntime
-from training.coding_learning_demo import run_coding_learning_demo
+from training.coding_brain_v02_demo import run_coding_brain_v02_demo
 
 
 def main():
@@ -25,9 +25,11 @@ def main():
             print(f"\nJARVIS LEARNING > {runtime.learning_summary()}\n")
             continue
 
-        if command == "/train":
-            print("\nJARVIS > Running controlled CodingWorld learning demo...\n")
-            print(run_coding_learning_demo(episodes=6))
+        if command.startswith("/train"):
+            parts = command.split()
+            episodes = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 36
+            print("\nJARVIS > Running persistent-safe CodingWorld v0.2 training/eval demo...\n")
+            print(run_coding_brain_v02_demo(train_episodes=episodes))
             continue
 
         if command == "/eval":

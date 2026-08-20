@@ -3,11 +3,18 @@ from __future__ import annotations
 import shutil
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from environments.coding.task import CodingTask
 from learning.curriculum.curriculum import CurriculumManager, TaskCandidate
 from learning.curriculum.difficulty import TaskFeatures
+
+
+class DatasetSplit(str, Enum):
+    TRAIN = "train"
+    VALIDATION = "validation"
+    HOLDOUT = "holdout"
 
 
 @dataclass
@@ -66,6 +73,55 @@ class CodingTaskFactory:
             max_steps=8,
             metadata={"level": 1, "bug_type": "syntax"},
         )
+
+    def make_hidden_addition_task(self, task_id: str, variant: int = 0, split: DatasetSplit = DatasetSplit.TRAIN) -> CodingTask:
+        workspace = self._fresh_workspace(task_id)
+        hidden_workspace = self._fresh_workspace(f"{task_id}_hidden")
+        function_name = "combine_values" if split == DatasetSplit.HOLDOUT else "add"
+        left, right = ("x", "y") if split == DatasetSplit.HOLDOUT else ("a", "b")
+        (workspace / "calculator.py").write_text(
+            f"def {function_name}({left}, {right}):\n    return {left} - {right}\n",
+            encoding="utf-8",
+        )
+        (workspace / "test_public.py").write_text(
+            "import unittest\n"
+            f"from calculator import {function_name}\n\n"
+            "class PublicTests(unittest.TestCase):\n"
+            "    def test_public_addition(self):\n"
+            f"        self.assertEqual({function_name}(2, 3), 5)\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        workspace_literal = str(workspace).replace("\\", "\\\\")
+        (hidden_workspace / "hidden_verifier.py").write_text(
+            "import sys\n"
+            f"sys.path.insert(0, r'{workspace_literal}')\n"
+            f"from calculator import {function_name}\n"
+            f"assert {function_name}(-2, 5) == 3\n"
+            f"assert {function_name}(10, 7) == 17\n",
+            encoding="utf-8",
+        )
+        return CodingTask(
+            description="Repair the arithmetic implementation so public and hidden verifier tests pass.",
+            workspace=workspace,
+            test_command=[sys.executable, "-m", "unittest", "discover", "-v"],
+            hidden_workspace=hidden_workspace,
+            hidden_test_command=[sys.executable, "hidden_verifier.py"],
+            protected_paths={"test_public.py"},
+            task_id=task_id,
+            max_steps=8,
+            metadata={"level": 2, "bug_type": "logic", "split": split.value, "variant": variant},
+        )
+
+    def make_split_tasks(self, split: DatasetSplit, count: int = 4) -> list[CodingTask]:
+        tasks = []
+        for index in range(count):
+            if split == DatasetSplit.TRAIN and index % 3 == 2:
+                tasks.append(self.make_syntax_bug_task(f"{split.value}_syntax_{index}"))
+            else:
+                tasks.append(self.make_hidden_addition_task(f"{split.value}_addition_{index}", variant=index, split=split))
+        return tasks
 
     def make_curriculum_candidates(self, count: int = 4) -> list[TaskCandidate]:
         candidates = []

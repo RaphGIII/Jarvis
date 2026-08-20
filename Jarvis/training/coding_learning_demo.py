@@ -4,10 +4,12 @@ import tempfile
 from pathlib import Path
 
 from learning.curriculum.curriculum import CurriculumManager
+from environments.coding.sandbox_backend import LocalTestSandboxBackend
 from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig
 from runtime.runtime_state import RuntimeMode
 from training.coding_benchmark import CodingBenchmark
 from training.coding_curriculum import CodingTaskFactory
+from training.generic_mutation_generator import GenericMutationActionGenerator
 
 
 def _make_tasks(factory: CodingTaskFactory, prefix: str, count: int):
@@ -39,6 +41,8 @@ def run_coding_learning_demo(episodes: int = 50) -> dict[str, object]:
             ),
             data_dir=root / "runtime_data",
             mode=RuntimeMode.TRAIN,
+            action_generator=GenericMutationActionGenerator(),
+            sandbox_backend=LocalTestSandboxBackend(),
         )
         runtime.scheduler.config.world_model_batch_size = 1
         runtime.scheduler.config.value_policy_batch_size = 1

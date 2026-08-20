@@ -42,6 +42,18 @@ class LearningConfig:
     policy_lr: float = 1e-3
     priority_prediction_error_weight: float = 0.5
     replay_capacity: int = 500
+    semantic_embedding_dim: int = 64
+    action_embedding_dim: int = 32
+    q_lr: float = 1e-3
+    encoder_lr: float = 1e-3
+    action_encoder_lr: float = 1e-3
+    target_tau: float = 0.05
+    gradient_clip_norm: float = 5.0
+    score_q_weight: float = 1.0
+    score_policy_log_weight: float = 0.4
+    epsilon_min: float = 0.02
+    epsilon_decay: float = 0.002
+    replay_warm_start_size: int = 200
 
 
 DEFAULT_CONFIG = LearningConfig()

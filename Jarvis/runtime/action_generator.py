@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from hashlib import sha256
 from typing import Any, Protocol
 
 from environments.coding.actions import ActionCandidate, ActionType
@@ -24,12 +25,18 @@ class QwenActionGenerator:
     def __init__(self, brain: BrainProvider, num_candidates: int = 4) -> None:
         self.brain = brain
         self.num_candidates = num_candidates
+        self._cache: dict[str, list[ActionCandidate]] = {}
 
     def generate(self, goal: str, observation: CodingObservation) -> list[ActionCandidate]:
+        cache_key = sha256(f"{goal}\n{observation.to_text()}".encode("utf-8", errors="ignore")).hexdigest()
+        if cache_key in self._cache:
+            return list(self._cache[cache_key])
         prompt = self._prompt(goal, observation)
         raw = self.brain.think(prompt, max_tokens=900)
         candidates = parse_action_candidates(raw)
-        return candidates[: self.num_candidates] or fallback_candidates(observation)
+        result = candidates[: self.num_candidates] or fallback_candidates(observation)
+        self._cache[cache_key] = result
+        return list(result)
 
     def _prompt(self, goal: str, observation: CodingObservation) -> str:
         allowed = ", ".join(action.name for action in ActionType)
@@ -67,10 +74,6 @@ class HeuristicCodingActionGenerator:
         if py_files and not excerpts:
             candidates.append(ActionCandidate(ActionType.READ_FILE, {"path": py_files[0]}, "Inspect likely implementation file.", 0.65, 1.0))
 
-        patch = self._patch_from_goal(goal, excerpts, py_files)
-        if patch is not None:
-            candidates.append(patch)
-
         if test_ran and not tests_passed:
             candidates.append(ActionCandidate(ActionType.INSPECT_ERROR, reasoning_summary="Inspect latest failing output.", confidence=0.55, estimated_cost=0.5))
             candidates.append(ActionCandidate(ActionType.RUN_TESTS, reasoning_summary="Re-run tests after a change.", confidence=0.45, estimated_cost=2.0))
@@ -91,36 +94,6 @@ class HeuristicCodingActionGenerator:
                 deduped.append(candidate)
                 seen.add(key)
         return deduped[: self.num_candidates]
-
-    def _patch_from_goal(
-        self,
-        goal: str,
-        excerpts: dict[str, str],
-        py_files: list[str],
-    ) -> ActionCandidate | None:
-        target_files = list(excerpts) or py_files
-        if not target_files:
-            return None
-        target = target_files[0]
-        text = excerpts.get(target, "")
-        lower_goal = goal.lower()
-        replacements = [
-            ("return a - b", "return a + b", "addition" in lower_goal or "add" in lower_goal or "sum" in lower_goal),
-            ("return a + b", "return a - b", "subtract" in lower_goal or "subtraction" in lower_goal),
-            ("return a * b", "return a / b", "divide" in lower_goal or "division" in lower_goal),
-            ("return a / b", "return a * b", "multiply" in lower_goal or "product" in lower_goal),
-            ("retun ", "return ", "syntax" in lower_goal or "repair" in lower_goal or "fix" in lower_goal),
-        ]
-        for old, new, goal_matches in replacements:
-            if goal_matches and old in text:
-                return ActionCandidate(
-                    ActionType.PATCH_FILE,
-                    {"path": target, "old": old, "new": new},
-                    "Apply minimal patch aligned with failing task.",
-                    0.95,
-                    0.8,
-                )
-        return None
 
 
 def parse_action_candidates(raw: str) -> list[ActionCandidate]:
