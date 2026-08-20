@@ -3,6 +3,8 @@ from __future__ import annotations
 import shutil
 import sys
 import hashlib
+import ast
+import re
 from textwrap import dedent
 from dataclasses import dataclass
 from enum import Enum
@@ -141,8 +143,54 @@ class CodingTaskFactory:
     def structural_fingerprint(task: CodingTask) -> str:
         source = (task.workspace / "solution.py").read_text(encoding="utf-8") if (task.workspace / "solution.py").exists() else ""
         public = (task.workspace / "test_public.py").read_text(encoding="utf-8") if (task.workspace / "test_public.py").exists() else ""
-        payload = "\n".join([task.description, source, public, str(task.metadata.get("family", ""))])
+        payload = "\n".join(
+            [
+                CodingTaskFactory._normalized_ast(source),
+                CodingTaskFactory._normalized_ast(public),
+                re.sub(r"\b(train|validation|holdout|v03|variant|task|split|id)\b|\d+", "", task.description.lower()),
+            ]
+        )
         return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+    @staticmethod
+    def _normalized_ast(text: str) -> str:
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return re.sub(r"#.*|[A-Za-z_][A-Za-z0-9_]*|\d+", "_", text)
+
+        class Normalizer(ast.NodeTransformer):
+            def visit_FunctionDef(self, node: ast.FunctionDef):
+                node.name = "FUNC"
+                self.generic_visit(node)
+                return node
+
+            def visit_ClassDef(self, node: ast.ClassDef):
+                node.name = "CLASS"
+                self.generic_visit(node)
+                return node
+
+            def visit_arg(self, node: ast.arg):
+                node.arg = "ARG"
+                return node
+
+            def visit_Name(self, node: ast.Name):
+                node.id = "NAME"
+                return node
+
+            def visit_Attribute(self, node: ast.Attribute):
+                self.generic_visit(node)
+                node.attr = "ATTR"
+                return node
+
+            def visit_alias(self, node: ast.alias):
+                node.name = "MODULE"
+                node.asname = None
+                return node
+
+        normalized = Normalizer().visit(tree)
+        ast.fix_missing_locations(normalized)
+        return ast.dump(normalized, include_attributes=False)
 
     def make_curriculum_candidates(self, count: int = 4) -> list[TaskCandidate]:
         candidates = []
@@ -202,206 +250,98 @@ class CodingTaskFactory:
         )
 
     def _v03_templates(self, split: DatasetSplit) -> list[dict[str, str]]:
+        return self._v03_distinct_catalog()[split]
+
+    def _v03_distinct_catalog(self) -> dict[DatasetSplit, list[dict[str, str]]]:
+        def fn(family: str, name: str, description: str, body: str, public: str, hidden: str) -> dict[str, str]:
+            return {
+                "family": family,
+                "description": description,
+                "source": f"def {name}(*args):\n" + "\n".join(f"    {line}" for line in body.splitlines()) + "\n",
+                "public_test": f"""
+                    import unittest
+                    from solution import {name}
+
+                    class PublicTests(unittest.TestCase):
+                        def test_public(self):
+                            {public}
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": f"from solution import {name}\n{hidden}\n",
+            }
+
+        def raw(family: str, description: str, source: str, public_test: str, hidden_test: str) -> dict[str, str]:
+            return {"family": family, "description": description, "source": source, "public_test": public_test, "hidden_test": hidden_test}
+
         train = [
-            {
-                "family": "arithmetic",
-                "description": "Repair solution.add_numbers so it returns the numeric sum for arbitrary integers.",
-                "source": "def add_numbers(a, b):\n    return a - b\n",
-                "public_test": """
-                    import unittest
-                    from solution import add_numbers
-
-                    class PublicTests(unittest.TestCase):
-                        def test_positive(self):
-                            self.assertEqual(add_numbers(2, 3), 5)
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import add_numbers\nassert add_numbers(-2, 5) == 3\nassert add_numbers(10, 7) == 17\n",
-            },
-            {
-                "family": "string",
-                "description": "Repair solution.shout_name so it strips whitespace and returns an uppercase greeting.",
-                "source": "def shout_name(name):\n    return 'hello ' + name.lower()\n",
-                "public_test": """
-                    import unittest
-                    from solution import shout_name
-
-                    class PublicTests(unittest.TestCase):
-                        def test_name(self):
-                            self.assertEqual(shout_name(' Ada '), 'HELLO ADA')
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import shout_name\nassert shout_name('bob') == 'HELLO BOB'\nassert shout_name('\\tLin ') == 'HELLO LIN'\n",
-            },
-            {
-                "family": "list",
-                "description": "Repair solution.positive_total so it sums only positive numbers from the list.",
-                "source": "def positive_total(values):\n    total = 0\n    for value in values:\n        total -= value\n    return total\n",
-                "public_test": """
-                    import unittest
-                    from solution import positive_total
-
-                    class PublicTests(unittest.TestCase):
-                        def test_mixed(self):
-                            self.assertEqual(positive_total([3, -4, 5]), 8)
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import positive_total\nassert positive_total([-5, -1]) == 0\nassert positive_total([1, 2, 3]) == 6\n",
-            },
-            {
-                "family": "dict",
-                "description": "Repair solution.invert_lookup so it maps dictionary values back to their keys.",
-                "source": "def invert_lookup(mapping):\n    return {key: value for key, value in mapping.items()}\n",
-                "public_test": """
-                    import unittest
-                    from solution import invert_lookup
-
-                    class PublicTests(unittest.TestCase):
-                        def test_invert(self):
-                            self.assertEqual(invert_lookup({'a': 1, 'b': 2}), {1: 'a', 2: 'b'})
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import invert_lookup\nassert invert_lookup({'x': 'y'}) == {'y': 'x'}\n",
-            },
-            {
-                "family": "boundary",
-                "description": "Repair solution.clamp so it bounds a value inclusively between low and high.",
-                "source": "def clamp(value, low, high):\n    if value < low:\n        return high\n    if value > high:\n        return low\n    return value\n",
-                "public_test": """
-                    import unittest
-                    from solution import clamp
-
-                    class PublicTests(unittest.TestCase):
-                        def test_low(self):
-                            self.assertEqual(clamp(-1, 0, 10), 0)
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import clamp\nassert clamp(11, 0, 10) == 10\nassert clamp(5, 0, 10) == 5\n",
-            },
-            {
-                "family": "loop",
-                "description": "Repair solution.factorial so it computes factorial for non-negative integers.",
-                "source": "def factorial(n):\n    result = 0\n    for value in range(1, n + 1):\n        result *= value\n    return result\n",
-                "public_test": """
-                    import unittest
-                    from solution import factorial
-
-                    class PublicTests(unittest.TestCase):
-                        def test_factorial(self):
-                            self.assertEqual(factorial(4), 24)
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import factorial\nassert factorial(0) == 1\nassert factorial(5) == 120\n",
-            },
+            fn("arithmetic_add", "add_numbers", "Return the sum of two integers.", "a, b = args\nreturn a - b", "self.assertEqual(add_numbers(2, 3), 5)", "assert add_numbers(-2, 5) == 3"),
+            fn("numeric_square", "square_plus_one", "Return n squared plus one.", "n = args[0]\nreturn n + 1", "self.assertEqual(square_plus_one(3), 10)", "assert square_plus_one(0) == 1"),
+            fn("numeric_abs", "absolute_delta", "Return the absolute difference between two numbers.", "a, b = args\nreturn a - b", "self.assertEqual(absolute_delta(2, 7), 5)", "assert absolute_delta(9, 4) == 5"),
+            fn("string_upper", "clean_upper", "Strip text and return uppercase.", "text = args[0]\nreturn text.lower()", "self.assertEqual(clean_upper(' Ada '), 'ADA')", "assert clean_upper('\\tbob ') == 'BOB'"),
+            fn("string_reverse", "reverse_text", "Return text reversed.", "text = args[0]\nreturn text", "self.assertEqual(reverse_text('abc'), 'cba')", "assert reverse_text('Jarvis') == 'sivraJ'"),
+            fn("normalization_slug", "slugify", "Normalize spaces to lowercase hyphenated words.", "text = args[0]\nreturn text.lower()", "self.assertEqual(slugify('Hello World'), 'hello-world')", "assert slugify(' Two  Words ') == 'two-words'"),
+            fn("parsing_ints", "parse_ints", "Parse comma separated integers.", "text = args[0]\nreturn text.split(',')", "self.assertEqual(parse_ints('1,2,3'), [1, 2, 3])", "assert parse_ints('10,-2') == [10, -2]"),
+            fn("parsing_pairs", "parse_pairs", "Parse key=value pairs into a dictionary.", "text = args[0]\nreturn dict(part.split(':') for part in text.split(','))", "self.assertEqual(parse_pairs('a=1,b=2'), {'a': '1', 'b': '2'})", "assert parse_pairs('x=9') == {'x': '9'}"),
+            fn("list_filter", "positive_values", "Return only positive values.", "values = args[0]\nreturn [v for v in values if v < 0]", "self.assertEqual(positive_values([-1, 2, 3]), [2, 3])", "assert positive_values([-5, 0, 4]) == [4]"),
+            fn("list_transform", "double_values", "Double each value in order.", "values = args[0]\nreturn [v + 2 for v in values]", "self.assertEqual(double_values([1, 3]), [2, 6])", "assert double_values([]) == []"),
+            fn("aggregation_sum", "sum_even", "Sum only even integers.", "values = args[0]\ntotal = 0\nfor v in values:\n    total += v\nreturn total", "self.assertEqual(sum_even([1, 2, 4]), 6)", "assert sum_even([1, 3]) == 0"),
+            fn("aggregation_mean", "mean_or_zero", "Return mean or zero for empty input.", "values = args[0]\nreturn sum(values) / len(values)", "self.assertEqual(mean_or_zero([]), 0)", "assert mean_or_zero([2, 4]) == 3"),
+            fn("dict_invert", "invert_lookup", "Invert a dictionary.", "mapping = args[0]\nreturn {k: v for k, v in mapping.items()}", "self.assertEqual(invert_lookup({'a': 1}), {1: 'a'})", "assert invert_lookup({'x': 'y'}) == {'y': 'x'}"),
+            fn("dict_count", "count_words", "Count words in a list.", "words = args[0]\nreturn {word: 1 for word in words}", "self.assertEqual(count_words(['a', 'a', 'b']), {'a': 2, 'b': 1})", "assert count_words([]) == {}"),
+            fn("set_unique", "unique_sorted", "Return unique values sorted.", "values = args[0]\nreturn list(values)", "self.assertEqual(unique_sorted([3, 1, 3]), [1, 3])", "assert unique_sorted([]) == []"),
+            fn("set_intersection", "common_items", "Return sorted common items.", "a, b = args\nreturn sorted(set(a) | set(b))", "self.assertEqual(common_items([1, 2], [2, 3]), [2])", "assert common_items([], [1]) == []"),
+            fn("boundary_clamp", "clamp", "Clamp value inclusively.", "value, low, high = args\nif value < low:\n    return high\nif value > high:\n    return low\nreturn value", "self.assertEqual(clamp(-1, 0, 10), 0)", "assert clamp(11, 0, 10) == 10"),
+            fn("boundary_index", "safe_get", "Return item or default when index is out of range.", "values, index, default = args\nreturn values[index]", "self.assertEqual(safe_get([1], 5, None), None)", "assert safe_get([7], 0, None) == 7"),
+            fn("loop_factorial", "factorial", "Compute factorial.", "n = args[0]\nresult = 0\nfor v in range(1, n + 1):\n    result *= v\nreturn result", "self.assertEqual(factorial(4), 24)", "assert factorial(0) == 1"),
+            fn("loop_countdown", "countdown", "Return descending integers to one.", "n = args[0]\nreturn list(range(1, n + 1))", "self.assertEqual(countdown(3), [3, 2, 1])", "assert countdown(0) == []"),
+            fn("conditional_grade", "letter_grade", "Map numeric score to pass/fail.", "score = args[0]\nif score > 60:\n    return 'fail'\nreturn 'pass'", "self.assertEqual(letter_grade(80), 'pass')", "assert letter_grade(50) == 'fail'"),
+            fn("conditional_sign", "sign_label", "Return negative, zero, or positive.", "n = args[0]\nif n >= 0:\n    return 'positive'\nreturn 'negative'", "self.assertEqual(sign_label(0), 'zero')", "assert sign_label(-1) == 'negative'"),
+            fn("search_contains", "contains_casefold", "Case-insensitive containment check.", "text, needle = args\nreturn needle in text", "self.assertTrue(contains_casefold('Hello', 'he'))", "assert not contains_casefold('abc', 'z')"),
+            fn("search_first", "first_index", "Return first index or -1.", "values, target = args\nreturn values.index(target)", "self.assertEqual(first_index([1, 2], 3), -1)", "assert first_index([4, 5], 5) == 1"),
+            fn("sorting_numbers", "sort_desc", "Sort numbers descending.", "values = args[0]\nreturn sorted(values)", "self.assertEqual(sort_desc([1, 3, 2]), [3, 2, 1])", "assert sort_desc([]) == []"),
+            fn("sorting_records", "sort_by_name", "Sort dictionaries by name.", "records = args[0]\nreturn sorted(records, key=lambda r: r['id'])", "self.assertEqual(sort_by_name([{'name':'b'}, {'name':'a'}]), [{'name':'a'}, {'name':'b'}])", "assert sort_by_name([]) == []"),
+            raw("class_state", "Repair Counter increment and value behavior.", "class Counter:\n    def __init__(self):\n        self.count = 0\n\n    def increment(self):\n        self.count -= 1\n\n    def value(self):\n        return 0\n", "import unittest\nfrom solution import Counter\n\nclass PublicTests(unittest.TestCase):\n    def test_public(self):\n        c = Counter(); c.increment(); self.assertEqual(c.value(), 1)\n\nif __name__ == '__main__':\n    unittest.main()\n", "from solution import Counter\nc = Counter()\nfor _ in range(3): c.increment()\nassert c.value() == 3"),
+            raw("class_collection", "Repair Bag add and size behavior.", "class Bag:\n    def __init__(self):\n        self.items = []\n\n    def add(self, item):\n        return None\n\n    def size(self):\n        return 0\n", "import unittest\nfrom solution import Bag\n\nclass PublicTests(unittest.TestCase):\n    def test_public(self):\n        b = Bag(); b.add('x'); self.assertEqual(b.size(), 1)\n\nif __name__ == '__main__':\n    unittest.main()\n", "from solution import Bag\nb = Bag(); b.add('a'); b.add('b'); assert b.size() == 2"),
+            fn("exception_divide", "safe_divide", "Return None for division by zero.", "a, b = args\nreturn a / b", "self.assertIsNone(safe_divide(4, 0))", "assert safe_divide(6, 3) == 2"),
+            fn("nested_flatten", "flatten_once", "Flatten one level of nested lists.", "values = args[0]\nreturn values", "self.assertEqual(flatten_once([[1, 2], [3]]), [1, 2, 3])", "assert flatten_once([]) == []"),
         ]
         validation = [
-            {
-                "family": "string",
-                "description": "Repair solution.initials so it returns uppercase initials from words in a name.",
-                "source": "def initials(name):\n    return ''.join(part[-1].lower() for part in name.split())\n",
-                "public_test": """
-                    import unittest
-                    from solution import initials
-
-                    class PublicTests(unittest.TestCase):
-                        def test_initials(self):
-                            self.assertEqual(initials('Ada Lovelace'), 'AL')
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import initials\nassert initials('Grace Brewster Hopper') == 'GBH'\n",
-            },
-            {
-                "family": "list",
-                "description": "Repair solution.evens so it returns only even integers in their original order.",
-                "source": "def evens(values):\n    return [value for value in values if value % 2 == 1]\n",
-                "public_test": """
-                    import unittest
-                    from solution import evens
-
-                    class PublicTests(unittest.TestCase):
-                        def test_evens(self):
-                            self.assertEqual(evens([1, 2, 3, 4]), [2, 4])
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import evens\nassert evens([0, -2, 5]) == [0, -2]\n",
-            },
+            fn("validation_initials", "make_initials", "Return uppercase initials from words in a name.", "name = args[0]\nreturn ''.join(part[-1].lower() for part in name.split())", "self.assertEqual(make_initials('Ada Lovelace'), 'AL')", "assert make_initials('Grace Brewster Hopper') == 'GBH'"),
+            fn("validation_even_filter", "even_values", "Return only even integers in original order.", "values = args[0]\nreturn [value for value in values if value % 2 == 1]", "self.assertEqual(even_values([1, 2, 3, 4]), [2, 4])", "assert even_values([0, -2, 5]) == [0, -2]"),
+            fn("validation_minmax", "min_max", "Return the smallest and largest values as a tuple.", "values = args[0]\nreturn (values[0], values[-1])", "self.assertEqual(min_max([3, 1, 4]), (1, 4))", "assert min_max([-2]) == (-2, -2)"),
+            fn("validation_parse_lines", "nonempty_lines", "Return stripped non-empty lines.", "text = args[0]\nreturn text.split('\\n')", "self.assertEqual(nonempty_lines('a\\n\\n b '), ['a', 'b'])", "assert nonempty_lines('') == []"),
+            fn("validation_dict_merge", "merge_counts", "Merge count dictionaries by summing values.", "left, right = args\nmerged = dict(left)\nmerged.update(right)\nreturn merged", "self.assertEqual(merge_counts({'a': 1}, {'a': 2, 'b': 1}), {'a': 3, 'b': 1})", "assert merge_counts({}, {'x': 4}) == {'x': 4}"),
+            fn("validation_prefix", "starts_with_any", "Check whether text starts with any prefix.", "text, prefixes = args\nreturn text in prefixes", "self.assertTrue(starts_with_any('jarvis', ['ja', 'co']))", "assert not starts_with_any('alpha', [])"),
+            fn("validation_nested_sum", "sum_matrix", "Sum all numbers in a matrix.", "matrix = args[0]\nreturn sum(matrix)", "self.assertEqual(sum_matrix([[1, 2], [3]]), 6)", "assert sum_matrix([]) == 0"),
+            fn("validation_sort_length", "sort_by_length", "Sort strings by length then alphabetically.", "words = args[0]\nreturn sorted(words)", "self.assertEqual(sort_by_length(['bbb', 'a', 'cc']), ['a', 'cc', 'bbb'])", "assert sort_by_length(['ba', 'ab']) == ['ab', 'ba']"),
+            raw("validation_stack", "Repair Stack push/pop behavior.", "class Stack:\n    def __init__(self):\n        self.items = []\n\n    def push(self, value):\n        return None\n\n    def pop(self):\n        return None\n", "import unittest\nfrom solution import Stack\n\nclass PublicTests(unittest.TestCase):\n    def test_public(self):\n        s = Stack(); s.push(3); self.assertEqual(s.pop(), 3)\n\nif __name__ == '__main__':\n    unittest.main()\n", "from solution import Stack\ns = Stack(); s.push('a'); s.push('b'); assert s.pop() == 'b'"),
+            fn("validation_exception_lookup", "lookup_default", "Return default when a key is missing.", "mapping, key, default = args\nreturn mapping[key]", "self.assertEqual(lookup_default({}, 'x', 7), 7)", "assert lookup_default({'x': 1}, 'x', 0) == 1"),
         ]
         holdout = [
-            {
-                "family": "parsing",
-                "description": "Repair solution.parse_scores so it converts comma-separated integers into a list of ints.",
-                "source": "def parse_scores(text):\n    return text.split(',')\n",
-                "public_test": """
-                    import unittest
-                    from solution import parse_scores
-
-                    class PublicTests(unittest.TestCase):
-                        def test_scores(self):
-                            self.assertEqual(parse_scores('1,2,3'), [1, 2, 3])
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import parse_scores\nassert parse_scores('10,-2,0') == [10, -2, 0]\n",
-            },
-            {
-                "family": "class_behavior",
-                "description": "Repair Counter so increment changes the stored count and value returns it.",
-                "source": "class Counter:\n    def __init__(self):\n        self.count = 0\n\n    def increment(self):\n        self.count -= 1\n\n    def value(self):\n        return 0\n",
-                "public_test": """
-                    import unittest
-                    from solution import Counter
-
-                    class PublicTests(unittest.TestCase):
-                        def test_counter(self):
-                            counter = Counter()
-                            counter.increment()
-                            self.assertEqual(counter.value(), 1)
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import Counter\ncounter = Counter()\nfor _ in range(3):\n    counter.increment()\nassert counter.value() == 3\n",
-            },
-            {
-                "family": "exceptions",
-                "description": "Repair solution.safe_divide so division by zero returns None and valid division returns a float.",
-                "source": "def safe_divide(a, b):\n    return a / b\n",
-                "public_test": """
-                    import unittest
-                    from solution import safe_divide
-
-                    class PublicTests(unittest.TestCase):
-                        def test_zero(self):
-                            self.assertIsNone(safe_divide(4, 0))
-
-                    if __name__ == '__main__':
-                        unittest.main()
-                """,
-                "hidden_test": "from solution import safe_divide\nassert safe_divide(6, 3) == 2\nassert safe_divide(1, 0) is None\n",
-            },
+            fn("holdout_parse_bool", "parse_bool", "Parse yes/no strings into booleans.", "text = args[0]\nreturn bool(text)", "self.assertTrue(parse_bool('yes'))", "assert parse_bool('no') is False"),
+            fn("holdout_roman", "roman_one_to_three", "Convert 1..3 to roman numerals.", "n = args[0]\nreturn str(n)", "self.assertEqual(roman_one_to_three(2), 'II')", "assert roman_one_to_three(3) == 'III'"),
+            fn("holdout_palindrome", "is_palindrome", "Ignore case and spaces when checking palindrome.", "text = args[0]\nreturn text == text[::-1]", "self.assertTrue(is_palindrome('Never odd or even'))", "assert not is_palindrome('jarvis')"),
+            fn("holdout_chunks", "chunk_pairs", "Group values into pairs.", "values = args[0]\nreturn values", "self.assertEqual(chunk_pairs([1, 2, 3, 4]), [[1, 2], [3, 4]])", "assert chunk_pairs([1]) == [[1]]"),
+            fn("holdout_merge", "merge_sorted", "Merge two sorted lists.", "a, b = args\nreturn sorted(a) + sorted(b)", "self.assertEqual(merge_sorted([1, 3], [2]), [1, 2, 3])", "assert merge_sorted([], [1]) == [1]"),
+            fn("holdout_anagram", "is_anagram", "Check whether two words are anagrams.", "a, b = args\nreturn a == b", "self.assertTrue(is_anagram('listen', 'silent'))", "assert not is_anagram('abc', 'abd')"),
+            fn("holdout_window", "moving_sum", "Return sums of adjacent pairs.", "values = args[0]\nreturn values", "self.assertEqual(moving_sum([1, 2, 3]), [3, 5])", "assert moving_sum([5]) == []"),
+            fn("holdout_nested_get", "nested_get", "Safely read a nested dictionary key.", "mapping, outer, inner, default = args\nreturn mapping[outer][inner]", "self.assertEqual(nested_get({}, 'a', 'b', 9), 9)", "assert nested_get({'a': {'b': 2}}, 'a', 'b', 0) == 2"),
+            fn("holdout_title", "title_words", "Capitalize each word after trimming.", "text = args[0]\nreturn text.upper()", "self.assertEqual(title_words('hello world'), 'Hello World')", "assert title_words(' ada ') == 'Ada'"),
+            fn("holdout_run_lengths", "run_lengths", "Return consecutive character run lengths.", "text = args[0]\nreturn []", "self.assertEqual(run_lengths('aabb'), [('a', 2), ('b', 2)])", "assert run_lengths('') == []"),
+            fn("holdout_rotate", "rotate_left", "Rotate a list left by n positions.", "values, n = args\nreturn values", "self.assertEqual(rotate_left([1, 2, 3], 1), [2, 3, 1])", "assert rotate_left([], 3) == []"),
+            fn("holdout_mode", "most_common", "Return most common item.", "values = args[0]\nreturn values[0]", "self.assertEqual(most_common(['a', 'b', 'a']), 'a')", "assert most_common([2, 2, 3]) == 2"),
+            fn("holdout_validate", "is_valid_port", "Return whether value is a valid TCP port.", "value = args[0]\nreturn value > 0", "self.assertFalse(is_valid_port(70000))", "assert is_valid_port(443)"),
+            fn("holdout_dedupe", "dedupe_keep_order", "Remove duplicates while preserving order.", "values = args[0]\nreturn list(set(values))", "self.assertEqual(dedupe_keep_order([2, 1, 2]), [2, 1])", "assert dedupe_keep_order([]) == []"),
+            fn("holdout_matrix", "transpose", "Transpose a rectangular matrix.", "matrix = args[0]\nreturn matrix", "self.assertEqual(transpose([[1, 2], [3, 4]]), [[1, 3], [2, 4]])", "assert transpose([]) == []"),
+            raw("holdout_class_toggle", "Repair Toggle switch state behavior.", "class Toggle:\n    def __init__(self):\n        self.on = False\n\n    def flip(self):\n        self.on = False\n\n    def state(self):\n        return False\n", "import unittest\nfrom solution import Toggle\n\nclass PublicTests(unittest.TestCase):\n    def test_public(self):\n        t = Toggle(); t.flip(); self.assertTrue(t.state())\n\nif __name__ == '__main__':\n    unittest.main()\n", "from solution import Toggle\nt = Toggle(); t.flip(); t.flip(); assert t.state() is False"),
+            fn("holdout_exception_int", "parse_optional_int", "Parse integer or return None.", "text = args[0]\nreturn int(text)", "self.assertIsNone(parse_optional_int('x'))", "assert parse_optional_int('7') == 7"),
+            fn("holdout_algorithm_gcd", "gcd", "Compute greatest common divisor.", "a, b = args\nreturn min(a, b)", "self.assertEqual(gcd(12, 8), 4)", "assert gcd(7, 3) == 1"),
+            fn("holdout_algorithm_fib", "fib", "Compute fibonacci number.", "n = args[0]\nreturn n", "self.assertEqual(fib(5), 5)", "assert fib(0) == 0 and fib(1) == 1"),
+            fn("holdout_structure", "group_by_first", "Group words by first letter.", "words = args[0]\nreturn {}", "self.assertEqual(group_by_first(['ant', 'bat', 'ape']), {'a': ['ant', 'ape'], 'b': ['bat']})", "assert group_by_first([]) == {}"),
         ]
-        if split == DatasetSplit.TRAIN:
-            return self._expand_v03_templates(train, split, 30)
-        if split == DatasetSplit.VALIDATION:
-            return self._expand_v03_templates(validation, split, 10)
-        return self._expand_v03_templates(holdout, split, 20)
+        return {DatasetSplit.TRAIN: train, DatasetSplit.VALIDATION: validation, DatasetSplit.HOLDOUT: holdout}
 
     def _expand_v03_templates(self, base_templates: list[dict[str, str]], split: DatasetSplit, target: int) -> list[dict[str, str]]:
         expanded = []

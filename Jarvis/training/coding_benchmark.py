@@ -67,8 +67,14 @@ class CodingBenchmark:
         with torch.no_grad():
             for task in tasks:
                 metrics = runtime.run_episode(task, RuntimeMode.EVAL)
-                hidden_result = runtime.final_hidden_verification()
-                external_success = bool(hidden_result.get("success", metrics["success"]))
+                public_success = bool(metrics["success"])
+                if public_success:
+                    hidden_result = runtime.final_hidden_verification()
+                    hidden_success = bool(hidden_result.get("success", False))
+                else:
+                    hidden_result = {"runs": 0}
+                    hidden_success = False
+                external_success = public_success and hidden_success
                 rewards.append(float(metrics["reward"]))
                 steps.append(float(metrics["steps"]))
                 successes.append(1.0 if external_success else 0.0)

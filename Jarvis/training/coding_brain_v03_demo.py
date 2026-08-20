@@ -231,15 +231,18 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         raise RuntimeError("v0.3 requires QwenActionGenerator in the productive runtime path.")
 
     train_episodes, _, validation_count, holdout_count = _counts(config)
-    factory = CodingTaskFactory(dataset_root)
+    train_factory = CodingTaskFactory(dataset_root / "train")
+    validation_factory = CodingTaskFactory(dataset_root / "validation")
+    baseline_holdout_factory = CodingTaskFactory(dataset_root / "holdout_baseline")
+    final_holdout_factory = CodingTaskFactory(dataset_root / "holdout_final")
     benchmark = CodingBenchmark()
     before_parameters = _snapshot(runtime)
 
-    holdout_tasks = factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
-    train_tasks = factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)
-    validation_tasks = factory.make_v03_split_tasks(DatasetSplit.VALIDATION, validation_count)
+    baseline_holdout_tasks = baseline_holdout_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
+    train_tasks = train_factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)
+    validation_tasks = validation_factory.make_v03_split_tasks(DatasetSplit.VALIDATION, validation_count)
 
-    baseline_holdout = benchmark.evaluate(runtime, holdout_tasks)
+    baseline_holdout = benchmark.evaluate(runtime, baseline_holdout_tasks)
     for episode, task in enumerate(train_tasks):
         runtime.run_episode(task, RuntimeMode.TRAIN)
         runtime.tensorboard.log_scalar("training/reward", runtime.state.total_reward, episode + 1)
@@ -258,7 +261,8 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
     if promoted:
         runtime.save_checkpoints(validation.to_dict(), category="best")
 
-    final_holdout = benchmark.evaluate(runtime, holdout_tasks)
+    final_holdout_tasks = final_holdout_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
+    final_holdout = benchmark.evaluate(runtime, final_holdout_tasks)
     runtime.tensorboard.log_scalar("evaluation/holdout_success_rate", final_holdout.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/holdout_reward", final_holdout.mean_reward, runtime.scheduler.runtime_steps)
 
@@ -271,7 +275,7 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         "QWEN_TRAINABLE": _qwen_trainable(runtime),
         "TRAIN_TASK_COUNT": len(train_tasks),
         "VALIDATION_TASK_COUNT": len(validation_tasks),
-        "HOLDOUT_TASK_COUNT": len(holdout_tasks),
+        "HOLDOUT_TASK_COUNT": len(final_holdout_tasks),
         "PERSISTENCE_MODE": "persistent" if config.persistent else "temporary",
         "SEED": config.seed,
         "BASELINE": baseline_holdout.to_dict(),

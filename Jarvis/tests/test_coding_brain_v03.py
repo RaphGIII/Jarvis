@@ -7,6 +7,7 @@ from environments.coding.actions import ActionCandidate, ActionType
 from environments.coding.environment import CodingEnvironment
 from environments.coding.reward import CodingRewardEngine
 from environments.coding.sandbox_backend import LocalTestSandboxBackend
+from environments.coding.task import CodingTask
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import DeterministicTextEncoder
 from runtime.action_generator import QwenActionGenerator
@@ -220,6 +221,76 @@ def test_v03_holdout_hidden_verifier_runs_once_after_episode(tmp_path):
     second = runtime.final_hidden_verification()
     assert first["runs"] == 1
     assert second["runs"] == 1
+
+
+def test_v03_holdout_evaluations_use_pristine_regenerated_workspaces(tmp_path):
+    baseline_factory = CodingTaskFactory(tmp_path / "holdout_baseline")
+    final_factory = CodingTaskFactory(tmp_path / "holdout_final")
+    baseline_task = baseline_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    original_solution = (baseline_task.workspace / "solution.py").read_bytes()
+    original_hidden = (baseline_task.hidden_workspace / "hidden_verifier.py").read_bytes()
+
+    (baseline_task.workspace / "solution.py").write_text("def contaminated():\n    return 'baseline'\n", encoding="utf-8")
+    (baseline_task.hidden_workspace / "hidden_verifier.py").write_text("raise AssertionError('mutated hidden verifier')\n", encoding="utf-8")
+
+    final_task = final_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    assert final_task.workspace != baseline_task.workspace
+    assert final_task.hidden_workspace != baseline_task.hidden_workspace
+    assert (final_task.workspace / "solution.py").read_bytes() == original_solution
+    assert (final_task.hidden_workspace / "hidden_verifier.py").read_bytes() == original_hidden
+    assert (baseline_task.workspace / "solution.py").read_bytes() != (final_task.workspace / "solution.py").read_bytes()
+    assert (baseline_task.hidden_workspace / "hidden_verifier.py").read_bytes() != (final_task.hidden_workspace / "hidden_verifier.py").read_bytes()
+
+
+def _public_hidden_truth_task(tmp_path, public_pass: bool, hidden_pass: bool) -> CodingTask:
+    label = f"public_{public_pass}_hidden_{hidden_pass}"
+    workspace = tmp_path / label / "workspace"
+    hidden_workspace = tmp_path / label / "hidden"
+    workspace.mkdir(parents=True)
+    hidden_workspace.mkdir(parents=True)
+    public_expected = 1 if public_pass else 99
+    hidden_expected = 1 if hidden_pass else 99
+    (workspace / "solution.py").write_text("def value():\n    return 1\n", encoding="utf-8")
+    (workspace / "test_public.py").write_text(
+        "import unittest\n"
+        "from solution import value\n\n"
+        "class PublicTests(unittest.TestCase):\n"
+        "    def test_value(self):\n"
+        f"        self.assertEqual(value(), {public_expected})\n\n"
+        "if __name__ == '__main__':\n"
+        "    unittest.main()\n",
+        encoding="utf-8",
+    )
+    (hidden_workspace / "hidden_verifier.py").write_text(
+        "from solution import value\n"
+        f"assert value() == {hidden_expected}\n",
+        encoding="utf-8",
+    )
+    return CodingTask(
+        description="Run public tests and external hidden verifier.",
+        workspace=workspace,
+        test_command=[sys.executable, "-m", "unittest", "discover", "-v"],
+        hidden_workspace=hidden_workspace,
+        hidden_test_command=[sys.executable, "hidden_verifier.py"],
+        protected_paths={"test_public.py"},
+        task_id=label,
+        max_steps=1,
+    )
+
+
+def test_v03_benchmark_success_requires_public_and_hidden_pass(tmp_path):
+    cases = [
+        (False, True, False, 0.0),
+        (True, False, False, 1.0),
+        (True, True, True, 1.0),
+        (False, False, False, 0.0),
+    ]
+    for public_pass, hidden_pass, expected_success, expected_hidden_runs in cases:
+        runtime = _runtime(tmp_path / f"runtime_{public_pass}_{hidden_pass}", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+        task = _public_hidden_truth_task(tmp_path, public_pass, hidden_pass)
+        result = CodingBenchmark().evaluate(runtime, [task])
+        assert result.success_rate == (1.0 if expected_success else 0.0)
+        assert result.hidden_verifier_runs == expected_hidden_runs
 
 
 def _dummy_observation():
