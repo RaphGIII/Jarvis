@@ -1,0 +1,4 @@
+{"step": 1, "tag": "train/replay_size", "value": 0.0}
+{"step": 1, "tag": "eval/success_rate", "value": 0.0}
+{"step": 1, "tag": "eval/mean_reward", "value": -7.23}
+{"step": 1, "tag": "eval/mean_steps", "value": 1.0}

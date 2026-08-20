@@ -76,6 +76,7 @@ class QwenActionGenerator:
             "generated_tokens": getattr(self.brain, "last_metadata", {}).get("generated_tokens"),
             "raw_response_hash": sha256(raw.encode("utf-8", errors="ignore")).hexdigest(),
             "valid_candidates": len(candidates),
+            "zero_valid_qwen_candidates": 1 if not candidates else 0,
             "returned_candidates": len(result),
             "fallback_backfill_count": backfilled,
             **parse_metadata,
@@ -89,7 +90,7 @@ class QwenActionGenerator:
         return (
             "Return JSON only. You are generating concrete CodingWorld action candidates, not final prose.\n"
             f"Allowed action_type values: {allowed}\n"
-            f"Return a JSON array with up to {self.num_candidates} diverse candidates.\n"
+            f"Return exactly {self.num_candidates} candidates when possible; otherwise return as many structurally plausible candidates as you can.\n"
             "Use this schema:\n"
             "[{\"reason\":\"short private summary\","
             "\"action_type\":\"PATCH_FILE\","
@@ -99,6 +100,9 @@ class QwenActionGenerator:
             "\"confidence\":0.5,"
             "\"estimated_cost\":1.0}]\n"
             "For PATCH_FILE, provide concrete old/new text that can be applied exactly.\n"
+            "If source content is not visible, do not guess a PATCH_FILE old string. Generate READ_FILE instead.\n"
+            "If public tests have not run, RUN_TESTS is reasonable.\n"
+            "If relevant source is known, generate concrete patches using exact visible text only.\n"
             "For WRITE_FILE, provide path and content. For READ_FILE/RUN_PYTHON, provide path.\n"
             "Include different strategies: inspect/test/minimal patch/alternative patch when useful.\n"
             "Do not claim private evaluator knowledge and do not modify tests.\n"
@@ -158,11 +162,12 @@ def parse_action_candidates(raw: str, return_metadata: bool = False):
     match = re.search(r"(\[.*\]|\{.*\})", text, flags=re.DOTALL)
     if match:
         text = match.group(1)
-    metadata: dict[str, Any] = {"malformed_items": 0, "parse_error": ""}
+    metadata: dict[str, Any] = {"malformed_items": 0, "schema_invalid_candidates": 0, "parse_error": "", "parse_error_count": 0}
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         metadata["parse_error"] = str(exc)
+        metadata["parse_error_count"] = 1
         return ([], metadata) if return_metadata else []
     if isinstance(parsed, dict):
         parsed = parsed.get("candidates", parsed.get("actions", [parsed]))
@@ -176,8 +181,10 @@ def parse_action_candidates(raw: str, return_metadata: bool = False):
                 candidates.append(_candidate_from_qwen_item(item))
             except (KeyError, ValueError):
                 metadata["malformed_items"] += 1
+                metadata["schema_invalid_candidates"] += 1
         else:
             metadata["malformed_items"] += 1
+            metadata["schema_invalid_candidates"] += 1
     return (candidates, metadata) if return_metadata else candidates
 
 
@@ -281,12 +288,35 @@ def _default_cost(action_type: ActionType) -> float:
 
 
 def fallback_candidates(observation: CodingObservation) -> list[ActionCandidate]:
-    first_file = next((path for path in observation.workspace_tree if path.endswith(".py")), None)
-    candidates = [
-        ActionCandidate(ActionType.LIST_FILES, reasoning_summary="Inspect workspace.", confidence=0.4, estimated_cost=0.5),
-        ActionCandidate(ActionType.RUN_TESTS, reasoning_summary="Use objective tests.", confidence=0.4, estimated_cost=2.0),
+    implementation_files = [
+        path
+        for path in observation.workspace_tree
+        if path.endswith(".py") and not path.rsplit("/", 1)[-1].startswith("test")
     ]
-    if first_file:
-        candidates.append(ActionCandidate(ActionType.READ_FILE, {"path": first_file}, "Read a Python file.", 0.4, 1.0))
-    candidates.append(ActionCandidate(ActionType.FINISH, reasoning_summary="Finish if solved.", confidence=0.1, estimated_cost=0.1))
+    unread_implementation = next((path for path in implementation_files if path not in observation.relevant_file_excerpts), None)
+    test_ran = bool(observation.test_state.get("ran", False))
+    tests_passing = bool(observation.test_state.get("passed", 0) > 0 and observation.test_state.get("failed", 0) == 0)
+    has_error = bool(observation.error_output)
+    candidates: list[ActionCandidate] = []
+    if unread_implementation:
+        candidates.append(ActionCandidate(ActionType.READ_FILE, {"path": unread_implementation}, "Read implementation source before editing.", 0.65, 1.0))
+        if not test_ran:
+            candidates.append(ActionCandidate(ActionType.RUN_TESTS, reasoning_summary="Establish objective public-test baseline.", confidence=0.55, estimated_cost=2.0))
+        if has_error:
+            candidates.append(ActionCandidate(ActionType.INSPECT_ERROR, reasoning_summary="Inspect public error output.", confidence=0.45, estimated_cost=0.5))
+        if not observation.workspace_tree:
+            candidates.append(ActionCandidate(ActionType.LIST_FILES, reasoning_summary="Inspect workspace.", confidence=0.35, estimated_cost=0.5))
+    else:
+        if not test_ran or not tests_passing:
+            candidates.append(ActionCandidate(ActionType.RUN_TESTS, reasoning_summary="Use objective public tests.", confidence=0.55, estimated_cost=2.0))
+        if has_error:
+            candidates.append(ActionCandidate(ActionType.INSPECT_ERROR, reasoning_summary="Inspect public error output.", confidence=0.5, estimated_cost=0.5))
+        if not observation.workspace_tree:
+            candidates.append(ActionCandidate(ActionType.LIST_FILES, reasoning_summary="Inspect workspace.", confidence=0.35, estimated_cost=0.5))
+    if tests_passing:
+        candidates.append(ActionCandidate(ActionType.FINISH, reasoning_summary="Public tests are passing.", confidence=0.5, estimated_cost=0.1))
+    if observation.workspace_tree:
+        candidates.append(ActionCandidate(ActionType.LIST_FILES, reasoning_summary="Refresh workspace listing if no better unique fallback is available.", confidence=0.2, estimated_cost=0.5))
+    if not candidates:
+        candidates.append(ActionCandidate(ActionType.LIST_FILES, reasoning_summary="Inspect workspace.", confidence=0.35, estimated_cost=0.5))
     return candidates

@@ -306,6 +306,7 @@ class JarvisRuntime:
             task,
             backend=self.sandbox_backend,
             run_hidden_during_tests=self.state.mode == RuntimeMode.TRAIN,
+            terminate_on_public_success=self.state.mode == RuntimeMode.TRAIN,
         )
         episode_id = f"{task.task_id}-{uuid.uuid4().hex[:8]}"
         self.state.reset_episode(task.task_id, episode_id)
@@ -335,7 +336,15 @@ class JarvisRuntime:
         self.profiler.increment("candidate_cache_hits", 1.0 if getattr(self.action_generator, "last_generation_metadata", {}).get("cache_hit") else 0.0)
         self.profiler.increment("candidates_generated", len(candidates))
         generation_metadata = getattr(self.action_generator, "last_generation_metadata", {})
-        for key in ["valid_candidates", "malformed_items", "fallback_backfill_count", "duplicate_candidates"]:
+        for key in [
+            "valid_candidates",
+            "malformed_items",
+            "schema_invalid_candidates",
+            "parse_error_count",
+            "zero_valid_qwen_candidates",
+            "fallback_backfill_count",
+            "duplicate_candidates",
+        ]:
             if generation_metadata.get(key) is not None:
                 self.profiler.increment(key, float(generation_metadata.get(key) or 0))
         generated_tokens = getattr(self.action_generator, "last_generation_metadata", {}).get("generated_tokens")
@@ -752,14 +761,19 @@ class JarvisRuntime:
                 return False, path_reason
             if not self._candidate_path_editable(path) and action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE}:
                 return False, "path is protected"
-            if action_type in {ActionType.READ_FILE, ActionType.RUN_PYTHON, ActionType.PATCH_FILE} and path not in observation.workspace_tree:
+            path_exists = path in observation.workspace_tree
+            if action_type in {ActionType.READ_FILE, ActionType.RUN_PYTHON, ActionType.PATCH_FILE} and not path_exists:
                 return False, "path does not exist"
             if action_type == ActionType.PATCH_FILE:
+                if path not in observation.relevant_file_excerpts:
+                    return False, "read file before patching"
                 old = str(arguments.get("old", ""))
                 if not old:
                     return False, "old text is empty"
-                if path in observation.relevant_file_excerpts and old not in observation.relevant_file_excerpts[path]:
+                if old not in observation.relevant_file_excerpts[path]:
                     return False, "old text unavailable"
+            if action_type == ActionType.WRITE_FILE and path_exists and path not in observation.relevant_file_excerpts:
+                return False, "read file before overwriting"
             return True, ""
         return False, "unsupported action type"
 
@@ -785,10 +799,20 @@ class JarvisRuntime:
         tests_ran = bool(observation.test_state.get("ran", False))
         tests_passing = bool(observation.test_state.get("passed", 0) > 0 and observation.test_state.get("failed", 0) == 0)
         has_excerpts = bool(observation.relevant_file_excerpts)
+        implementation_unread = any(
+            path.endswith(".py")
+            and not Path(path).name.startswith("test")
+            and path not in observation.relevant_file_excerpts
+            for path in observation.workspace_tree
+        )
         if candidate.action_type == ActionType.RUN_TESTS and not tests_ran:
             score += 0.35
-        if candidate.action_type == ActionType.READ_FILE and not has_excerpts:
-            score += 0.25
+        if candidate.action_type == ActionType.RUN_TESTS and tests_ran and implementation_unread:
+            score -= 0.3
+        if candidate.action_type == ActionType.LIST_FILES and observation.workspace_tree:
+            score -= 0.2
+        if candidate.action_type == ActionType.READ_FILE and implementation_unread:
+            score += 0.75 if tests_ran else 0.45
         if candidate.action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE} and has_excerpts:
             score += 0.15
         if candidate.action_type == ActionType.FINISH and tests_passing:
@@ -858,8 +882,21 @@ class JarvisRuntime:
                 if old or new:
                     print(f"    old=\"{old}\" new=\"{new}\"", flush=True)
         ok = "OK" if getattr(environment_step.action_result, "ok", False) else "FAIL"
+        action_result = environment_step.action_result
         print(f"selected: {selected.candidate.action_type.name}", flush=True)
-        print(f"result: {ok} | reward={reward:.3f}", flush=True)
+        print(
+            f"result: {ok} | reward={reward:.3f} | return_code={getattr(action_result, 'return_code', None)} "
+            f"| kind={(getattr(action_result, 'data', {}) or {}).get('failure_kind', '')} "
+            f"| message=\"{self._truncate_trace_text(getattr(action_result, 'message', ''))}\"",
+            flush=True,
+        )
+        if not getattr(action_result, "ok", False):
+            stdout = self._truncate_trace_text(getattr(action_result, "stdout", ""))
+            stderr = self._truncate_trace_text(getattr(action_result, "stderr", ""))
+            if stdout:
+                print(f"public_stdout=\"{stdout}\"", flush=True)
+            if stderr:
+                print(f"public_stderr=\"{stderr}\"", flush=True)
 
     @staticmethod
     def _truncate_trace_text(text: str, limit: int = 120) -> str:

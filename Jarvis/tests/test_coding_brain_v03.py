@@ -91,9 +91,9 @@ def test_v03_qwen_duplicate_patches_are_deduplicated(tmp_path):
     generator = QwenActionGenerator(StaticBrain(response), num_candidates=6)
     observation = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
     candidates = generator.generate(observation.description, CodingEnvironment(observation, backend=LocalTestSandboxBackend()).observe())
-    assert len(candidates) == 5
+    assert len(candidates) == 4
     assert generator.last_generation_metadata["duplicate_candidates"] == 1
-    assert generator.last_generation_metadata["fallback_backfill_count"] == 3
+    assert generator.last_generation_metadata["fallback_backfill_count"] == 2
 
 
 def test_v03_malformed_qwen_output_falls_back_without_crashing(tmp_path):
@@ -280,6 +280,12 @@ def _public_hidden_truth_task(tmp_path, public_pass: bool, hidden_pass: bool) ->
 
 
 def test_v03_benchmark_success_requires_public_and_hidden_pass(tmp_path):
+    class RunTestsOnlyGenerator:
+        last_generation_metadata = {}
+
+        def generate(self, goal, observation):
+            return [ActionCandidate(ActionType.RUN_TESTS)]
+
     cases = [
         (False, True, False, 0.0),
         (True, False, False, 1.0),
@@ -288,6 +294,7 @@ def test_v03_benchmark_success_requires_public_and_hidden_pass(tmp_path):
     ]
     for public_pass, hidden_pass, expected_success, expected_hidden_runs in cases:
         runtime = _runtime(tmp_path / f"runtime_{public_pass}_{hidden_pass}", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+        runtime.action_generator = RunTestsOnlyGenerator()
         task = _public_hidden_truth_task(tmp_path, public_pass, hidden_pass)
         result = CodingBenchmark().evaluate(runtime, [task])
         assert result.success_rate == (1.0 if expected_success else 0.0)
@@ -315,6 +322,13 @@ def test_v03_benchmark_public_success_is_success_without_hidden_verifier(tmp_pat
         max_steps=1,
     )
     runtime = _runtime(tmp_path / "runtime_public_only", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    class RunTestsOnlyGenerator:
+        last_generation_metadata = {}
+
+        def generate(self, goal, observation):
+            return [ActionCandidate(ActionType.RUN_TESTS)]
+
+    runtime.action_generator = RunTestsOnlyGenerator()
     result = CodingBenchmark().evaluate(runtime, [task])
     assert result.success_rate == 1.0
     assert result.hidden_verifier_runs == 0.0
@@ -338,6 +352,88 @@ def test_v03_benchmark_invalid_action_rate_counts_transitions(tmp_path):
     result = CodingBenchmark().evaluate(runtime, [task])
     assert result.invalid_action_rate == 1.0
     assert result.episodes_with_invalid_action_rate == 1.0
+
+
+def _weak_public_hidden_task(tmp_path, task_id: str = "weak_public") -> CodingTask:
+    workspace = tmp_path / task_id / "workspace"
+    hidden_workspace = tmp_path / task_id / "hidden"
+    workspace.mkdir(parents=True)
+    hidden_workspace.mkdir(parents=True)
+    (workspace / "solution.py").write_text("def value():\n    return 1\n", encoding="utf-8")
+    (workspace / "test_public.py").write_text(
+        "import unittest\n\n"
+        "class PublicTests(unittest.TestCase):\n"
+        "    def test_public_is_weak(self):\n"
+        "        self.assertTrue(True)\n\n"
+        "if __name__ == '__main__':\n"
+        "    unittest.main()\n",
+        encoding="utf-8",
+    )
+    (hidden_workspace / "hidden_verifier.py").write_text("from solution import value\nassert value() == 2\n", encoding="utf-8")
+    return CodingTask(
+        description="Weak public tests pass before the hidden requirement is satisfied.",
+        workspace=workspace,
+        test_command=[sys.executable, "-m", "unittest", "discover", "-v"],
+        hidden_workspace=hidden_workspace,
+        hidden_test_command=[sys.executable, "hidden_verifier.py"],
+        protected_paths={"test_public.py"},
+        task_id=task_id,
+        max_steps=6,
+    )
+
+
+class SequenceActionGenerator:
+    last_generation_metadata = {}
+
+    def __init__(self, actions):
+        self.actions = list(actions)
+        self.index = 0
+
+    def generate(self, goal, observation):
+        action = self.actions[min(self.index, len(self.actions) - 1)]
+        self.index += 1
+        return [action]
+
+
+def test_v03_eval_public_pass_does_not_stop_and_agent_can_continue_patch(tmp_path):
+    task = _weak_public_hidden_task(tmp_path)
+    runtime = _runtime(tmp_path / "runtime_eval_continue", StaticBrain("[]"), mode=RuntimeMode.EVAL)
+    runtime.action_generator = SequenceActionGenerator(
+        [
+            ActionCandidate(ActionType.RUN_TESTS),
+            ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}),
+            ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "return 1", "new": "return 2"}),
+            ActionCandidate(ActionType.RUN_TESTS),
+            ActionCandidate(ActionType.FINISH),
+        ]
+    )
+    metrics = runtime.run_episode(task, RuntimeMode.EVAL)
+    actions = [transition.metadata["action"]["action_type"] for transition in runtime.state.trajectory.transitions]
+    assert metrics["steps"] == 5
+    assert actions == ["RUN_TESTS", "READ_FILE", "PATCH_FILE", "RUN_TESTS", "FINISH"]
+    assert runtime.environment.hidden_state["runs"] == 0
+    hidden = runtime.final_hidden_verification()
+    assert hidden["success"] is True
+    assert runtime.final_hidden_verification()["runs"] == 1
+    observation_text = runtime.environment.observe().to_text()
+    assert "hidden_verifier" not in observation_text
+    assert "hidden_passed" not in observation_text
+
+
+def test_v03_eval_finish_stops_after_public_pass(tmp_path):
+    task = _weak_public_hidden_task(tmp_path, "finish_stops")
+    runtime = _runtime(tmp_path / "runtime_finish", StaticBrain("[]"), mode=RuntimeMode.EVAL)
+    runtime.action_generator = SequenceActionGenerator(
+        [
+            ActionCandidate(ActionType.RUN_TESTS),
+            ActionCandidate(ActionType.FINISH),
+            ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}),
+        ]
+    )
+    metrics = runtime.run_episode(task, RuntimeMode.EVAL)
+    assert metrics["steps"] == 2
+    actions = [transition.metadata["action"]["action_type"] for transition in runtime.state.trajectory.transitions]
+    assert actions == ["RUN_TESTS", "FINISH"]
 
 
 def _dummy_observation():

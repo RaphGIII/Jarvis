@@ -1,0 +1,16 @@
+{"step": 1, "tag": "train/replay_size", "value": 0.0}
+{"step": 1, "tag": "eval/success_rate", "value": 0.0}
+{"step": 1, "tag": "eval/mean_reward", "value": -7.23}
+{"step": 1, "tag": "eval/mean_steps", "value": 1.0}
+{"step": 2, "tag": "train/replay_size", "value": 0.0}
+{"step": 2, "tag": "eval/success_rate", "value": 0.0}
+{"step": 2, "tag": "eval/mean_reward", "value": -7.4375}
+{"step": 2, "tag": "eval/mean_steps", "value": 2.0}
+{"step": 3, "tag": "train/replay_size", "value": 0.0}
+{"step": 3, "tag": "eval/success_rate", "value": 0.0}
+{"step": 3, "tag": "eval/mean_reward", "value": -7.1825}
+{"step": 3, "tag": "eval/mean_steps", "value": 3.0}
+{"step": 4, "tag": "train/replay_size", "value": 0.0}
+{"step": 4, "tag": "eval/success_rate", "value": 1.0}
+{"step": 4, "tag": "eval/mean_reward", "value": 19.5875}
+{"step": 4, "tag": "eval/mean_steps", "value": 4.0}

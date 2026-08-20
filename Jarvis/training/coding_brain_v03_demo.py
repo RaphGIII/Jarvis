@@ -39,6 +39,7 @@ class CodingBrainV03Config:
     brain_profile: str | None = None
     brain_provider: str | None = None
     trace_actions: bool = False
+    max_steps: int | None = None
 
 
 class MockAutonomousPatchBrain:
@@ -228,6 +229,8 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         config.coding_max_tokens = 300
     if config.smoke and config.candidate_count == 6:
         config.candidate_count = 2
+    if config.smoke and config.max_steps is None:
+        config.max_steps = 6
     set_global_seeds(config.seed)
     random.seed(config.seed)
     if not DockerSandboxBackend.is_available():
@@ -264,9 +267,9 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
     baseline_holdout_tasks = baseline_holdout_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
     train_tasks = train_factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)
     validation_tasks = validation_factory.make_v03_split_tasks(DatasetSplit.VALIDATION, validation_count)
-    if config.smoke:
+    if config.max_steps is not None:
         for task in [*baseline_holdout_tasks, *train_tasks, *validation_tasks]:
-            task.max_steps = min(task.max_steps, 4)
+            task.max_steps = min(task.max_steps, config.max_steps or task.max_steps)
 
     def log(message: str) -> None:
         if not config.quiet:
@@ -305,9 +308,9 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         runtime.save_checkpoints(validation.to_dict(), category="best")
 
     final_holdout_tasks = final_holdout_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
-    if config.smoke:
+    if config.max_steps is not None:
         for task in final_holdout_tasks:
-            task.max_steps = min(task.max_steps, 4)
+            task.max_steps = min(task.max_steps, config.max_steps or task.max_steps)
     log(f"[FINAL 1/{len(final_holdout_tasks)}] evaluating fresh pristine holdout tasks...")
     runtime.trace_label = "HOLDOUT"
     final_holdout = benchmark.evaluate(runtime, final_holdout_tasks)
@@ -368,6 +371,7 @@ def _parse_args() -> CodingBrainV03Config:
     parser.add_argument("--brain-profile", default=None)
     parser.add_argument("--brain-provider", choices=["local_transformers", "openai_compatible"], default=None)
     parser.add_argument("--trace-actions", action="store_true", help="Print safe per-step action scoring diagnostics.")
+    parser.add_argument("--max-steps", type=int, default=None, help="Override per-task step budget for smoke/diagnostics.")
     args = parser.parse_args()
     train_episodes = args.train_episodes if args.train_episodes is not None else (1 if args.smoke else (4 if args.quick else 30))
     candidate_count = args.candidate_count
@@ -388,6 +392,7 @@ def _parse_args() -> CodingBrainV03Config:
         brain_profile=args.brain_profile,
         brain_provider=args.brain_provider,
         trace_actions=args.trace_actions,
+        max_steps=args.max_steps,
     )
 
 

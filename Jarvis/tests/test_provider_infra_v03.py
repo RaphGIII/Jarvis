@@ -10,7 +10,7 @@ from brain.providers import LocalTransformersBrainProvider, OpenAICompatibleBrai
 from environments.coding.actions import ActionCandidate, ActionType
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import LightweightLocalEmbeddingProvider
-from runtime.action_generator import QwenActionGenerator
+from runtime.action_generator import QwenActionGenerator, fallback_candidates, parse_action_candidates
 from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig, ScoredAction
 from runtime.runtime_state import RuntimeMode
 from training.coding_brain_v03_demo import CodingBrainV03Config, run_coding_brain_v03_demo
@@ -195,7 +195,62 @@ def test_qwen_action_generator_backfills_partial_candidate_sets(tmp_path):
     assert generator.last_generation_metadata["fallback_backfill_count"] == 2
     assert len({json.dumps(candidate.to_dict(), sort_keys=True) for candidate in candidates}) == 3
     assert "4-8" not in generator._prompt(task.description, observation)
-    assert "up to 3" in generator._prompt(task.description, observation)
+    assert "Return exactly 3 candidates" in generator._prompt(task.description, observation)
+    assert "do not guess a PATCH_FILE old string" in generator._prompt(task.description, observation)
+
+
+def test_fallback_candidates_prioritize_unread_implementation_source(tmp_path):
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    observation = CodingEnvironment(task, backend=LocalTestSandboxBackend()).observe()
+    candidates = fallback_candidates(observation)
+    assert candidates[0].action_type == ActionType.READ_FILE
+    assert candidates[0].arguments["path"] == "solution.py"
+    assert all(candidate.arguments.get("path") != "test_public.py" for candidate in candidates)
+    assert [candidate.action_type for candidate in candidates[:2]] == [ActionType.READ_FILE, ActionType.RUN_TESTS]
+
+
+def test_fallback_candidates_after_tests_prefer_read_over_repeated_tests(tmp_path):
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    env = CodingEnvironment(task, backend=LocalTestSandboxBackend(), terminate_on_public_success=False)
+    env.step(ActionCandidate(ActionType.RUN_TESTS))
+    candidates = fallback_candidates(env.observe())
+    assert candidates[0].action_type == ActionType.READ_FILE
+    assert candidates[0].arguments["path"] == "solution.py"
+    assert ActionType.LIST_FILES not in [candidate.action_type for candidate in candidates[:2]]
+
+
+def test_parse_diagnostics_count_parse_and_schema_errors():
+    parsed, metadata = parse_action_candidates("not json", return_metadata=True)
+    assert parsed == []
+    assert metadata["parse_error_count"] == 1
+    parsed, metadata = parse_action_candidates('[{"action_type":"NOPE"}, 3]', return_metadata=True)
+    assert parsed == []
+    assert metadata["schema_invalid_candidates"] == 2
+
+
+def test_qwen_generation_metadata_counts_zero_valid_candidates(tmp_path):
+    class InvalidProvider(FakeProvider):
+        def generate_coding(self, prompt, *, max_tokens=450, temperature=0.6, top_p=0.9):
+            self.generate_calls += 1
+            return json.dumps([{"action_type": "NOPE"}])
+
+    generator = QwenActionGenerator(InvalidProvider(), num_candidates=2)
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    observation = CodingEnvironment(task, backend=LocalTestSandboxBackend()).observe()
+    candidates = generator.generate(task.description, observation)
+    assert len(candidates) == 2
+    assert generator.last_generation_metadata["zero_valid_qwen_candidates"] == 1
+    assert generator.last_generation_metadata["schema_invalid_candidates"] == 1
+    assert generator.last_generation_metadata["fallback_backfill_count"] == 2
 
 
 def test_runtime_feasibility_and_cold_start_weight(tmp_path):
@@ -216,6 +271,28 @@ def test_runtime_feasibility_and_cold_start_weight(tmp_path):
     assert runtime._validate_candidate_feasibility(protected, observation) == (False, "path is protected")
 
 
+def test_runtime_requires_read_before_patch_or_existing_overwrite(tmp_path):
+    runtime = JarvisRuntime(
+        brain=FakeProvider(),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=10, train_exploration_epsilon=0.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.EVAL,
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    observation = runtime.start_task(task, RuntimeMode.EVAL)
+    patch = ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "return a - b", "new": "return a + b"})
+    assert runtime._validate_candidate_feasibility(patch, observation) == (False, "read file before patching")
+    overwrite = ActionCandidate(ActionType.WRITE_FILE, {"path": "solution.py", "content": "x = 1\n"})
+    assert runtime._validate_candidate_feasibility(overwrite, observation) == (False, "read file before overwriting")
+    create = ActionCandidate(ActionType.WRITE_FILE, {"path": "notes.py", "content": "x = 1\n"})
+    assert runtime._validate_candidate_feasibility(create, observation) == (True, "")
+    runtime.environment.step(ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}))
+    observation = runtime.environment.observe()
+    assert runtime._validate_candidate_feasibility(patch, observation) == (True, "")
+    bad_patch = ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "not in file", "new": "x"})
+    assert runtime._validate_candidate_feasibility(bad_patch, observation) == (False, "old text unavailable")
+
+
 def test_profiler_breakdown_excludes_nested_totals():
     from runtime.profiling import PerformanceProfiler
 
@@ -230,6 +307,17 @@ def test_profiler_breakdown_excludes_nested_totals():
     assert summary["breakdown"]["docker_execution"]["percent"] == 10.0
     assert summary["breakdown"]["other"]["percent"] == 50.0
     assert summary["timings"]["total_step"]["percent"] == 0.0
+
+
+def test_public_run_failure_is_classified_as_infrastructure(tmp_path):
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import DisabledSandboxBackend
+
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    env = CodingEnvironment(task, backend=DisabledSandboxBackend(), terminate_on_public_success=False)
+    result = env.step(ActionCandidate(ActionType.RUN_TESTS))
+    assert result.action_result.data["failure_kind"] == "infrastructure"
+    assert result.done is False
 
 
 def _scored(action_type: ActionType, score: float, feasible: bool) -> ScoredAction:
@@ -295,5 +383,6 @@ def test_timing_and_smoke_mode_work(tmp_path, monkeypatch):
     assert metrics["VALIDATION_TASK_COUNT"] == 1
     assert metrics["HOLDOUT_TASK_COUNT"] == 1
     assert metrics["CONFIG"]["coding_max_tokens"] == 300
+    assert metrics["CONFIG"]["max_steps"] == 6
     assert "PERFORMANCE" in metrics
     assert "brain_candidate_generation" in metrics["PERFORMANCE"]["timings"]

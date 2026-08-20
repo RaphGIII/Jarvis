@@ -27,12 +27,14 @@ class CodingEnvironment:
         backend: SandboxBackend | None = None,
         *,
         run_hidden_during_tests: bool = False,
+        terminate_on_public_success: bool = True,
     ) -> None:
         self.task = task
         self.workspace = task.workspace.resolve()
         self.timeout_seconds = timeout_seconds
         self.backend = backend or DisabledSandboxBackend()
         self.run_hidden_during_tests = run_hidden_during_tests
+        self.terminate_on_public_success = terminate_on_public_success
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.step_number = 0
         self.latest_action: dict[str, Any] | None = None
@@ -89,7 +91,8 @@ class CodingEnvironment:
         self.latest_error = result.stderr or (result.stdout if not result.ok else "")
         self.success = self._tests_passed()
         max_steps_hit = self.step_number >= self.task.max_steps
-        self.done = bool(self.success or max_steps_hit or candidate.action_type == ActionType.FINISH)
+        success_terminal = self.success and self.terminate_on_public_success
+        self.done = bool(success_terminal or max_steps_hit or candidate.action_type == ActionType.FINISH)
         invalid_action = bool(result.data.get("invalid_action", False)) if result.data else False
         return EnvironmentStep(
             observation=self.observe(),
@@ -220,13 +223,34 @@ class CodingEnvironment:
             verifier_workspace=verifier_workspace,
         )
         ok = completed.returncode == 0
+        failure_kind = self._classify_process_failure(completed.stdout, completed.stderr, completed.returncode)
         return ActionResult(
             ok,
             label if ok else f"{label} Return code {completed.returncode}.",
             stdout=completed.stdout[-4000:] if expose_output else "",
             stderr=completed.stderr[-4000:] if expose_output else ("Hidden verifier failed." if not ok else ""),
             return_code=completed.returncode,
+            data={"failure_kind": failure_kind} if not ok else {},
         )
+
+    @staticmethod
+    def _classify_process_failure(stdout: str, stderr: str, return_code: int | None) -> str:
+        output = f"{stdout}\n{stderr}".lower()
+        infrastructure_markers = [
+            "docker sandbox unavailable",
+            "cannot connect to the docker daemon",
+            "error response from daemon",
+            "container",
+            "image pull",
+            "network timed out",
+            "timed out",
+            "temporary failure",
+            "resource temporarily unavailable",
+            "no such file or directory: 'docker'",
+        ]
+        if return_code in {125, 126, 127} or any(marker in output for marker in infrastructure_markers):
+            return "infrastructure"
+        return "test_failure"
 
     def _subprocess_env(self) -> dict[str, str]:
         env = dict(os.environ)
