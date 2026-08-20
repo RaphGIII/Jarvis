@@ -42,6 +42,7 @@ class MockAutonomousPatchBrain:
     def think(self, user_prompt: str, max_tokens: int = 1200) -> str:
         self.calls += 1
         prompt = user_prompt.lower()
+        excerpts = prompt.split("excerpts:", 1)[-1]
         candidates: list[dict[str, Any]] = [
             {
                 "reason": "Run objective tests before editing.",
@@ -61,7 +62,7 @@ class MockAutonomousPatchBrain:
                 "estimated_cost": 0.5,
             },
         ]
-        if "solution.py:\ndef add_numbers(a, b):\n    return a - b" in prompt or "solution.py:\ndef add(a, b):\n    return a - b" in prompt:
+        if "solution.py:" in excerpts and "return a - b" in excerpts:
             candidates.insert(
                 0,
                 {
@@ -74,7 +75,7 @@ class MockAutonomousPatchBrain:
                     "estimated_cost": 2.0,
                 },
             )
-        if "solution.py:\ndef parse_scores(text):\n    return text.split(',')" in prompt:
+        if "solution.py:" in excerpts and "return text.split(',')" in excerpts:
             candidates.insert(
                 0,
                 {
@@ -87,7 +88,7 @@ class MockAutonomousPatchBrain:
                     "estimated_cost": 2.5,
                 },
             )
-        if "solution.py:\nclass counter:" in prompt and "self.count -= 1" in prompt:
+        if "solution.py:" in excerpts and "class counter" in excerpts and "self.count -= 1" in excerpts:
             candidates.insert(
                 0,
                 {
@@ -103,7 +104,7 @@ class MockAutonomousPatchBrain:
                     "estimated_cost": 4.0,
                 },
             )
-        if "solution.py:\ndef safe_divide(a, b):\n    return a / b" in prompt:
+        if "solution.py:" in excerpts and "return a / b" in excerpts:
             candidates.insert(
                 0,
                 {
@@ -229,13 +230,17 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
     if not isinstance(runtime.action_generator, QwenActionGenerator):
         raise RuntimeError("v0.3 requires QwenActionGenerator in the productive runtime path.")
 
-    train_episodes, train_count, validation_count, holdout_count = _counts(config)
+    train_episodes, _, validation_count, holdout_count = _counts(config)
     factory = CodingTaskFactory(dataset_root)
     benchmark = CodingBenchmark()
     before_parameters = _snapshot(runtime)
 
-    baseline_holdout = benchmark.evaluate(runtime, factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count))
-    for episode, task in enumerate(factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)):
+    holdout_tasks = factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
+    train_tasks = factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)
+    validation_tasks = factory.make_v03_split_tasks(DatasetSplit.VALIDATION, validation_count)
+
+    baseline_holdout = benchmark.evaluate(runtime, holdout_tasks)
+    for episode, task in enumerate(train_tasks):
         runtime.run_episode(task, RuntimeMode.TRAIN)
         runtime.tensorboard.log_scalar("training/reward", runtime.state.total_reward, episode + 1)
         runtime.tensorboard.log_scalar("training/success", 1.0 if runtime.state.latest_metrics.get("success") else 0.0, episode + 1)
@@ -243,18 +248,17 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         runtime.tensorboard.log_scalar("training/invalid_action_rate", 1.0 if runtime.state.latest_metrics.get("invalid_action") else 0.0, episode + 1)
         runtime.tensorboard.log_scalar("training/episode_length", float(runtime.state.step_count), episode + 1)
 
-    validation = benchmark.evaluate(runtime, factory.make_v03_split_tasks(DatasetSplit.VALIDATION, validation_count))
+    validation = benchmark.evaluate(runtime, validation_tasks)
     runtime.tensorboard.log_scalar("evaluation/validation_success_rate", validation.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/validation_reward", validation.mean_reward, runtime.scheduler.runtime_steps)
 
-    latest_paths = runtime.save_checkpoints(validation.to_dict())
-    runtime.checkpoint_manager.save_category_metadata("latest", validation.to_dict(), {"paths": latest_paths, "version": "v0.3"})
+    latest_paths = runtime.save_checkpoints(validation.to_dict(), category="latest")
     best_metrics = runtime.checkpoint_manager.best_metrics()
     promoted = runtime.checkpoint_manager.should_promote(validation.to_dict(), best_metrics)
     if promoted:
-        runtime.checkpoint_manager.save_category_metadata("best", validation.to_dict(), {"paths": latest_paths, "version": "v0.3"})
+        runtime.save_checkpoints(validation.to_dict(), category="best")
 
-    final_holdout = benchmark.evaluate(runtime, factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count))
+    final_holdout = benchmark.evaluate(runtime, holdout_tasks)
     runtime.tensorboard.log_scalar("evaluation/holdout_success_rate", final_holdout.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/holdout_reward", final_holdout.mean_reward, runtime.scheduler.runtime_steps)
 
@@ -265,9 +269,9 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
         "ACTION_GENERATOR": runtime.action_generator.__class__.__name__,
         "SEMANTIC_ENCODER": runtime.text_encoder.__class__.__name__,
         "QWEN_TRAINABLE": _qwen_trainable(runtime),
-        "TRAIN_TASK_COUNT": train_count,
-        "VALIDATION_TASK_COUNT": validation_count,
-        "HOLDOUT_TASK_COUNT": holdout_count,
+        "TRAIN_TASK_COUNT": len(train_tasks),
+        "VALIDATION_TASK_COUNT": len(validation_tasks),
+        "HOLDOUT_TASK_COUNT": len(holdout_tasks),
         "PERSISTENCE_MODE": "persistent" if config.persistent else "temporary",
         "SEED": config.seed,
         "BASELINE": baseline_holdout.to_dict(),

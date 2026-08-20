@@ -286,13 +286,22 @@ class JarvisRuntime:
         return loaded
 
     def start_task(self, task: CodingTask, mode: RuntimeMode | None = None) -> CodingObservation:
-        self.environment = CodingEnvironment(task, backend=self.sandbox_backend)
         if mode is not None:
             self.state.mode = mode
+        self.environment = CodingEnvironment(
+            task,
+            backend=self.sandbox_backend,
+            run_hidden_during_tests=self.state.mode == RuntimeMode.TRAIN,
+        )
         episode_id = f"{task.task_id}-{uuid.uuid4().hex[:8]}"
         self.state.reset_episode(task.task_id, episode_id)
         self.events.append(RuntimeEvent("episode_started", {"task_id": task.task_id, "episode_id": episode_id}))
         return self.environment.observe()
+
+    def final_hidden_verification(self) -> dict[str, Any]:
+        if self.environment is None:
+            raise RuntimeError("No CodingEnvironment is active.")
+        return self.environment.run_final_hidden_verifier()
 
     def step(self, user_goal: str) -> RuntimeStepResult:
         if self.environment is None:
@@ -444,24 +453,37 @@ class JarvisRuntime:
             },
         }
 
-    def save_checkpoints(self, metrics: dict[str, float] | None = None) -> dict[str, str]:
+    def save_checkpoints(self, metrics: dict[str, float] | None = None, category: str = "latest") -> dict[str, str]:
         paths = {
-            "WorldModel": self.world_model.save_checkpoint(
-                self.checkpoint_manager.directory / "world_model.pt",
+            "WorldModel": self.checkpoint_manager.save_module_snapshot(
+                category,
+                "world_model",
+                self.world_model,
+                version=self.world_model.config.version,
+                training_step=self.world_model.training_step,
                 optimizer=self.scheduler.world_optimizer,
                 metrics=metrics,
             ),
-            "Policy": self.policy.save_checkpoint(
-                self.checkpoint_manager.directory / "policy.pt",
+            "Policy": self.checkpoint_manager.save_module_snapshot(
+                category,
+                "policy",
+                self.policy,
+                version=self.policy.config.version,
+                training_step=self.policy.training_step,
                 optimizer=self.scheduler.policy_optimizer,
                 metrics=metrics,
             ),
-            "ValueFunction": self.value_function.save_checkpoint(
-                self.checkpoint_manager.directory / "value.pt",
+            "ValueFunction": self.checkpoint_manager.save_module_snapshot(
+                category,
+                "value",
+                self.value_function,
+                version=self.value_function.config.version,
+                training_step=self.value_function.training_step,
                 optimizer=self.scheduler.value_optimizer,
                 metrics=metrics,
             ),
-            "ObservationEncoder": self.checkpoint_manager.save_module(
+            "ObservationEncoder": self.checkpoint_manager.save_module_snapshot(
+                category,
                 "observation_projection",
                 self.encoder,
                 version="observation-projection-0.2",
@@ -469,7 +491,8 @@ class JarvisRuntime:
                 metrics=metrics,
                 optimizer=self.scheduler.encoder_optimizer,
             ),
-            "ActionProjection": self.checkpoint_manager.save_module(
+            "ActionProjection": self.checkpoint_manager.save_module_snapshot(
+                category,
                 "action_projection",
                 self.action_encoder,
                 version="action-projection-0.2",
@@ -477,7 +500,8 @@ class JarvisRuntime:
                 metrics=metrics,
                 optimizer=self.scheduler.action_encoder_optimizer,
             ),
-            "ActionValueNetwork": self.checkpoint_manager.save_module(
+            "ActionValueNetwork": self.checkpoint_manager.save_module_snapshot(
+                category,
                 "action_value",
                 self.action_value,
                 version=self.action_value.config.version,
@@ -486,6 +510,7 @@ class JarvisRuntime:
                 optimizer=self.scheduler.q_optimizer,
             ),
         }
+        self.checkpoint_manager.save_category_metadata(category, metrics or {}, {"version": "runtime-snapshot"})
         return {name: str(path) for name, path in paths.items()}
 
     def load_latest_checkpoints(self) -> dict[str, bool]:
@@ -506,6 +531,44 @@ class JarvisRuntime:
                 "action_projection", self.action_encoder, optimizer=self.scheduler.action_encoder_optimizer
             ),
             "ActionValueNetwork": self.checkpoint_manager.load_latest_module(
+                "action_value", self.action_value, optimizer=self.scheduler.q_optimizer
+            ),
+        }
+        modules = {
+            "WorldModel": self.world_model,
+            "Policy": self.policy,
+            "ValueFunction": self.value_function,
+            "ObservationProjection": self.encoder,
+            "ActionProjection": self.action_encoder,
+            "ActionValueNetwork": self.action_value,
+        }
+        for name, payload in payloads.items():
+            if payload is not None and hasattr(modules[name], "training_step"):
+                modules[name].training_step = int(payload.get("training_step", 0))
+        loaded = {name: payload is not None for name, payload in payloads.items()}
+        self.scheduler.target_value.load_state_dict(self.value_function.state_dict())
+        if self.scheduler.target_action_value is not None:
+            self.scheduler.target_action_value.load_state_dict(self.action_value.state_dict())
+        return loaded
+
+    def load_best_checkpoints(self) -> dict[str, bool]:
+        payloads = {
+            "WorldModel": self.checkpoint_manager.load_best_module(
+                "world_model", self.world_model, optimizer=self.scheduler.world_optimizer
+            ),
+            "Policy": self.checkpoint_manager.load_best_module(
+                "policy", self.policy, optimizer=self.scheduler.policy_optimizer
+            ),
+            "ValueFunction": self.checkpoint_manager.load_best_module(
+                "value", self.value_function, optimizer=self.scheduler.value_optimizer
+            ),
+            "ObservationProjection": self.checkpoint_manager.load_best_module(
+                "observation_projection", self.encoder, optimizer=self.scheduler.encoder_optimizer
+            ),
+            "ActionProjection": self.checkpoint_manager.load_best_module(
+                "action_projection", self.action_encoder, optimizer=self.scheduler.action_encoder_optimizer
+            ),
+            "ActionValueNetwork": self.checkpoint_manager.load_best_module(
                 "action_value", self.action_value, optimizer=self.scheduler.q_optimizer
             ),
         }

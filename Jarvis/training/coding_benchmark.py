@@ -22,6 +22,7 @@ class BenchmarkResult:
     world_model_prediction_loss: float
     value_prediction_error: float
     q_prediction_error: float = 0.0
+    hidden_verifier_runs: float = 0.0
 
     def to_dict(self) -> dict[str, float | int]:
         return {
@@ -35,6 +36,7 @@ class BenchmarkResult:
             "world_model_prediction_loss": self.world_model_prediction_loss,
             "value_prediction_error": self.value_prediction_error,
             "q_prediction_error": self.q_prediction_error,
+            "hidden_verifier_runs": self.hidden_verifier_runs,
         }
 
 
@@ -49,6 +51,7 @@ class CodingBenchmark:
         prediction_losses = []
         value_errors = []
         q_errors = []
+        hidden_runs = []
         previous_mode = runtime.state.mode
         modules = [
             runtime.encoder,
@@ -64,12 +67,15 @@ class CodingBenchmark:
         with torch.no_grad():
             for task in tasks:
                 metrics = runtime.run_episode(task, RuntimeMode.EVAL)
+                hidden_result = runtime.final_hidden_verification()
+                external_success = bool(hidden_result.get("success", metrics["success"]))
                 rewards.append(float(metrics["reward"]))
                 steps.append(float(metrics["steps"]))
-                successes.append(1.0 if metrics["success"] else 0.0)
+                successes.append(1.0 if external_success else 0.0)
+                hidden_runs.append(float(hidden_result.get("runs", 0)))
                 latest = runtime.state.latest_metrics
                 tests_passed.append(float(latest.get("tests_passed", 0)))
-                regressions.append(1.0 if float(latest.get("tests_failed", 0)) > 0 and metrics["success"] is False else 0.0)
+                regressions.append(1.0 if float(latest.get("tests_failed", 0)) > 0 and external_success is False else 0.0)
                 invalids.append(1.0 if latest.get("invalid_action", False) else 0.0)
                 transition_prediction = [
                     float(transition.metadata.get("prediction_error", 0.0))
@@ -100,4 +106,5 @@ class CodingBenchmark:
             world_model_prediction_loss=mean(prediction_losses) if prediction_losses else 0.0,
             value_prediction_error=mean(value_errors) if value_errors else 0.0,
             q_prediction_error=mean(q_errors) if q_errors else 0.0,
+            hidden_verifier_runs=mean(hidden_runs) if hidden_runs else 0.0,
         )

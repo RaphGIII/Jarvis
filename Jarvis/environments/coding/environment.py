@@ -20,11 +20,19 @@ class SandboxViolation(ValueError):
 class CodingEnvironment:
     """A controlled local coding environment scoped to one sandbox workspace."""
 
-    def __init__(self, task: CodingTask, timeout_seconds: float = 5.0, backend: SandboxBackend | None = None) -> None:
+    def __init__(
+        self,
+        task: CodingTask,
+        timeout_seconds: float = 5.0,
+        backend: SandboxBackend | None = None,
+        *,
+        run_hidden_during_tests: bool = False,
+    ) -> None:
         self.task = task
         self.workspace = task.workspace.resolve()
         self.timeout_seconds = timeout_seconds
         self.backend = backend or DisabledSandboxBackend()
+        self.run_hidden_during_tests = run_hidden_during_tests
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.step_number = 0
         self.latest_action: dict[str, Any] | None = None
@@ -39,9 +47,13 @@ class CodingEnvironment:
             "failed": 0,
             "total": 0,
             "last_return_code": None,
-            "hidden_ran": False,
-            "hidden_passed": 0,
-            "hidden_failed": 0,
+        }
+        self.hidden_state: dict[str, Any] = {
+            "ran": False,
+            "passed": 0,
+            "failed": 0,
+            "runs": 0,
+            "last_return_code": None,
         }
 
     def observe(self) -> CodingObservation:
@@ -148,23 +160,49 @@ class CodingEnvironment:
     def _run_tests(self) -> ActionResult:
         result = self._run_process(self.task.test_command, label="Ran tests.")
         self.test_state = self._parse_test_state(result.stdout, result.stderr, result.return_code)
-        if self._tests_passed() and self.task.hidden_test_command is not None:
-            hidden = self._run_process(
-                self.task.hidden_test_command,
-                label="Ran hidden verifier.",
-                cwd=self.workspace,
-                verifier_workspace=self.task.hidden_workspace,
-                expose_output=False,
-            )
-            hidden_ok = hidden.return_code == 0
-            self.test_state["hidden_ran"] = True
-            self.test_state["hidden_passed"] = int(hidden_ok)
-            self.test_state["hidden_failed"] = int(not hidden_ok)
+        if self.run_hidden_during_tests and self._public_tests_passed() and self.task.hidden_test_command is not None:
+            hidden = self.run_final_hidden_verifier()
+            hidden_ok = bool(hidden["success"])
             if not hidden_ok:
-                self.test_state["failed"] = int(self.test_state.get("failed", 0)) + 1
-                self.test_state["total"] = int(self.test_state.get("total", 0)) + 1
-                return ActionResult(False, "Hidden verifier failed.", stderr="Hidden verifier failed.", return_code=hidden.return_code)
+                return ActionResult(
+                    False,
+                    "Private verifier did not pass.",
+                    stderr="",
+                    return_code=int(hidden.get("return_code") or 1),
+                    data={"private_verifier_failed": True},
+                )
         return result
+
+    def run_final_hidden_verifier(self) -> dict[str, Any]:
+        """Run private verifier once for external evaluation without exposing output."""
+
+        if self.task.hidden_test_command is None:
+            return {"ran": False, "success": self._public_tests_passed(), "return_code": None, "runs": self.hidden_state["runs"]}
+        if self.hidden_state["ran"]:
+            return {
+                "ran": True,
+                "success": bool(self.hidden_state["passed"]),
+                "return_code": self.hidden_state["last_return_code"],
+                "runs": self.hidden_state["runs"],
+            }
+        hidden = self._run_process(
+            self.task.hidden_test_command,
+            label="Ran final verifier.",
+            cwd=self.workspace,
+            verifier_workspace=self.task.hidden_workspace,
+            expose_output=False,
+        )
+        hidden_ok = hidden.return_code == 0
+        self.hidden_state.update(
+            {
+                "ran": True,
+                "passed": int(hidden_ok),
+                "failed": int(not hidden_ok),
+                "runs": int(self.hidden_state["runs"]) + 1,
+                "last_return_code": hidden.return_code,
+            }
+        )
+        return {"ran": True, "success": hidden_ok, "return_code": hidden.return_code, "runs": self.hidden_state["runs"]}
 
     def _run_process(
         self,
@@ -279,6 +317,11 @@ class CodingEnvironment:
         return text[:limit]
 
     def _tests_passed(self) -> bool:
+        if self.run_hidden_during_tests and self.task.hidden_test_command is not None and self.hidden_state["ran"]:
+            return bool(self.hidden_state["passed"])
+        return self._public_tests_passed()
+
+    def _public_tests_passed(self) -> bool:
         return bool(self.test_state.get("ran", False) and self.test_state.get("passed", 0) > 0 and self.test_state.get("failed", 0) == 0)
 
     def _metrics(self, invalid_action: bool = False, max_steps_hit: bool = False) -> dict[str, float | int | str | bool]:

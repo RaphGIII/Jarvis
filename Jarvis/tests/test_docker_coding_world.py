@@ -74,10 +74,12 @@ def test_docker_correct_patch_passes_public_and_hidden_tests(tmp_path):
         )
     )
     result = env.step(ActionCandidate(ActionType.RUN_TESTS))
+    hidden = env.run_final_hidden_verifier()
 
     assert result.success
-    assert result.observation.test_state["hidden_ran"] is True
-    assert result.observation.test_state["hidden_passed"] == 1
+    assert hidden["success"] is True
+    assert hidden["runs"] == 1
+    assert "hidden_passed" not in result.observation.test_state
 
 
 def test_docker_public_only_patch_fails_hidden_verifier(tmp_path):
@@ -91,12 +93,14 @@ def test_docker_public_only_patch_fails_hidden_verifier(tmp_path):
         )
     )
     result = env.step(ActionCandidate(ActionType.RUN_TESTS))
+    hidden = env.run_final_hidden_verifier()
 
-    assert not result.success
-    assert not result.action_result.ok
-    assert result.observation.test_state["hidden_ran"] is True
-    assert result.observation.test_state["hidden_failed"] == 1
-    assert "Hidden verifier failed" in result.action_result.stderr
+    assert result.success
+    assert result.action_result.ok
+    assert hidden["success"] is False
+    assert hidden["runs"] == 1
+    assert "hidden_failed" not in result.observation.test_state
+    assert "Hidden verifier failed" not in result.action_result.stderr
 
 
 def test_docker_hidden_verifier_is_not_agent_visible_or_writable(tmp_path):

@@ -22,10 +22,19 @@ class ActionGenerator(Protocol):
 class QwenActionGenerator:
     """Uses Qwen as structured high-level candidate generator only."""
 
-    def __init__(self, brain: BrainProvider, num_candidates: int = 4, max_tokens: int = 1200) -> None:
+    def __init__(
+        self,
+        brain: BrainProvider,
+        num_candidates: int = 4,
+        max_tokens: int = 1200,
+        temperature: float = 0.6,
+        top_p: float = 0.9,
+    ) -> None:
         self.brain = brain
         self.num_candidates = num_candidates
         self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_p = top_p
         self._cache: dict[str, list[ActionCandidate]] = {}
         self.last_generation_metadata: dict[str, Any] = {}
 
@@ -35,7 +44,10 @@ class QwenActionGenerator:
             self.last_generation_metadata = {"cache_key": cache_key, "cache_hit": True}
             return list(self._cache[cache_key])
         prompt = self._prompt(goal, observation)
-        raw = self.brain.think(prompt, max_tokens=self.max_tokens)
+        if hasattr(self.brain, "think_coding"):
+            raw = self.brain.think_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
+        else:
+            raw = self.brain.think(prompt, max_tokens=self.max_tokens)
         candidates, parse_metadata = parse_action_candidates(raw, return_metadata=True)
         result, diversity_metadata = dedupe_action_candidates(candidates, self.num_candidates)
         if not result:
@@ -69,7 +81,7 @@ class QwenActionGenerator:
             "For PATCH_FILE, provide concrete old/new text that can be applied exactly.\n"
             "For WRITE_FILE, provide path and content. For READ_FILE/RUN_PYTHON, provide path.\n"
             "Include different strategies: inspect/test/minimal patch/alternative patch when useful.\n"
-            "Do not claim hidden verifier knowledge and do not modify tests.\n"
+            "Do not claim private evaluator knowledge and do not modify tests.\n"
             f"Return at most {self.num_candidates} candidates.\n"
             f"Goal: {goal}\n"
             f"Observation:\n{observation.to_text()}"

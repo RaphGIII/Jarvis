@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import hashlib
 from textwrap import dedent
 from dataclasses import dataclass
 from enum import Enum
@@ -128,11 +129,20 @@ class CodingTaskFactory:
         defaults = {DatasetSplit.TRAIN: 30, DatasetSplit.VALIDATION: 10, DatasetSplit.HOLDOUT: 20}
         target_count = count if count is not None else defaults[split]
         templates = self._v03_templates(split)
+        if target_count > len(templates):
+            raise ValueError(f"Not enough distinct v0.3 templates for {split.value}: requested {target_count}, have {len(templates)}")
         tasks: list[CodingTask] = []
         for index in range(target_count):
-            template = templates[index % len(templates)]
+            template = templates[index]
             tasks.append(self._make_v03_task(split, index, template))
         return tasks
+
+    @staticmethod
+    def structural_fingerprint(task: CodingTask) -> str:
+        source = (task.workspace / "solution.py").read_text(encoding="utf-8") if (task.workspace / "solution.py").exists() else ""
+        public = (task.workspace / "test_public.py").read_text(encoding="utf-8") if (task.workspace / "test_public.py").exists() else ""
+        payload = "\n".join([task.description, source, public, str(task.metadata.get("family", ""))])
+        return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
 
     def make_curriculum_candidates(self, count: int = 4) -> list[TaskCandidate]:
         candidates = []
@@ -388,7 +398,39 @@ class CodingTaskFactory:
             },
         ]
         if split == DatasetSplit.TRAIN:
-            return train
+            return self._expand_v03_templates(train, split, 30)
         if split == DatasetSplit.VALIDATION:
-            return validation
-        return holdout
+            return self._expand_v03_templates(validation, split, 10)
+        return self._expand_v03_templates(holdout, split, 20)
+
+    def _expand_v03_templates(self, base_templates: list[dict[str, str]], split: DatasetSplit, target: int) -> list[dict[str, str]]:
+        expanded = []
+        for index in range(target):
+            expanded.append(self._variant_template(base_templates[index % len(base_templates)], split, index))
+        return expanded
+
+    def _variant_template(self, template: dict[str, str], split: DatasetSplit, index: int) -> dict[str, str]:
+        variant = dict(template)
+        token = f"{split.value}_{index}"
+        replacements = {
+            "add_numbers": f"add_numbers_{token}",
+            "shout_name": f"shout_name_{token}",
+            "positive_total": f"positive_total_{token}",
+            "invert_lookup": f"invert_lookup_{token}",
+            "clamp": f"clamp_{token}",
+            "factorial": f"factorial_{token}",
+            "initials": f"initials_{token}",
+            "evens": f"evens_{token}",
+            "parse_scores": f"parse_scores_{token}",
+            "safe_divide": f"safe_divide_{token}",
+            "Counter": f"Counter{split.value.title()}{index}",
+        }
+        for field in ["source", "public_test", "hidden_test", "description"]:
+            text = variant[field]
+            for old, new in replacements.items():
+                text = text.replace(old, new)
+            variant[field] = text
+        variant["family"] = f"{variant['family']}_{token}"
+        variant["source"] = f"# v0.3 {split.value} variant {index}\n" + variant["source"]
+        variant["description"] = f"{variant['description']} Variant {index}."
+        return variant

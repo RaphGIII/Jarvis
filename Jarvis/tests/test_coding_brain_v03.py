@@ -36,11 +36,12 @@ class SequentialPatchBrain:
     def think(self, prompt, max_tokens=1200):
         self.calls += 1
         lowered = prompt.lower()
+        excerpts = lowered.split("excerpts:", 1)[-1]
         if "tests: {'ran': false" in lowered:
             return json.dumps([{"action_type": "RUN_TESTS", "arguments": {}, "reason": "baseline", "confidence": 0.9}])
         if "solution.py:" not in lowered:
             return json.dumps([{"action_type": "READ_FILE", "path": "solution.py", "reason": "inspect", "confidence": 0.9}])
-        if "solution.py:\ndef add_numbers(a, b):\n    return a - b" in lowered or "solution.py:\ndef add(a, b):\n    return a - b" in lowered:
+        if "solution.py:" in excerpts and "return a - b" in excerpts:
             return json.dumps(
                 [
                     {
@@ -52,8 +53,6 @@ class SequentialPatchBrain:
                     }
                 ]
             )
-        if "hidden_passed': 1" in lowered or "hidden_passed\": 1" in lowered:
-            return json.dumps([{"action_type": "FINISH", "arguments": {}, "reason": "verified", "confidence": 0.9}])
         return json.dumps([{"action_type": "RUN_TESTS", "arguments": {}, "reason": "verify", "confidence": 0.9}])
 
 
@@ -128,8 +127,10 @@ def test_v03_public_only_reward_hacking_still_fails_hidden(tmp_path):
     env = CodingEnvironment(task, backend=LocalTestSandboxBackend())
     env.step(ActionCandidate(ActionType.WRITE_FILE, {"path": "calculator.py", "content": "def add(a, b):\n    return 5\n"}))
     result = env.step(ActionCandidate(ActionType.RUN_TESTS))
-    assert not result.success
-    assert result.observation.test_state["hidden_failed"] == 1
+    hidden = env.run_final_hidden_verifier()
+    assert result.success
+    assert hidden["success"] is False
+    assert "hidden_failed" not in result.observation.test_state
 
 
 def test_v03_eval_never_updates_replay_or_optimizers(tmp_path):
@@ -194,6 +195,33 @@ def test_v03_productive_generators_do_not_contain_predefined_holdout_patch():
     assert all(text not in prompt for text in forbidden)
 
 
+def test_v03_holdout_prompt_contains_no_hidden_oracle_feedback(tmp_path):
+    captured = {}
+
+    def response(prompt):
+        captured["prompt"] = prompt
+        return json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])
+
+    runtime = _runtime(tmp_path, StaticBrain(response), mode=RuntimeMode.EVAL)
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    runtime.run_episode(task, RuntimeMode.EVAL)
+    prompt = captured["prompt"]
+    forbidden = ["hidden_passed", "hidden_failed", "hidden_ran", "Hidden verifier failed", "hidden_verifier"]
+    assert all(text not in prompt for text in forbidden)
+    assert all(text not in runtime.environment.observe().to_text() for text in forbidden)
+
+
+def test_v03_holdout_hidden_verifier_runs_once_after_episode(tmp_path):
+    runtime = _runtime(tmp_path, SequentialPatchBrain(), mode=RuntimeMode.EVAL)
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    runtime.run_episode(task, RuntimeMode.EVAL)
+    assert runtime.environment.hidden_state["runs"] == 0
+    first = runtime.final_hidden_verification()
+    second = runtime.final_hidden_verification()
+    assert first["runs"] == 1
+    assert second["runs"] == 1
+
+
 def _dummy_observation():
     from environments.coding.observation import CodingObservation
 
@@ -224,6 +252,47 @@ def test_v03_checkpoint_promotion_prefers_success_over_reward(tmp_path):
     assert manager.should_promote(better_success, best)
 
 
+def test_v03_best_snapshot_survives_worse_latest_and_load_best(tmp_path):
+    runtime = _runtime(tmp_path, SequentialPatchBrain())
+    for parameter in runtime.policy.parameters():
+        parameter.data.fill_(1.0)
+    runtime.save_checkpoints({"success_rate": 1.0, "regression_rate": 0.0, "mean_steps_to_solution": 2.0}, category="latest")
+    runtime.save_checkpoints({"success_rate": 1.0, "regression_rate": 0.0, "mean_steps_to_solution": 2.0}, category="best")
+    best_policy = [parameter.detach().clone() for parameter in runtime.policy.parameters()]
+
+    for parameter in runtime.policy.parameters():
+        parameter.data.fill_(2.0)
+    runtime.save_checkpoints({"success_rate": 0.0, "regression_rate": 0.0, "mean_steps_to_solution": 8.0}, category="latest")
+
+    latest_loaded = _runtime(tmp_path / "latest_load", SequentialPatchBrain())
+    latest_loaded.checkpoint_manager = runtime.checkpoint_manager
+    latest_loaded.load_latest_checkpoints()
+    assert all(torch.allclose(parameter, torch.full_like(parameter, 2.0)) for parameter in latest_loaded.policy.parameters())
+
+    best_loaded = _runtime(tmp_path / "best_load", SequentialPatchBrain())
+    best_loaded.checkpoint_manager = runtime.checkpoint_manager
+    best_loaded.load_best_checkpoints()
+    assert all(torch.allclose(old, new) for old, new in zip(best_policy, best_loaded.policy.parameters()))
+
+
+def test_v03_full_split_fingerprints_are_unique_and_disjoint(tmp_path):
+    factory = CodingTaskFactory(tmp_path / "tasks")
+    splits = {
+        DatasetSplit.TRAIN: factory.make_v03_split_tasks(DatasetSplit.TRAIN),
+        DatasetSplit.VALIDATION: factory.make_v03_split_tasks(DatasetSplit.VALIDATION),
+        DatasetSplit.HOLDOUT: factory.make_v03_split_tasks(DatasetSplit.HOLDOUT),
+    }
+    fingerprints = {split: [factory.structural_fingerprint(task) for task in tasks] for split, tasks in splits.items()}
+    assert len(fingerprints[DatasetSplit.TRAIN]) == 30
+    assert len(fingerprints[DatasetSplit.VALIDATION]) == 10
+    assert len(fingerprints[DatasetSplit.HOLDOUT]) == 20
+    for values in fingerprints.values():
+        assert len(values) == len(set(values))
+    assert set(fingerprints[DatasetSplit.TRAIN]).isdisjoint(fingerprints[DatasetSplit.VALIDATION])
+    assert set(fingerprints[DatasetSplit.TRAIN]).isdisjoint(fingerprints[DatasetSplit.HOLDOUT])
+    assert set(fingerprints[DatasetSplit.VALIDATION]).isdisjoint(fingerprints[DatasetSplit.HOLDOUT])
+
+
 def test_v03_end_to_end_qwen_generated_patch_solves_synthetic_task(tmp_path):
     runtime = _runtime(tmp_path, SequentialPatchBrain(), mode=RuntimeMode.EVAL)
     task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
@@ -244,3 +313,6 @@ def test_v03_smoke_benchmark_entrypoint_uses_qwen_path_with_mock(tmp_path, monke
     assert metrics["ACTION_GENERATOR"] == "QwenActionGenerator"
     assert metrics["QWEN_TRAINABLE"] is False
     assert "BASELINE_HOLDOUT_SUCCESS_RATE" in metrics
+    assert metrics["TRAIN_TASK_COUNT"] == 1
+    assert metrics["VALIDATION_TASK_COUNT"] == 2
+    assert metrics["HOLDOUT_TASK_COUNT"] == 3

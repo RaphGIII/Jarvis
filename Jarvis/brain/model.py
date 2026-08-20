@@ -17,7 +17,7 @@ class JarvisBrain:
 
         print("JARVIS brain online.")
 
-    def ask(self, system_prompt, user_prompt, max_tokens=700):
+    def ask(self, system_prompt, user_prompt, max_tokens=700, temperature=0.2, top_p=None):
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -35,11 +35,16 @@ class JarvisBrain:
         ).to(self.model.device)
 
         with torch.no_grad():
+            generation_kwargs = {
+                "max_new_tokens": max_tokens,
+                "temperature": temperature,
+                "do_sample": True,
+            }
+            if top_p is not None:
+                generation_kwargs["top_p"] = top_p
             output = self.model.generate(
                 **inputs,
-                max_new_tokens=max_tokens,
-                temperature=0.2,
-                do_sample=True
+                **generation_kwargs,
             )
 
         generated = output[0, inputs["input_ids"].shape[1]:]
@@ -51,3 +56,6 @@ class JarvisBrain:
 
     def think(self, user_prompt, max_tokens=MAX_NEW_TOKENS):
         return self.ask(SYSTEM_PROMPT, user_prompt, max_tokens=max_tokens)
+
+    def think_coding(self, user_prompt, max_tokens=900, temperature=0.6, top_p=0.9):
+        return self.ask(SYSTEM_PROMPT, user_prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)

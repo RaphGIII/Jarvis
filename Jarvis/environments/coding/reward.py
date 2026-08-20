@@ -44,7 +44,6 @@ class CodingRewardEngine:
             and current_tests.get("failed", 0) == 0
             and current_tests.get("passed", 0) > 0
         )
-        hidden_passed = bool(current_tests.get("hidden_passed", 0))
         completion = 1.0 if action.action_type == ActionType.FINISH and environment_step.success else 0.0
         step_cost = min(1.0, max(0.0, action.estimated_cost / 10.0))
         error_text = f"{environment_step.action_result.stderr}\n{environment_step.action_result.stdout}".lower()
@@ -58,7 +57,7 @@ class CodingRewardEngine:
         r_errors = -4.0 * invalid - 2.0 * syntax_or_runtime_error
         r_efficiency = -0.2 - 0.15 * step_cost - 0.3 * unchanged_or_passive
         r_completion = 20.0 if environment_step.success else 0.0
-        r_hidden = 5.0 if hidden_passed else 0.0
+        r_hidden = 0.0
         r_public_only = -6.0 if all_tests_passed and not environment_step.success else 0.0
 
         signal = RewardSignal(
