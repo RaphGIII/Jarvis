@@ -11,7 +11,7 @@ from environments.coding.actions import ActionCandidate, ActionType
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import LightweightLocalEmbeddingProvider
 from runtime.action_generator import QwenActionGenerator
-from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig
+from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig, ScoredAction
 from runtime.runtime_state import RuntimeMode
 from training.coding_brain_v03_demo import CodingBrainV03Config, run_coding_brain_v03_demo
 from training.coding_curriculum import CodingTaskFactory, DatasetSplit
@@ -230,6 +230,60 @@ def test_profiler_breakdown_excludes_nested_totals():
     assert summary["breakdown"]["docker_execution"]["percent"] == 10.0
     assert summary["breakdown"]["other"]["percent"] == 50.0
     assert summary["timings"]["total_step"]["percent"] == 0.0
+
+
+def _scored(action_type: ActionType, score: float, feasible: bool) -> ScoredAction:
+    return ScoredAction(
+        candidate=ActionCandidate(action_type),
+        score=score,
+        policy_score=0.0,
+        q_value=0.0,
+        predicted_reward=0.0,
+        expected_information_gain=0.0,
+        risk=0.0,
+        uncertainty=0.0,
+        novelty=0.0,
+        feasible=feasible,
+        feasibility_reason="" if feasible else "infeasible",
+    )
+
+
+def test_select_epsilon_exploration_never_selects_infeasible_when_feasible_exists(tmp_path):
+    runtime = JarvisRuntime(
+        config=JarvisRuntimeConfig(train_exploration_epsilon=1.0, epsilon_min=1.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.TRAIN,
+    )
+    scored = [_scored(ActionType.PATCH_FILE, 999.0, False), _scored(ActionType.READ_FILE, 0.0, True)]
+    for _ in range(25):
+        assert runtime._select(scored).feasible is True
+
+
+def test_select_score_sampling_never_selects_infeasible_when_feasible_exists(tmp_path):
+    runtime = JarvisRuntime(
+        config=JarvisRuntimeConfig(train_exploration_epsilon=0.0, epsilon_min=0.0),
+        data_dir=tmp_path / "runtime",
+        mode=RuntimeMode.TRAIN,
+    )
+    scored = [_scored(ActionType.PATCH_FILE, 1000.0, False), _scored(ActionType.READ_FILE, -1000.0, True)]
+    for _ in range(25):
+        assert runtime._select(scored).feasible is True
+
+
+def test_select_eval_never_selects_infeasible_when_feasible_exists(tmp_path):
+    runtime = JarvisRuntime(data_dir=tmp_path / "runtime", mode=RuntimeMode.EVAL)
+    scored = [_scored(ActionType.PATCH_FILE, 1000.0, False), _scored(ActionType.RUN_TESTS, -1.0, True)]
+    selected = runtime._select(scored)
+    assert selected.feasible is True
+    assert selected.candidate.action_type == ActionType.RUN_TESTS
+
+
+def test_select_all_infeasible_does_not_crash(tmp_path):
+    runtime = JarvisRuntime(data_dir=tmp_path / "runtime", mode=RuntimeMode.EVAL)
+    scored = [_scored(ActionType.PATCH_FILE, 2.0, False), _scored(ActionType.FINISH, 1.0, False)]
+    selected = runtime._select(scored)
+    assert selected.feasible is False
+    assert selected.candidate.action_type == ActionType.PATCH_FILE
 
 
 def test_timing_and_smoke_mode_work(tmp_path, monkeypatch):

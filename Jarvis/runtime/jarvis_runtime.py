@@ -796,6 +796,8 @@ class JarvisRuntime:
         return score
 
     def _select(self, scored: list[ScoredAction]) -> ScoredAction:
+        feasible_scored = [item for item in scored if item.feasible]
+        selection_pool = feasible_scored if feasible_scored else scored
         if self.state.mode == RuntimeMode.TRAIN:
             epsilon = max(
                 self.config.epsilon_min,
@@ -803,12 +805,12 @@ class JarvisRuntime:
                 * torch.exp(torch.tensor(-self.config.epsilon_decay * max(0, self.scheduler.runtime_steps))).item(),
             )
             if self._rng.random() < epsilon:
-                return self._rng.choice(scored)
-            scores = torch.tensor([item.score for item in scored], dtype=torch.float32)
+                return self._rng.choice(selection_pool)
+            scores = torch.tensor([item.score for item in selection_pool], dtype=torch.float32)
             probabilities = F.softmax(scores, dim=0)
             index = int(torch.multinomial(probabilities, 1).item())
-            return scored[index]
-        return scored[0]
+            return selection_pool[index]
+        return selection_pool[0]
 
     def _estimate_risk(self, candidate: ActionCandidate, observation: CodingObservation) -> float:
         risk = 0.0
