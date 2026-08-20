@@ -329,6 +329,34 @@ def test_parser_enforces_action_specific_required_arguments():
     assert metadata["schema_invalid_candidates"] == 3
 
 
+def test_guided_json_schema_uses_only_vllm_compatible_structural_keywords():
+    unsupported_keywords = {
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "format",
+        "multipleOf",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+    }
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                assert key not in unsupported_keywords
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    schema = action_candidate_json_schema()
+    walk(schema)
+    assert schema["required"] == ["candidates"]
+
+
 class SequentialGenerationProvider:
     provider_name = "sequential"
     model_name = "sequential-model"

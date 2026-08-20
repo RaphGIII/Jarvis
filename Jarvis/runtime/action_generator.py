@@ -45,8 +45,8 @@ def action_candidate_json_schema() -> dict[str, Any]:
         "reasoning_summary": {"type": "string"},
         "reason": {"type": "string"},
         "expected_effect": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "estimated_cost": {"type": "number", "minimum": 0.0},
+        "confidence": {"type": "number"},
+        "estimated_cost": {"type": "number"},
     }
 
     def item(action_type: ActionType, arguments: dict[str, Any] | None = None, required_args: list[str] | None = None) -> dict[str, Any]:
@@ -66,17 +66,16 @@ def action_candidate_json_schema() -> dict[str, Any]:
             "required": ["action_type"],
         }
 
-    path = {"path": {"type": "string", "minLength": 1}}
-    patch_args = {"path": {"type": "string", "minLength": 1}, "old": {"type": "string", "minLength": 1}, "new": {"type": "string"}}
-    write_args = {"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}
-    search_args = {"query": {"type": "string", "minLength": 1}}
+    path = {"path": {"type": "string"}}
+    patch_args = {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}}
+    write_args = {"path": {"type": "string"}, "content": {"type": "string"}}
+    search_args = {"query": {"type": "string"}}
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
             "candidates": {
                 "type": "array",
-                "minItems": 0,
                 "items": {
                     "oneOf": [
                         item(ActionType.LIST_FILES, {}, []),
