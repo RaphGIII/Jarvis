@@ -120,7 +120,7 @@ class CodingEnvironment:
         if action_type == ActionType.RUN_PYTHON:
             script = str(arguments.get("path", ""))
             path = self._safe_path(script, must_exist=True)
-            return self._run_process([sys.executable, str(path)], label=f"Ran Python {script}.")
+            return self._run_process([sys.executable, script], label=f"Ran Python {script}.")
         if action_type == ActionType.INSPECT_ERROR:
             return ActionResult(True, "Inspected latest error.", stdout=self.latest_error, data={"error": self.latest_error})
         if action_type == ActionType.FINISH:
@@ -151,7 +151,8 @@ class CodingEnvironment:
             hidden = self._run_process(
                 self.task.hidden_test_command,
                 label="Ran hidden verifier.",
-                cwd=self.task.hidden_workspace or self.workspace,
+                cwd=self.workspace,
+                verifier_workspace=self.task.hidden_workspace,
                 expose_output=False,
             )
             hidden_ok = hidden.return_code == 0
@@ -169,6 +170,7 @@ class CodingEnvironment:
         command: list[str],
         label: str,
         cwd: Path | None = None,
+        verifier_workspace: Path | None = None,
         expose_output: bool = True,
     ) -> ActionResult:
         completed = self.backend.run(
@@ -176,6 +178,7 @@ class CodingEnvironment:
             cwd=cwd or self.workspace,
             timeout_seconds=self.timeout_seconds,
             env=self._subprocess_env(),
+            verifier_workspace=verifier_workspace,
         )
         ok = completed.returncode == 0
         return ActionResult(

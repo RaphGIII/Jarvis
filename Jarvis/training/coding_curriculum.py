@@ -93,10 +93,10 @@ class CodingTaskFactory:
             "    unittest.main()\n",
             encoding="utf-8",
         )
-        workspace_literal = str(workspace).replace("\\", "\\\\")
         (hidden_workspace / "hidden_verifier.py").write_text(
+            "import os\n"
             "import sys\n"
-            f"sys.path.insert(0, r'{workspace_literal}')\n"
+            "sys.path.insert(0, os.environ.get('JARVIS_WORKSPACE', '/workspace'))\n"
             f"from calculator import {function_name}\n"
             f"assert {function_name}(-2, 5) == 3\n"
             f"assert {function_name}(10, 7) == 17\n",

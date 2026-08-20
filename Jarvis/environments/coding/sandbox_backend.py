@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -21,7 +22,14 @@ class SandboxPolicy:
 class SandboxBackend(Protocol):
     policy: SandboxPolicy
 
-    def run(self, command: list[str], cwd: Path, timeout_seconds: float, env: dict[str, str]) -> subprocess.CompletedProcess:
+    def run(
+        self,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: float,
+        env: dict[str, str],
+        verifier_workspace: Path | None = None,
+    ) -> subprocess.CompletedProcess:
         ...
 
 
@@ -31,7 +39,14 @@ class DisabledSandboxBackend:
     def __init__(self, policy: SandboxPolicy | None = None) -> None:
         self.policy = policy or SandboxPolicy()
 
-    def run(self, command: list[str], cwd: Path, timeout_seconds: float, env: dict[str, str]) -> subprocess.CompletedProcess:
+    def run(
+        self,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: float,
+        env: dict[str, str],
+        verifier_workspace: Path | None = None,
+    ) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(
             command,
             returncode=126,
@@ -46,16 +61,26 @@ class LocalTestSandboxBackend:
     def __init__(self, policy: SandboxPolicy | None = None) -> None:
         self.policy = policy or SandboxPolicy()
 
-    def run(self, command: list[str], cwd: Path, timeout_seconds: float, env: dict[str, str]) -> subprocess.CompletedProcess:
+    def run(
+        self,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: float,
+        env: dict[str, str],
+        verifier_workspace: Path | None = None,
+    ) -> subprocess.CompletedProcess:
         clean_env = {
             key: value
             for key, value in env.items()
             if not key.upper().startswith(("SECRET", "TOKEN", "API_KEY"))
         }
         clean_env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+        clean_env["JARVIS_WORKSPACE"] = str(cwd.resolve())
+        if verifier_workspace is not None:
+            clean_env["PYTHONPATH"] = str(cwd.resolve())
         return subprocess.run(
             command,
-            cwd=cwd,
+            cwd=verifier_workspace or cwd,
             capture_output=True,
             text=True,
             timeout=min(timeout_seconds, self.policy.timeout_seconds),
@@ -74,12 +99,24 @@ class DockerSandboxBackend:
     @staticmethod
     def is_available() -> bool:
         try:
-            completed = subprocess.run(["docker", "--version"], capture_output=True, text=True, timeout=2)
+            completed = subprocess.run(
+                ["docker", "version", "--format", "{{.Server.Version}}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             return completed.returncode == 0
         except Exception:
             return False
 
-    def run(self, command: list[str], cwd: Path, timeout_seconds: float, env: dict[str, str]) -> subprocess.CompletedProcess:
+    def run(
+        self,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: float,
+        env: dict[str, str],
+        verifier_workspace: Path | None = None,
+    ) -> subprocess.CompletedProcess:
         if not self.is_available():
             return subprocess.CompletedProcess(
                 command,
@@ -87,6 +124,10 @@ class DockerSandboxBackend:
                 stdout="",
                 stderr="Docker sandbox unavailable; unsafe host fallback is disabled.",
             )
+        workspace = cwd.resolve()
+        verifier = verifier_workspace.resolve() if verifier_workspace is not None else None
+        normalized_command = self._normalize_command(command, workspace, verifier)
+        container_cwd = "/verifier" if verifier is not None else "/workspace"
         docker_command = [
             "docker",
             "run",
@@ -101,13 +142,24 @@ class DockerSandboxBackend:
             str(self.policy.pid_limit),
             "--security-opt",
             "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "-e",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "-e",
+            "PYTHONPATH=/workspace",
+            "-e",
+            "JARVIS_WORKSPACE=/workspace",
             "-v",
-            f"{cwd.resolve()}:/workspace:rw",
+            f"{workspace}:/workspace:rw",
             "-w",
-            "/workspace",
-            self.image,
-            *command,
+            container_cwd,
         ]
+        if self.policy.non_root:
+            docker_command.extend(["--user", "65532:65532"])
+        if verifier is not None:
+            docker_command.extend(["-v", f"{verifier}:/verifier:ro"])
+        docker_command.extend([self.image, *normalized_command])
         return subprocess.run(
             docker_command,
             capture_output=True,
@@ -116,3 +168,43 @@ class DockerSandboxBackend:
             shell=False,
             env={key: value for key, value in os.environ.items() if key in {"PATH", "SYSTEMROOT", "COMSPEC"}},
         )
+
+    def _normalize_command(self, command: list[str], workspace: Path, verifier: Path | None) -> list[str]:
+        normalized: list[str] = []
+        for index, token in enumerate(command):
+            if index == 0 and self._is_host_python(token):
+                normalized.append("python")
+                continue
+            normalized.append(self._containerize_path(token, workspace, verifier))
+        return normalized
+
+    @staticmethod
+    def _is_host_python(token: str) -> bool:
+        lowered = token.lower().replace("\\", "/")
+        executable = str(Path(sys.executable)).lower().replace("\\", "/")
+        return (
+            lowered == executable
+            or lowered.endswith("/python.exe")
+            or lowered.endswith("/python")
+            or lowered in {"python", "python.exe", "py", "py.exe"}
+        )
+
+    @staticmethod
+    def _containerize_path(token: str, workspace: Path, verifier: Path | None) -> str:
+        try:
+            path = Path(token)
+        except (OSError, ValueError):
+            return token
+        if not path.is_absolute():
+            return token
+        resolved = path.resolve(strict=False)
+        if resolved == workspace:
+            return "/workspace"
+        if resolved.is_relative_to(workspace):
+            return "/workspace/" + resolved.relative_to(workspace).as_posix()
+        if verifier is not None:
+            if resolved == verifier:
+                return "/verifier"
+            if resolved.is_relative_to(verifier):
+                return "/verifier/" + resolved.relative_to(verifier).as_posix()
+        return token
