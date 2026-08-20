@@ -144,7 +144,11 @@ class OpenAICompatibleBrainProvider:
             "max_tokens": max_tokens,
         }
         body = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "Jarvis/0.3",
+}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         last_error: Exception | None = None
