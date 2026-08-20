@@ -344,6 +344,11 @@ class JarvisRuntime:
             "zero_valid_qwen_candidates",
             "fallback_backfill_count",
             "duplicate_candidates",
+            "generation_length_truncation_count",
+            "structured_generation_requests",
+            "structured_generation_failures",
+            "candidate_regeneration_count",
+            "candidate_regeneration_success_count",
         ]:
             if generation_metadata.get(key) is not None:
                 self.profiler.increment(key, float(generation_metadata.get(key) or 0))
@@ -712,6 +717,7 @@ class JarvisRuntime:
             heuristic_score = (
                 + self.config.confidence_weight * candidate.confidence
                 + self._cold_start_workflow_score(candidate, observation)
+                - self._stagnation_penalty(candidate, observation)
                 - self.config.risk_weight * risk
                 - self.config.cost_weight * candidate.estimated_cost
             )
@@ -818,12 +824,25 @@ class JarvisRuntime:
         tests_ran = bool(observation.test_state.get("ran", False))
         tests_passing = bool(observation.test_state.get("passed", 0) > 0 and observation.test_state.get("failed", 0) == 0)
         has_excerpts = bool(observation.relevant_file_excerpts)
+        code_changed_since_last_test = self._code_changed_since_last_test()
         implementation_unread = any(
             path.endswith(".py")
             and not Path(path).name.startswith("test")
             and path not in observation.relevant_file_excerpts
             for path in observation.workspace_tree
         )
+        if code_changed_since_last_test:
+            if candidate.action_type == ActionType.RUN_TESTS:
+                score += 2.5
+            elif candidate.action_type in {
+                ActionType.PATCH_FILE,
+                ActionType.WRITE_FILE,
+                ActionType.RUN_PYTHON,
+                ActionType.INSPECT_ERROR,
+                ActionType.LIST_FILES,
+                ActionType.SEARCH_TEXT,
+            }:
+                score -= 0.75
         if candidate.action_type == ActionType.RUN_TESTS and not tests_ran:
             score += 0.35
         if candidate.action_type == ActionType.RUN_TESTS and tests_ran and implementation_unread:
@@ -837,6 +856,38 @@ class JarvisRuntime:
         if candidate.action_type == ActionType.FINISH and tests_passing:
             score += 0.2
         return score
+
+    def _code_changed_since_last_test(self) -> bool:
+        if self.state.trajectory is None:
+            return False
+        for transition in reversed(self.state.trajectory.transitions):
+            action_data = transition.metadata.get("action", {})
+            action_type = str(action_data.get("action_type", "")).upper()
+            if action_type == ActionType.RUN_TESTS.name:
+                return False
+            if action_type in {ActionType.PATCH_FILE.name, ActionType.WRITE_FILE.name}:
+                metrics = transition.metadata.get("objective_metrics", {})
+                if not metrics.get("invalid_action", False):
+                    return True
+        return False
+
+    def _stagnation_penalty(self, candidate: ActionCandidate, observation: CodingObservation) -> float:
+        if self.state.trajectory is None or not self.state.trajectory.transitions:
+            return 0.0
+        latest = self.state.trajectory.transitions[-1]
+        action_data = latest.metadata.get("action", {})
+        latest_type = str(action_data.get("action_type", "")).upper()
+        if candidate.action_type == ActionType.RUN_TESTS:
+            if self._code_changed_since_last_test():
+                return 0.0
+            return 0.8 if latest_type == ActionType.RUN_TESTS.name else 0.0
+        if candidate.action_type == ActionType.INSPECT_ERROR and latest_type == ActionType.INSPECT_ERROR.name:
+            if str(latest.next_observation.get("error_output", "")) == str(observation.error_output):
+                return 0.6
+        if candidate.action_type == ActionType.LIST_FILES and latest_type == ActionType.LIST_FILES.name:
+            if latest.next_observation.get("workspace_tree") == observation.workspace_tree:
+                return 0.5
+        return 0.0
 
     def _select(self, scored: list[ScoredAction]) -> ScoredAction:
         feasible_scored = [item for item in scored if item.feasible]

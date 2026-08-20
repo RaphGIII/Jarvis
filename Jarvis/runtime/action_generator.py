@@ -20,6 +20,17 @@ class BrainProvider(Protocol):
     def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
         ...
 
+    def generate_structured(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        *,
+        max_tokens: int = 450,
+        temperature: float = 0.6,
+        top_p: float = 0.9,
+    ) -> str:
+        ...
+
     def think(self, user_prompt: str, max_tokens: int = 700) -> str:
         ...
 
@@ -27,6 +38,62 @@ class BrainProvider(Protocol):
 class ActionGenerator(Protocol):
     def generate(self, goal: str, observation: CodingObservation) -> list[ActionCandidate]:
         ...
+
+
+def action_candidate_json_schema() -> dict[str, Any]:
+    common = {
+        "reasoning_summary": {"type": "string"},
+        "reason": {"type": "string"},
+        "expected_effect": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "estimated_cost": {"type": "number", "minimum": 0.0},
+    }
+
+    def item(action_type: ActionType, arguments: dict[str, Any] | None = None, required_args: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "action_type": {"const": action_type.name},
+                "arguments": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": arguments or {},
+                    "required": required_args or [],
+                },
+                **common,
+            },
+            "required": ["action_type"],
+        }
+
+    path = {"path": {"type": "string", "minLength": 1}}
+    patch_args = {"path": {"type": "string", "minLength": 1}, "old": {"type": "string", "minLength": 1}, "new": {"type": "string"}}
+    write_args = {"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}
+    search_args = {"query": {"type": "string", "minLength": 1}}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "candidates": {
+                "type": "array",
+                "minItems": 0,
+                "items": {
+                    "oneOf": [
+                        item(ActionType.LIST_FILES, {}, []),
+                        item(ActionType.READ_FILE, path, ["path"]),
+                        item(ActionType.SEARCH_TEXT, search_args, ["query"]),
+                        item(ActionType.WRITE_FILE, write_args, ["path", "content"]),
+                        item(ActionType.PATCH_FILE, patch_args, ["path", "old", "new"]),
+                        item(ActionType.RUN_TESTS, {}, []),
+                        item(ActionType.RUN_PYTHON, path, ["path"]),
+                        item(ActionType.INSPECT_ERROR, {}, []),
+                        item(ActionType.FINISH, {}, []),
+                    ]
+                },
+            }
+        },
+        "required": ["candidates"],
+    }
 
 
 class QwenActionGenerator:
@@ -55,35 +122,98 @@ class QwenActionGenerator:
             return list(self._cache[cache_key])
         prompt = self._prompt(goal, observation)
         started = time.perf_counter()
-        if hasattr(self.brain, "generate_coding"):
-            raw = self.brain.generate_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
-        elif hasattr(self.brain, "think_coding"):
-            raw = self.brain.think_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
-        else:
-            raw = self.brain.think(prompt, max_tokens=self.max_tokens)
+        raw, request_metadata = self._request_candidates(prompt)
         latency_seconds = time.perf_counter() - started
         candidates, parse_metadata = parse_action_candidates(raw, return_metadata=True)
+        regeneration_count = 0
+        regeneration_success_count = 0
+        first_parse_metadata = dict(parse_metadata)
+        if not candidates and request_metadata.get("genuine_brain_request", True):
+            regeneration_count = 1
+            repair_prompt = self._repair_prompt(prompt, raw, parse_metadata)
+            retry_started = time.perf_counter()
+            retry_raw, retry_metadata = self._request_candidates(repair_prompt)
+            latency_seconds += time.perf_counter() - retry_started
+            retry_candidates, retry_parse_metadata = parse_action_candidates(retry_raw, return_metadata=True)
+            request_metadata = _merge_generation_metadata(request_metadata, retry_metadata)
+            request_metadata["raw_response_hash"] = sha256(retry_raw.encode("utf-8", errors="ignore")).hexdigest()
+            if retry_candidates:
+                raw = retry_raw
+                candidates = retry_candidates
+                parse_metadata = retry_parse_metadata
+                regeneration_success_count = 1
+            else:
+                parse_metadata = _merge_parse_metadata(first_parse_metadata, retry_parse_metadata)
         result, diversity_metadata = dedupe_action_candidates(candidates, self.num_candidates)
         backfilled = 0
         if len(result) < self.num_candidates:
             result, backfilled = backfill_action_candidates(result, fallback_candidates(observation), self.num_candidates)
+        provider_metadata = getattr(self.brain, "last_metadata", {}) or {}
         self.last_generation_metadata = {
             "cache_key": cache_key,
             "cache_hit": False,
             "latency_seconds": latency_seconds,
             "provider": getattr(self.brain, "provider_name", self.brain.__class__.__name__),
             "model": getattr(self.brain, "model_name", ""),
-            "generated_tokens": getattr(self.brain, "last_metadata", {}).get("generated_tokens"),
-            "raw_response_hash": sha256(raw.encode("utf-8", errors="ignore")).hexdigest(),
+            "generated_tokens": provider_metadata.get("generated_tokens"),
+            "total_tokens": provider_metadata.get("total_tokens"),
+            "finish_reason": provider_metadata.get("finish_reason"),
+            "attempts": provider_metadata.get("attempts"),
+            "raw_response_hash": request_metadata.get("raw_response_hash") or sha256(raw.encode("utf-8", errors="ignore")).hexdigest(),
             "valid_candidates": len(candidates),
             "zero_valid_qwen_candidates": 1 if not candidates else 0,
             "returned_candidates": len(result),
             "fallback_backfill_count": backfilled,
+            "generation_length_truncation_count": 1 if provider_metadata.get("finish_reason") == "length" else 0,
+            "structured_generation_requests": int(request_metadata.get("structured_generation_requests", 0)),
+            "structured_generation_failures": int(request_metadata.get("structured_generation_failures", 0)),
+            "candidate_regeneration_count": regeneration_count,
+            "candidate_regeneration_success_count": regeneration_success_count,
             **parse_metadata,
             **diversity_metadata,
         }
-        self._cache[cache_key] = result
+        if candidates and not parse_metadata.get("parse_error") and result:
+            self._cache[cache_key] = result
         return list(result)
+
+    def _request_candidates(self, prompt: str) -> tuple[str, dict[str, Any]]:
+        metadata = {
+            "structured_generation_requests": 0,
+            "structured_generation_failures": 0,
+            "genuine_brain_request": True,
+        }
+        if _supports_structured_generation(self.brain):
+            metadata["structured_generation_requests"] = 1
+            try:
+                raw = self.brain.generate_structured(
+                    prompt,
+                    action_candidate_json_schema(),
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                )
+                metadata["raw_response_hash"] = sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
+                return raw, metadata
+            except (AttributeError, NotImplementedError, RuntimeError, ValueError, TypeError):
+                metadata["structured_generation_failures"] = 1
+        if hasattr(self.brain, "generate_coding"):
+            raw = self.brain.generate_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
+        elif hasattr(self.brain, "think_coding"):
+            raw = self.brain.think_coding(prompt, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p)
+        else:
+            raw = self.brain.think(prompt, max_tokens=self.max_tokens)
+        metadata["raw_response_hash"] = sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
+        return raw, metadata
+
+    def _repair_prompt(self, prompt: str, raw: str, parse_metadata: dict[str, Any]) -> str:
+        reason = parse_metadata.get("parse_error") or "no valid candidates matched the CodingWorld action schema"
+        return (
+            f"{prompt}\n\n"
+            "The previous response could not be used. Return JSON only as a top-level object with a candidates array.\n"
+            f"Problem: {reason}\n"
+            f"Previous response excerpt: {raw[:600]}\n"
+            "Each candidate must use one allowed action_type and only the required arguments for that action."
+        )
 
     def _prompt(self, goal: str, observation: CodingObservation) -> str:
         allowed = ", ".join(action.name for action in ActionType)
@@ -92,13 +222,12 @@ class QwenActionGenerator:
             f"Allowed action_type values: {allowed}\n"
             f"Return exactly {self.num_candidates} candidates when possible; otherwise return as many structurally plausible candidates as you can.\n"
             "Use this schema:\n"
-            "[{\"reason\":\"short private summary\","
+            "{\"candidates\":[{\"reason\":\"short private summary\","
             "\"action_type\":\"PATCH_FILE\","
-            "\"path\":\"solution.py\","
-            "\"arguments\":{\"old\":\"exact old text\",\"new\":\"exact replacement text\"},"
+            "\"arguments\":{\"path\":\"solution.py\",\"old\":\"exact old text\",\"new\":\"exact replacement text\"},"
             "\"expected_effect\":\"what should improve\","
             "\"confidence\":0.5,"
-            "\"estimated_cost\":1.0}]\n"
+            "\"estimated_cost\":1.0}]}\n"
             "For PATCH_FILE, provide concrete old/new text that can be applied exactly.\n"
             "If source content is not visible, do not guess a PATCH_FILE old string. Generate READ_FILE instead.\n"
             "If public tests have not run, RUN_TESTS is reasonable.\n"
@@ -209,8 +338,13 @@ def _candidate_from_qwen_item(item: dict[str, Any]) -> ActionCandidate:
             arguments["patch"] = patch
     if action_type == ActionType.WRITE_FILE and "content" in item and "content" not in arguments:
         arguments["content"] = item["content"]
+    if action_type == ActionType.SEARCH_TEXT and "query" in item and "query" not in arguments:
+        arguments["query"] = item["query"]
     if action_type in {ActionType.RUN_TESTS, ActionType.LIST_FILES, ActionType.INSPECT_ERROR, ActionType.FINISH}:
+        if arguments:
+            raise ValueError(f"{action_type.name} does not accept arguments")
         arguments = {}
+    _validate_action_arguments(action_type, arguments)
     reason = str(item.get("reasoning_summary") or item.get("reason") or "")
     expected = str(item.get("expected_effect") or "")
     summary = reason if not expected else f"{reason} Expected: {expected}".strip()
@@ -221,6 +355,29 @@ def _candidate_from_qwen_item(item: dict[str, Any]) -> ActionCandidate:
         confidence=_clamp_float(item.get("confidence", 0.5), 0.0, 1.0),
         estimated_cost=_clamp_float(item.get("estimated_cost", _default_cost(action_type)), 0.1, 10.0),
     )
+
+
+def _validate_action_arguments(action_type: ActionType, arguments: dict[str, Any]) -> None:
+    if action_type in {ActionType.LIST_FILES, ActionType.RUN_TESTS, ActionType.INSPECT_ERROR, ActionType.FINISH}:
+        if arguments:
+            raise ValueError(f"{action_type.name} does not accept arguments")
+        return
+    if action_type in {ActionType.READ_FILE, ActionType.RUN_PYTHON}:
+        if not str(arguments.get("path", "")).strip():
+            raise ValueError(f"{action_type.name} requires path")
+        return
+    if action_type == ActionType.SEARCH_TEXT:
+        if not str(arguments.get("query", "")).strip():
+            raise ValueError("SEARCH_TEXT requires query")
+        return
+    if action_type == ActionType.WRITE_FILE:
+        if not str(arguments.get("path", "")).strip() or "content" not in arguments:
+            raise ValueError("WRITE_FILE requires path and content")
+        return
+    if action_type == ActionType.PATCH_FILE:
+        if not str(arguments.get("path", "")).strip() or not str(arguments.get("old", "")) or "new" not in arguments:
+            raise ValueError("PATCH_FILE requires path, old, and new")
+        return
 
 
 def dedupe_action_candidates(candidates: list[ActionCandidate], limit: int) -> tuple[list[ActionCandidate], dict[str, int]]:
@@ -285,6 +442,38 @@ def _default_cost(action_type: ActionType) -> float:
     if action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE}:
         return 3.0
     return 1.0
+
+
+def _supports_structured_generation(brain: BrainProvider) -> bool:
+    capabilities = getattr(brain, "capabilities", None)
+    if callable(capabilities):
+        try:
+            if capabilities().get("structured_generation") is True:
+                return hasattr(brain, "generate_structured")
+        except Exception:
+            return False
+    return False
+
+
+def _merge_generation_metadata(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(first)
+    for key in ["structured_generation_requests", "structured_generation_failures"]:
+        merged[key] = int(first.get(key, 0)) + int(second.get(key, 0))
+    for key, value in second.items():
+        if key not in {"structured_generation_requests", "structured_generation_failures"}:
+            merged[key] = value
+    return merged
+
+
+def _merge_parse_metadata(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(second)
+    for key in ["malformed_items", "schema_invalid_candidates", "parse_error_count"]:
+        merged[key] = int(first.get(key, 0)) + int(second.get(key, 0))
+    if first.get("parse_error") and second.get("parse_error"):
+        merged["parse_error"] = f"{first['parse_error']} | retry: {second['parse_error']}"
+    elif first.get("parse_error"):
+        merged["parse_error"] = first["parse_error"]
+    return merged
 
 
 def fallback_candidates(observation: CodingObservation) -> list[ActionCandidate]:

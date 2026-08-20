@@ -21,6 +21,17 @@ class BrainProvider(Protocol):
     def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
         ...
 
+    def generate_structured(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        *,
+        max_tokens: int = 450,
+        temperature: float = 0.6,
+        top_p: float = 0.9,
+    ) -> str:
+        ...
+
     def health_check(self) -> dict[str, Any]:
         ...
 
@@ -50,6 +61,17 @@ class LocalTransformersBrainProvider:
     def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
         return self.generate(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
 
+    def generate_structured(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        *,
+        max_tokens: int = 450,
+        temperature: float = 0.6,
+        top_p: float = 0.9,
+    ) -> str:
+        raise NotImplementedError("Local Transformers provider does not support guided JSON generation.")
+
     def think(self, user_prompt: str, max_tokens: int = MAX_NEW_TOKENS) -> str:
         return self.generate(user_prompt, max_tokens=max_tokens)
 
@@ -60,7 +82,7 @@ class LocalTransformersBrainProvider:
         return {"ok": self.model is not None, "provider": self.provider_name, "model": self.model_name}
 
     def capabilities(self) -> dict[str, Any]:
-        return {"chat": True, "coding": True, "embeddings": False, "local": True}
+        return {"chat": True, "coding": True, "embeddings": False, "local": True, "structured_generation": False}
 
 
 @dataclass(frozen=True)
@@ -115,6 +137,23 @@ class OpenAICompatibleBrainProvider:
     def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
         return self._chat_completion(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
 
+    def generate_structured(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        *,
+        max_tokens: int = 450,
+        temperature: float = 0.6,
+        top_p: float = 0.9,
+    ) -> str:
+        return self._chat_completion(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            response_schema=schema,
+        )
+
     def think(self, user_prompt: str, max_tokens: int = MAX_NEW_TOKENS) -> str:
         return self.generate(user_prompt, max_tokens=max_tokens)
 
@@ -129,9 +168,17 @@ class OpenAICompatibleBrainProvider:
             return {"ok": False, "provider": self.provider_name, "model": self.model_name, "error": type(exc).__name__}
 
     def capabilities(self) -> dict[str, Any]:
-        return {"chat": True, "coding": True, "embeddings": False, "local": False}
+        return {"chat": True, "coding": True, "embeddings": False, "local": False, "structured_generation": True}
 
-    def _chat_completion(self, prompt: str, *, max_tokens: int, temperature: float, top_p: float) -> str:
+    def _chat_completion(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        response_schema: dict[str, Any] | None = None,
+    ) -> str:
         url = self.config.base_url.rstrip("/") + "/v1/chat/completions"
         payload = {
             "model": self.config.model,
@@ -143,6 +190,8 @@ class OpenAICompatibleBrainProvider:
             "top_p": top_p,
             "max_tokens": max_tokens,
         }
+        if response_schema is not None:
+            payload["guided_json"] = response_schema
         body = json.dumps(payload).encode("utf-8")
         headers = {
     "Content-Type": "application/json",
@@ -158,12 +207,14 @@ class OpenAICompatibleBrainProvider:
                 request = urllib.request.Request(url, data=body, headers=headers, method="POST")
                 with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                content = choice["message"]["content"]
                 usage = data.get("usage") or {}
                 self.last_metadata = {
                     "latency_seconds": time.perf_counter() - started,
                     "generated_tokens": usage.get("completion_tokens"),
                     "total_tokens": usage.get("total_tokens"),
+                    "finish_reason": choice.get("finish_reason"),
                     "attempts": attempt + 1,
                 }
                 return str(content)

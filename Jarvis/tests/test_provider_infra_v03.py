@@ -10,7 +10,7 @@ from brain.providers import LocalTransformersBrainProvider, OpenAICompatibleBrai
 from environments.coding.actions import ActionCandidate, ActionType
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import LightweightLocalEmbeddingProvider
-from runtime.action_generator import QwenActionGenerator, fallback_candidates, parse_action_candidates
+from runtime.action_generator import QwenActionGenerator, action_candidate_json_schema, fallback_candidates, parse_action_candidates
 from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig, ScoredAction
 from runtime.runtime_state import RuntimeMode
 from training.coding_brain_v03_demo import CodingBrainV03Config, run_coding_brain_v03_demo
@@ -55,6 +55,29 @@ def test_local_provider_works_through_common_interface():
     assert provider.generate("hello") == "local-ok"
     assert provider.generate_coding("code") == "local-ok"
     assert provider.health_check()["ok"] is True
+    assert provider.capabilities()["structured_generation"] is False
+    try:
+        provider.generate_structured("hello", action_candidate_json_schema())
+    except NotImplementedError:
+        pass
+    else:
+        raise AssertionError("local provider should not claim guided JSON support")
+
+
+def test_qwen_action_generator_falls_back_when_local_provider_has_no_guided_json(tmp_path):
+    provider = LocalTransformersBrainProvider(brain=FakeLocalBrain(), model_id="fake-local")
+    provider.brain.ask = lambda system_prompt, user_prompt, max_tokens=700, temperature=0.2, top_p=None: json.dumps(
+        [{"action_type": "RUN_TESTS", "arguments": {}}]
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    observation = CodingEnvironment(task, backend=LocalTestSandboxBackend()).observe()
+    generator = QwenActionGenerator(provider, num_candidates=1)
+    candidates = generator.generate(task.description, observation)
+    assert candidates[0].action_type == ActionType.RUN_TESTS
+    assert generator.last_generation_metadata["structured_generation_requests"] == 0
 
 
 def test_openai_compatible_provider_works_with_mocked_http_server():
@@ -96,6 +119,53 @@ def test_openai_compatible_provider_works_with_mocked_http_server():
         assert captured["payload"]["model"] == "remote-test"
         assert captured["authorization"] == "Bearer secret-test-key"
         assert provider.last_metadata["generated_tokens"] == 7
+    finally:
+        server.shutdown()
+
+
+def test_openai_compatible_provider_sends_guided_json_schema_to_server():
+    captured = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers["Content-Length"])
+            captured["payload"] = json.loads(self.rfile.read(length).decode("utf-8"))
+            body = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": "{\"candidates\":[{\"action_type\":\"RUN_TESTS\",\"arguments\":{}}]}"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"completion_tokens": 11, "total_tokens": 31},
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return None
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = OpenAICompatibleBrainProvider(
+            OpenAICompatibleConfig(base_url=f"http://127.0.0.1:{server.server_port}", api_key="", model="remote-test", timeout=5)
+        )
+        schema = action_candidate_json_schema()
+        response = provider.generate_structured("generate candidates", schema, max_tokens=30)
+        assert "RUN_TESTS" in response
+        assert captured["payload"]["guided_json"] == schema
+        assert provider.capabilities()["structured_generation"] is True
+        assert provider.last_metadata["finish_reason"] == "stop"
+        assert provider.last_metadata["generated_tokens"] == 11
+        assert provider.last_metadata["total_tokens"] == 31
+        assert provider.last_metadata["attempts"] == 1
     finally:
         server.shutdown()
 
@@ -234,6 +304,126 @@ def test_parse_diagnostics_count_parse_and_schema_errors():
     assert metadata["schema_invalid_candidates"] == 2
 
 
+def test_parser_accepts_legacy_top_level_list_and_path_fields():
+    parsed = parse_action_candidates('[{"action_type":"READ_FILE","path":"solution.py","reason":"inspect"}]')
+    assert len(parsed) == 1
+    assert parsed[0].action_type == ActionType.READ_FILE
+    assert parsed[0].arguments["path"] == "solution.py"
+
+
+def test_parser_enforces_action_specific_required_arguments():
+    parsed, metadata = parse_action_candidates(
+        json.dumps(
+            {
+                "candidates": [
+                    {"action_type": "READ_FILE", "arguments": {}},
+                    {"action_type": "PATCH_FILE", "arguments": {"path": "solution.py", "old": "x"}},
+                    {"action_type": "RUN_TESTS", "arguments": {"path": "test_public.py"}},
+                    {"action_type": "SEARCH_TEXT", "arguments": {"query": "needle"}},
+                ]
+            }
+        ),
+        return_metadata=True,
+    )
+    assert [candidate.action_type for candidate in parsed] == [ActionType.SEARCH_TEXT]
+    assert metadata["schema_invalid_candidates"] == 3
+
+
+class SequentialGenerationProvider:
+    provider_name = "sequential"
+    model_name = "sequential-model"
+
+    def __init__(self, responses, structured: bool = False, fail_structured: bool = False):
+        self.responses = list(responses)
+        self.generate_calls = 0
+        self.structured_calls = 0
+        self.structured = structured
+        self.fail_structured = fail_structured
+        self.last_metadata = {}
+
+    def capabilities(self):
+        return {"coding": True, "structured_generation": self.structured}
+
+    def generate_coding(self, prompt, *, max_tokens=450, temperature=0.6, top_p=0.9):
+        self.generate_calls += 1
+        self.last_metadata = {"finish_reason": "stop", "generated_tokens": 5, "total_tokens": 10, "attempts": 1}
+        return self.responses[min(self.generate_calls + self.structured_calls - 1, len(self.responses) - 1)]
+
+    def generate_structured(self, prompt, schema, *, max_tokens=450, temperature=0.6, top_p=0.9):
+        self.structured_calls += 1
+        if self.fail_structured:
+            raise RuntimeError("guided JSON unavailable")
+        assert schema["required"] == ["candidates"]
+        self.last_metadata = {"finish_reason": "length", "generated_tokens": 9, "total_tokens": 18, "attempts": 1}
+        return self.responses[min(self.generate_calls + self.structured_calls - 1, len(self.responses) - 1)]
+
+
+def _holdout_observation(tmp_path):
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    return task, CodingEnvironment(task, backend=LocalTestSandboxBackend()).observe()
+
+
+def test_qwen_generator_regenerates_once_after_malformed_first_response(tmp_path):
+    valid = json.dumps({"candidates": [{"action_type": "RUN_TESTS", "arguments": {}}]})
+    provider = SequentialGenerationProvider(["not json", valid])
+    task, observation = _holdout_observation(tmp_path)
+    generator = QwenActionGenerator(provider, num_candidates=1)
+    candidates = generator.generate(task.description, observation)
+    assert candidates[0].action_type == ActionType.RUN_TESTS
+    assert provider.generate_calls == 2
+    assert generator.last_generation_metadata["candidate_regeneration_count"] == 1
+    assert generator.last_generation_metadata["candidate_regeneration_success_count"] == 1
+
+
+def test_qwen_generator_regeneration_failure_is_bounded_and_not_cached(tmp_path):
+    provider = SequentialGenerationProvider(["not json", "{\"candidates\":[{\"action_type\":\"NOPE\"}]}"])
+    task, observation = _holdout_observation(tmp_path)
+    generator = QwenActionGenerator(provider, num_candidates=2)
+    first = generator.generate(task.description, observation)
+    assert len(first) == 2
+    assert provider.generate_calls == 2
+    assert generator.last_generation_metadata["candidate_regeneration_count"] == 1
+    assert generator.last_generation_metadata["candidate_regeneration_success_count"] == 0
+    assert generator.last_generation_metadata["zero_valid_qwen_candidates"] == 1
+    second = generator.generate(task.description, observation)
+    assert len(second) == 2
+    assert provider.generate_calls == 4
+    assert generator.last_generation_metadata["cache_hit"] is False
+
+
+def test_qwen_generator_valid_generation_is_cached(tmp_path):
+    valid = json.dumps({"candidates": [{"action_type": "RUN_TESTS", "arguments": {}}]})
+    provider = SequentialGenerationProvider([valid])
+    task, observation = _holdout_observation(tmp_path)
+    generator = QwenActionGenerator(provider, num_candidates=1)
+    assert generator.generate(task.description, observation)
+    assert generator.generate(task.description, observation)
+    assert provider.generate_calls == 1
+    assert generator.last_generation_metadata["cache_hit"] is True
+
+
+def test_qwen_generator_uses_structured_generation_and_falls_back_on_failure(tmp_path):
+    valid = json.dumps({"candidates": [{"action_type": "RUN_TESTS", "arguments": {}}]})
+    task, observation = _holdout_observation(tmp_path)
+
+    structured_provider = SequentialGenerationProvider([valid], structured=True)
+    structured = QwenActionGenerator(structured_provider, num_candidates=1)
+    assert structured.generate(task.description, observation)[0].action_type == ActionType.RUN_TESTS
+    assert structured_provider.structured_calls == 1
+    assert structured.last_generation_metadata["structured_generation_requests"] == 1
+    assert structured.last_generation_metadata["generation_length_truncation_count"] == 1
+
+    fallback_provider = SequentialGenerationProvider([valid], structured=True, fail_structured=True)
+    fallback = QwenActionGenerator(fallback_provider, num_candidates=1)
+    assert fallback.generate(task.description, observation)[0].action_type == ActionType.RUN_TESTS
+    assert fallback_provider.structured_calls == 1
+    assert fallback_provider.generate_calls == 1
+    assert fallback.last_generation_metadata["structured_generation_failures"] == 1
+
+
 def test_qwen_generation_metadata_counts_zero_valid_candidates(tmp_path):
     class InvalidProvider(FakeProvider):
         def generate_coding(self, prompt, *, max_tokens=450, temperature=0.6, top_p=0.9):
@@ -249,7 +439,9 @@ def test_qwen_generation_metadata_counts_zero_valid_candidates(tmp_path):
     candidates = generator.generate(task.description, observation)
     assert len(candidates) == 2
     assert generator.last_generation_metadata["zero_valid_qwen_candidates"] == 1
-    assert generator.last_generation_metadata["schema_invalid_candidates"] == 1
+    assert generator.last_generation_metadata["schema_invalid_candidates"] == 2
+    assert generator.last_generation_metadata["candidate_regeneration_count"] == 1
+    assert generator.last_generation_metadata["candidate_regeneration_success_count"] == 0
     assert generator.last_generation_metadata["fallback_backfill_count"] == 2
 
 
@@ -382,6 +574,110 @@ class InfeasiblePatchGenerator:
             ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "guessed old", "new": "new"}),
             ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "another guess", "new": "new"}),
         ]
+
+
+class FixedSequenceGenerator:
+    last_generation_metadata = {}
+
+    def __init__(self, actions):
+        self.actions = list(actions)
+        self.index = 0
+
+    def generate(self, goal, observation):
+        action = self.actions[min(self.index, len(self.actions) - 1)]
+        self.index += 1
+        return [action]
+
+
+def _runtime_with_actions(tmp_path, actions, mode=RuntimeMode.EVAL):
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    return JarvisRuntime(
+        action_generator=FixedSequenceGenerator(actions),
+        config=JarvisRuntimeConfig(latent_dim=8, hidden_dim=8, replay_capacity=20, train_exploration_epsilon=0.0),
+        data_dir=tmp_path / "runtime",
+        mode=mode,
+        sandbox_backend=LocalTestSandboxBackend(),
+    )
+
+
+def _score_action_types(runtime, observation, actions):
+    features = runtime._observation_features(observation)
+    latent = runtime._encode_features(features)
+    return runtime._score_candidates(latent, actions, observation)
+
+
+def test_runtime_patch_makes_run_tests_dominate_until_tests_run(tmp_path):
+    runtime = _runtime_with_actions(
+        tmp_path,
+        [
+            ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}),
+            ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "return a - b", "new": "return a + b"}),
+        ],
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.start_task(task, RuntimeMode.EVAL)
+    runtime.step(task.description)
+    runtime.step(task.description)
+    observation = runtime.environment.observe()
+    scored = _score_action_types(
+        runtime,
+        observation,
+        [
+            ActionCandidate(ActionType.RUN_TESTS, confidence=0.2, estimated_cost=2.0),
+            ActionCandidate(ActionType.LIST_FILES, confidence=1.0, estimated_cost=0.1),
+            ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}, confidence=1.0, estimated_cost=0.1),
+        ],
+    )
+    assert runtime._code_changed_since_last_test() is True
+    assert scored[0].candidate.action_type == ActionType.RUN_TESTS
+
+
+def test_runtime_write_file_makes_run_tests_dominate_until_tests_run(tmp_path):
+    runtime = _runtime_with_actions(
+        tmp_path,
+        [ActionCandidate(ActionType.WRITE_FILE, {"path": "notes.py", "content": "changed = True\n"})],
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.start_task(task, RuntimeMode.EVAL)
+    runtime.step(task.description)
+    observation = runtime.environment.observe()
+    scored = _score_action_types(
+        runtime,
+        observation,
+        [
+            ActionCandidate(ActionType.RUN_TESTS, confidence=0.2, estimated_cost=2.0),
+            ActionCandidate(ActionType.LIST_FILES, confidence=1.0, estimated_cost=0.1),
+        ],
+    )
+    assert runtime._code_changed_since_last_test() is True
+    assert scored[0].candidate.action_type == ActionType.RUN_TESTS
+
+
+def test_runtime_repeated_run_tests_without_code_change_is_penalized(tmp_path):
+    runtime = _runtime_with_actions(tmp_path, [ActionCandidate(ActionType.RUN_TESTS)])
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.start_task(task, RuntimeMode.EVAL)
+    runtime.step(task.description)
+    observation = runtime.environment.observe()
+    assert runtime._stagnation_penalty(ActionCandidate(ActionType.RUN_TESTS), observation) > 0.0
+
+
+def test_runtime_retest_after_modification_is_not_penalized(tmp_path):
+    runtime = _runtime_with_actions(
+        tmp_path,
+        [
+            ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}),
+            ActionCandidate(ActionType.PATCH_FILE, {"path": "solution.py", "old": "return a - b", "new": "return a + b"}),
+        ],
+    )
+    task = CodingTaskFactory(tmp_path / "tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.start_task(task, RuntimeMode.EVAL)
+    runtime.step(task.description)
+    runtime.step(task.description)
+    observation = runtime.environment.observe()
+    assert runtime._code_changed_since_last_test() is True
+    assert runtime._stagnation_penalty(ActionCandidate(ActionType.RUN_TESTS), observation) == 0.0
 
 
 def test_runtime_all_generated_infeasible_uses_safe_feasible_fallback(tmp_path):
