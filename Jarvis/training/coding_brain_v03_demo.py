@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import tempfile
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from brain.model import JarvisBrain
+from environments.coding.sandbox_backend import DockerSandboxBackend, SandboxPolicy
+from learning.objectives.optimizer import set_global_seeds
+from learning.representations.semantic import DeterministicTextEncoder
+from runtime.action_generator import QwenActionGenerator
+from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig
+from runtime.runtime_state import RuntimeMode
+from training.coding_benchmark import CodingBenchmark
+from training.coding_curriculum import CodingTaskFactory, DatasetSplit
+
+
+@dataclass
+class CodingBrainV03Config:
+    quick: bool = False
+    seed: int = 41
+    train_episodes: int = 30
+    candidate_count: int = 6
+    persistent: bool = False
+    resume: bool = False
+    mock_brain: bool = False
+
+
+class MockAutonomousPatchBrain:
+    """Test-only Qwen stand-in that emits structured concrete patch candidates."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def think(self, user_prompt: str, max_tokens: int = 1200) -> str:
+        self.calls += 1
+        prompt = user_prompt.lower()
+        candidates: list[dict[str, Any]] = [
+            {
+                "reason": "Run objective tests before editing.",
+                "action_type": "RUN_TESTS",
+                "arguments": {},
+                "expected_effect": "Collect public failure signal.",
+                "confidence": 0.45,
+                "estimated_cost": 2.0,
+            },
+            {
+                "reason": "Inspect the implementation file.",
+                "action_type": "READ_FILE",
+                "path": "solution.py",
+                "arguments": {"path": "solution.py"},
+                "expected_effect": "Expose source for patching.",
+                "confidence": 0.55,
+                "estimated_cost": 0.5,
+            },
+        ]
+        if "solution.py:\ndef add_numbers(a, b):\n    return a - b" in prompt or "solution.py:\ndef add(a, b):\n    return a - b" in prompt:
+            candidates.insert(
+                0,
+                {
+                    "reason": "Patch arithmetic operation in the implementation.",
+                    "action_type": "PATCH_FILE",
+                    "path": "solution.py",
+                    "arguments": {"old": "return a - b", "new": "return a + b"},
+                    "expected_effect": "Addition should pass public and hidden arithmetic tests.",
+                    "confidence": 0.8,
+                    "estimated_cost": 2.0,
+                },
+            )
+        if "solution.py:\ndef parse_scores(text):\n    return text.split(',')" in prompt:
+            candidates.insert(
+                0,
+                {
+                    "reason": "Convert split strings into integers.",
+                    "action_type": "PATCH_FILE",
+                    "path": "solution.py",
+                    "arguments": {"old": "return text.split(',')", "new": "return [int(part) for part in text.split(',')]"},
+                    "expected_effect": "Parsed scores become integers.",
+                    "confidence": 0.75,
+                    "estimated_cost": 2.5,
+                },
+            )
+        if "solution.py:\nclass counter:" in prompt and "self.count -= 1" in prompt:
+            candidates.insert(
+                0,
+                {
+                    "reason": "Increment should increase count and value should expose it.",
+                    "action_type": "WRITE_FILE",
+                    "path": "solution.py",
+                    "arguments": {
+                        "path": "solution.py",
+                        "content": "class Counter:\n    def __init__(self):\n        self.count = 0\n\n    def increment(self):\n        self.count += 1\n\n    def value(self):\n        return self.count\n",
+                    },
+                    "expected_effect": "Counter accumulates increments.",
+                    "confidence": 0.72,
+                    "estimated_cost": 4.0,
+                },
+            )
+        if "solution.py:\ndef safe_divide(a, b):\n    return a / b" in prompt:
+            candidates.insert(
+                0,
+                {
+                    "reason": "Guard division by zero.",
+                    "action_type": "WRITE_FILE",
+                    "path": "solution.py",
+                    "arguments": {
+                        "path": "solution.py",
+                        "content": "def safe_divide(a, b):\n    if b == 0:\n        return None\n    return a / b\n",
+                    },
+                    "expected_effect": "Zero division returns None while valid division works.",
+                    "confidence": 0.7,
+                    "estimated_cost": 4.0,
+                },
+            )
+        return json.dumps(candidates[:6])
+
+
+def _snapshot(runtime: JarvisRuntime) -> dict[str, list[torch.Tensor]]:
+    modules = {
+        "ObservationEncoder": runtime.encoder,
+        "ActionEncoder": runtime.action_encoder,
+        "WorldModel": runtime.world_model,
+        "Value": runtime.value_function,
+        "Q Network": runtime.action_value,
+        "Policy": runtime.policy,
+    }
+    return {name: [parameter.detach().clone() for parameter in module.parameters()] for name, module in modules.items()}
+
+
+def _changed(before: dict[str, list[torch.Tensor]], runtime: JarvisRuntime) -> dict[str, str]:
+    modules = {
+        "ObservationEncoder": runtime.encoder,
+        "ActionEncoder": runtime.action_encoder,
+        "WorldModel": runtime.world_model,
+        "Value": runtime.value_function,
+        "Q Network": runtime.action_value,
+        "Policy": runtime.policy,
+    }
+    result = {}
+    for name, module in modules.items():
+        result[name] = "YES" if any(not torch.allclose(old, new) for old, new in zip(before[name], module.parameters())) else "NO"
+    result["Qwen"] = "NO"
+    return result
+
+
+def _make_brain(config: CodingBrainV03Config):
+    if config.mock_brain:
+        return MockAutonomousPatchBrain(), DeterministicTextEncoder(embedding_dim=64)
+    try:
+        return JarvisBrain(), None
+    except Exception as exc:
+        raise RuntimeError("Autonomous Qwen generation was requested, but Qwen could not be loaded.") from exc
+
+
+def _make_runtime(config: CodingBrainV03Config, data_dir: Path, brain, semantic_encoder) -> JarvisRuntime:
+    runtime = JarvisRuntime(
+        brain=brain,
+        semantic_text_encoder=semantic_encoder,
+        config=JarvisRuntimeConfig(
+            latent_dim=32 if config.quick else 64,
+            hidden_dim=32 if config.quick else 96,
+            replay_capacity=300 if config.quick else 1200,
+            num_action_candidates=config.candidate_count,
+            train_exploration_epsilon=0.35,
+            q_score_weight=1.3,
+            world_reward_weight=0.4,
+            confidence_weight=0.02,
+            cost_weight=0.08,
+            risk_weight=0.25,
+            seed=config.seed,
+            load_latest_checkpoints=config.resume,
+            tensorboard_subdir="tensorboard/coding_v03",
+        ),
+        data_dir=data_dir,
+        mode=RuntimeMode.TRAIN,
+        sandbox_backend=DockerSandboxBackend(policy=SandboxPolicy(timeout_seconds=20.0)),
+    )
+    runtime.scheduler.config.value_policy_batch_size = 1 if config.quick else 4
+    runtime.scheduler.config.world_model_batch_size = 1 if config.quick else 4
+    runtime.scheduler.config.value_policy_train_every_n_steps = 1
+    runtime.scheduler.config.world_model_train_every_n_steps = 1
+    return runtime
+
+
+def _counts(config: CodingBrainV03Config) -> tuple[int, int, int, int]:
+    if config.quick:
+        return config.train_episodes, 4, 2, 3
+    return config.train_episodes, 30, 10, 20
+
+
+def _qwen_trainable(runtime: JarvisRuntime) -> bool:
+    model = getattr(runtime.brain, "model", None)
+    if model is None:
+        return False
+    return any(parameter.requires_grad for parameter in model.parameters())
+
+
+def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dict[str, Any]:
+    config = config or CodingBrainV03Config()
+    set_global_seeds(config.seed)
+    random.seed(config.seed)
+    if not DockerSandboxBackend.is_available():
+        return {
+            "SANDBOX_AVAILABLE": False,
+            "MESSAGE": "Docker sandbox unavailable; unsafe host fallback is disabled.",
+        }
+
+    if config.persistent:
+        data_dir = Path("data")
+        dataset_root = Path("data") / "datasets" / "coding_v03"
+        results_dir = Path("data") / "benchmark_results"
+    else:
+        temp_root = Path(tempfile.mkdtemp(prefix="jarvis_coding_v03_"))
+        data_dir = temp_root / "runtime"
+        dataset_root = temp_root / "datasets"
+        results_dir = temp_root / "benchmark_results"
+    dataset_root.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    brain, semantic_encoder = _make_brain(config)
+    runtime = _make_runtime(config, data_dir, brain, semantic_encoder)
+    if not isinstance(runtime.action_generator, QwenActionGenerator):
+        raise RuntimeError("v0.3 requires QwenActionGenerator in the productive runtime path.")
+
+    train_episodes, train_count, validation_count, holdout_count = _counts(config)
+    factory = CodingTaskFactory(dataset_root)
+    benchmark = CodingBenchmark()
+    before_parameters = _snapshot(runtime)
+
+    baseline_holdout = benchmark.evaluate(runtime, factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count))
+    for episode, task in enumerate(factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)):
+        runtime.run_episode(task, RuntimeMode.TRAIN)
+        runtime.tensorboard.log_scalar("training/reward", runtime.state.total_reward, episode + 1)
+        runtime.tensorboard.log_scalar("training/success", 1.0 if runtime.state.latest_metrics.get("success") else 0.0, episode + 1)
+        runtime.tensorboard.log_scalar("training/tests_passed", float(runtime.state.latest_metrics.get("tests_passed", 0)), episode + 1)
+        runtime.tensorboard.log_scalar("training/invalid_action_rate", 1.0 if runtime.state.latest_metrics.get("invalid_action") else 0.0, episode + 1)
+        runtime.tensorboard.log_scalar("training/episode_length", float(runtime.state.step_count), episode + 1)
+
+    validation = benchmark.evaluate(runtime, factory.make_v03_split_tasks(DatasetSplit.VALIDATION, validation_count))
+    runtime.tensorboard.log_scalar("evaluation/validation_success_rate", validation.success_rate, runtime.scheduler.runtime_steps)
+    runtime.tensorboard.log_scalar("evaluation/validation_reward", validation.mean_reward, runtime.scheduler.runtime_steps)
+
+    latest_paths = runtime.save_checkpoints(validation.to_dict())
+    runtime.checkpoint_manager.save_category_metadata("latest", validation.to_dict(), {"paths": latest_paths, "version": "v0.3"})
+    best_metrics = runtime.checkpoint_manager.best_metrics()
+    promoted = runtime.checkpoint_manager.should_promote(validation.to_dict(), best_metrics)
+    if promoted:
+        runtime.checkpoint_manager.save_category_metadata("best", validation.to_dict(), {"paths": latest_paths, "version": "v0.3"})
+
+    final_holdout = benchmark.evaluate(runtime, factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count))
+    runtime.tensorboard.log_scalar("evaluation/holdout_success_rate", final_holdout.success_rate, runtime.scheduler.runtime_steps)
+    runtime.tensorboard.log_scalar("evaluation/holdout_reward", final_holdout.mean_reward, runtime.scheduler.runtime_steps)
+
+    result = {
+        "SANDBOX_AVAILABLE": True,
+        "MODEL": "MockAutonomousPatchBrain" if config.mock_brain else "JarvisBrain/Qwen",
+        "DEVICE": "cuda" if torch.cuda.is_available() else "cpu",
+        "ACTION_GENERATOR": runtime.action_generator.__class__.__name__,
+        "SEMANTIC_ENCODER": runtime.text_encoder.__class__.__name__,
+        "QWEN_TRAINABLE": _qwen_trainable(runtime),
+        "TRAIN_TASK_COUNT": train_count,
+        "VALIDATION_TASK_COUNT": validation_count,
+        "HOLDOUT_TASK_COUNT": holdout_count,
+        "PERSISTENCE_MODE": "persistent" if config.persistent else "temporary",
+        "SEED": config.seed,
+        "BASELINE": baseline_holdout.to_dict(),
+        "VALIDATION": validation.to_dict(),
+        "FINAL": final_holdout.to_dict(),
+        "DELTA": {
+            "holdout_success_rate": final_holdout.success_rate - baseline_holdout.success_rate,
+            "mean_reward": final_holdout.mean_reward - baseline_holdout.mean_reward,
+            "mean_steps": final_holdout.mean_steps_to_solution - baseline_holdout.mean_steps_to_solution,
+        },
+        "BASELINE_HOLDOUT_SUCCESS_RATE": baseline_holdout.success_rate,
+        "FINAL_HOLDOUT_SUCCESS_RATE": final_holdout.success_rate,
+        "ABSOLUTE_DELTA": final_holdout.success_rate - baseline_holdout.success_rate,
+        "PARAMETERS_CHANGED": _changed(before_parameters, runtime),
+        "PROMOTED_BEST": promoted,
+        "REPLAY_SIZE": len(runtime.replay_buffer),
+        "PERSISTENT_EXPERIENCE": runtime.experience_store.count(),
+        "TENSORBOARD": runtime.learning_summary()["tensorboard"],
+        "CONFIG": asdict(config),
+    }
+    output_path = results_dir / f"coding_brain_v03_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    output_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+    result["RESULT_PATH"] = str(output_path)
+    return result
+
+
+def _parse_args() -> CodingBrainV03Config:
+    parser = argparse.ArgumentParser(description="Run JARVIS Coding Brain v0.3 autonomous patch synthesis benchmark.")
+    parser.add_argument("--quick", action="store_true", help="Run a small local benchmark.")
+    parser.add_argument("--seed", type=int, default=41)
+    parser.add_argument("--train-episodes", type=int, default=None)
+    parser.add_argument("--candidate-count", type=int, default=6)
+    parser.add_argument("--persistent", action="store_true", help="Use repository-local data/ paths.")
+    parser.add_argument("--resume", action="store_true", help="Resume latest checkpoints from the selected data directory.")
+    parser.add_argument("--mock-brain", action="store_true", help="Use test-only structured mock brain instead of loading Qwen.")
+    args = parser.parse_args()
+    train_episodes = args.train_episodes if args.train_episodes is not None else (4 if args.quick else 30)
+    return CodingBrainV03Config(
+        quick=args.quick,
+        seed=args.seed,
+        train_episodes=train_episodes,
+        candidate_count=args.candidate_count,
+        persistent=args.persistent,
+        resume=args.resume,
+        mock_brain=args.mock_brain,
+    )
+
+
+def main() -> None:
+    config = _parse_args()
+    metrics = run_coding_brain_v03_demo(config)
+    for key in [
+        "SANDBOX_AVAILABLE",
+        "MODEL",
+        "DEVICE",
+        "ACTION_GENERATOR",
+        "SEMANTIC_ENCODER",
+        "QWEN_TRAINABLE",
+        "TRAIN_TASK_COUNT",
+        "VALIDATION_TASK_COUNT",
+        "HOLDOUT_TASK_COUNT",
+        "PERSISTENCE_MODE",
+        "SEED",
+    ]:
+        if key in metrics:
+            print(f"{key}: {metrics[key]}")
+    print(f"BASELINE HOLDOUT SUCCESS RATE: {metrics.get('BASELINE_HOLDOUT_SUCCESS_RATE', 0.0):.3f}")
+    print(f"FINAL HOLDOUT SUCCESS RATE:    {metrics.get('FINAL_HOLDOUT_SUCCESS_RATE', 0.0):.3f}")
+    print(f"ABSOLUTE DELTA:                {metrics.get('ABSOLUTE_DELTA', 0.0):+.3f}")
+    print(json.dumps(metrics, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

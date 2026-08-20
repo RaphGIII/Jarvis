@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from textwrap import dedent
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -123,6 +124,16 @@ class CodingTaskFactory:
                 tasks.append(self.make_hidden_addition_task(f"{split.value}_addition_{index}", variant=index, split=split))
         return tasks
 
+    def make_v03_split_tasks(self, split: DatasetSplit, count: int | None = None) -> list[CodingTask]:
+        defaults = {DatasetSplit.TRAIN: 30, DatasetSplit.VALIDATION: 10, DatasetSplit.HOLDOUT: 20}
+        target_count = count if count is not None else defaults[split]
+        templates = self._v03_templates(split)
+        tasks: list[CodingTask] = []
+        for index in range(target_count):
+            template = templates[index % len(templates)]
+            tasks.append(self._make_v03_task(split, index, template))
+        return tasks
+
     def make_curriculum_candidates(self, count: int = 4) -> list[TaskCandidate]:
         candidates = []
         for index in range(count):
@@ -153,3 +164,231 @@ class CodingTaskFactory:
             shutil.rmtree(workspace)
         workspace.mkdir(parents=True)
         return workspace
+
+    def _make_v03_task(self, split: DatasetSplit, index: int, template: dict[str, str]) -> CodingTask:
+        task_id = f"v03_{split.value}_{template['family']}_{index}"
+        workspace = self._fresh_workspace(task_id)
+        hidden_workspace = self._fresh_workspace(f"{task_id}_hidden")
+        (workspace / "solution.py").write_text(dedent(template["source"]).strip() + "\n", encoding="utf-8")
+        (workspace / "test_public.py").write_text(dedent(template["public_test"]).strip() + "\n", encoding="utf-8")
+        (hidden_workspace / "hidden_verifier.py").write_text(
+            "import os\n"
+            "import sys\n"
+            "sys.path.insert(0, os.environ.get('JARVIS_WORKSPACE', '/workspace'))\n"
+            + dedent(template["hidden_test"]).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        return CodingTask(
+            description=template["description"],
+            workspace=workspace,
+            test_command=[sys.executable, "-m", "unittest", "discover", "-v"],
+            hidden_workspace=hidden_workspace,
+            hidden_test_command=[sys.executable, "hidden_verifier.py"],
+            protected_paths={"test_public.py"},
+            task_id=task_id,
+            max_steps=int(template.get("max_steps", "10")),
+            metadata={"version": "v0.3", "split": split.value, "family": template["family"], "index": index},
+        )
+
+    def _v03_templates(self, split: DatasetSplit) -> list[dict[str, str]]:
+        train = [
+            {
+                "family": "arithmetic",
+                "description": "Repair solution.add_numbers so it returns the numeric sum for arbitrary integers.",
+                "source": "def add_numbers(a, b):\n    return a - b\n",
+                "public_test": """
+                    import unittest
+                    from solution import add_numbers
+
+                    class PublicTests(unittest.TestCase):
+                        def test_positive(self):
+                            self.assertEqual(add_numbers(2, 3), 5)
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import add_numbers\nassert add_numbers(-2, 5) == 3\nassert add_numbers(10, 7) == 17\n",
+            },
+            {
+                "family": "string",
+                "description": "Repair solution.shout_name so it strips whitespace and returns an uppercase greeting.",
+                "source": "def shout_name(name):\n    return 'hello ' + name.lower()\n",
+                "public_test": """
+                    import unittest
+                    from solution import shout_name
+
+                    class PublicTests(unittest.TestCase):
+                        def test_name(self):
+                            self.assertEqual(shout_name(' Ada '), 'HELLO ADA')
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import shout_name\nassert shout_name('bob') == 'HELLO BOB'\nassert shout_name('\\tLin ') == 'HELLO LIN'\n",
+            },
+            {
+                "family": "list",
+                "description": "Repair solution.positive_total so it sums only positive numbers from the list.",
+                "source": "def positive_total(values):\n    total = 0\n    for value in values:\n        total -= value\n    return total\n",
+                "public_test": """
+                    import unittest
+                    from solution import positive_total
+
+                    class PublicTests(unittest.TestCase):
+                        def test_mixed(self):
+                            self.assertEqual(positive_total([3, -4, 5]), 8)
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import positive_total\nassert positive_total([-5, -1]) == 0\nassert positive_total([1, 2, 3]) == 6\n",
+            },
+            {
+                "family": "dict",
+                "description": "Repair solution.invert_lookup so it maps dictionary values back to their keys.",
+                "source": "def invert_lookup(mapping):\n    return {key: value for key, value in mapping.items()}\n",
+                "public_test": """
+                    import unittest
+                    from solution import invert_lookup
+
+                    class PublicTests(unittest.TestCase):
+                        def test_invert(self):
+                            self.assertEqual(invert_lookup({'a': 1, 'b': 2}), {1: 'a', 2: 'b'})
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import invert_lookup\nassert invert_lookup({'x': 'y'}) == {'y': 'x'}\n",
+            },
+            {
+                "family": "boundary",
+                "description": "Repair solution.clamp so it bounds a value inclusively between low and high.",
+                "source": "def clamp(value, low, high):\n    if value < low:\n        return high\n    if value > high:\n        return low\n    return value\n",
+                "public_test": """
+                    import unittest
+                    from solution import clamp
+
+                    class PublicTests(unittest.TestCase):
+                        def test_low(self):
+                            self.assertEqual(clamp(-1, 0, 10), 0)
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import clamp\nassert clamp(11, 0, 10) == 10\nassert clamp(5, 0, 10) == 5\n",
+            },
+            {
+                "family": "loop",
+                "description": "Repair solution.factorial so it computes factorial for non-negative integers.",
+                "source": "def factorial(n):\n    result = 0\n    for value in range(1, n + 1):\n        result *= value\n    return result\n",
+                "public_test": """
+                    import unittest
+                    from solution import factorial
+
+                    class PublicTests(unittest.TestCase):
+                        def test_factorial(self):
+                            self.assertEqual(factorial(4), 24)
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import factorial\nassert factorial(0) == 1\nassert factorial(5) == 120\n",
+            },
+        ]
+        validation = [
+            {
+                "family": "string",
+                "description": "Repair solution.initials so it returns uppercase initials from words in a name.",
+                "source": "def initials(name):\n    return ''.join(part[-1].lower() for part in name.split())\n",
+                "public_test": """
+                    import unittest
+                    from solution import initials
+
+                    class PublicTests(unittest.TestCase):
+                        def test_initials(self):
+                            self.assertEqual(initials('Ada Lovelace'), 'AL')
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import initials\nassert initials('Grace Brewster Hopper') == 'GBH'\n",
+            },
+            {
+                "family": "list",
+                "description": "Repair solution.evens so it returns only even integers in their original order.",
+                "source": "def evens(values):\n    return [value for value in values if value % 2 == 1]\n",
+                "public_test": """
+                    import unittest
+                    from solution import evens
+
+                    class PublicTests(unittest.TestCase):
+                        def test_evens(self):
+                            self.assertEqual(evens([1, 2, 3, 4]), [2, 4])
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import evens\nassert evens([0, -2, 5]) == [0, -2]\n",
+            },
+        ]
+        holdout = [
+            {
+                "family": "parsing",
+                "description": "Repair solution.parse_scores so it converts comma-separated integers into a list of ints.",
+                "source": "def parse_scores(text):\n    return text.split(',')\n",
+                "public_test": """
+                    import unittest
+                    from solution import parse_scores
+
+                    class PublicTests(unittest.TestCase):
+                        def test_scores(self):
+                            self.assertEqual(parse_scores('1,2,3'), [1, 2, 3])
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import parse_scores\nassert parse_scores('10,-2,0') == [10, -2, 0]\n",
+            },
+            {
+                "family": "class_behavior",
+                "description": "Repair Counter so increment changes the stored count and value returns it.",
+                "source": "class Counter:\n    def __init__(self):\n        self.count = 0\n\n    def increment(self):\n        self.count -= 1\n\n    def value(self):\n        return 0\n",
+                "public_test": """
+                    import unittest
+                    from solution import Counter
+
+                    class PublicTests(unittest.TestCase):
+                        def test_counter(self):
+                            counter = Counter()
+                            counter.increment()
+                            self.assertEqual(counter.value(), 1)
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import Counter\ncounter = Counter()\nfor _ in range(3):\n    counter.increment()\nassert counter.value() == 3\n",
+            },
+            {
+                "family": "exceptions",
+                "description": "Repair solution.safe_divide so division by zero returns None and valid division returns a float.",
+                "source": "def safe_divide(a, b):\n    return a / b\n",
+                "public_test": """
+                    import unittest
+                    from solution import safe_divide
+
+                    class PublicTests(unittest.TestCase):
+                        def test_zero(self):
+                            self.assertIsNone(safe_divide(4, 0))
+
+                    if __name__ == '__main__':
+                        unittest.main()
+                """,
+                "hidden_test": "from solution import safe_divide\nassert safe_divide(6, 3) == 2\nassert safe_divide(1, 0) is None\n",
+            },
+        ]
+        if split == DatasetSplit.TRAIN:
+            return train
+        if split == DatasetSplit.VALIDATION:
+            return validation
+        return holdout

@@ -56,6 +56,9 @@ class QwenHiddenStateTextEncoder:
         self.brain = brain
         self.tokenizer = brain.tokenizer
         self.model = brain.model
+        self.model.eval()
+        for parameter in self.model.parameters():
+            parameter.requires_grad_(False)
         self.embedding_dim = int(getattr(self.model.config, "hidden_size", getattr(self.model.config, "d_model", 0)))
         if self.embedding_dim <= 0:
             raise ValueError("Could not infer Qwen hidden size from model.config")

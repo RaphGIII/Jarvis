@@ -22,6 +22,7 @@ from learning.experience.replay_buffer import ReplayBuffer
 from learning.experience.transition import Transition
 from learning.meta.self_model import SelfModel
 from learning.objectives.optimizer import set_global_seeds
+from learning.objectives.optimizer import make_optimizer
 from learning.policy.action_value import ActionValueConfig, ActionValueNetwork
 from learning.policy.policy import NeuralPolicy, PolicyConfig
 from learning.policy.value import NeuralValueFunction, ValueConfig
@@ -68,6 +69,7 @@ class JarvisRuntimeConfig:
     epsilon_decay: float = DEFAULT_CONFIG.epsilon_decay
     load_latest_checkpoints: bool = False
     replay_warm_start_size: int = DEFAULT_CONFIG.replay_warm_start_size
+    tensorboard_subdir: str = "tensorboard"
 
 
 @dataclass
@@ -126,6 +128,7 @@ class JarvisRuntime:
         self.config = config or JarvisRuntimeConfig()
         set_global_seeds(self.config.seed)
         self.brain = brain
+        self._freeze_brain_parameters(brain)
         self.sandbox_backend = sandbox_backend
         self.text_encoder = semantic_text_encoder or (
             QwenHiddenStateTextEncoder(brain)
@@ -192,7 +195,7 @@ class JarvisRuntime:
         self.checkpoint_manager = RuntimeCheckpointManager(root_data_dir / "checkpoints")
         self.experience_store = PersistentExperienceStore(root_data_dir / "experience" / "experience.sqlite")
         self.scheduler.persistent_store = self.experience_store
-        self.tensorboard = TensorBoardLogger(root_data_dir / "tensorboard")
+        self.tensorboard = TensorBoardLogger(root_data_dir / self.config.tensorboard_subdir)
         self.reward_engine = CodingRewardEngine()
         self.uncertainty_estimator = UncertaintyEstimator()
         self.self_model = SelfModel()
@@ -205,6 +208,61 @@ class JarvisRuntime:
             self.load_latest_checkpoints()
         self.warm_start_replay(self.config.replay_warm_start_size)
 
+    def attach_brain(
+        self,
+        brain: BrainProvider,
+        *,
+        semantic_text_encoder: SemanticTextEncoder | None = None,
+        num_action_candidates: int | None = None,
+        max_tokens: int = 1200,
+    ) -> None:
+        """Attach one loaded Qwen brain to generation and semantic encoding.
+
+        This method intentionally reuses the provided brain object for both
+        candidate generation and hidden-state feature extraction. It does not
+        load another foundation model and it freezes any exposed model
+        parameters.
+        """
+
+        self.brain = brain
+        self._freeze_brain_parameters(brain)
+        model = getattr(brain, "model", None)
+        if model is not None:
+            model.eval()
+        self.text_encoder = semantic_text_encoder or QwenHiddenStateTextEncoder(brain)
+        self.action_generator = QwenActionGenerator(
+            brain,
+            num_candidates=num_action_candidates or self.config.num_action_candidates,
+            max_tokens=max_tokens,
+        )
+        self._rebuild_text_dependent_modules()
+
+    def _rebuild_text_dependent_modules(self) -> None:
+        self.action_encoder = SemanticActionEncoder(
+            self.text_encoder,
+            action_embedding_dim=self.config.action_embedding_dim,
+            hidden_dim=self.config.hidden_dim,
+        )
+        self.encoder = ProjectionEncoder(
+            semantic_dim=self.text_encoder.embedding_dim,
+            numeric_dim=self.config.observation_feature_dim,
+            latent_dim=self.config.latent_dim,
+            hidden_dim=self.config.hidden_dim,
+        )
+        self.scheduler.observation_encoder = self.encoder
+        self.scheduler.action_encoder = self.action_encoder
+        self.scheduler.encoder_optimizer = make_optimizer(self.encoder, self.scheduler.config.encoder_lr)
+        self.scheduler.action_encoder_optimizer = make_optimizer(self.action_encoder, self.scheduler.config.action_encoder_lr)
+
+    @staticmethod
+    def _freeze_brain_parameters(brain: BrainProvider | None) -> None:
+        model = getattr(brain, "model", None)
+        if model is None:
+            return
+        model.eval()
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+
     def warm_start_replay(self, limit: int | None = None) -> int:
         transitions = self.experience_store.warm_start_transitions(limit or self.config.replay_warm_start_size)
         seen_rows: set[int] = set()
@@ -212,6 +270,12 @@ class JarvisRuntime:
         for transition in transitions:
             row_id = transition.metadata.get("persistent_row_id")
             if row_id in seen_rows:
+                continue
+            action_raw = transition.metadata.get("action_raw_features")
+            observation_features = transition.metadata.get("observation_features") or {}
+            if action_raw is not None and len(action_raw) != self.action_encoder.raw_dim:
+                continue
+            if observation_features.get("semantic") is not None and len(observation_features["semantic"]) != self.text_encoder.embedding_dim:
                 continue
             seen_rows.add(row_id)
             combined_error = abs(float(transition.metadata.get("td_error", 0.0))) + DEFAULT_CONFIG.priority_prediction_error_weight * abs(
@@ -623,6 +687,7 @@ class JarvisRuntime:
                 "action_raw_features": action_raw_features.detach().cpu().tolist(),
                 "action_embedding": action_embedding.detach().cpu().tolist(),
                 "candidate_scores": [item.to_dict() for item in scored_candidates],
+                "action_generation": getattr(self.action_generator, "last_generation_metadata", {}),
                 "reward_components": reward.components,
                 "scoring": selected.to_dict(),
                 "prediction_error": float(prediction_error),

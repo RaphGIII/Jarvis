@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import mean
 
+import torch
+
 from environments.coding.task import CodingTask
 from runtime.jarvis_runtime import JarvisRuntime
 from runtime.runtime_state import RuntimeMode
@@ -19,6 +21,7 @@ class BenchmarkResult:
     invalid_action_rate: float
     world_model_prediction_loss: float
     value_prediction_error: float
+    q_prediction_error: float = 0.0
 
     def to_dict(self) -> dict[str, float | int]:
         return {
@@ -31,6 +34,7 @@ class BenchmarkResult:
             "invalid_action_rate": self.invalid_action_rate,
             "world_model_prediction_loss": self.world_model_prediction_loss,
             "value_prediction_error": self.value_prediction_error,
+            "q_prediction_error": self.q_prediction_error,
         }
 
 
@@ -44,26 +48,46 @@ class CodingBenchmark:
         invalids = []
         prediction_losses = []
         value_errors = []
+        q_errors = []
         previous_mode = runtime.state.mode
-        for task in tasks:
-            metrics = runtime.run_episode(task, RuntimeMode.EVAL)
-            rewards.append(float(metrics["reward"]))
-            steps.append(float(metrics["steps"]))
-            successes.append(1.0 if metrics["success"] else 0.0)
-            latest = runtime.state.latest_metrics
-            tests_passed.append(float(latest.get("tests_passed", 0)))
-            regressions.append(1.0 if float(latest.get("tests_failed", 0)) > 0 and metrics["success"] is False else 0.0)
-            invalids.append(1.0 if latest.get("invalid_action", False) else 0.0)
-            transition_prediction = [
-                float(transition.metadata.get("prediction_error", 0.0))
-                for transition in runtime.state.trajectory.transitions
-            ]
-            transition_td = [
-                abs(float(transition.metadata.get("td_error", 0.0)))
-                for transition in runtime.state.trajectory.transitions
-            ]
-            prediction_losses.append(mean(transition_prediction) if transition_prediction else 0.0)
-            value_errors.append(mean(transition_td) if transition_td else 0.0)
+        modules = [
+            runtime.encoder,
+            runtime.action_encoder,
+            runtime.world_model,
+            runtime.value_function,
+            runtime.action_value,
+            runtime.policy,
+        ]
+        previous_training_modes = [module.training for module in modules]
+        for module in modules:
+            module.eval()
+        with torch.no_grad():
+            for task in tasks:
+                metrics = runtime.run_episode(task, RuntimeMode.EVAL)
+                rewards.append(float(metrics["reward"]))
+                steps.append(float(metrics["steps"]))
+                successes.append(1.0 if metrics["success"] else 0.0)
+                latest = runtime.state.latest_metrics
+                tests_passed.append(float(latest.get("tests_passed", 0)))
+                regressions.append(1.0 if float(latest.get("tests_failed", 0)) > 0 and metrics["success"] is False else 0.0)
+                invalids.append(1.0 if latest.get("invalid_action", False) else 0.0)
+                transition_prediction = [
+                    float(transition.metadata.get("prediction_error", 0.0))
+                    for transition in runtime.state.trajectory.transitions
+                ]
+                transition_td = [
+                    abs(float(transition.metadata.get("td_error", 0.0)))
+                    for transition in runtime.state.trajectory.transitions
+                ]
+                transition_q = [
+                    abs(float((transition.metadata.get("scoring") or {}).get("q_value", 0.0) - transition.reward))
+                    for transition in runtime.state.trajectory.transitions
+                ]
+                prediction_losses.append(mean(transition_prediction) if transition_prediction else 0.0)
+                value_errors.append(mean(transition_td) if transition_td else 0.0)
+                q_errors.append(mean(transition_q) if transition_q else 0.0)
+        for module, was_training in zip(modules, previous_training_modes):
+            module.train(was_training)
         runtime.state.mode = previous_mode
         return BenchmarkResult(
             episodes=len(tasks),
@@ -75,4 +99,5 @@ class CodingBenchmark:
             invalid_action_rate=mean(invalids) if invalids else 0.0,
             world_model_prediction_loss=mean(prediction_losses) if prediction_losses else 0.0,
             value_prediction_error=mean(value_errors) if value_errors else 0.0,
+            q_prediction_error=mean(q_errors) if q_errors else 0.0,
         )

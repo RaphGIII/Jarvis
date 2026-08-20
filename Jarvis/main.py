@@ -40,7 +40,7 @@ def main():
             message = command.removeprefix("/brain").strip() or input("Brain prompt > ")
             if brain is None:
                 brain = JarvisBrain()
-                runtime.brain = brain
+                runtime.attach_brain(brain)
             print(f"\nJARVIS > {runtime.chat(message)}\n")
             continue
 
@@ -49,7 +49,7 @@ def main():
 
         if brain is None:
             brain = JarvisBrain()
-            runtime.brain = brain
+            runtime.attach_brain(brain)
 
         answer = runtime.chat(command)
 

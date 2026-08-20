@@ -22,29 +22,54 @@ class ActionGenerator(Protocol):
 class QwenActionGenerator:
     """Uses Qwen as structured high-level candidate generator only."""
 
-    def __init__(self, brain: BrainProvider, num_candidates: int = 4) -> None:
+    def __init__(self, brain: BrainProvider, num_candidates: int = 4, max_tokens: int = 1200) -> None:
         self.brain = brain
         self.num_candidates = num_candidates
+        self.max_tokens = max_tokens
         self._cache: dict[str, list[ActionCandidate]] = {}
+        self.last_generation_metadata: dict[str, Any] = {}
 
     def generate(self, goal: str, observation: CodingObservation) -> list[ActionCandidate]:
         cache_key = sha256(f"{goal}\n{observation.to_text()}".encode("utf-8", errors="ignore")).hexdigest()
         if cache_key in self._cache:
+            self.last_generation_metadata = {"cache_key": cache_key, "cache_hit": True}
             return list(self._cache[cache_key])
         prompt = self._prompt(goal, observation)
-        raw = self.brain.think(prompt, max_tokens=900)
-        candidates = parse_action_candidates(raw)
-        result = candidates[: self.num_candidates] or fallback_candidates(observation)
+        raw = self.brain.think(prompt, max_tokens=self.max_tokens)
+        candidates, parse_metadata = parse_action_candidates(raw, return_metadata=True)
+        result, diversity_metadata = dedupe_action_candidates(candidates, self.num_candidates)
+        if not result:
+            result = fallback_candidates(observation)[: self.num_candidates]
+        self.last_generation_metadata = {
+            "cache_key": cache_key,
+            "cache_hit": False,
+            "raw_response_hash": sha256(raw.encode("utf-8", errors="ignore")).hexdigest(),
+            "valid_candidates": len(candidates),
+            "returned_candidates": len(result),
+            **parse_metadata,
+            **diversity_metadata,
+        }
         self._cache[cache_key] = result
         return list(result)
 
     def _prompt(self, goal: str, observation: CodingObservation) -> str:
         allowed = ", ".join(action.name for action in ActionType)
         return (
-            "Return JSON only. Generate plausible CodingWorld action candidates.\n"
+            "Return JSON only. You are generating concrete CodingWorld action candidates, not final prose.\n"
             f"Allowed action_type values: {allowed}\n"
-            "Schema: [{\"action_type\":\"READ_FILE\",\"arguments\":{\"path\":\"main.py\"},"
-            "\"reasoning_summary\":\"short\",\"confidence\":0.5,\"estimated_cost\":1.0}]\n"
+            "Return a JSON array with 4-8 diverse candidates when possible.\n"
+            "Use this schema:\n"
+            "[{\"reason\":\"short private summary\","
+            "\"action_type\":\"PATCH_FILE\","
+            "\"path\":\"solution.py\","
+            "\"arguments\":{\"old\":\"exact old text\",\"new\":\"exact replacement text\"},"
+            "\"expected_effect\":\"what should improve\","
+            "\"confidence\":0.5,"
+            "\"estimated_cost\":1.0}]\n"
+            "For PATCH_FILE, provide concrete old/new text that can be applied exactly.\n"
+            "For WRITE_FILE, provide path and content. For READ_FILE/RUN_PYTHON, provide path.\n"
+            "Include different strategies: inspect/test/minimal patch/alternative patch when useful.\n"
+            "Do not claim hidden verifier knowledge and do not modify tests.\n"
             f"Return at most {self.num_candidates} candidates.\n"
             f"Goal: {goal}\n"
             f"Observation:\n{observation.to_text()}"
@@ -96,25 +121,111 @@ class HeuristicCodingActionGenerator:
         return deduped[: self.num_candidates]
 
 
-def parse_action_candidates(raw: str) -> list[ActionCandidate]:
+def parse_action_candidates(raw: str, return_metadata: bool = False):
     text = raw.strip()
-    match = re.search(r"(\[.*\])", text, flags=re.DOTALL)
+    match = re.search(r"(\[.*\]|\{.*\})", text, flags=re.DOTALL)
     if match:
         text = match.group(1)
+    metadata: dict[str, Any] = {"malformed_items": 0, "parse_error": ""}
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        metadata["parse_error"] = str(exc)
+        return ([], metadata) if return_metadata else []
+    if isinstance(parsed, dict):
+        parsed = parsed.get("candidates", parsed.get("actions", [parsed]))
     if not isinstance(parsed, list):
-        return []
+        metadata["malformed_items"] = 1
+        return ([], metadata) if return_metadata else []
     candidates = []
     for item in parsed:
         if isinstance(item, dict):
             try:
-                candidates.append(ActionCandidate.from_dict(item))
+                candidates.append(_candidate_from_qwen_item(item))
             except (KeyError, ValueError):
-                continue
-    return candidates
+                metadata["malformed_items"] += 1
+        else:
+            metadata["malformed_items"] += 1
+    return (candidates, metadata) if return_metadata else candidates
+
+
+def _candidate_from_qwen_item(item: dict[str, Any]) -> ActionCandidate:
+    raw_type = str(item.get("action_type", "")).strip().upper()
+    if raw_type not in ActionType.__members__:
+        raise ValueError(f"Unsupported action_type: {raw_type}")
+    action_type = ActionType[raw_type]
+    arguments = dict(item.get("arguments") or {})
+    if "path" in item and "path" not in arguments:
+        arguments["path"] = item["path"]
+    if action_type == ActionType.PATCH_FILE:
+        patch = item.get("patch")
+        if isinstance(patch, dict):
+            for key in ["old", "new", "content"]:
+                if key in patch and key not in arguments:
+                    arguments[key] = patch[key]
+        for key in ["old", "new", "content"]:
+            if key in item and key not in arguments:
+                arguments[key] = item[key]
+        if isinstance(patch, str) and "patch" not in arguments:
+            arguments["patch"] = patch
+    if action_type == ActionType.WRITE_FILE and "content" in item and "content" not in arguments:
+        arguments["content"] = item["content"]
+    if action_type in {ActionType.RUN_TESTS, ActionType.LIST_FILES, ActionType.INSPECT_ERROR, ActionType.FINISH}:
+        arguments = {}
+    reason = str(item.get("reasoning_summary") or item.get("reason") or "")
+    expected = str(item.get("expected_effect") or "")
+    summary = reason if not expected else f"{reason} Expected: {expected}".strip()
+    return ActionCandidate(
+        action_type=action_type,
+        arguments=arguments,
+        reasoning_summary=summary[:500],
+        confidence=_clamp_float(item.get("confidence", 0.5), 0.0, 1.0),
+        estimated_cost=_clamp_float(item.get("estimated_cost", _default_cost(action_type)), 0.1, 10.0),
+    )
+
+
+def dedupe_action_candidates(candidates: list[ActionCandidate], limit: int) -> tuple[list[ActionCandidate], dict[str, int]]:
+    deduped: list[ActionCandidate] = []
+    seen: set[str] = set()
+    duplicates = 0
+    for candidate in candidates:
+        key = _candidate_diversity_key(candidate)
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+        if len(deduped) >= limit:
+            break
+    return deduped, {"duplicate_candidates": duplicates}
+
+
+def _candidate_diversity_key(candidate: ActionCandidate) -> str:
+    payload = {
+        "action_type": candidate.action_type.name,
+        "arguments": candidate.arguments,
+    }
+    text = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _clamp_float(value: Any, low: float, high: float) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = low
+    return max(low, min(high, numeric))
+
+
+def _default_cost(action_type: ActionType) -> float:
+    if action_type in {ActionType.READ_FILE, ActionType.LIST_FILES, ActionType.INSPECT_ERROR}:
+        return 0.5
+    if action_type in {ActionType.RUN_TESTS, ActionType.RUN_PYTHON}:
+        return 2.0
+    if action_type in {ActionType.PATCH_FILE, ActionType.WRITE_FILE}:
+        return 3.0
+    return 1.0
 
 
 def fallback_candidates(observation: CodingObservation) -> list[ActionCandidate]:

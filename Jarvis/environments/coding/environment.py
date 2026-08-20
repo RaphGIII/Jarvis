@@ -78,12 +78,13 @@ class CodingEnvironment:
         self.success = self._tests_passed()
         max_steps_hit = self.step_number >= self.task.max_steps
         self.done = bool(self.success or max_steps_hit or candidate.action_type == ActionType.FINISH)
+        invalid_action = bool(result.data.get("invalid_action", False)) if result.data else False
         return EnvironmentStep(
             observation=self.observe(),
             action_result=result,
             success=self.success,
             done=self.done,
-            objective_metrics=self._metrics(invalid_action=not result.ok, max_steps_hit=max_steps_hit),
+            objective_metrics=self._metrics(invalid_action=invalid_action, max_steps_hit=max_steps_hit),
         )
 
     def _execute(self, candidate: ActionCandidate) -> ActionResult:
