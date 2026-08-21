@@ -253,15 +253,21 @@ def _latest_mean_gate(runtime: JarvisRuntime) -> float:
 
 
 def _restore_progress_python_rng(progress: BenchmarkProgressStore) -> None:
-    encoded = progress.state.get("python_random_state")
-    if encoded:
-        random.setstate(BenchmarkProgressStore.decode_random_state(encoded))
-    torch_encoded = progress.state.get("torch_rng_state")
-    if torch_encoded:
-        torch.set_rng_state(BenchmarkProgressStore.decode_random_state(torch_encoded))
-    cuda_encoded = progress.state.get("torch_cuda_rng_state")
-    if cuda_encoded and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(BenchmarkProgressStore.decode_random_state(cuda_encoded))
+    BenchmarkProgressStore.restore_rng_snapshot(progress.state.get("committed_rng"))
+
+
+def _restore_committed_rng_after_runtime(progress: BenchmarkProgressStore, runtime: JarvisRuntime) -> None:
+    if _resume_point_uses_committed_eval_rng(progress):
+        BenchmarkProgressStore.restore_rng_snapshot(progress.state.get("committed_rng"), runtime=runtime)
+
+
+def _resume_point_uses_committed_eval_rng(progress: BenchmarkProgressStore) -> bool:
+    stage = str(progress.state.get("stage", ""))
+    if stage == "interrupted":
+        stage = str(progress.state.get("interrupted_from", ""))
+    if stage in {"baseline", "baseline_complete", "validation", "validation_complete", "final_holdout", "final_holdout_complete"}:
+        return True
+    return False
 
 
 def _stage_result_from_progress(benchmark: CodingBenchmark, progress: BenchmarkProgressStore, key: str) -> BenchmarkResult | None:
@@ -298,12 +304,16 @@ def _evaluate_resumable_stage(
         start_index=completed,
         initial_accumulators=initial_accumulators,
         after_episode=lambda index, partial: progress.save(
+            runtime=runtime,
+            commit_rng=True,
             stage=stage_name,
             **{progress_completed_key: index + 1},
             metrics={**(progress.state.get("metrics") or {}), f"{result_key}_partial": partial.to_dict()},
         ),
     )
     progress.save(
+        runtime=runtime,
+        commit_rng=True,
         stage=f"{stage_name}_complete",
         **{progress_completed_key: len(tasks)},
         metrics={**(progress.state.get("metrics") or {}), result_key: result.to_dict()},
@@ -343,7 +353,7 @@ def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dic
     except KeyboardInterrupt:
         root = Path(config.benchmark_dir) if config.benchmark_dir else (Path("data") if config.persistent else Path.cwd())
         progress = BenchmarkProgressStore(root / "benchmark_results" / "coding_brain_v03_progress.json")
-        progress.save(stage="interrupted", interrupted=True)
+        progress.save(stage="interrupted", interrupted=True, interrupted_from=progress.state.get("stage"), commit_rng=False, capture_live_rng=True)
         summary = {
             "INTERRUPTED": True,
             "PROGRESS_PATH": str(progress.path),
@@ -387,9 +397,7 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
     dataset_root.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     progress = BenchmarkProgressStore(results_dir / "coding_brain_v03_progress.json")
-    if config.resume:
-        _restore_progress_python_rng(progress)
-    progress.save(stage="setup", config=asdict(config))
+    progress.save(stage=progress.state.get("stage") if config.resume else "setup", config=asdict(config))
 
     brain, semantic_encoder = _make_brain(config)
     runtime = _make_runtime(config, data_dir, brain, semantic_encoder)
@@ -404,6 +412,7 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
             runtime.load_training_resume_checkpoint(checkpoint_path, expected_train_completed=train_completed)
         elif checkpoint_path:
             runtime.load_training_resume_checkpoint(checkpoint_path, expected_train_completed=train_completed)
+        _restore_committed_rng_after_runtime(progress, runtime)
 
     train_episodes, _, validation_count, holdout_count = _counts(config)
     train_factory = CodingTaskFactory(dataset_root / "train")

@@ -1,5 +1,7 @@
 import json
 import sys
+import random
+import copy
 from dataclasses import replace
 
 import torch
@@ -745,6 +747,128 @@ def test_v03_resumable_eval_stage_uses_completed_index_and_accumulators(tmp_path
         )
         assert resumed.episodes == 2
         assert progress.state[completed_key] == 2
+
+
+def _three_episode_accumulators():
+    return {
+        "rewards": [1.0, 2.0, 3.0],
+        "steps": [1.0, 1.0, 1.0],
+        "successes": [1.0, 0.0, 1.0],
+        "tests_passed": [0.0, 0.0, 0.0],
+        "regressions": [0.0, 1.0, 0.0],
+        "invalids": [],
+        "prediction_losses": [0.0, 0.0, 0.0],
+        "value_errors": [0.0, 0.0, 0.0],
+        "q_errors": [0.0, 0.0, 0.0],
+        "hidden_runs": [0.0, 0.0, 0.0],
+        "episode_invalids": [0.0, 0.0, 0.0],
+        "controller_scores": [],
+        "episode_changed": [0.0, 0.0, 0.0],
+        "episode_success_when_changed": [],
+    }
+
+
+class SpyResumeBenchmark(CodingBenchmark):
+    def __init__(self):
+        super().__init__()
+        self.seen_start_index = None
+
+    def evaluate(self, runtime, tasks, *, eval_controller=None, after_episode=None, start_index=0, initial_accumulators=None):
+        self.seen_start_index = start_index
+        result = self.result_from_accumulators(initial_accumulators)
+        if after_episode is not None and start_index < len(tasks):
+            after_episode(start_index, result)
+        return result
+
+
+def _assert_mid_episode_interrupt_preserves_committed_rng(tmp_path, stage_name, completed_key, result_key):
+    runtime = _runtime(tmp_path / f"{stage_name}_runtime", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    progress = BenchmarkProgressStore(tmp_path / f"{stage_name}_progress.json")
+    partial = CodingBenchmark().result_from_accumulators(_three_episode_accumulators())
+    progress.save(
+        runtime=runtime,
+        commit_rng=True,
+        stage=stage_name,
+        **{completed_key: 3},
+        metrics={f"{result_key}_partial": partial.to_dict()},
+    )
+    committed = copy.deepcopy(progress.state["committed_rng"])
+    BenchmarkProgressStore.restore_rng_snapshot(committed, runtime=runtime)
+    expected_python = random.random()
+    expected_torch = torch.rand(3)
+    expected_runtime = runtime._rng.random()
+
+    random.random()
+    torch.rand(5)
+    runtime._rng.random()
+    progress.save(stage="interrupted", interrupted=True, interrupted_from=stage_name, commit_rng=False, capture_live_rng=True)
+
+    assert progress.state[completed_key] == 3
+    assert progress.state["committed_rng"] == committed
+    assert progress.state["live_rng"] != committed
+
+    restored_runtime = _runtime(tmp_path / f"{stage_name}_restored", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    v03_demo._restore_committed_rng_after_runtime(progress, restored_runtime)
+    assert random.random() == expected_python
+    assert torch.allclose(torch.rand(3), expected_torch)
+    assert restored_runtime._rng.random() == expected_runtime
+
+    spy = SpyResumeBenchmark()
+    tasks = CodingTaskFactory(tmp_path / f"{stage_name}_tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 4)
+    v03_demo._evaluate_resumable_stage(
+        benchmark=spy,
+        runtime=restored_runtime,
+        tasks=tasks,
+        progress=progress,
+        result_key=result_key,
+        progress_completed_key=completed_key,
+        stage_name=stage_name,
+        controller="heuristic",
+        resume=True,
+    )
+    assert spy.seen_start_index == 3
+
+
+def test_v03_final_mid_episode_interrupt_preserves_committed_rng_and_resumes_at_episode_four(tmp_path):
+    _assert_mid_episode_interrupt_preserves_committed_rng(
+        tmp_path,
+        "final_holdout",
+        "final_holdout_completed",
+        "final",
+    )
+
+
+def test_v03_validation_mid_episode_interrupt_preserves_committed_rng_and_resumes_at_episode_four(tmp_path):
+    _assert_mid_episode_interrupt_preserves_committed_rng(
+        tmp_path,
+        "validation",
+        "validation_completed",
+        "validation",
+    )
+
+
+def test_v03_eval_committed_rng_is_restored_after_training_checkpoint(tmp_path):
+    training_runtime = _runtime(tmp_path / "ordering_train", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    task = CodingTaskFactory(tmp_path / "ordering_train_tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    task.max_steps = 2
+    training_runtime.run_episode(task, RuntimeMode.TRAIN)
+    checkpoint = training_runtime.save_training_resume_checkpoint(tmp_path / "resume.pt", train_completed=1)
+
+    eval_runtime = _runtime(tmp_path / "ordering_eval", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    progress = BenchmarkProgressStore(tmp_path / "ordering_progress.json")
+    progress.save(runtime=eval_runtime, commit_rng=True, stage="final_holdout", train_completed=1, resume_checkpoint=str(checkpoint), final_holdout_completed=3)
+    committed = copy.deepcopy(progress.state["committed_rng"])
+    BenchmarkProgressStore.restore_rng_snapshot(committed, runtime=eval_runtime)
+    expected_python = random.random()
+    expected_torch = torch.rand(2)
+    expected_runtime = eval_runtime._rng.random()
+
+    restored = _runtime(tmp_path / "ordering_restored", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    restored.load_training_resume_checkpoint(checkpoint, expected_train_completed=1)
+    v03_demo._restore_committed_rng_after_runtime(progress, restored)
+    assert random.random() == expected_python
+    assert torch.allclose(torch.rand(2), expected_torch)
+    assert restored._rng.random() == expected_runtime
 
 
 def test_v03_ctrl_c_partial_save(tmp_path, monkeypatch):
