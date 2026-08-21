@@ -1,0 +1,76 @@
+{
+  "CAPABILITY_ACQUISITION_SUCCESS_RATE": 1.0,
+  "CONFIG": {
+    "benchmark_dir": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo",
+    "brain_provider": null,
+    "local_test_backend": true,
+    "mock_brain": true,
+    "persistent": false,
+    "quiet": true,
+    "task_count": 2
+  },
+  "DEVELOPMENT_WALL_TIME_SECONDS": 3.882365099998424,
+  "FIRST_ATTEMPT_SUCCESS_RATE": 0.0,
+  "INVALID_ACTION_RATE": 0.0,
+  "MEAN_REPAIR_ITERATIONS": 1.0,
+  "MEAN_STEPS_TO_ACQUISITION": 4.0,
+  "PROMOTION_FAILURES": 0,
+  "REGISTRY_PATH": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\runtime\\registry.json",
+  "RESULTS": [
+    {
+      "capability_id": "text.line_count",
+      "error": "",
+      "execution_success": true,
+      "goal": "Count non-empty lines in supplied text. Use capability text.line_count.",
+      "hidden_success": true,
+      "invalid_action_rate": 0.0,
+      "output": {
+        "lines": 2
+      },
+      "promoted": true,
+      "public_success": true,
+      "repair_iterations": 1,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": true,
+      "steps_to_acquisition": 4,
+      "success": true,
+      "trajectory_id": "bf14c9eb75234457957caef1fd3bd633"
+    },
+    {
+      "capability_id": "data.csv_column_mode",
+      "error": "",
+      "execution_success": true,
+      "goal": "Read CSV text and return the most common value in a selected column. Use capability data.csv_column_mode.",
+      "hidden_success": true,
+      "invalid_action_rate": 0.0,
+      "output": {
+        "frequency": 2,
+        "value": "py"
+      },
+      "promoted": true,
+      "public_success": true,
+      "repair_iterations": 1,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability in mock catalog.",
+        "status": "missing"
+      },
+      "second_call_success": true,
+      "steps_to_acquisition": 4,
+      "success": true,
+      "trajectory_id": "58348149ce5944e2a1658fdc576f0f5f"
+    }
+  ],
+  "SECOND_CALL_DIRECT_USE_SUCCESS_RATE": 1.0,
+  "TASK_COUNT": 2,
+  "TRAJECTORY_PATH": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\runtime\\acquisition_trajectories.jsonl",
+  "VERSION": "v0.4"
+}

@@ -78,6 +78,8 @@ class JarvisRuntimeConfig:
     tensorboard_subdir: str = "tensorboard"
     trace_actions: bool = False
     eval_controller: str = "full"
+    production_controller: str = "heuristic"
+    learned_controller_mode: str = "active"
     value_score_weight: float = 0.4
     learned_component_clip: float = 2.0
     learned_gate_min_experiences: int = 50
@@ -110,6 +112,10 @@ class ScoredAction:
     controller_mode: str = "full"
     heuristic_winner: bool = False
     controller_changed_heuristic: bool = False
+    shadow_learned_score: float = 0.0
+    shadow_controller_gate: float = 0.0
+    shadow_learned_winner: bool = False
+    shadow_changed_heuristic: bool = False
     raw_score_components: dict[str, float] = field(default_factory=dict)
     normalized_score_components: dict[str, float] = field(default_factory=dict)
 
@@ -137,6 +143,10 @@ class ScoredAction:
             "controller_mode": self.controller_mode,
             "heuristic_winner": self.heuristic_winner,
             "controller_changed_heuristic": self.controller_changed_heuristic,
+            "shadow_learned_score": self.shadow_learned_score,
+            "shadow_controller_gate": self.shadow_controller_gate,
+            "shadow_learned_winner": self.shadow_learned_winner,
+            "shadow_changed_heuristic": self.shadow_changed_heuristic,
             "raw_score_components": self.raw_score_components,
             "normalized_score_components": self.normalized_score_components,
         }
@@ -875,12 +885,30 @@ class JarvisRuntime:
             )
 
         normalized = self._normalized_controller_components(entries)
+        shadow_mode = self.config.learned_controller_mode == "shadow"
         controller_mode = self.config.eval_controller if self.state.mode == RuntimeMode.EVAL else "training_legacy"
+        if shadow_mode:
+            controller_mode = self.config.production_controller
         active_components = self._active_controller_components(controller_mode)
+        shadow_components = self._active_controller_components(self.config.eval_controller if self.config.eval_controller != "heuristic" else "full")
         gate = self._learned_controller_gate() if self.state.mode == RuntimeMode.EVAL and active_components else 0.0
+        shadow_gate = self._learned_controller_gate() if shadow_mode and shadow_components else 0.0
         scored: list[ScoredAction] = []
         for entry, norm in zip(entries, normalized):
-            if self.state.mode == RuntimeMode.EVAL:
+            if shadow_mode:
+                shadow_learned_score = (
+                    self.config.policy_log_score_weight * norm["policy"]
+                    if "policy" in shadow_components
+                    else 0.0
+                )
+                shadow_learned_score += self.config.q_score_weight * norm["q"] if "q" in shadow_components else 0.0
+                shadow_learned_score += self.config.value_score_weight * norm["value"] if "value" in shadow_components else 0.0
+                shadow_learned_score += self.config.world_reward_weight * norm["world"] if "world" in shadow_components else 0.0
+                learned_score = shadow_learned_score
+                score = entry["heuristic_score"]
+                learned_weight = 0.0
+                controller_gate = 0.0
+            elif self.state.mode == RuntimeMode.EVAL:
                 learned_score = (
                     self.config.policy_log_score_weight * norm["policy"]
                     if "policy" in active_components
@@ -891,10 +919,14 @@ class JarvisRuntime:
                 learned_score += self.config.world_reward_weight * norm["world"] if "world" in active_components else 0.0
                 score = entry["heuristic_score"] + gate * learned_score
                 learned_weight = gate
+                shadow_learned_score = 0.0
+                controller_gate = gate
             else:
                 learned_score = entry["legacy_learned_score"]
                 score = entry["heuristic_score"] + legacy_learned_weight * learned_score
                 learned_weight = legacy_learned_weight
+                shadow_learned_score = 0.0
+                controller_gate = 0.0
             if not entry["feasible"]:
                 score -= self.config.feasibility_penalty
             scored.append(
@@ -917,8 +949,10 @@ class JarvisRuntime:
                     value_score=float(norm["value"]),
                     world_score=float(norm["world"]),
                     final_score=float(score),
-                    controller_gate=float(gate),
+                    controller_gate=float(controller_gate),
                     controller_mode=controller_mode,
+                    shadow_learned_score=float(shadow_learned_score),
+                    shadow_controller_gate=float(shadow_gate),
                     raw_score_components={
                         "policy": float(entry["policy_score"]),
                         "q": float(entry["q_value"]),
@@ -930,9 +964,12 @@ class JarvisRuntime:
             )
         heuristic_winner = self._heuristic_winner(scored)
         selected_winner = max([item for item in scored if item.feasible] or scored, key=lambda item: item.score)
+        shadow_winner = self._shadow_winner(scored) if shadow_mode else None
         for item in scored:
             item.heuristic_winner = item is heuristic_winner
             item.controller_changed_heuristic = selected_winner is not heuristic_winner
+            item.shadow_learned_winner = item is shadow_winner
+            item.shadow_changed_heuristic = shadow_winner is not None and shadow_winner is not heuristic_winner
         return sorted(scored, key=lambda item: item.score, reverse=True)
 
     def _normalized_controller_components(self, entries: list[dict[str, Any]]) -> list[dict[str, float]]:
@@ -994,6 +1031,11 @@ class JarvisRuntime:
     def _heuristic_winner(scored: list[ScoredAction]) -> ScoredAction:
         pool = [item for item in scored if item.feasible] or scored
         return max(pool, key=lambda item: item.heuristic_score)
+
+    @staticmethod
+    def _shadow_winner(scored: list[ScoredAction]) -> ScoredAction:
+        pool = [item for item in scored if item.feasible] or scored
+        return max(pool, key=lambda item: item.heuristic_score + item.shadow_controller_gate * item.shadow_learned_score)
 
     def _ensure_feasible_scored(
         self,

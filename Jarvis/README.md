@@ -575,3 +575,74 @@ ValueFunction: LEARNING
 ActionValueNetwork: LEARNING
 NeuralPolicy: LEARNING
 ```
+
+## JARVIS V0.4 Capability Acquisition MVP
+
+v0.4 adds a persistent capability-acquisition layer. The default production
+selector for capability work is the proven heuristic controller; Policy/Q/Value
+and WorldModel scores can still be computed and recorded in shadow mode, but do
+not change the selected production action unless explicitly enabled.
+
+Lifecycle:
+
+```text
+USER GOAL
+  -> CapabilityResolver
+  -> missing capability
+  -> SkillSpecification
+  -> staging workspace
+  -> CodingWorld build/debug loop
+  -> public tests
+  -> hidden verifier
+  -> versioned promotion
+  -> CapabilityRegistry
+  -> execute original request
+  -> second call uses installed capability directly
+```
+
+The persistent registry is stored as JSON and records:
+
+```text
+capability_id, description, version, status, entrypoint,
+input_schema, output_schema, permissions_required, dependencies,
+source_location, tests_location, creation_metadata, validation_status
+```
+
+Staged skills are created under `skills/_staging/<capability>/<candidate>/`.
+Promoted skills are copied into
+`skills/installed/<capability_id>/<version>/` and registered only after:
+
+```text
+syntax/build succeeds
+public tests pass
+hidden verifier passes
+protected files remain pristine
+manifest validates
+permission policy passes
+```
+
+Hidden verifier workspaces are separate from the editable skill workspace. The
+developer loop can see public tests and staged source files, but not hidden
+verifier source or hidden expected outputs.
+
+Permission policy is conservative in v0.4. Safe local capabilities can be
+developed and tested automatically. Network, browser, credential, email, or
+other side-effect permissions are blocked with a structured permission decision
+instead of being silently granted.
+
+Acquisition trajectories are appended to
+`data/capabilities/acquisition_trajectories.jsonl` by default. Each record
+contains the goal, gap detection result, specification, actions/observations,
+test results, promotion decision, original execution result, and final outcome.
+
+Run the mock v0.4 demo without loading Qwen:
+
+```bash
+python -m training.capability_acquisition_v04_demo --mock-brain
+```
+
+Cheapest real-Qwen smoke path through an OpenAI-compatible endpoint:
+
+```bash
+python -m training.capability_acquisition_v04_demo --brain-provider openai_compatible --task-count 1
+```

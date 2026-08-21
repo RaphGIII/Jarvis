@@ -1,0 +1,1 @@
+def gcd(*args):\n    if len(args) == 0:\n        return 0\n    a, b = args[0], args[1]\n    a, b = abs(a), abs(b)\n    while b:\n        a, b = b, a % b\n    return a

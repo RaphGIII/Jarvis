@@ -1,0 +1,46 @@
+{
+  "acceptance_criteria": [
+    "Public tests pass.",
+    "Hidden verifier passes.",
+    "Original request executes through the installed skill."
+  ],
+  "allowed_dependencies": [],
+  "capability_id": "data.csv_column_mode",
+  "constraints": [
+    "Use Python standard library only.",
+    "No network access.",
+    "Expose run(payload: dict) -> dict."
+  ],
+  "functional_requirements": [
+    "Use the header row.",
+    "Skip rows with missing columns.",
+    "Break ties lexicographically."
+  ],
+  "inputs": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "metadata": {},
+  "objective": "Read CSV text and return the most common value in a selected column.",
+  "outputs": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "permissions": [],
+  "proposed_file_structure": [
+    "main.py"
+  ],
+  "public_tests": [
+    {
+      "expected": {
+        "frequency": 2,
+        "value": "red"
+      },
+      "input": {
+        "column": "color",
+        "csv_text": "name,color\nAda,red\nBob,blue\nCy,red\n"
+      },
+      "name": "mode"
+    }
+  ]
+}

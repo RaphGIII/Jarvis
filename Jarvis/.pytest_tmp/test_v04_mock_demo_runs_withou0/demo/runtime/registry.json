@@ -1,0 +1,65 @@
+{
+  "capabilities": {
+    "data.csv_column_mode": {
+      "capability_id": "data.csv_column_mode",
+      "creation_metadata": {
+        "created_at": "2026-08-21T17:21:16.221783+00:00",
+        "source": "capability_acquisition_v04"
+      },
+      "dependencies": [],
+      "description": "Read CSV text and return the most common value in a selected column.",
+      "entrypoint": "main.py",
+      "input_schema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "permissions_required": [],
+      "source_location": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\skills\\installed\\data.csv_column_mode\\1.0.0",
+      "status": "active",
+      "tests_location": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\skills\\installed\\data.csv_column_mode\\1.0.0\\test_public.py",
+      "validation_status": {
+        "hidden_verifier": true,
+        "permission_policy": true,
+        "protected_files_pristine": true,
+        "public_tests": true,
+        "syntax_build": true
+      },
+      "version": "1.0.0"
+    },
+    "text.line_count": {
+      "capability_id": "text.line_count",
+      "creation_metadata": {
+        "created_at": "2026-08-21T17:21:14.253181+00:00",
+        "source": "capability_acquisition_v04"
+      },
+      "dependencies": [],
+      "description": "Count non-empty lines in supplied text.",
+      "entrypoint": "main.py",
+      "input_schema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "permissions_required": [],
+      "source_location": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\skills\\installed\\text.line_count\\1.0.0",
+      "status": "active",
+      "tests_location": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\skills\\installed\\text.line_count\\1.0.0\\test_public.py",
+      "validation_status": {
+        "hidden_verifier": true,
+        "permission_policy": true,
+        "protected_files_pristine": true,
+        "public_tests": true,
+        "syntax_build": true
+      },
+      "version": "1.0.0"
+    }
+  },
+  "schema_version": 1
+}

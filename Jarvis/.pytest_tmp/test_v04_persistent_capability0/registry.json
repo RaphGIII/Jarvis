@@ -1,0 +1,22 @@
+{
+  "capabilities": {
+    "text.statistics": {
+      "capability_id": "text.statistics",
+      "creation_metadata": {},
+      "dependencies": [],
+      "description": "Compute text statistics.",
+      "entrypoint": "main.py",
+      "input_schema": {},
+      "output_schema": {},
+      "permissions_required": [],
+      "source_location": "skills/installed/text.statistics/1.0.0",
+      "status": "disabled",
+      "tests_location": "",
+      "validation_status": {
+        "disabled_reason": "test"
+      },
+      "version": "1.0.0"
+    }
+  },
+  "schema_version": 1
+}

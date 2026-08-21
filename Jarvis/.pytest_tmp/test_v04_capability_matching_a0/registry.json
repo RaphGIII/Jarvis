@@ -1,0 +1,20 @@
+{
+  "capabilities": {
+    "data.csv.mode": {
+      "capability_id": "data.csv.mode",
+      "creation_metadata": {},
+      "dependencies": [],
+      "description": "Read CSV text and compute the most common column value.",
+      "entrypoint": "main.py",
+      "input_schema": {},
+      "output_schema": {},
+      "permissions_required": [],
+      "source_location": "",
+      "status": "active",
+      "tests_location": "",
+      "validation_status": {},
+      "version": "1.0.0"
+    }
+  },
+  "schema_version": 1
+}
