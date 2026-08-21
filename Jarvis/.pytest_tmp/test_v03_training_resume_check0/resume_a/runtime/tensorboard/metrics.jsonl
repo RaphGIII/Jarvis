@@ -1,0 +1,16 @@
+{"step": 1, "tag": "train/replay_size", "value": 1.0}
+{"step": 1, "tag": "train/episode_reward", "value": -0.5075000000000001}
+{"step": 1, "tag": "train/success_rate", "value": 0.0}
+{"step": 1, "tag": "train/steps", "value": 1.0}
+{"step": 1, "tag": "train/world_loss", "value": 0.26214882731437683}
+{"step": 1, "tag": "train/value_loss", "value": 0.2739090621471405}
+{"step": 1, "tag": "train/q_loss", "value": 0.07427222281694412}
+{"step": 1, "tag": "train/policy_loss", "value": -1.3039422035217285}
+{"step": 2, "tag": "train/replay_size", "value": 2.0}
+{"step": 2, "tag": "train/episode_reward", "value": -0.7225000000000001}
+{"step": 2, "tag": "train/success_rate", "value": 0.0}
+{"step": 2, "tag": "train/steps", "value": 2.0}
+{"step": 2, "tag": "train/world_loss", "value": 0.18037764728069305}
+{"step": 2, "tag": "train/value_loss", "value": 0.2527264356613159}
+{"step": 2, "tag": "train/q_loss", "value": 0.055369991809129715}
+{"step": 2, "tag": "train/policy_loss", "value": -0.9534845948219299}

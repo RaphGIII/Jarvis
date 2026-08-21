@@ -922,6 +922,133 @@ def test_v03_suite_only_cli_path_loads_checkpoint_without_optimizer_updates(tmp_
     assert result["TRAINING_STEPS_BEFORE"] == result["TRAINING_STEPS_AFTER"]
 
 
+def test_v03_count_overrides_do_not_modify_full_runtime_architecture(tmp_path):
+    config = CodingBrainV03Config(
+        train_episodes=20,
+        validation_count=3,
+        holdout_count=3,
+        mock_brain=True,
+        quiet=True,
+    )
+    train_count, _, validation_count, holdout_count = v03_demo._counts(config)
+    brain, encoder = v03_demo._make_brain(config)
+    runtime = v03_demo._make_runtime(config, tmp_path / "runtime", brain, encoder)
+
+    assert (train_count, validation_count, holdout_count) == (20, 3, 3)
+    assert runtime.config.latent_dim == 64
+    assert runtime.config.hidden_dim == 96
+    assert runtime.config.replay_capacity == 1200
+    assert runtime.scheduler.config.value_policy_batch_size == 4
+    assert runtime.scheduler.config.world_model_batch_size == 4
+
+
+def test_v03_quick_still_uses_quick_runtime_architecture(tmp_path):
+    config = CodingBrainV03Config(quick=True, train_episodes=4, mock_brain=True, quiet=True)
+    train_count, _, validation_count, holdout_count = v03_demo._counts(config)
+    brain, encoder = v03_demo._make_brain(config)
+    runtime = v03_demo._make_runtime(config, tmp_path / "runtime", brain, encoder)
+
+    assert (train_count, validation_count, holdout_count) == (4, 2, 3)
+    assert runtime.config.latent_dim == 32
+    assert runtime.config.hidden_dim == 32
+    assert runtime.config.replay_capacity == 300
+    assert runtime.scheduler.config.value_policy_batch_size == 1
+    assert runtime.scheduler.config.world_model_batch_size == 1
+
+
+def test_v03_suite_only_respects_holdout_count_without_changing_architecture(tmp_path, monkeypatch):
+    captured_counts = {}
+
+    def fake_evaluate_controller_suite(self, runtime, task_factory):
+        results = {}
+        for mode in CodingBenchmark.CONTROLLER_MODES:
+            tasks = task_factory(mode)
+            captured_counts[mode] = len(tasks)
+            results[mode] = {
+                "success_rate": 0.0,
+                "mean_reward": 0.0,
+                "mean_steps_to_solution": 1.0,
+                "regression_rate": 0.0,
+                "controller_diagnostics": {"mean_gate": 0.0, "action_selection_disagreement_rate_vs_heuristic": 0.0},
+            }
+        return results
+
+    monkeypatch.setattr(v03_demo.DockerSandboxBackend, "is_available", staticmethod(lambda: True))
+    monkeypatch.setattr(v03_demo, "_load_suite_checkpoint", lambda runtime, category: {"policy": True})
+    monkeypatch.setattr(CodingBenchmark, "evaluate_controller_suite", fake_evaluate_controller_suite)
+
+    result = run_coding_brain_v03_demo(
+        CodingBrainV03Config(
+            mock_brain=True,
+            quiet=True,
+            benchmark_dir=str(tmp_path),
+            eval_controller_suite_only=True,
+            holdout_count=2,
+        )
+    )
+
+    assert result["SUITE_ONLY"] is True
+    assert captured_counts == {mode: 2 for mode in CodingBenchmark.CONTROLLER_MODES}
+    assert result["RUNTIME_ARCHITECTURE"]["latent_dim"] == 64
+    assert result["RUNTIME_ARCHITECTURE"]["hidden_dim"] == 96
+    assert result["RUNTIME_ARCHITECTURE"]["replay_capacity"] == 1200
+
+
+def test_v03_compact_output_suppresses_controller_json_but_keeps_result_diagnostics(tmp_path, monkeypatch, capsys):
+    result_path = tmp_path / "result.json"
+    detailed = {
+        "CONTROLLER_ABLATIONS": {
+            "full": {
+                "episodes": [
+                    {
+                        "candidate_scores": [
+                            {"action": {"action_type": "PATCH_FILE"}, "raw_q_score": 1.0}
+                        ]
+                    }
+                ],
+                "controller_diagnostics": {"mean_gate": 0.5},
+            }
+        }
+    }
+    result_path.write_text(json.dumps(detailed), encoding="utf-8")
+    metrics = {
+        "SANDBOX_AVAILABLE": True,
+        "MODEL": "mock",
+        "ACTION_GENERATOR": "QwenActionGenerator",
+        "TRAIN_TASK_COUNT": 1,
+        "VALIDATION_TASK_COUNT": 1,
+        "HOLDOUT_TASK_COUNT": 1,
+        "REPLAY_SIZE": 4,
+        "BASELINE": {"success_rate": 0.0, "mean_reward": 0.0, "mean_steps_to_solution": 1.0},
+        "VALIDATION": {"success_rate": 0.0, "mean_reward": 0.0, "mean_steps_to_solution": 1.0},
+        "FINAL": {"success_rate": 0.0, "mean_reward": 0.0, "mean_steps_to_solution": 1.0},
+        "CONTROLLER_ABLATIONS": detailed["CONTROLLER_ABLATIONS"],
+        "CONTROLLER_ABLATION_TABLE": [
+            {
+                "mode": "full",
+                "success_rate": 0.0,
+                "mean_reward": 0.0,
+                "mean_steps": 1.0,
+                "controller_mean_gate": 0.5,
+                "disagreement_vs_heuristic": 0.0,
+            }
+        ],
+        "RESULT_PATH": str(result_path),
+        "PROGRESS_PATH": str(tmp_path / "progress.json"),
+    }
+
+    monkeypatch.setattr(v03_demo, "_parse_args", lambda: CodingBrainV03Config(compact_output=True))
+    monkeypatch.setattr(v03_demo, "run_coding_brain_v03_demo", lambda config: metrics)
+    v03_demo.main()
+    stdout = capsys.readouterr().out
+
+    assert "CONTROLLER_ABLATION_TABLE" in stdout
+    assert "CONTROLLER_ABLATIONS" not in stdout
+    assert "candidate_scores" not in stdout
+    assert "PATCH_FILE" not in stdout
+    assert json.loads(result_path.read_text(encoding="utf-8"))["CONTROLLER_ABLATIONS"]["full"]["episodes"][0]["candidate_scores"]
+
+
 def test_v03_full_split_fingerprints_are_unique_and_disjoint(tmp_path):
     factory = CodingTaskFactory(tmp_path / "tasks")
     splits = {

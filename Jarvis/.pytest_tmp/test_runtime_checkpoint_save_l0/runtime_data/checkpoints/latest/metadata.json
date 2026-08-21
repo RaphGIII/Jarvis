@@ -1,0 +1,10 @@
+{
+  "category": "latest",
+  "extra": {
+    "version": "runtime-snapshot"
+  },
+  "metrics": {
+    "loss": 1.0
+  },
+  "timestamp": "2026-08-21T15:05:10.431980+00:00"
+}

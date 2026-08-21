@@ -1,0 +1,12 @@
+{
+  "category": "latest",
+  "extra": {
+    "version": "runtime-snapshot"
+  },
+  "metrics": {
+    "mean_reward": 1.0,
+    "regression_rate": 0.0,
+    "success_rate": 1.0
+  },
+  "timestamp": "2026-08-21T15:05:50.747963+00:00"
+}

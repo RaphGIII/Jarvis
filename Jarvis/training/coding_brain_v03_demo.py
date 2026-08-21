@@ -46,6 +46,9 @@ class CodingBrainV03Config:
     eval_controller_suite_only: bool = False
     checkpoint_category: str = "best"
     benchmark_dir: str | None = None
+    validation_count: int | None = None
+    holdout_count: int | None = None
+    compact_output: bool = False
 
 
 class MockAutonomousPatchBrain:
@@ -215,12 +218,25 @@ def _make_runtime(config: CodingBrainV03Config, data_dir: Path, brain, semantic_
     return runtime
 
 
+def _validate_count(name: str, value: int, maximum: int) -> int:
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1.")
+    if value > maximum:
+        raise ValueError(f"{name}={value} exceeds available v0.3 curriculum size {maximum}.")
+    return value
+
+
 def _counts(config: CodingBrainV03Config) -> tuple[int, int, int, int]:
     if config.smoke:
-        return min(config.train_episodes, 2), 2, 1, 1
-    if config.quick:
-        return config.train_episodes, 4, 2, 3
-    return config.train_episodes, 30, 10, 20
+        train_default, validation_default, holdout_default = config.train_episodes, 1, 1
+    elif config.quick:
+        train_default, validation_default, holdout_default = config.train_episodes, 2, 3
+    else:
+        train_default, validation_default, holdout_default = config.train_episodes, 10, 20
+    train_count = _validate_count("train_episodes", train_default, 30)
+    validation_count = _validate_count("validation_count", config.validation_count if config.validation_count is not None else validation_default, 10)
+    holdout_count = _validate_count("holdout_count", config.holdout_count if config.holdout_count is not None else holdout_default, 20)
+    return train_count, train_count, validation_count, holdout_count
 
 
 def _fresh_tasks(factory: CodingTaskFactory, split: DatasetSplit, count: int, max_steps: int | None):
@@ -340,6 +356,83 @@ def _ablation_table(results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     return table
 
 
+def _runtime_architecture(runtime: JarvisRuntime) -> dict[str, Any]:
+    return {
+        "latent_dim": runtime.config.latent_dim,
+        "hidden_dim": runtime.config.hidden_dim,
+        "replay_capacity": runtime.config.replay_capacity,
+        "value_policy_batch_size": runtime.scheduler.config.value_policy_batch_size,
+        "world_model_batch_size": runtime.scheduler.config.world_model_batch_size,
+        "learned_gate_min_experiences": runtime.config.learned_gate_min_experiences,
+        "learned_gate_warmup_experiences": runtime.config.learned_gate_warmup_experiences,
+    }
+
+
+def _format_ablation_table(table: list[dict[str, Any]]) -> str:
+    lines = ["CONTROLLER_ABLATION_TABLE", "MODE                SUCCESS  STEPS   REWARD    GATE  DISAGREE"]
+    if not table:
+        lines.append("(not run)")
+        return "\n".join(lines)
+    for row in table:
+        lines.append(
+            f"{row.get('mode', ''):<19}"
+            f"{float(row.get('success_rate', 0.0)):>7.3f}"
+            f"{float(row.get('mean_steps', 0.0)):>7.2f}"
+            f"{float(row.get('mean_reward', 0.0)):>9.3f}"
+            f"{float(row.get('controller_mean_gate', 0.0)):>8.3f}"
+            f"{float(row.get('disagreement_vs_heuristic', 0.0)):>10.3f}"
+        )
+    return "\n".join(lines)
+
+
+def _print_compact_metrics(metrics: dict[str, Any]) -> None:
+    for key in [
+        "SANDBOX_AVAILABLE",
+        "MODEL",
+        "DEVICE",
+        "ACTION_GENERATOR",
+        "BRAIN_PROVIDER",
+        "SEMANTIC_ENCODER",
+        "QWEN_TRAINABLE",
+        "TRAIN_TASK_COUNT",
+        "VALIDATION_TASK_COUNT",
+        "HOLDOUT_TASK_COUNT",
+        "PERSISTENCE_MODE",
+        "SEED",
+    ]:
+        if key in metrics:
+            print(f"{key}: {metrics[key]}")
+    architecture = metrics.get("RUNTIME_ARCHITECTURE")
+    if architecture:
+        print(
+            "RUNTIME_ARCHITECTURE: "
+            f"latent_dim={architecture.get('latent_dim')} "
+            f"hidden_dim={architecture.get('hidden_dim')} "
+            f"replay_capacity={architecture.get('replay_capacity')}"
+        )
+    if "BASELINE" in metrics:
+        baseline = metrics["BASELINE"]
+        print(f"BASELINE: success={baseline.get('success_rate', 0.0):.3f} reward={baseline.get('mean_reward', 0.0):.3f} steps={baseline.get('mean_steps_to_solution', 0.0):.2f}")
+    if "VALIDATION" in metrics:
+        validation = metrics["VALIDATION"]
+        print(f"VALIDATION: success={validation.get('success_rate', 0.0):.3f} reward={validation.get('mean_reward', 0.0):.3f} steps={validation.get('mean_steps_to_solution', 0.0):.2f}")
+    if "FINAL" in metrics:
+        final = metrics["FINAL"]
+        print(f"FINAL: success={final.get('success_rate', 0.0):.3f} reward={final.get('mean_reward', 0.0):.3f} steps={final.get('mean_steps_to_solution', 0.0):.2f}")
+    print(f"REPLAY_SIZE: {metrics.get('REPLAY_SIZE', 0)}")
+    table = metrics.get("CONTROLLER_ABLATION_TABLE") or []
+    gates = [float(row.get("controller_mean_gate", 0.0)) for row in table]
+    mean_gate = sum(gates) / len(gates) if gates else 0.0
+    print(f"MEAN_CONTROLLER_GATE: {mean_gate:.3f}")
+    if "PERFORMANCE_TEXT" in metrics:
+        print(metrics["PERFORMANCE_TEXT"])
+    print(_format_ablation_table(table))
+    if "RESULT_PATH" in metrics:
+        print(f"RESULT_PATH: {metrics['RESULT_PATH']}")
+    if "PROGRESS_PATH" in metrics:
+        print(f"PROGRESS_PATH: {metrics['PROGRESS_PATH']}")
+
+
 def _load_suite_checkpoint(runtime: JarvisRuntime, category: str) -> dict[str, bool]:
     if category == "latest":
         return runtime.load_latest_checkpoints()
@@ -452,6 +545,7 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
             "TRAINING_STEPS_BEFORE": suite_before_steps,
             "TRAINING_STEPS_AFTER": dict(runtime.learning_summary()["parameters_updated"]),
             "REPLAY_SIZE": len(runtime.replay_buffer),
+            "RUNTIME_ARCHITECTURE": _runtime_architecture(runtime),
             "CONFIG": asdict(config),
         }
         output_path = results_dir / f"coding_brain_v03_suite_only_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -622,6 +716,7 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
         "TENSORBOARD": runtime.learning_summary()["tensorboard"],
         "PERFORMANCE": runtime.profiler.summary(),
         "PERFORMANCE_TEXT": runtime.profiler.format_summary(),
+        "RUNTIME_ARCHITECTURE": _runtime_architecture(runtime),
         "CONFIG": asdict(config),
     }
     output_path = results_dir / f"coding_brain_v03_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -658,6 +753,9 @@ def _parse_args() -> CodingBrainV03Config:
     parser.add_argument("--eval-controller-suite-only", action="store_true", help="Load an existing checkpoint and run only controller ablations.")
     parser.add_argument("--checkpoint-category", choices=["best", "latest"], default="best", help="Checkpoint category for suite-only ablation.")
     parser.add_argument("--benchmark-dir", default=None, help="Reusable benchmark directory for temporary/resumable runs.")
+    parser.add_argument("--validation-count", type=int, default=None, help="Override validation task count without changing runtime architecture.")
+    parser.add_argument("--holdout-count", type=int, default=None, help="Override holdout task count without changing runtime architecture.")
+    parser.add_argument("--compact-output", action="store_true", help="Print compact benchmark summaries while writing full diagnostics to RESULT_PATH.")
     args = parser.parse_args()
     train_episodes = args.train_episodes if args.train_episodes is not None else (1 if args.smoke else (4 if args.quick else 30))
     candidate_count = args.candidate_count
@@ -684,12 +782,18 @@ def _parse_args() -> CodingBrainV03Config:
         eval_controller_suite_only=args.eval_controller_suite_only,
         checkpoint_category=args.checkpoint_category,
         benchmark_dir=args.benchmark_dir,
+        validation_count=args.validation_count,
+        holdout_count=args.holdout_count,
+        compact_output=args.compact_output,
     )
 
 
 def main() -> None:
     config = _parse_args()
     metrics = run_coding_brain_v03_demo(config)
+    if config.compact_output:
+        _print_compact_metrics(metrics)
+        return
     for key in [
         "SANDBOX_AVAILABLE",
         "MODEL",
@@ -711,6 +815,8 @@ def main() -> None:
     print(f"ABSOLUTE DELTA:                {metrics.get('ABSOLUTE_DELTA', 0.0):+.3f}")
     if "PERFORMANCE_TEXT" in metrics:
         print(metrics["PERFORMANCE_TEXT"])
+    if "CONTROLLER_ABLATION_TABLE" in metrics:
+        print(_format_ablation_table(metrics["CONTROLLER_ABLATION_TABLE"]))
     print(json.dumps(metrics, indent=2, sort_keys=True))
 
 

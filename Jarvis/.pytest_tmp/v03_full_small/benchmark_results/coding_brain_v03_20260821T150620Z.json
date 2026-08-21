@@ -1,0 +1,779 @@
+{
+  "ABSOLUTE_DELTA": 0.0,
+  "ACTION_GENERATOR": "QwenActionGenerator",
+  "BASELINE": {
+    "accumulators": {
+      "controller_scores": [
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.8505726210547215,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.8500000000000001,
+          "heuristic_score": 0.8500000000000001,
+          "heuristic_winner": true,
+          "learned_score": 1.0946500778198243,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.36543235182762146,
+            "q": 1.1854926347732544,
+            "value": -1.2747892141342163,
+            "world": 0.5239956974983215
+          },
+          "novelty": 1.0,
+          "policy_score": -2.26678729057312,
+          "predicted_reward": 0.27558597922325134,
+          "q_score": 1.1854926347732544,
+          "q_value": -0.1040356457233429,
+          "raw_score_components": {
+            "policy": -2.26678729057312,
+            "q": -0.1040356457233429,
+            "value": -0.06700515002012253,
+            "world": 0.27558597922325134
+          },
+          "risk": 0.0,
+          "score": 0.8500000000000001,
+          "uncertainty": 0.7011452421094431,
+          "value_score": -1.2747892141342163,
+          "world_score": 0.5239956974983215
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.850518852020755,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": false,
+          "learned_score": -2.5558543652296066,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0004321336746216,
+            "q": -1.2605448961257935,
+            "value": 0.1071343794465065,
+            "world": -1.3995672464370728
+          },
+          "novelty": 1.0,
+          "policy_score": -2.312448501586914,
+          "predicted_reward": 0.26848846673965454,
+          "q_score": -1.2605448961257935,
+          "q_value": -0.11587398499250412,
+          "raw_score_components": {
+            "policy": -2.312448501586914,
+            "q": -0.11587398499250412,
+            "value": -0.06556203961372375,
+            "world": 0.26848846673965454
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.7010377040415099,
+          "value_score": 0.1071343794465065,
+          "world_score": -1.3995672464370728
+        },
+        {
+          "candidate": {
+            "action_type": "LIST_FILES",
+            "arguments": {},
+            "confidence": 0.2,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Refresh workspace listing if no better unique fallback is available."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.8505824488220792,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": -0.07999999999999999,
+          "heuristic_score": -0.07999999999999999,
+          "heuristic_winner": false,
+          "learned_score": 1.4612157627940179,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.3658678531646729,
+            "q": 0.07505534589290619,
+            "value": 1.1676620244979858,
+            "world": 0.8755796551704407
+          },
+          "novelty": 1.0,
+          "policy_score": -2.142293930053711,
+          "predicted_reward": 0.27688324451446533,
+          "q_score": 0.07505534589290619,
+          "q_value": -0.10940994322299957,
+          "raw_score_components": {
+            "policy": -2.142293930053711,
+            "q": -0.10940994322299957,
+            "value": -0.06445455551147461,
+            "world": 0.27688324451446533
+          },
+          "risk": 0.0,
+          "score": -0.07999999999999999,
+          "uncertainty": 0.7011648976441585,
+          "value_score": 1.1676620244979858,
+          "world_score": 0.8755796551704407
+        }
+      ],
+      "episode_changed": [
+        0.0
+      ],
+      "episode_invalids": [
+        0.0
+      ],
+      "episode_success_when_changed": [],
+      "hidden_runs": [
+        0.0
+      ],
+      "invalids": [
+        0.0
+      ],
+      "prediction_losses": [
+        0.15773016214370728
+      ],
+      "q_errors": [
+        0.10346435427665712
+      ],
+      "regressions": [
+        0.0
+      ],
+      "rewards": [
+        -0.20750000000000002
+      ],
+      "steps": [
+        1.0
+      ],
+      "successes": [
+        0.0
+      ],
+      "tests_passed": [
+        0.0
+      ],
+      "value_errors": [
+        0.21689042121171953
+      ]
+    },
+    "controller_diagnostics": {
+      "action_selection_disagreement_rate_vs_heuristic": 0.0,
+      "candidate_count": 3,
+      "episodes_with_learned_override_rate": 0.0,
+      "learned_changed_heuristic_winner_rate": 0.0,
+      "mean_abs_contribution": {
+        "heuristic_score": 0.49333333333333335,
+        "learned_score": 1.7039067352811497,
+        "policy_score": 2.2405099074045816,
+        "q_score": 0.8403642922639847,
+        "value_score": 0.8498618726929029,
+        "world_score": 0.9330475330352783
+      },
+      "mean_gate": 0.0,
+      "success_rate_when_learned_changed_episode": 0.0
+    },
+    "episodes": 1,
+    "episodes_with_invalid_action_rate": 0.0,
+    "hidden_verifier_runs": 0.0,
+    "invalid_action_rate": 0.0,
+    "mean_reward": -0.20750000000000002,
+    "mean_steps_to_solution": 1.0,
+    "q_prediction_error": 0.10346435427665712,
+    "regression_rate": 0.0,
+    "success_rate": 0.0,
+    "tests_passed_delta": 0.0,
+    "value_prediction_error": 0.21689042121171953,
+    "world_model_prediction_loss": 0.15773016214370728
+  },
+  "BASELINE_HOLDOUT_SUCCESS_RATE": 0.0,
+  "BRAIN_PROVIDER": "MockAutonomousPatchBrain",
+  "CONFIG": {
+    "benchmark_dir": ".pytest_tmp\\v03_full_small",
+    "brain_profile": null,
+    "brain_provider": null,
+    "candidate_count": 6,
+    "checkpoint_category": "best",
+    "coding_max_tokens": 450,
+    "compact_output": true,
+    "eval_controller": "full",
+    "eval_controller_suite": false,
+    "eval_controller_suite_only": false,
+    "holdout_count": 1,
+    "max_steps": 1,
+    "mock_brain": true,
+    "persistent": false,
+    "quick": false,
+    "quiet": true,
+    "resume": false,
+    "seed": 41,
+    "smoke": false,
+    "trace_actions": false,
+    "train_episodes": 1,
+    "validation_count": 1
+  },
+  "CONTROLLER_ABLATIONS": {},
+  "CONTROLLER_ABLATION_TABLE": [],
+  "DELTA": {
+    "holdout_success_rate": 0.0,
+    "mean_reward": 0.0,
+    "mean_steps": 0.0
+  },
+  "DEVICE": "cpu",
+  "EVAL_CONTROLLER": "full",
+  "FINAL": {
+    "accumulators": {
+      "controller_scores": [
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.1748150452971458,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.8500000000000001,
+          "heuristic_score": 0.8500000000000001,
+          "heuristic_winner": true,
+          "learned_score": 1.0946500778198243,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.36543235182762146,
+            "q": 1.1854926347732544,
+            "value": -1.2747892141342163,
+            "world": 0.5239956974983215
+          },
+          "novelty": 0.0,
+          "policy_score": -2.26678729057312,
+          "predicted_reward": 0.27558597922325134,
+          "q_score": 1.1854926347732544,
+          "q_value": -0.1040356457233429,
+          "raw_score_components": {
+            "policy": -2.26678729057312,
+            "q": -0.1040356457233429,
+            "value": -0.06700515002012253,
+            "world": 0.27558597922325134
+          },
+          "risk": 0.0,
+          "score": 0.8500000000000001,
+          "uncertainty": 0.3496300905942916,
+          "value_score": -1.2747892141342163,
+          "world_score": 0.5239956974983215
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.17476127626317917,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": false,
+          "learned_score": -2.5558543652296066,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0004321336746216,
+            "q": -1.2605448961257935,
+            "value": 0.1071343794465065,
+            "world": -1.3995672464370728
+          },
+          "novelty": 0.0,
+          "policy_score": -2.312448501586914,
+          "predicted_reward": 0.26848846673965454,
+          "q_score": -1.2605448961257935,
+          "q_value": -0.11587398499250412,
+          "raw_score_components": {
+            "policy": -2.312448501586914,
+            "q": -0.11587398499250412,
+            "value": -0.06556203961372375,
+            "world": 0.26848846673965454
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.34952255252635833,
+          "value_score": 0.1071343794465065,
+          "world_score": -1.3995672464370728
+        },
+        {
+          "candidate": {
+            "action_type": "LIST_FILES",
+            "arguments": {},
+            "confidence": 0.2,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Refresh workspace listing if no better unique fallback is available."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.1748248730645035,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": -0.07999999999999999,
+          "heuristic_score": -0.07999999999999999,
+          "heuristic_winner": false,
+          "learned_score": 1.4612157627940179,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.3658678531646729,
+            "q": 0.07505534589290619,
+            "value": 1.1676620244979858,
+            "world": 0.8755796551704407
+          },
+          "novelty": 0.0,
+          "policy_score": -2.142293930053711,
+          "predicted_reward": 0.27688324451446533,
+          "q_score": 0.07505534589290619,
+          "q_value": -0.10940994322299957,
+          "raw_score_components": {
+            "policy": -2.142293930053711,
+            "q": -0.10940994322299957,
+            "value": -0.06445455551147461,
+            "world": 0.27688324451446533
+          },
+          "risk": 0.0,
+          "score": -0.07999999999999999,
+          "uncertainty": 0.349649746129007,
+          "value_score": 1.1676620244979858,
+          "world_score": 0.8755796551704407
+        }
+      ],
+      "episode_changed": [
+        0.0
+      ],
+      "episode_invalids": [
+        0.0
+      ],
+      "episode_success_when_changed": [],
+      "hidden_runs": [
+        0.0
+      ],
+      "invalids": [
+        0.0
+      ],
+      "prediction_losses": [
+        0.15773016214370728
+      ],
+      "q_errors": [
+        0.10346435427665712
+      ],
+      "regressions": [
+        0.0
+      ],
+      "rewards": [
+        -0.20750000000000002
+      ],
+      "steps": [
+        1.0
+      ],
+      "successes": [
+        0.0
+      ],
+      "tests_passed": [
+        0.0
+      ],
+      "value_errors": [
+        0.21689042121171953
+      ]
+    },
+    "controller_diagnostics": {
+      "action_selection_disagreement_rate_vs_heuristic": 0.0,
+      "candidate_count": 3,
+      "episodes_with_learned_override_rate": 0.0,
+      "learned_changed_heuristic_winner_rate": 0.0,
+      "mean_abs_contribution": {
+        "heuristic_score": 0.49333333333333335,
+        "learned_score": 1.7039067352811497,
+        "policy_score": 2.2405099074045816,
+        "q_score": 0.8403642922639847,
+        "value_score": 0.8498618726929029,
+        "world_score": 0.9330475330352783
+      },
+      "mean_gate": 0.0,
+      "success_rate_when_learned_changed_episode": 0.0
+    },
+    "episodes": 1,
+    "episodes_with_invalid_action_rate": 0.0,
+    "hidden_verifier_runs": 0.0,
+    "invalid_action_rate": 0.0,
+    "mean_reward": -0.20750000000000002,
+    "mean_steps_to_solution": 1.0,
+    "q_prediction_error": 0.10346435427665712,
+    "regression_rate": 0.0,
+    "success_rate": 0.0,
+    "tests_passed_delta": 0.0,
+    "value_prediction_error": 0.21689042121171953,
+    "world_model_prediction_loss": 0.15773016214370728
+  },
+  "FINAL_HOLDOUT_SUCCESS_RATE": 0.0,
+  "HOLDOUT_TASK_COUNT": 1,
+  "MODEL": "MockAutonomousPatchBrain",
+  "PARAMETERS_CHANGED": {
+    "ActionEncoder": "NO",
+    "ObservationEncoder": "NO",
+    "Policy": "NO",
+    "Q Network": "NO",
+    "Qwen": "NO",
+    "Value": "NO",
+    "WorldModel": "NO"
+  },
+  "PERFORMANCE": {
+    "breakdown": {
+      "brain_candidate_generation": {
+        "percent": 0.6851165140561045,
+        "seconds": 0.0014482999995379942
+      },
+      "docker_execution": {
+        "percent": 5.839786901477137,
+        "seconds": 0.012345000001005246
+      },
+      "optimizer_training_update": {
+        "percent": 0.02999129151617685,
+        "seconds": 6.340000072668772e-05
+      },
+      "other": {
+        "percent": 75.75549434135618,
+        "seconds": 0.16014309999627585
+      },
+      "policy_q_world_scoring": {
+        "percent": 10.882533951837763,
+        "seconds": 0.023005099999863887
+      },
+      "semantic_action_encoding": {
+        "percent": 1.1847979155383557,
+        "seconds": 0.0025045999991561985
+      },
+      "semantic_observation_encoding": {
+        "percent": 5.622279084218286,
+        "seconds": 0.011885200003234786
+      }
+    },
+    "counters": {
+      "brain_requests": 3.0,
+      "candidate_cache_hits": 1.0,
+      "candidate_regeneration_count": 0.0,
+      "candidate_regeneration_success_count": 0.0,
+      "candidates_generated": 12.0,
+      "duplicate_candidates": 0.0,
+      "fallback_backfill_count": 3.0,
+      "generation_length_truncation_count": 0.0,
+      "malformed_items": 0.0,
+      "parse_error_count": 0.0,
+      "schema_invalid_candidates": 0.0,
+      "structured_generation_failures": 0.0,
+      "structured_generation_requests": 0.0,
+      "valid_candidates": 6.0,
+      "zero_valid_qwen_candidates": 0.0
+    },
+    "timings": {
+      "brain_candidate_generation": {
+        "count": 4,
+        "kind": "component",
+        "mean_seconds": 0.00036207499988449854,
+        "percent": 0.6851165140561045,
+        "seconds": 0.0014482999995379942
+      },
+      "docker_execution": {
+        "count": 4,
+        "kind": "component",
+        "mean_seconds": 0.0030862500002513116,
+        "percent": 5.839786901477137,
+        "seconds": 0.012345000001005246
+      },
+      "optimizer_training_update": {
+        "count": 4,
+        "kind": "component",
+        "mean_seconds": 1.585000018167193e-05,
+        "percent": 0.02999129151617685,
+        "seconds": 6.340000072668772e-05
+      },
+      "policy_q_world_scoring": {
+        "count": 4,
+        "kind": "component",
+        "mean_seconds": 0.005751274999965972,
+        "percent": 10.882533951837763,
+        "seconds": 0.023005099999863887
+      },
+      "semantic_action_encoding": {
+        "count": 4,
+        "kind": "component",
+        "mean_seconds": 0.0006261499997890496,
+        "percent": 1.1847979155383557,
+        "seconds": 0.0025045999991561985
+      },
+      "semantic_observation_encoding": {
+        "count": 8,
+        "kind": "component",
+        "mean_seconds": 0.0014856500004043482,
+        "percent": 5.622279084218286,
+        "seconds": 0.011885200003234786
+      },
+      "total_episode": {
+        "count": 4,
+        "kind": "total",
+        "mean_seconds": 0.05284867499995016,
+        "percent": 0.0,
+        "seconds": 0.21139469999980065
+      },
+      "total_step": {
+        "count": 4,
+        "kind": "total",
+        "mean_seconds": 0.051333675000023504,
+        "percent": 0.0,
+        "seconds": 0.20533470000009402
+      }
+    },
+    "total_episode_seconds": 0.21139469999980065,
+    "total_step_seconds": 0.20533470000009402,
+    "wall_time_seconds": 0.21139469999980065
+  },
+  "PERFORMANCE_TEXT": "WALL TIME: 0.211s\nBREAKDOWN:\nbrain_candidate_generation: 0.001s | 0.7%\nsemantic_observation_encoding: 0.012s | 5.6%\nsemantic_action_encoding: 0.003s | 1.2%\npolicy_q_world_scoring: 0.023s | 10.9%\ndocker_execution: 0.012s | 5.8%\noptimizer_training_update: 0.000s | 0.0%\nother: 0.160s | 75.8%\nTOTALS:\ntotal_episode: 0.211s | n=4\ntotal_step: 0.205s | n=4\nbrain_requests: 3\ncandidate_cache_hits: 1\ncandidate_regeneration_count: 0\ncandidate_regeneration_success_count: 0\ncandidates_generated: 12\nduplicate_candidates: 0\nfallback_backfill_count: 3\ngeneration_length_truncation_count: 0\nmalformed_items: 0\nparse_error_count: 0\nschema_invalid_candidates: 0\nstructured_generation_failures: 0\nstructured_generation_requests: 0\nvalid_candidates: 6\nzero_valid_qwen_candidates: 0",
+  "PERSISTENCE_MODE": "temporary",
+  "PERSISTENT_EXPERIENCE": 1,
+  "PROMOTED_BEST": true,
+  "QWEN_TRAINABLE": false,
+  "REPLAY_SIZE": 1,
+  "RUNTIME_ARCHITECTURE": {
+    "hidden_dim": 96,
+    "latent_dim": 64,
+    "learned_gate_min_experiences": 50,
+    "learned_gate_warmup_experiences": 250,
+    "replay_capacity": 1200,
+    "value_policy_batch_size": 4,
+    "world_model_batch_size": 4
+  },
+  "SANDBOX_AVAILABLE": true,
+  "SEED": 41,
+  "SEMANTIC_ENCODER": "DeterministicTextEncoder",
+  "TENSORBOARD": "tensorboard --logdir .pytest_tmp\\v03_full_small\\runtime\\tensorboard\\coding_v03",
+  "TRAIN_TASK_COUNT": 1,
+  "VALIDATION": {
+    "accumulators": {
+      "controller_scores": [
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7654176084832711,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.8500000000000001,
+          "heuristic_score": 0.8500000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.3704071402549743,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.4765988886356354,
+            "q": 1.1992549896240234,
+            "value": -1.2990467548370361,
+            "world": -1.1959152221679688
+          },
+          "novelty": 1.0,
+          "policy_score": -2.267094135284424,
+          "predicted_reward": 0.23512431979179382,
+          "q_score": 1.1992549896240234,
+          "q_value": -0.11153073608875275,
+          "raw_score_components": {
+            "policy": -2.267094135284424,
+            "q": -0.11153073608875275,
+            "value": -0.0726747214794159,
+            "world": 0.23512431979179382
+          },
+          "risk": 0.0,
+          "score": 0.8500000000000001,
+          "uncertainty": 0.5308352169665422,
+          "value_score": -1.2990467548370361,
+          "world_score": -1.1959152221679688
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7655189930489569,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": false,
+          "learned_score": -1.9454112097620966,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.9148043990135193,
+            "q": -1.2487350702285767,
+            "value": 0.16541780531406403,
+            "world": -0.055752452462911606
+          },
+          "novelty": 1.0,
+          "policy_score": -2.302170515060425,
+          "predicted_reward": 0.2485070824623108,
+          "q_score": -1.2487350702285767,
+          "q_value": -0.12283679842948914,
+          "raw_score_components": {
+            "policy": -2.302170515060425,
+            "q": -0.12283679842948914,
+            "value": -0.06708796322345734,
+            "world": 0.2485070824623108
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.5310379860979138,
+          "value_score": 0.16541780531406403,
+          "world_score": -0.055752452462911606
+        },
+        {
+          "candidate": {
+            "action_type": "LIST_FILES",
+            "arguments": {},
+            "confidence": 0.2,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Refresh workspace listing if no better unique fallback is available."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7656352505539402,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": -0.07999999999999999,
+          "heuristic_score": -0.07999999999999999,
+          "heuristic_winner": false,
+          "learned_score": 1.5750006474554539,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.3913973569869995,
+            "q": 0.049478478729724884,
+            "value": 1.1336289644241333,
+            "world": 1.251670241355896
+          },
+          "novelty": 1.0,
+          "policy_score": -2.1175694465637207,
+          "predicted_reward": 0.2638530731201172,
+          "q_score": 0.049478478729724884,
+          "q_value": -0.11684098839759827,
+          "raw_score_components": {
+            "policy": -2.1175694465637207,
+            "q": -0.11684098839759827,
+            "value": -0.06339435279369354,
+            "world": 0.2638530731201172
+          },
+          "risk": 0.0,
+          "score": -0.07999999999999999,
+          "uncertainty": 0.5312705011078804,
+          "value_score": 1.1336289644241333,
+          "world_score": 1.251670241355896
+        }
+      ],
+      "episode_changed": [
+        0.0
+      ],
+      "episode_invalids": [
+        0.0
+      ],
+      "episode_success_when_changed": [],
+      "hidden_runs": [
+        0.0
+      ],
+      "invalids": [
+        0.0
+      ],
+      "prediction_losses": [
+        0.18252868950366974
+      ],
+      "q_errors": [
+        0.09596926391124727
+      ],
+      "regressions": [
+        0.0
+      ],
+      "rewards": [
+        -0.20750000000000002
+      ],
+      "steps": [
+        1.0
+      ],
+      "successes": [
+        0.0
+      ],
+      "tests_passed": [
+        0.0
+      ],
+      "value_errors": [
+        0.23986825764179232
+      ]
+    },
+    "controller_diagnostics": {
+      "action_selection_disagreement_rate_vs_heuristic": 0.0,
+      "candidate_count": 3,
+      "episodes_with_learned_override_rate": 0.0,
+      "learned_changed_heuristic_winner_rate": 0.0,
+      "mean_abs_contribution": {
+        "heuristic_score": 0.49333333333333335,
+        "learned_score": 1.296939665824175,
+        "policy_score": 2.228944698969523,
+        "q_score": 0.832489512860775,
+        "value_score": 0.8660311748584112,
+        "world_score": 0.8344459719955921
+      },
+      "mean_gate": 0.0,
+      "success_rate_when_learned_changed_episode": 0.0
+    },
+    "episodes": 1,
+    "episodes_with_invalid_action_rate": 0.0,
+    "hidden_verifier_runs": 0.0,
+    "invalid_action_rate": 0.0,
+    "mean_reward": -0.20750000000000002,
+    "mean_steps_to_solution": 1.0,
+    "q_prediction_error": 0.09596926391124727,
+    "regression_rate": 0.0,
+    "success_rate": 0.0,
+    "tests_passed_delta": 0.0,
+    "value_prediction_error": 0.23986825764179232,
+    "world_model_prediction_loss": 0.18252868950366974
+  },
+  "VALIDATION_TASK_COUNT": 1
+}
