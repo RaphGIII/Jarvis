@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import uuid
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -596,6 +597,111 @@ class JarvisRuntime:
         }
         self.checkpoint_manager.save_category_metadata(category, metrics or {}, {"version": "runtime-snapshot"})
         return {name: str(path) for name, path in paths.items()}
+
+    def save_training_resume_checkpoint(self, path: str | Path, *, train_completed: int) -> Path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": 1,
+            "train_completed": int(train_completed),
+            "models": {
+                "world_model": self.world_model.state_dict(),
+                "policy": self.policy.state_dict(),
+                "value": self.value_function.state_dict(),
+                "action_value": self.action_value.state_dict(),
+                "observation_encoder": self.encoder.state_dict(),
+                "action_encoder": self.action_encoder.state_dict(),
+                "target_value": self.scheduler.target_value.state_dict(),
+                "target_action_value": self.scheduler.target_action_value.state_dict()
+                if self.scheduler.target_action_value is not None
+                else None,
+            },
+            "optimizers": {
+                "world": self.scheduler.world_optimizer.state_dict(),
+                "policy": self.scheduler.policy_optimizer.state_dict(),
+                "value": self.scheduler.value_optimizer.state_dict(),
+                "q": self.scheduler.q_optimizer.state_dict() if self.scheduler.q_optimizer is not None else None,
+                "encoder": self.scheduler.encoder_optimizer.state_dict() if self.scheduler.encoder_optimizer is not None else None,
+                "action_encoder": self.scheduler.action_encoder_optimizer.state_dict()
+                if self.scheduler.action_encoder_optimizer is not None
+                else None,
+            },
+            "training_steps": {
+                "world_model": self.world_model.training_step,
+                "policy": self.policy.training_step,
+                "value": self.value_function.training_step,
+                "action_value": self.action_value.training_step,
+                "observation_encoder": self.encoder.training_step,
+                "action_encoder": self.action_encoder.training_step,
+                "scheduler_runtime_steps": self.scheduler.runtime_steps,
+            },
+            "replay": {
+                "storage": list(self.replay_buffer._storage),
+                "priorities": list(self.replay_buffer._priorities),
+                "position": self.replay_buffer._position,
+                "rng_state": self.replay_buffer._rng.getstate(),
+            },
+            "known_latents": [latent.detach().cpu() for latent in self.known_latents],
+            "rng": {
+                "python": random.getstate(),
+                "torch": torch.get_rng_state(),
+                "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                "runtime": self._rng.getstate(),
+            },
+        }
+        temp = target.with_suffix(target.suffix + ".tmp")
+        torch.save(payload, temp)
+        os.replace(temp, target)
+        return target
+
+    def load_training_resume_checkpoint(self, path: str | Path, *, expected_train_completed: int | None = None) -> dict[str, Any]:
+        payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+        train_completed = int(payload.get("train_completed", -1))
+        if expected_train_completed is not None and train_completed != int(expected_train_completed):
+            raise RuntimeError(
+                f"Resume checkpoint train_completed={train_completed} does not match progress train_completed={expected_train_completed}."
+            )
+        models = payload["models"]
+        self.world_model.load_state_dict(models["world_model"])
+        self.policy.load_state_dict(models["policy"])
+        self.value_function.load_state_dict(models["value"])
+        self.action_value.load_state_dict(models["action_value"])
+        self.encoder.load_state_dict(models["observation_encoder"])
+        self.action_encoder.load_state_dict(models["action_encoder"])
+        self.scheduler.target_value.load_state_dict(models["target_value"])
+        if self.scheduler.target_action_value is not None and models.get("target_action_value") is not None:
+            self.scheduler.target_action_value.load_state_dict(models["target_action_value"])
+        optimizers = payload["optimizers"]
+        self.scheduler.world_optimizer.load_state_dict(optimizers["world"])
+        self.scheduler.policy_optimizer.load_state_dict(optimizers["policy"])
+        self.scheduler.value_optimizer.load_state_dict(optimizers["value"])
+        if self.scheduler.q_optimizer is not None and optimizers.get("q") is not None:
+            self.scheduler.q_optimizer.load_state_dict(optimizers["q"])
+        if self.scheduler.encoder_optimizer is not None and optimizers.get("encoder") is not None:
+            self.scheduler.encoder_optimizer.load_state_dict(optimizers["encoder"])
+        if self.scheduler.action_encoder_optimizer is not None and optimizers.get("action_encoder") is not None:
+            self.scheduler.action_encoder_optimizer.load_state_dict(optimizers["action_encoder"])
+        steps = payload["training_steps"]
+        self.world_model.training_step = int(steps.get("world_model", 0))
+        self.policy.training_step = int(steps.get("policy", 0))
+        self.value_function.training_step = int(steps.get("value", 0))
+        self.action_value.training_step = int(steps.get("action_value", 0))
+        self.encoder.training_step = int(steps.get("observation_encoder", 0))
+        self.action_encoder.training_step = int(steps.get("action_encoder", 0))
+        self.scheduler.runtime_steps = int(steps.get("scheduler_runtime_steps", 0))
+        replay = payload["replay"]
+        self.replay_buffer._storage = list(replay.get("storage", []))
+        self.replay_buffer._priorities = list(replay.get("priorities", []))
+        self.replay_buffer._position = int(replay.get("position", 0))
+        self.replay_buffer._rng.setstate(replay["rng_state"])
+        self.known_latents = [latent.detach().clone() for latent in payload.get("known_latents", [])]
+        rng = payload["rng"]
+        random.setstate(rng["python"])
+        torch.set_rng_state(rng["torch"])
+        if torch.cuda.is_available() and rng.get("torch_cuda") is not None:
+            torch.cuda.set_rng_state_all(rng["torch_cuda"])
+        self._rng.setstate(rng["runtime"])
+        return payload
 
     def load_latest_checkpoints(self) -> dict[str, bool]:
         payloads = {

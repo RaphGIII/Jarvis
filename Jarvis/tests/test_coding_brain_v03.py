@@ -632,6 +632,119 @@ def test_v03_progress_store_persists_episode_checkpoint_and_resume_state(tmp_pat
     assert resumed.state["train_completed"] == 3
     assert resumed.state["metrics"]["reward"] == 1.5
     assert resumed.state["python_random_state"]
+    assert resumed.state["torch_rng_state"]
+
+
+def test_v03_training_resume_checkpoint_restores_rng_replay_and_counters(tmp_path):
+    runtime = _runtime(tmp_path / "resume_a", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    task = CodingTaskFactory(tmp_path / "resume_tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    task.max_steps = 2
+    runtime.run_episode(task, RuntimeMode.TRAIN)
+    checkpoint = runtime.save_training_resume_checkpoint(tmp_path / "resume.pt", train_completed=1)
+    expected_python = __import__("random").random()
+    expected_torch = torch.rand(3)
+    expected_runtime_rng = runtime._rng.random()
+
+    restored = _runtime(tmp_path / "resume_b", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    payload = restored.load_training_resume_checkpoint(checkpoint, expected_train_completed=1)
+    assert payload["train_completed"] == 1
+    assert len(restored.replay_buffer) == len(runtime.replay_buffer)
+    assert restored.scheduler.runtime_steps == runtime.scheduler.runtime_steps
+    assert restored.policy.training_step == runtime.policy.training_step
+    assert __import__("random").random() == expected_python
+    assert torch.allclose(torch.rand(3), expected_torch)
+    assert restored._rng.random() == expected_runtime_rng
+
+
+def test_v03_resume_checkpoint_refuses_progress_mismatch(tmp_path):
+    runtime = _runtime(tmp_path / "resume_mismatch", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    checkpoint = runtime.save_training_resume_checkpoint(tmp_path / "resume.pt", train_completed=2)
+    restored = _runtime(tmp_path / "resume_mismatch_b", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    try:
+        restored.load_training_resume_checkpoint(checkpoint, expected_train_completed=3)
+    except RuntimeError as exc:
+        assert "does not match" in str(exc)
+    else:
+        raise AssertionError("mismatched progress/checkpoint pair should fail")
+
+
+def _train_tasks_for_resume(root, count=6):
+    tasks = CodingTaskFactory(root).make_v03_split_tasks(DatasetSplit.TRAIN, count)
+    for task in tasks:
+        task.max_steps = 2
+    return tasks
+
+
+def _state_signature(runtime):
+    return {
+        "policy": [parameter.detach().clone() for parameter in runtime.policy.parameters()],
+        "value": [parameter.detach().clone() for parameter in runtime.value_function.parameters()],
+        "world": [parameter.detach().clone() for parameter in runtime.world_model.parameters()],
+        "q": [parameter.detach().clone() for parameter in runtime.action_value.parameters()],
+        "replay": len(runtime.replay_buffer),
+        "runtime_steps": runtime.scheduler.runtime_steps,
+    }
+
+
+def _force_greedy_selection(runtime):
+    runtime._select = lambda scored: ([item for item in scored if item.feasible] or scored)[0]
+
+
+def test_v03_interrupted_then_resumed_training_matches_uninterrupted(tmp_path):
+    uninterrupted = _runtime(tmp_path / "uninterrupted", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    _force_greedy_selection(uninterrupted)
+    uninterrupted_tasks = _train_tasks_for_resume(tmp_path / "tasks_uninterrupted")
+    for task in uninterrupted_tasks:
+        uninterrupted.run_episode(task, RuntimeMode.TRAIN)
+    uninterrupted_signature = _state_signature(uninterrupted)
+
+    partial = _runtime(tmp_path / "partial", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    _force_greedy_selection(partial)
+    partial_tasks = _train_tasks_for_resume(tmp_path / "tasks_partial")
+    for task in partial_tasks[:3]:
+        partial.run_episode(task, RuntimeMode.TRAIN)
+    checkpoint = partial.save_training_resume_checkpoint(tmp_path / "train_episode_0003.pt", train_completed=3)
+    resumed = _runtime(tmp_path / "resumed", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    _force_greedy_selection(resumed)
+    resumed.load_training_resume_checkpoint(checkpoint, expected_train_completed=3)
+    for task in partial_tasks[3:]:
+        resumed.run_episode(task, RuntimeMode.TRAIN)
+    resumed_signature = _state_signature(resumed)
+
+    assert resumed_signature["replay"] == uninterrupted_signature["replay"]
+    assert resumed_signature["runtime_steps"] == uninterrupted_signature["runtime_steps"]
+    for key in ["policy", "value", "world", "q"]:
+        max_diff = max(float((left - right).abs().max().item()) for left, right in zip(resumed_signature[key], uninterrupted_signature[key]))
+        assert max_diff < 2e-2
+
+
+def test_v03_resumable_eval_stage_uses_completed_index_and_accumulators(tmp_path):
+    runtime = _runtime(tmp_path / "stage_resume", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    benchmark = CodingBenchmark()
+    progress = BenchmarkProgressStore(tmp_path / "progress.json")
+    tasks = CodingTaskFactory(tmp_path / "stage_tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 2)
+    for task in tasks:
+        task.max_steps = 1
+    partial_one = benchmark.evaluate(runtime, tasks[:1], eval_controller="heuristic", start_index=0)
+    for stage, completed_key, result_key in [
+        ("baseline", "baseline_completed", "baseline"),
+        ("validation", "validation_completed", "validation"),
+        ("final_holdout", "final_holdout_completed", "final"),
+    ]:
+        progress.save(stage=stage, **{completed_key: 1}, metrics={f"{result_key}_partial": partial_one.to_dict()})
+        resumed = v03_demo._evaluate_resumable_stage(
+            benchmark=benchmark,
+            runtime=runtime,
+            tasks=tasks,
+            progress=progress,
+            result_key=result_key,
+            progress_completed_key=completed_key,
+            stage_name=stage,
+            controller="heuristic",
+            resume=True,
+        )
+        assert resumed.episodes == 2
+        assert progress.state[completed_key] == 2
 
 
 def test_v03_ctrl_c_partial_save(tmp_path, monkeypatch):
@@ -642,6 +755,47 @@ def test_v03_ctrl_c_partial_save(tmp_path, monkeypatch):
     metrics = run_coding_brain_v03_demo(CodingBrainV03Config(benchmark_dir=str(tmp_path), quiet=True))
     assert metrics["INTERRUPTED"] is True
     assert (tmp_path / "benchmark_results" / "coding_brain_v03_progress.json").exists()
+
+
+def test_v03_suite_only_ablation_does_not_update_trainable_parameters(tmp_path):
+    runtime = _runtime(tmp_path / "suite_only_runtime", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    task = CodingTaskFactory(tmp_path / "suite_only_train").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    task.max_steps = 2
+    runtime.run_episode(task, RuntimeMode.TRAIN)
+    runtime.save_checkpoints({"split": "validation", "success_rate": 1.0, "regression_rate": 0.0, "mean_steps_to_solution": 1.0}, category="best")
+    before = _state_signature(runtime)
+    result = CodingBenchmark().evaluate_controller_suite(
+        runtime,
+        lambda mode: CodingTaskFactory(tmp_path / f"suite_only_{mode}").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1),
+    )
+    after = _state_signature(runtime)
+    assert set(result) == set(CodingBenchmark.CONTROLLER_MODES)
+    assert after["runtime_steps"] >= before["runtime_steps"]
+    for key in ["policy", "value", "world", "q"]:
+        assert all(torch.allclose(left, right) for left, right in zip(before[key], after[key]))
+
+
+def test_v03_suite_only_cli_path_loads_checkpoint_without_optimizer_updates(tmp_path):
+    config = CodingBrainV03Config(quick=True, mock_brain=True, benchmark_dir=str(tmp_path), quiet=True, max_steps=1)
+    brain, encoder = v03_demo._make_brain(config)
+    runtime = v03_demo._make_runtime(config, tmp_path / "runtime", brain, encoder)
+    runtime.save_checkpoints({"split": "validation", "success_rate": 0.5, "regression_rate": 0.0, "mean_steps_to_solution": 1.0}, category="best")
+    result = run_coding_brain_v03_demo(
+        CodingBrainV03Config(
+            quick=True,
+            mock_brain=True,
+            benchmark_dir=str(tmp_path),
+            quiet=True,
+            max_steps=1,
+            eval_controller_suite_only=True,
+        )
+    )
+    if not result.get("SANDBOX_AVAILABLE"):
+        return
+    assert result["SUITE_ONLY"] is True
+    assert set(result["CONTROLLER_ABLATIONS"]) == set(CodingBenchmark.CONTROLLER_MODES)
+    assert all(value == "NO" for value in result["PARAMETERS_CHANGED"].values())
+    assert result["TRAINING_STEPS_BEFORE"] == result["TRAINING_STEPS_AFTER"]
 
 
 def test_v03_full_split_fingerprints_are_unique_and_disjoint(tmp_path):

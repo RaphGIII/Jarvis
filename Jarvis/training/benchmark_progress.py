@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import torch
+
 
 class BenchmarkProgressStore:
     """Small JSON progress file for long v0.3 benchmark runs."""
@@ -34,6 +36,8 @@ class BenchmarkProgressStore:
         self.state.update(updates)
         self.state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.state["python_random_state"] = self.encode_random_state(random.getstate())
+        self.state["torch_rng_state"] = self.encode_random_state(torch.get_rng_state())
+        self.state["torch_cuda_rng_state"] = self.encode_random_state(torch.cuda.get_rng_state_all()) if torch.cuda.is_available() else None
         temp = self.path.with_suffix(self.path.suffix + ".tmp")
         temp.write_text(json.dumps(self.state, indent=2, sort_keys=True), encoding="utf-8")
         temp.replace(self.path)

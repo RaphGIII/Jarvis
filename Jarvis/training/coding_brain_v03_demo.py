@@ -43,6 +43,8 @@ class CodingBrainV03Config:
     max_steps: int | None = None
     eval_controller: str = "full"
     eval_controller_suite: bool = False
+    eval_controller_suite_only: bool = False
+    checkpoint_category: str = "best"
     benchmark_dir: str | None = None
 
 
@@ -197,7 +199,7 @@ def _make_runtime(config: CodingBrainV03Config, data_dir: Path, brain, semantic_
             cost_weight=0.08,
             risk_weight=0.25,
             seed=config.seed,
-            load_latest_checkpoints=config.resume,
+            load_latest_checkpoints=False,
             tensorboard_subdir="tensorboard/coding_v03",
             trace_actions=config.trace_actions,
             eval_controller=config.eval_controller if config.eval_controller != "all" else "full",
@@ -248,6 +250,90 @@ def _latest_mean_gate(runtime: JarvisRuntime) -> float:
     scores = trajectory.transitions[-1].metadata.get("candidate_scores") or []
     gates = [float(score.get("controller_gate", 0.0)) for score in scores]
     return sum(gates) / len(gates) if gates else 0.0
+
+
+def _restore_progress_python_rng(progress: BenchmarkProgressStore) -> None:
+    encoded = progress.state.get("python_random_state")
+    if encoded:
+        random.setstate(BenchmarkProgressStore.decode_random_state(encoded))
+    torch_encoded = progress.state.get("torch_rng_state")
+    if torch_encoded:
+        torch.set_rng_state(BenchmarkProgressStore.decode_random_state(torch_encoded))
+    cuda_encoded = progress.state.get("torch_cuda_rng_state")
+    if cuda_encoded and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(BenchmarkProgressStore.decode_random_state(cuda_encoded))
+
+
+def _stage_result_from_progress(benchmark: CodingBenchmark, progress: BenchmarkProgressStore, key: str) -> BenchmarkResult | None:
+    metrics = progress.state.get("metrics") or {}
+    if metrics.get(key):
+        return _benchmark_result_from_dict(metrics[key])
+    partial = metrics.get(f"{key}_partial")
+    if partial and partial.get("accumulators"):
+        return benchmark.result_from_accumulators(partial["accumulators"])
+    return None
+
+
+def _evaluate_resumable_stage(
+    *,
+    benchmark: CodingBenchmark,
+    runtime: JarvisRuntime,
+    tasks,
+    progress: BenchmarkProgressStore,
+    result_key: str,
+    progress_completed_key: str,
+    stage_name: str,
+    controller: str,
+    resume: bool,
+) -> BenchmarkResult:
+    existing = _stage_result_from_progress(benchmark, progress, result_key) if resume else None
+    completed = int(progress.state.get(progress_completed_key, 0)) if resume else 0
+    if existing is not None and existing.episodes >= len(tasks):
+        return existing
+    initial_accumulators = existing.accumulators if existing is not None else None
+    result = benchmark.evaluate(
+        runtime,
+        tasks,
+        eval_controller=controller,
+        start_index=completed,
+        initial_accumulators=initial_accumulators,
+        after_episode=lambda index, partial: progress.save(
+            stage=stage_name,
+            **{progress_completed_key: index + 1},
+            metrics={**(progress.state.get("metrics") or {}), f"{result_key}_partial": partial.to_dict()},
+        ),
+    )
+    progress.save(
+        stage=f"{stage_name}_complete",
+        **{progress_completed_key: len(tasks)},
+        metrics={**(progress.state.get("metrics") or {}), result_key: result.to_dict()},
+    )
+    return result
+
+
+def _ablation_table(results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    table = []
+    for mode, metrics in results.items():
+        diagnostics = metrics.get("controller_diagnostics") or {}
+        table.append(
+            {
+                "mode": mode,
+                "success_rate": metrics.get("success_rate", 0.0),
+                "mean_reward": metrics.get("mean_reward", 0.0),
+                "mean_steps": metrics.get("mean_steps_to_solution", 0.0),
+                "regression_rate": metrics.get("regression_rate", 0.0),
+                "controller_mean_gate": diagnostics.get("mean_gate", 0.0),
+                "disagreement_vs_heuristic": diagnostics.get("action_selection_disagreement_rate_vs_heuristic", 0.0),
+                "success_when_controller_overrides_heuristic": diagnostics.get("success_rate_when_learned_changed_episode", 0.0),
+            }
+        )
+    return table
+
+
+def _load_suite_checkpoint(runtime: JarvisRuntime, category: str) -> dict[str, bool]:
+    if category == "latest":
+        return runtime.load_latest_checkpoints()
+    return runtime.load_best_checkpoints()
 
 
 def run_coding_brain_v03_demo(config: CodingBrainV03Config | None = None) -> dict[str, Any]:
@@ -301,12 +387,23 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
     dataset_root.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     progress = BenchmarkProgressStore(results_dir / "coding_brain_v03_progress.json")
+    if config.resume:
+        _restore_progress_python_rng(progress)
     progress.save(stage="setup", config=asdict(config))
 
     brain, semantic_encoder = _make_brain(config)
     runtime = _make_runtime(config, data_dir, brain, semantic_encoder)
     if not isinstance(runtime.action_generator, QwenActionGenerator):
         raise RuntimeError("v0.3 requires QwenActionGenerator in the productive runtime path.")
+    if config.resume:
+        train_completed = int(progress.state.get("train_completed", 0))
+        checkpoint_path = progress.state.get("resume_checkpoint")
+        if train_completed > 0:
+            if not checkpoint_path:
+                raise RuntimeError("Progress has completed training episodes but no exact resume checkpoint reference.")
+            runtime.load_training_resume_checkpoint(checkpoint_path, expected_train_completed=train_completed)
+        elif checkpoint_path:
+            runtime.load_training_resume_checkpoint(checkpoint_path, expected_train_completed=train_completed)
 
     train_episodes, _, validation_count, holdout_count = _counts(config)
     train_factory = CodingTaskFactory(dataset_root / "train")
@@ -315,6 +412,45 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
     final_holdout_factory = CodingTaskFactory(dataset_root / "holdout_final")
     benchmark = CodingBenchmark()
     before_parameters = _snapshot(runtime)
+
+    if config.eval_controller_suite_only:
+        suite_resume_checkpoint = progress.state.get("resume_checkpoint")
+        suite_train_completed = int(progress.state.get("train_completed", 0))
+        if suite_resume_checkpoint:
+            runtime.load_training_resume_checkpoint(suite_resume_checkpoint, expected_train_completed=suite_train_completed)
+        loaded = _load_suite_checkpoint(runtime, config.checkpoint_category)
+        if not any(loaded.values()):
+            raise RuntimeError(f"No {config.checkpoint_category} checkpoint available for --eval-controller-suite-only.")
+        suite_before_parameters = _snapshot(runtime)
+        suite_before_steps = dict(runtime.learning_summary()["parameters_updated"])
+        suite_results = benchmark.evaluate_controller_suite(
+            runtime,
+            lambda mode: _fresh_tasks(
+                CodingTaskFactory(dataset_root / f"holdout_suite_only_{mode}"),
+                DatasetSplit.HOLDOUT,
+                holdout_count,
+                config.max_steps,
+            ),
+        )
+        result = {
+            "SANDBOX_AVAILABLE": True,
+            "SUITE_ONLY": True,
+            "CHECKPOINT_CATEGORY": config.checkpoint_category,
+            "LOADED_CHECKPOINTS": loaded,
+            "CONTROLLER_ABLATIONS": suite_results,
+            "CONTROLLER_ABLATION_TABLE": _ablation_table(suite_results),
+            "PARAMETERS_CHANGED": _changed(suite_before_parameters, runtime),
+            "TRAINING_STEPS_BEFORE": suite_before_steps,
+            "TRAINING_STEPS_AFTER": dict(runtime.learning_summary()["parameters_updated"]),
+            "REPLAY_SIZE": len(runtime.replay_buffer),
+            "CONFIG": asdict(config),
+        }
+        output_path = results_dir / f"coding_brain_v03_suite_only_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+        output_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+        result["RESULT_PATH"] = str(output_path)
+        result["PROGRESS_PATH"] = str(progress.path)
+        progress.save(stage="suite_only_complete", result_path=str(output_path), metrics={**(progress.state.get("metrics") or {}), "suite_only": result})
+        return result
 
     baseline_holdout_tasks = baseline_holdout_factory.make_v03_split_tasks(DatasetSplit.HOLDOUT, holdout_count)
     train_tasks = train_factory.make_v03_split_tasks(DatasetSplit.TRAIN, train_episodes)
@@ -333,24 +469,17 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
     log(f"[BASELINE 1/{len(baseline_holdout_tasks)}] evaluating pristine holdout tasks...")
     runtime.trace_label = "BASELINE"
     controller = config.eval_controller if config.eval_controller != "all" else "full"
-    if config.resume and progress.state.get("metrics", {}).get("baseline"):
-        baseline_holdout = _benchmark_result_from_dict(progress.state["metrics"]["baseline"])
-    else:
-        baseline_holdout = benchmark.evaluate(
-            runtime,
-            baseline_holdout_tasks,
-            eval_controller=controller,
-            after_episode=lambda index, partial: progress.save(
-                stage="baseline",
-                baseline_completed=index + 1,
-                metrics={**(progress.state.get("metrics") or {}), "baseline_partial": partial.to_dict()},
-            ),
-        )
-        progress.save(
-            stage="baseline_complete",
-            baseline_completed=len(baseline_holdout_tasks),
-            metrics={**(progress.state.get("metrics") or {}), "baseline": baseline_holdout.to_dict()},
-        )
+    baseline_holdout = _evaluate_resumable_stage(
+        benchmark=benchmark,
+        runtime=runtime,
+        tasks=baseline_holdout_tasks,
+        progress=progress,
+        result_key="baseline",
+        progress_completed_key="baseline_completed",
+        stage_name="baseline",
+        controller=controller,
+        resume=config.resume,
+    )
     train_start = int(progress.state.get("train_completed", 0)) if config.resume else 0
     for episode, task in enumerate(train_tasks[train_start:], start=train_start):
         log(f"[TRAIN {episode + 1}/{len(train_tasks)}] task={task.task_id} | running episode...")
@@ -383,29 +512,30 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
             curves = list((progress.state.get("metrics") or {}).get("training_curves") or [])
             curves.append(curve)
             progress.metric("training_curves", curves)
+        resume_checkpoint = runtime.save_training_resume_checkpoint(
+            results_dir / "resume_checkpoints" / f"train_episode_{episode + 1:04d}.pt",
+            train_completed=episode + 1,
+        )
         progress.save(
             stage="train",
             train_completed=episode + 1,
+            resume_checkpoint=str(resume_checkpoint),
             latest_training_metrics=dict(runtime.state.latest_metrics),
             replay_size=len(runtime.replay_buffer),
         )
 
     log(f"[VALIDATION 1/{len(validation_tasks)}] evaluating no-grad validation tasks...")
     runtime.trace_label = "VALIDATION"
-    validation = benchmark.evaluate(
-        runtime,
-        validation_tasks,
-        eval_controller=controller,
-        after_episode=lambda index, partial: progress.save(
-            stage="validation",
-            validation_completed=index + 1,
-            metrics={**(progress.state.get("metrics") or {}), "validation_partial": partial.to_dict()},
-        ),
-    )
-    progress.save(
-        stage="validation_complete",
-        validation_completed=len(validation_tasks),
-        metrics={**(progress.state.get("metrics") or {}), "validation": validation.to_dict()},
+    validation = _evaluate_resumable_stage(
+        benchmark=benchmark,
+        runtime=runtime,
+        tasks=validation_tasks,
+        progress=progress,
+        result_key="validation",
+        progress_completed_key="validation_completed",
+        stage_name="validation",
+        controller=controller,
+        resume=config.resume,
     )
     runtime.tensorboard.log_scalar("evaluation/validation_success_rate", validation.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/validation_reward", validation.mean_reward, runtime.scheduler.runtime_steps)
@@ -423,20 +553,16 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
             task.max_steps = min(task.max_steps, config.max_steps or task.max_steps)
     log(f"[FINAL 1/{len(final_holdout_tasks)}] evaluating fresh pristine holdout tasks...")
     runtime.trace_label = "HOLDOUT"
-    final_holdout = benchmark.evaluate(
-        runtime,
-        final_holdout_tasks,
-        eval_controller=controller,
-        after_episode=lambda index, partial: progress.save(
-            stage="final_holdout",
-            final_holdout_completed=index + 1,
-            metrics={**(progress.state.get("metrics") or {}), "final_partial": partial.to_dict()},
-        ),
-    )
-    progress.save(
-        stage="final_holdout_complete",
-        final_holdout_completed=len(final_holdout_tasks),
-        metrics={**(progress.state.get("metrics") or {}), "final": final_holdout.to_dict()},
+    final_holdout = _evaluate_resumable_stage(
+        benchmark=benchmark,
+        runtime=runtime,
+        tasks=final_holdout_tasks,
+        progress=progress,
+        result_key="final",
+        progress_completed_key="final_holdout_completed",
+        stage_name="final_holdout",
+        controller=controller,
+        resume=config.resume,
     )
     runtime.tensorboard.log_scalar("evaluation/holdout_success_rate", final_holdout.success_rate, runtime.scheduler.runtime_steps)
     runtime.tensorboard.log_scalar("evaluation/holdout_reward", final_holdout.mean_reward, runtime.scheduler.runtime_steps)
@@ -481,6 +607,7 @@ def _run_coding_brain_v03_demo_impl(config: CodingBrainV03Config) -> dict[str, A
         "PROMOTED_BEST": promoted,
         "EVAL_CONTROLLER": controller,
         "CONTROLLER_ABLATIONS": controller_ablations,
+        "CONTROLLER_ABLATION_TABLE": _ablation_table(controller_ablations),
         "REPLAY_SIZE": len(runtime.replay_buffer),
         "PERSISTENT_EXPERIENCE": runtime.experience_store.count(),
         "TENSORBOARD": runtime.learning_summary()["tensorboard"],
@@ -519,6 +646,8 @@ def _parse_args() -> CodingBrainV03Config:
         help="Evaluation-only controller ablation mode.",
     )
     parser.add_argument("--eval-controller-suite", action="store_true", help="Evaluate all controller modes on fresh holdout tasks.")
+    parser.add_argument("--eval-controller-suite-only", action="store_true", help="Load an existing checkpoint and run only controller ablations.")
+    parser.add_argument("--checkpoint-category", choices=["best", "latest"], default="best", help="Checkpoint category for suite-only ablation.")
     parser.add_argument("--benchmark-dir", default=None, help="Reusable benchmark directory for temporary/resumable runs.")
     args = parser.parse_args()
     train_episodes = args.train_episodes if args.train_episodes is not None else (1 if args.smoke else (4 if args.quick else 30))
@@ -543,6 +672,8 @@ def _parse_args() -> CodingBrainV03Config:
         max_steps=args.max_steps,
         eval_controller=args.eval_controller,
         eval_controller_suite=args.eval_controller_suite,
+        eval_controller_suite_only=args.eval_controller_suite_only,
+        checkpoint_category=args.checkpoint_category,
         benchmark_dir=args.benchmark_dir,
     )
 

@@ -26,6 +26,7 @@ class BenchmarkResult:
     hidden_verifier_runs: float = 0.0
     episodes_with_invalid_action_rate: float = 0.0
     controller_diagnostics: dict[str, Any] = field(default_factory=dict)
+    accumulators: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +43,7 @@ class BenchmarkResult:
             "hidden_verifier_runs": self.hidden_verifier_runs,
             "episodes_with_invalid_action_rate": self.episodes_with_invalid_action_rate,
             "controller_diagnostics": self.controller_diagnostics,
+            "accumulators": self.accumulators,
         }
 
 
@@ -55,21 +57,26 @@ class CodingBenchmark:
         *,
         eval_controller: str | None = None,
         after_episode: Callable[[int, BenchmarkResult], None] | None = None,
+        start_index: int = 0,
+        initial_accumulators: dict[str, Any] | None = None,
     ) -> BenchmarkResult:
-        rewards = []
-        steps = []
-        successes = []
-        tests_passed = []
-        regressions = []
-        invalids = []
-        episode_invalids = []
-        prediction_losses = []
-        value_errors = []
-        q_errors = []
-        hidden_runs = []
-        episode_changed = []
-        episode_success_when_changed = []
-        all_controller_scores = []
+        accumulators = self._empty_accumulators()
+        if initial_accumulators:
+            accumulators.update({key: list(value) for key, value in initial_accumulators.items()})
+        rewards = accumulators["rewards"]
+        steps = accumulators["steps"]
+        successes = accumulators["successes"]
+        tests_passed = accumulators["tests_passed"]
+        regressions = accumulators["regressions"]
+        invalids = accumulators["invalids"]
+        episode_invalids = accumulators["episode_invalids"]
+        prediction_losses = accumulators["prediction_losses"]
+        value_errors = accumulators["value_errors"]
+        q_errors = accumulators["q_errors"]
+        hidden_runs = accumulators["hidden_runs"]
+        episode_changed = accumulators["episode_changed"]
+        episode_success_when_changed = accumulators["episode_success_when_changed"]
+        all_controller_scores = accumulators["controller_scores"]
         previous_mode = runtime.state.mode
         previous_config = runtime.config
         if eval_controller is not None:
@@ -86,7 +93,7 @@ class CodingBenchmark:
         for module in modules:
             module.eval()
         with torch.no_grad():
-            for index, task in enumerate(tasks):
+            for index, task in enumerate(tasks[start_index:], start=start_index):
                 metrics = runtime.run_episode(task, RuntimeMode.EVAL)
                 public_success = bool(metrics["success"])
                 if public_success and task.hidden_test_command is not None:
@@ -187,6 +194,25 @@ class CodingBenchmark:
             results[mode] = self.evaluate(runtime, task_builder(mode), eval_controller=mode).to_dict()
         return results
 
+    def result_from_accumulators(self, accumulators: dict[str, Any] | None) -> BenchmarkResult:
+        accumulators = accumulators or self._empty_accumulators()
+        return self._build_result(
+            list(accumulators.get("rewards", [])),
+            list(accumulators.get("steps", [])),
+            list(accumulators.get("successes", [])),
+            list(accumulators.get("tests_passed", [])),
+            list(accumulators.get("regressions", [])),
+            list(accumulators.get("invalids", [])),
+            list(accumulators.get("prediction_losses", [])),
+            list(accumulators.get("value_errors", [])),
+            list(accumulators.get("q_errors", [])),
+            list(accumulators.get("hidden_runs", [])),
+            list(accumulators.get("episode_invalids", [])),
+            list(accumulators.get("controller_scores", [])),
+            list(accumulators.get("episode_changed", [])),
+            list(accumulators.get("episode_success_when_changed", [])),
+        )
+
     def _build_result(
         self,
         rewards,
@@ -222,7 +248,42 @@ class CodingBenchmark:
                 episode_changed,
                 episode_success_when_changed,
             ),
+            accumulators={
+                "rewards": list(rewards),
+                "steps": list(steps),
+                "successes": list(successes),
+                "tests_passed": list(tests_passed),
+                "regressions": list(regressions),
+                "invalids": list(invalids),
+                "prediction_losses": list(prediction_losses),
+                "value_errors": list(value_errors),
+                "q_errors": list(q_errors),
+                "hidden_runs": list(hidden_runs),
+                "episode_invalids": list(episode_invalids),
+                "controller_scores": list(all_controller_scores),
+                "episode_changed": list(episode_changed),
+                "episode_success_when_changed": list(episode_success_when_changed),
+            },
         )
+
+    @staticmethod
+    def _empty_accumulators() -> dict[str, list[Any]]:
+        return {
+            "rewards": [],
+            "steps": [],
+            "successes": [],
+            "tests_passed": [],
+            "regressions": [],
+            "invalids": [],
+            "prediction_losses": [],
+            "value_errors": [],
+            "q_errors": [],
+            "hidden_runs": [],
+            "episode_invalids": [],
+            "controller_scores": [],
+            "episode_changed": [],
+            "episode_success_when_changed": [],
+        }
 
     def _controller_diagnostics(
         self,
