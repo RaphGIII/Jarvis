@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from statistics import mean
+from typing import Any, Callable
 
 import torch
 
@@ -24,8 +25,9 @@ class BenchmarkResult:
     q_prediction_error: float = 0.0
     hidden_verifier_runs: float = 0.0
     episodes_with_invalid_action_rate: float = 0.0
+    controller_diagnostics: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, float | int]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "episodes": self.episodes,
             "success_rate": self.success_rate,
@@ -39,11 +41,21 @@ class BenchmarkResult:
             "q_prediction_error": self.q_prediction_error,
             "hidden_verifier_runs": self.hidden_verifier_runs,
             "episodes_with_invalid_action_rate": self.episodes_with_invalid_action_rate,
+            "controller_diagnostics": self.controller_diagnostics,
         }
 
 
 class CodingBenchmark:
-    def evaluate(self, runtime: JarvisRuntime, tasks: list[CodingTask]) -> BenchmarkResult:
+    CONTROLLER_MODES = ["heuristic", "policy", "policy_q", "policy_q_value", "full"]
+
+    def evaluate(
+        self,
+        runtime: JarvisRuntime,
+        tasks: list[CodingTask],
+        *,
+        eval_controller: str | None = None,
+        after_episode: Callable[[int, BenchmarkResult], None] | None = None,
+    ) -> BenchmarkResult:
         rewards = []
         steps = []
         successes = []
@@ -55,7 +67,13 @@ class CodingBenchmark:
         value_errors = []
         q_errors = []
         hidden_runs = []
+        episode_changed = []
+        episode_success_when_changed = []
+        all_controller_scores = []
         previous_mode = runtime.state.mode
+        previous_config = runtime.config
+        if eval_controller is not None:
+            runtime.config = replace(runtime.config, eval_controller=eval_controller)
         modules = [
             runtime.encoder,
             runtime.action_encoder,
@@ -68,7 +86,7 @@ class CodingBenchmark:
         for module in modules:
             module.eval()
         with torch.no_grad():
-            for task in tasks:
+            for index, task in enumerate(tasks):
                 metrics = runtime.run_episode(task, RuntimeMode.EVAL)
                 public_success = bool(metrics["success"])
                 if public_success and task.hidden_test_command is not None:
@@ -111,11 +129,83 @@ class CodingBenchmark:
                 prediction_losses.append(mean(transition_prediction) if transition_prediction else 0.0)
                 value_errors.append(mean(transition_td) if transition_td else 0.0)
                 q_errors.append(mean(transition_q) if transition_q else 0.0)
+                changed = any(
+                    bool((transition.metadata.get("scoring") or {}).get("controller_changed_heuristic", False))
+                    for transition in runtime.state.trajectory.transitions
+                )
+                episode_changed.append(1.0 if changed else 0.0)
+                if changed:
+                    episode_success_when_changed.append(1.0 if external_success else 0.0)
+                for transition in runtime.state.trajectory.transitions:
+                    all_controller_scores.extend(transition.metadata.get("candidate_scores") or [])
+                if after_episode is not None:
+                    after_episode(index, self._build_result(
+                        rewards,
+                        steps,
+                        successes,
+                        tests_passed,
+                        regressions,
+                        invalids,
+                        prediction_losses,
+                        value_errors,
+                        q_errors,
+                        hidden_runs,
+                        episode_invalids,
+                        all_controller_scores,
+                        episode_changed,
+                        episode_success_when_changed,
+                    ))
         for module, was_training in zip(modules, previous_training_modes):
             module.train(was_training)
         runtime.state.mode = previous_mode
+        runtime.config = previous_config
+        return self._build_result(
+            rewards,
+            steps,
+            successes,
+            tests_passed,
+            regressions,
+            invalids,
+            prediction_losses,
+            value_errors,
+            q_errors,
+            hidden_runs,
+            episode_invalids,
+            all_controller_scores,
+            episode_changed,
+            episode_success_when_changed,
+        )
+
+    def evaluate_controller_suite(
+        self,
+        runtime: JarvisRuntime,
+        task_builder: Callable[[str], list[CodingTask]],
+        modes: list[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        results = {}
+        for mode in modes or self.CONTROLLER_MODES:
+            results[mode] = self.evaluate(runtime, task_builder(mode), eval_controller=mode).to_dict()
+        return results
+
+    def _build_result(
+        self,
+        rewards,
+        steps,
+        successes,
+        tests_passed,
+        regressions,
+        invalids,
+        prediction_losses,
+        value_errors,
+        q_errors,
+        hidden_runs,
+        episode_invalids,
+        all_controller_scores,
+        episode_changed,
+        episode_success_when_changed,
+    ) -> BenchmarkResult:
         return BenchmarkResult(
-            episodes=len(tasks),
+            episodes=len(rewards),
             success_rate=mean(successes) if successes else 0.0,
             mean_reward=mean(rewards) if rewards else 0.0,
             mean_steps_to_solution=mean(steps) if steps else 0.0,
@@ -127,4 +217,34 @@ class CodingBenchmark:
             q_prediction_error=mean(q_errors) if q_errors else 0.0,
             hidden_verifier_runs=mean(hidden_runs) if hidden_runs else 0.0,
             episodes_with_invalid_action_rate=mean(episode_invalids) if episode_invalids else 0.0,
+            controller_diagnostics=self._controller_diagnostics(
+                all_controller_scores,
+                episode_changed,
+                episode_success_when_changed,
+            ),
         )
+
+    def _controller_diagnostics(
+        self,
+        candidate_scores: list[dict[str, Any]],
+        episode_changed: list[float],
+        episode_success_when_changed: list[float],
+    ) -> dict[str, Any]:
+        components = ["heuristic_score", "policy_score", "q_score", "value_score", "world_score", "learned_score"]
+        mean_abs = {}
+        for component in components:
+            values = [abs(float(score.get(component, 0.0))) for score in candidate_scores]
+            mean_abs[component] = mean(values) if values else 0.0
+        gates = [float(score.get("controller_gate", 0.0)) for score in candidate_scores]
+        heuristic_entries = [score for score in candidate_scores if bool(score.get("heuristic_winner", False))]
+        changed_actions = [1.0 if bool(score.get("controller_changed_heuristic", False)) else 0.0 for score in heuristic_entries]
+        disagreement_rate = mean(changed_actions) if changed_actions else 0.0
+        return {
+            "mean_abs_contribution": mean_abs,
+            "mean_gate": mean(gates) if gates else 0.0,
+            "action_selection_disagreement_rate_vs_heuristic": disagreement_rate,
+            "learned_changed_heuristic_winner_rate": disagreement_rate,
+            "episodes_with_learned_override_rate": mean(episode_changed) if episode_changed else 0.0,
+            "success_rate_when_learned_changed_episode": mean(episode_success_when_changed) if episode_success_when_changed else 0.0,
+            "candidate_count": len(candidate_scores),
+        }

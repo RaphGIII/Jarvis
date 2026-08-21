@@ -1,5 +1,6 @@
 import json
 import sys
+from dataclasses import replace
 
 import torch
 
@@ -14,7 +15,9 @@ from runtime.action_generator import QwenActionGenerator
 from runtime.checkpoints import RuntimeCheckpointManager
 from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig
 from runtime.runtime_state import RuntimeMode
+from training.benchmark_progress import BenchmarkProgressStore
 from training.coding_benchmark import CodingBenchmark
+import training.coding_brain_v03_demo as v03_demo
 from training.coding_brain_v03_demo import CodingBrainV03Config, run_coding_brain_v03_demo
 from training.coding_curriculum import CodingTaskFactory, DatasetSplit
 
@@ -470,6 +473,15 @@ def test_v03_checkpoint_promotion_prefers_success_over_reward(tmp_path):
     assert manager.should_promote(better_success, best)
 
 
+def test_v03_checkpoint_promotion_uses_validation_not_holdout(tmp_path):
+    manager = RuntimeCheckpointManager(tmp_path / "checkpoints")
+    best = {"split": "validation", "success_rate": 0.5, "mean_reward": 1.0, "regression_rate": 0.0, "mean_steps_to_solution": 5.0}
+    holdout_metrics = {"split": "holdout", "success_rate": 1.0, "mean_reward": 999.0, "regression_rate": 0.0, "mean_steps_to_solution": 1.0}
+    validation_metrics = {"split": "validation", "success_rate": 0.6, "mean_reward": 0.0, "regression_rate": 0.5, "mean_steps_to_solution": 9.0}
+    assert not manager.should_promote(holdout_metrics, best)
+    assert manager.should_promote(validation_metrics, best)
+
+
 def test_v03_best_snapshot_survives_worse_latest_and_load_best(tmp_path):
     runtime = _runtime(tmp_path, SequentialPatchBrain())
     for parameter in runtime.policy.parameters():
@@ -491,6 +503,145 @@ def test_v03_best_snapshot_survives_worse_latest_and_load_best(tmp_path):
     best_loaded.checkpoint_manager = runtime.checkpoint_manager
     best_loaded.load_best_checkpoints()
     assert all(torch.allclose(old, new) for old, new in zip(best_policy, best_loaded.policy.parameters()))
+
+
+def _score_eval_candidates(runtime, task):
+    observation = runtime.start_task(task, RuntimeMode.EVAL)
+    candidates = [
+        ActionCandidate(ActionType.RUN_TESTS, confidence=0.2, estimated_cost=2.0),
+        ActionCandidate(ActionType.READ_FILE, {"path": "solution.py"}, confidence=0.9, estimated_cost=0.5),
+    ]
+    features = runtime._observation_features(observation)
+    latent = runtime._encode_features(features)
+    return runtime._score_candidates(latent, candidates, observation)
+
+
+def test_v03_controller_ablation_modes_are_eval_only_and_observable(tmp_path):
+    runtime = _runtime(tmp_path / "controller_modes", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    runtime.config = replace(runtime.config, learned_gate_min_experiences=0, learned_gate_warmup_experiences=1)
+    train_task = CodingTaskFactory(tmp_path / "train_tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.run_episode(train_task, RuntimeMode.TRAIN)
+    assert len(runtime.replay_buffer) > 0
+    task = CodingTaskFactory(tmp_path / "eval_tasks").make_v03_split_tasks(DatasetSplit.HOLDOUT, 1)[0]
+    for mode in CodingBenchmark.CONTROLLER_MODES:
+        runtime.config = replace(runtime.config, eval_controller=mode)
+        scored = _score_eval_candidates(runtime, task)
+        assert all(item.controller_mode == mode for item in scored)
+        assert all("policy" in item.raw_score_components for item in scored)
+        assert all("q" in item.normalized_score_components for item in scored)
+        if mode == "heuristic":
+            assert all(item.learned_score == 0.0 for item in scored)
+            assert all(item.controller_gate == 0.0 for item in scored)
+
+
+def test_v03_safe_learned_override_gate_depends_on_maturity(tmp_path):
+    runtime = _runtime(tmp_path / "gate", SequentialPatchBrain(), mode=RuntimeMode.EVAL)
+    runtime.config = replace(runtime.config, learned_gate_min_experiences=10, learned_gate_warmup_experiences=20)
+    assert runtime._learned_controller_gate() == 0.0
+    runtime.config = replace(runtime.config, learned_gate_min_experiences=0, learned_gate_warmup_experiences=1)
+    train_task = CodingTaskFactory(tmp_path / "gate_tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.run_episode(train_task, RuntimeMode.TRAIN)
+    assert runtime._learned_controller_gate() > 0.0
+
+
+def test_v03_component_normalization_clips_large_scales(tmp_path):
+    runtime = _runtime(tmp_path / "normalization", SequentialPatchBrain(), mode=RuntimeMode.EVAL)
+    runtime.config = replace(runtime.config, learned_component_clip=1.0)
+    values = runtime._normalize_component([-1000.0, 0.0, 1000.0])
+    assert max(abs(value) for value in values) <= 1.0
+    assert sum(values) == 0.0
+
+
+def test_v03_controller_disagreement_diagnostics_are_aggregated():
+    diagnostics = CodingBenchmark()._controller_diagnostics(
+        [
+            {
+                "heuristic_winner": True,
+                "controller_changed_heuristic": True,
+                "heuristic_score": 1.0,
+                "policy_score": -0.5,
+                "q_score": 0.25,
+                "value_score": 0.0,
+                "world_score": 0.1,
+                "learned_score": 0.75,
+                "controller_gate": 0.5,
+            },
+            {
+                "heuristic_winner": False,
+                "controller_changed_heuristic": True,
+                "heuristic_score": 0.2,
+                "policy_score": -0.1,
+                "q_score": 0.75,
+                "value_score": 0.3,
+                "world_score": 0.0,
+                "learned_score": 0.4,
+                "controller_gate": 0.5,
+            },
+        ],
+        [1.0],
+        [1.0],
+    )
+    assert diagnostics["action_selection_disagreement_rate_vs_heuristic"] == 1.0
+    assert diagnostics["success_rate_when_learned_changed_episode"] == 1.0
+    assert diagnostics["mean_abs_contribution"]["q_score"] > 0.0
+
+
+def test_v03_world_gradients_are_finite_and_clipped(tmp_path):
+    runtime = _runtime(tmp_path / "gradients", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    runtime.scheduler.config.gradient_clip_norm = 0.05
+    linear = torch.nn.Linear(2, 1)
+    for parameter in linear.parameters():
+        parameter.grad = torch.full_like(parameter, 100.0)
+    norm_before = runtime.scheduler._clip(linear.parameters())
+    assert torch.isfinite(torch.tensor(norm_before))
+    clipped_norm = sum(float(parameter.grad.detach().norm().item()) ** 2 for parameter in linear.parameters()) ** 0.5
+    assert clipped_norm <= runtime.scheduler.config.gradient_clip_norm + 1e-5
+    task = CodingTaskFactory(tmp_path / "gradient_tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.run_episode(task, RuntimeMode.TRAIN)
+    assert torch.isfinite(torch.tensor(runtime.state.latest_metrics.get("world_gradient_norm", 0.0)))
+
+
+def test_v03_q_value_calibration_metrics_are_available(tmp_path):
+    runtime = _runtime(tmp_path / "calibration", SequentialPatchBrain(), mode=RuntimeMode.TRAIN)
+    task = CodingTaskFactory(tmp_path / "calibration_tasks").make_v03_split_tasks(DatasetSplit.TRAIN, 1)[0]
+    runtime.run_episode(task, RuntimeMode.TRAIN)
+    diagnostics = runtime.scheduler.calibration_diagnostics(runtime.replay_buffer)
+    assert -1.0 <= diagnostics["q_return_rank_correlation"] <= 1.0
+    assert -1.0 <= diagnostics["value_return_correlation"] <= 1.0
+
+
+def test_v03_benchmark_controller_suite_uses_fresh_tasks(tmp_path):
+    runtime = _runtime(tmp_path / "suite", StaticBrain(json.dumps([{"action_type": "RUN_TESTS", "arguments": {}}])), mode=RuntimeMode.EVAL)
+    factory_root = tmp_path / "suite_tasks"
+    result = CodingBenchmark().evaluate_controller_suite(
+        runtime,
+        lambda mode: CodingTaskFactory(factory_root / mode).make_v03_split_tasks(DatasetSplit.HOLDOUT, 1),
+        modes=["heuristic", "full"],
+    )
+    assert set(result) == {"heuristic", "full"}
+    assert result["heuristic"]["controller_diagnostics"]["candidate_count"] > 0
+    assert (factory_root / "heuristic").exists()
+    assert (factory_root / "full").exists()
+
+
+def test_v03_progress_store_persists_episode_checkpoint_and_resume_state(tmp_path):
+    store = BenchmarkProgressStore(tmp_path / "progress.json")
+    store.save(stage="train", train_completed=3, metrics={"reward": 1.5})
+    resumed = BenchmarkProgressStore(tmp_path / "progress.json")
+    assert resumed.state["stage"] == "train"
+    assert resumed.state["train_completed"] == 3
+    assert resumed.state["metrics"]["reward"] == 1.5
+    assert resumed.state["python_random_state"]
+
+
+def test_v03_ctrl_c_partial_save(tmp_path, monkeypatch):
+    def interrupt(config):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(v03_demo, "_run_coding_brain_v03_demo_impl", interrupt)
+    metrics = run_coding_brain_v03_demo(CodingBrainV03Config(benchmark_dir=str(tmp_path), quiet=True))
+    assert metrics["INTERRUPTED"] is True
+    assert (tmp_path / "benchmark_results" / "coding_brain_v03_progress.json").exists()
 
 
 def test_v03_full_split_fingerprints_are_unique_and_disjoint(tmp_path):

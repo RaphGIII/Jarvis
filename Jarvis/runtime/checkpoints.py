@@ -99,20 +99,22 @@ class RuntimeCheckpointManager:
         return path
 
     def should_promote(self, candidate: dict[str, float], best: dict[str, float] | None) -> bool:
+        if str(candidate.get("split", "")).lower() == "holdout":
+            return False
         if best is None:
             return True
-        candidate_regression = candidate.get("regression_rate", 1.0)
-        best_regression = best.get("regression_rate", 1.0)
-        if candidate_regression > best_regression + 1e-9:
-            return False
         candidate_success = candidate.get("success_rate", 0.0)
         best_success = best.get("success_rate", 0.0)
         if candidate_success > best_success + 1e-9:
             return True
         if candidate_success < best_success - 1e-9:
             return False
+        candidate_regression = candidate.get("regression_rate", 1.0)
+        best_regression = best.get("regression_rate", 1.0)
         if candidate_regression < best_regression - 1e-9:
             return True
+        if candidate_regression > best_regression + 1e-9:
+            return False
         candidate_steps = candidate.get("mean_steps_to_solution", float("inf"))
         best_steps = best.get("mean_steps_to_solution", float("inf"))
         if candidate_steps < best_steps - 1e-9:

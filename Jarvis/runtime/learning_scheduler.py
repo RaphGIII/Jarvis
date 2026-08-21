@@ -46,15 +46,25 @@ class TrainingReport:
     mean_q_error: float | None = None
     mean_prediction_error: float | None = None
     gradient_norm: float = 0.0
+    world_gradient_norm: float = 0.0
+    value_gradient_norm: float = 0.0
+    q_gradient_norm: float = 0.0
+    policy_gradient_norm: float = 0.0
     encoder_gradient_norm: float = 0.0
     action_encoder_gradient_norm: float = 0.0
     replay_size: int = 0
     updated_modules: list[str] = field(default_factory=list)
+    q_return_rank_correlation: float | None = None
+    value_return_correlation: float | None = None
 
     def to_dict(self) -> dict[str, float | int | bool | str]:
         result: dict[str, float | int | bool | str] = {
             "did_update": self.did_update,
             "gradient_norm": self.gradient_norm,
+            "world_gradient_norm": self.world_gradient_norm,
+            "value_gradient_norm": self.value_gradient_norm,
+            "q_gradient_norm": self.q_gradient_norm,
+            "policy_gradient_norm": self.policy_gradient_norm,
             "encoder_gradient_norm": self.encoder_gradient_norm,
             "action_encoder_gradient_norm": self.action_encoder_gradient_norm,
             "replay_size": self.replay_size,
@@ -70,6 +80,8 @@ class TrainingReport:
             "mean_td_error",
             "mean_q_error",
             "mean_prediction_error",
+            "q_return_rank_correlation",
+            "value_return_correlation",
         ]:
             value = getattr(self, key)
             if value is not None:
@@ -154,6 +166,9 @@ class LearningScheduler:
         report.gradient_norm = float(gradient_norm)
         report.updated_modules = modules
         report.replay_size = len(replay_buffer)
+        calibration = self.calibration_diagnostics(replay_buffer)
+        report.q_return_rank_correlation = calibration.get("q_return_rank_correlation")
+        report.value_return_correlation = calibration.get("value_return_correlation")
         return report
 
     def _semantic_ready(self, replay_buffer: ReplayBuffer) -> bool:
@@ -214,14 +229,11 @@ class LearningScheduler:
         total_loss.backward()
         encoder_norm = self._clip(self.observation_encoder.parameters())
         action_encoder_norm = self._clip(self.action_encoder.parameters())
-        total_norm = (
-            encoder_norm
-            + action_encoder_norm
-            + self._clip(self.world_model.parameters())
-            + self._clip(self.value_function.parameters())
-            + self._clip(self.action_value.parameters())
-            + self._clip(self.policy.parameters())
-        )
+        world_norm = self._clip(self.world_model.parameters())
+        value_norm = self._clip(self.value_function.parameters())
+        q_norm = self._clip(self.action_value.parameters())
+        policy_norm = self._clip(self.policy.parameters())
+        total_norm = encoder_norm + action_encoder_norm + world_norm + value_norm + q_norm + policy_norm
         self._step_semantic_optimizers()
         soft_update(self.target_value, self.value_function, self.config.target_tau)
         soft_update(self.target_action_value, self.action_value, self.config.target_tau)
@@ -264,8 +276,15 @@ class LearningScheduler:
         report.mean_q_error = float(q_errors.detach().abs().mean().item())
         report.mean_prediction_error = float(prediction_errors.detach().mean().item())
         report.gradient_norm = float(total_norm)
+        report.world_gradient_norm = float(world_norm)
+        report.value_gradient_norm = float(value_norm)
+        report.q_gradient_norm = float(q_norm)
+        report.policy_gradient_norm = float(policy_norm)
         report.encoder_gradient_norm = float(encoder_norm)
         report.action_encoder_gradient_norm = float(action_encoder_norm)
+        calibration = self.calibration_diagnostics(replay_buffer)
+        report.q_return_rank_correlation = calibration.get("q_return_rank_correlation")
+        report.value_return_correlation = calibration.get("value_return_correlation")
         report.updated_modules = [
             "ObservationProjection",
             "ActionProjection",
@@ -293,8 +312,11 @@ class LearningScheduler:
         latent, action_embeddings, next_latent, rewards, _, _ = self._batch_tensors(batch.transitions)
         self.world_optimizer.zero_grad()
         loss, metrics = self.world_model.loss(latent, action_embeddings, next_latent, rewards)
+        if not torch.isfinite(loss):
+            zeros = torch.zeros(len(batch.transitions), dtype=torch.float32)
+            return {"world_loss": 0.0, "transition_loss": 0.0, "reward_loss": 0.0}, 0.0, zeros, batch.indices
         loss.backward()
-        grad_norm = self._gradient_norm(self.world_model.parameters())
+        grad_norm = self._clip(self.world_model.parameters())
         self.world_optimizer.step()
         self.world_model.training_step += 1
         with torch.no_grad():
@@ -322,8 +344,10 @@ class LearningScheduler:
         self.value_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         total_loss = value_loss + policy_loss
+        if not torch.isfinite(total_loss):
+            return {"value_loss": 0.0, "policy_loss": 0.0}, 0.0, torch.zeros_like(td_errors), batch.indices
         total_loss.backward()
-        grad_norm = self._gradient_norm(self.value_function.parameters()) + self._gradient_norm(self.policy.parameters())
+        grad_norm = self._clip(self.value_function.parameters()) + self._clip(self.policy.parameters())
         self.value_optimizer.step()
         self.policy_optimizer.step()
         self.value_function.training_step += 1
@@ -356,6 +380,49 @@ class LearningScheduler:
         actions = torch.tensor([int(transition.action) for transition in transitions], dtype=torch.long)
         return obs_semantic, obs_numeric, next_semantic, next_numeric, action_raw, rewards, dones, actions
 
+    def calibration_diagnostics(self, replay_buffer: ReplayBuffer, batch_size: int | None = None) -> dict[str, float]:
+        if len(replay_buffer) < 2:
+            return {"q_return_rank_correlation": 0.0, "value_return_correlation": 0.0}
+        sample_size = min(batch_size or 64, len(replay_buffer))
+        transitions = replay_buffer.sample_recent(sample_size)
+        try:
+            if self._semantic_ready_for_transitions(transitions):
+                obs_semantic, obs_numeric, next_semantic, next_numeric, action_raw, rewards, dones, _ = self._semantic_batch_tensors(transitions)
+                with torch.no_grad():
+                    z = self.observation_encoder(obs_semantic, obs_numeric)
+                    next_z = self.observation_encoder(next_semantic, next_numeric)
+                    action_embedding = self.action_encoder.forward_from_raw(action_raw)
+                    q_predictions = self.action_value(z, action_embedding).reshape(-1)
+                    value_predictions = self.value_function(z).reshape(-1)
+                    returns = bellman_target(rewards, self.target_value(next_z), dones, self.config.discount_factor).reshape(-1)
+            else:
+                latent, action_embeddings, next_latent, rewards, dones, _ = self._batch_tensors(transitions)
+                with torch.no_grad():
+                    q_predictions = (
+                        self.action_value(latent, action_embeddings).reshape(-1)
+                        if self.action_value is not None
+                        else torch.zeros_like(rewards)
+                    )
+                    value_predictions = self.value_function(latent).reshape(-1)
+                    returns = bellman_target(rewards, self.target_value(next_latent), dones, self.config.discount_factor).reshape(-1)
+        except (KeyError, ValueError, RuntimeError):
+            return {"q_return_rank_correlation": 0.0, "value_return_correlation": 0.0}
+        return {
+            "q_return_rank_correlation": self._correlation(q_predictions, returns),
+            "value_return_correlation": self._correlation(value_predictions, returns),
+        }
+
+    def _semantic_ready_for_transitions(self, transitions) -> bool:
+        return (
+            self.observation_encoder is not None
+            and self.action_encoder is not None
+            and self.action_value is not None
+            and all(
+                all(key in transition.metadata for key in ["observation_features", "next_observation_features", "action_raw_features"])
+                for transition in transitions
+            )
+        )
+
     def _zero_semantic_optimizers(self) -> None:
         for optimizer in [
             self.world_optimizer,
@@ -385,6 +452,19 @@ class LearningScheduler:
         if not params:
             return 0.0
         return float(torch.nn.utils.clip_grad_norm_(params, self.config.gradient_clip_norm).item())
+
+    @staticmethod
+    def _correlation(first: torch.Tensor, second: torch.Tensor) -> float:
+        first = first.detach().float().reshape(-1)
+        second = second.detach().float().reshape(-1)
+        if first.numel() < 2 or second.numel() < 2:
+            return 0.0
+        first_centered = first - first.mean()
+        second_centered = second - second.mean()
+        denom = first_centered.norm() * second_centered.norm()
+        if float(denom.item()) <= 1e-8:
+            return 0.0
+        return float(torch.clamp(torch.dot(first_centered, second_centered) / denom, -1.0, 1.0).item())
 
     @staticmethod
     def _gradient_norm(parameters) -> float:

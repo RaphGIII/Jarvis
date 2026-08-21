@@ -76,6 +76,13 @@ class JarvisRuntimeConfig:
     replay_warm_start_size: int = DEFAULT_CONFIG.replay_warm_start_size
     tensorboard_subdir: str = "tensorboard"
     trace_actions: bool = False
+    eval_controller: str = "full"
+    value_score_weight: float = 0.4
+    learned_component_clip: float = 2.0
+    learned_gate_min_experiences: int = 50
+    learned_gate_warmup_experiences: int = 250
+    learned_gate_prediction_error_scale: float = 10.0
+    learned_gate_recent_window: int = 50
 
 
 @dataclass
@@ -94,14 +101,28 @@ class ScoredAction:
     learned_weight: float = 1.0
     heuristic_score: float = 0.0
     learned_score: float = 0.0
+    q_score: float = 0.0
+    value_score: float = 0.0
+    world_score: float = 0.0
+    final_score: float = 0.0
+    controller_gate: float = 0.0
+    controller_mode: str = "full"
+    heuristic_winner: bool = False
+    controller_changed_heuristic: bool = False
+    raw_score_components: dict[str, float] = field(default_factory=dict)
+    normalized_score_components: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "candidate": self.candidate.to_dict(),
             "score": self.score,
+            "final_score": self.final_score,
             "policy_score": self.policy_score,
             "q_value": self.q_value,
             "predicted_reward": self.predicted_reward,
+            "q_score": self.q_score,
+            "value_score": self.value_score,
+            "world_score": self.world_score,
             "expected_information_gain": self.expected_information_gain,
             "risk": self.risk,
             "uncertainty": self.uncertainty,
@@ -111,6 +132,12 @@ class ScoredAction:
             "learned_weight": self.learned_weight,
             "heuristic_score": self.heuristic_score,
             "learned_score": self.learned_score,
+            "controller_gate": self.controller_gate,
+            "controller_mode": self.controller_mode,
+            "heuristic_winner": self.heuristic_winner,
+            "controller_changed_heuristic": self.controller_changed_heuristic,
+            "raw_score_components": self.raw_score_components,
+            "normalized_score_components": self.normalized_score_components,
         }
 
 
@@ -686,8 +713,8 @@ class JarvisRuntime:
             policy_probs = self.policy.action_distribution(latent).squeeze(0)
         known = torch.stack(self.known_latents) if self.known_latents else None
         novelty = min(1.0, novelty_reward(latent, known))
-        scored = []
-        learned_weight = self._learned_weight()
+        entries: list[dict[str, Any]] = []
+        legacy_learned_weight = self._learned_weight()
         with self.profiler.measure("semantic_action_encoding"):
             action_raw_batch = self.action_encoder.raw_features_batch(candidates)
         for candidate, action_raw in zip(candidates, action_raw_batch):
@@ -696,6 +723,7 @@ class JarvisRuntime:
                 action_embedding = self.action_encoder.forward_from_raw(action_raw).squeeze(0)
                 prediction = self.world_model(latent, action_embedding)
                 predicted_reward = float(prediction.reward_pred.reshape(-1)[0].item()) if prediction.reward_pred is not None else 0.0
+                predicted_next_value = float(self.value_function(prediction.next_latent_pred.squeeze(0)).reshape(-1)[0].item())
                 q_value = float(self.action_value(latent, action_embedding).reshape(-1)[0].item())
             policy_prior = float(policy_probs[candidate.action_index].item())
             policy_score = float(torch.log(torch.tensor(policy_prior + 1e-8)).item())
@@ -707,7 +735,7 @@ class JarvisRuntime:
                 novelty=novelty,
             ).total
             expected_information_gain = 0.5 * uncertainty + 0.5 * novelty
-            learned_score = (
+            legacy_learned_score = (
                 self.config.policy_score_weight * policy_prior
                 + self.config.policy_log_score_weight * policy_score
                 + self.config.q_score_weight * q_value
@@ -721,28 +749,145 @@ class JarvisRuntime:
                 - self.config.risk_weight * risk
                 - self.config.cost_weight * candidate.estimated_cost
             )
-            score = heuristic_score + learned_weight * learned_score
-            if not feasible:
+            entries.append(
+                {
+                    "candidate": candidate,
+                    "policy_prior": policy_prior,
+                    "policy_score": policy_score,
+                    "q_value": q_value,
+                    "predicted_reward": predicted_reward,
+                    "predicted_next_value": predicted_next_value,
+                    "expected_information_gain": float(expected_information_gain),
+                    "risk": float(risk),
+                    "uncertainty": float(uncertainty),
+                    "novelty": float(novelty),
+                    "feasible": feasible,
+                    "feasibility_reason": feasibility_reason,
+                    "heuristic_score": float(heuristic_score),
+                    "legacy_learned_score": float(legacy_learned_score),
+                }
+            )
+
+        normalized = self._normalized_controller_components(entries)
+        controller_mode = self.config.eval_controller if self.state.mode == RuntimeMode.EVAL else "training_legacy"
+        active_components = self._active_controller_components(controller_mode)
+        gate = self._learned_controller_gate() if self.state.mode == RuntimeMode.EVAL and active_components else 0.0
+        scored: list[ScoredAction] = []
+        for entry, norm in zip(entries, normalized):
+            if self.state.mode == RuntimeMode.EVAL:
+                learned_score = (
+                    self.config.policy_log_score_weight * norm["policy"]
+                    if "policy" in active_components
+                    else 0.0
+                )
+                learned_score += self.config.q_score_weight * norm["q"] if "q" in active_components else 0.0
+                learned_score += self.config.value_score_weight * norm["value"] if "value" in active_components else 0.0
+                learned_score += self.config.world_reward_weight * norm["world"] if "world" in active_components else 0.0
+                score = entry["heuristic_score"] + gate * learned_score
+                learned_weight = gate
+            else:
+                learned_score = entry["legacy_learned_score"]
+                score = entry["heuristic_score"] + legacy_learned_weight * learned_score
+                learned_weight = legacy_learned_weight
+            if not entry["feasible"]:
                 score -= self.config.feasibility_penalty
             scored.append(
                 ScoredAction(
-                    candidate=candidate,
+                    candidate=entry["candidate"],
                     score=float(score),
-                    policy_score=policy_score,
-                    q_value=q_value,
-                    predicted_reward=predicted_reward,
-                    expected_information_gain=float(expected_information_gain),
-                    risk=float(risk),
-                    uncertainty=float(uncertainty),
-                    novelty=float(novelty),
-                    feasible=feasible,
-                    feasibility_reason=feasibility_reason,
+                    policy_score=entry["policy_score"],
+                    q_value=entry["q_value"],
+                    predicted_reward=entry["predicted_reward"],
+                    expected_information_gain=entry["expected_information_gain"],
+                    risk=entry["risk"],
+                    uncertainty=entry["uncertainty"],
+                    novelty=entry["novelty"],
+                    feasible=entry["feasible"],
+                    feasibility_reason=entry["feasibility_reason"],
                     learned_weight=float(learned_weight),
-                    heuristic_score=float(heuristic_score),
+                    heuristic_score=entry["heuristic_score"],
                     learned_score=float(learned_score),
+                    q_score=float(norm["q"]),
+                    value_score=float(norm["value"]),
+                    world_score=float(norm["world"]),
+                    final_score=float(score),
+                    controller_gate=float(gate),
+                    controller_mode=controller_mode,
+                    raw_score_components={
+                        "policy": float(entry["policy_score"]),
+                        "q": float(entry["q_value"]),
+                        "value": float(entry["predicted_next_value"]),
+                        "world": float(entry["predicted_reward"]),
+                    },
+                    normalized_score_components={key: float(value) for key, value in norm.items()},
                 )
             )
+        heuristic_winner = self._heuristic_winner(scored)
+        selected_winner = max([item for item in scored if item.feasible] or scored, key=lambda item: item.score)
+        for item in scored:
+            item.heuristic_winner = item is heuristic_winner
+            item.controller_changed_heuristic = selected_winner is not heuristic_winner
         return sorted(scored, key=lambda item: item.score, reverse=True)
+
+    def _normalized_controller_components(self, entries: list[dict[str, Any]]) -> list[dict[str, float]]:
+        raw_by_name = {
+            "policy": [entry["policy_score"] for entry in entries],
+            "q": [entry["q_value"] for entry in entries],
+            "value": [entry["predicted_next_value"] for entry in entries],
+            "world": [entry["predicted_reward"] for entry in entries],
+        }
+        normalized_by_name = {name: self._normalize_component(values) for name, values in raw_by_name.items()}
+        return [
+            {name: normalized_by_name[name][index] for name in normalized_by_name}
+            for index in range(len(entries))
+        ]
+
+    def _normalize_component(self, values: list[float]) -> list[float]:
+        if len(values) < 2:
+            return [0.0 for _ in values]
+        tensor = torch.tensor(values, dtype=torch.float32)
+        spread = float((tensor.max() - tensor.min()).item())
+        if spread < 1e-8:
+            return [0.0 for _ in values]
+        normalized = (tensor - tensor.mean()) / tensor.std(unbiased=False).clamp_min(1e-6)
+        clipped = torch.clamp(normalized, -self.config.learned_component_clip, self.config.learned_component_clip)
+        return [float(value) for value in clipped.tolist()]
+
+    def _active_controller_components(self, mode: str) -> set[str]:
+        modes = {
+            "heuristic": set(),
+            "policy": {"policy"},
+            "policy_q": {"policy", "q"},
+            "policy_q_value": {"policy", "q", "value"},
+            "full": {"policy", "q", "value", "world"},
+            "training_legacy": {"policy", "q", "world"},
+        }
+        return modes.get(mode, modes["full"])
+
+    def _learned_controller_gate(self) -> float:
+        replay_size = len(self.replay_buffer)
+        minimum = max(0, int(self.config.learned_gate_min_experiences))
+        warmup = max(minimum + 1, int(self.config.learned_gate_warmup_experiences))
+        if replay_size < minimum:
+            return 0.0
+        maturity = min(1.0, (replay_size - minimum) / max(1, warmup - minimum))
+        errors = []
+        if replay_size:
+            try:
+                recent = self.replay_buffer.sample_recent(min(replay_size, max(1, int(self.config.learned_gate_recent_window))))
+            except (ValueError, IndexError):
+                recent = []
+            for transition in recent:
+                errors.append(abs(float(transition.metadata.get("prediction_error", 0.0))))
+        mean_error = sum(errors) / len(errors) if errors else 0.0
+        scale = max(1e-6, float(self.config.learned_gate_prediction_error_scale))
+        calibration = 1.0 / (1.0 + mean_error / scale)
+        return max(0.0, min(1.0, maturity * calibration))
+
+    @staticmethod
+    def _heuristic_winner(scored: list[ScoredAction]) -> ScoredAction:
+        pool = [item for item in scored if item.feasible] or scored
+        return max(pool, key=lambda item: item.heuristic_score)
 
     def _ensure_feasible_scored(
         self,
