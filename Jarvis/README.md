@@ -578,10 +578,16 @@ NeuralPolicy: LEARNING
 
 ## JARVIS V0.4 Capability Acquisition MVP
 
-v0.4 adds a persistent capability-acquisition layer. The default production
-selector for capability work is the proven heuristic controller; Policy/Q/Value
-and WorldModel scores can still be computed and recorded in shadow mode, but do
-not change the selected production action unless explicitly enabled.
+v0.4 adds a dedicated autonomous software-development engine for capability
+acquisition. Greenfield capability creation no longer depends on the v0.3
+low-level candidate-action loop. Qwen is used as a frozen high-level software
+author: it returns complete structured file bundles and, on failure, complete
+structured repaired files. Python orchestration controls materialization,
+testing, verification, promotion, and reuse.
+
+The v0.3 Policy/Q/Value/WorldModel stack remains intact for legacy experiments
+and diagnostics. For v0.4 capability acquisition, learned components operate in
+shadow mode and do not select production build actions.
 
 Lifecycle:
 
@@ -591,14 +597,27 @@ USER GOAL
   -> missing capability
   -> SkillSpecification
   -> staging workspace
-  -> CodingWorld build/debug loop
-  -> public tests
+  -> AutonomousSoftwareEngineer
+  -> complete implementation bundle
+  -> deterministic materialization
+  -> automatic public tests
+  -> failure-driven full-file repair loop
   -> hidden verifier
   -> versioned promotion
   -> CapabilityRegistry
   -> execute original request
   -> second call uses installed capability directly
 ```
+
+The software engineering state machine is:
+
+```text
+UNDERSTAND -> PLAN -> IMPLEMENT -> TEST -> DIAGNOSE -> REVISE
+           -> TEST -> VERIFY -> COMPLETE
+```
+
+On failure, it enters `FAILED` after the repair budget is exhausted or after an
+unsafe generated path/protected file attempt.
 
 The persistent registry is stored as JSON and records:
 
@@ -622,7 +641,7 @@ permission policy passes
 ```
 
 Hidden verifier workspaces are separate from the editable skill workspace. The
-developer loop can see public tests and staged source files, but not hidden
+software engineer can see public tests and staged source files, but not hidden
 verifier source or hidden expected outputs.
 
 Permission policy is conservative in v0.4. Safe local capabilities can be
@@ -630,10 +649,18 @@ developed and tested automatically. Network, browser, credential, email, or
 other side-effect permissions are blocked with a structured permission decision
 instead of being silently granted.
 
+Development memory is stored in JSONL and records task/spec fingerprints,
+architecture plan, generated implementation, failures, diagnoses, repairs,
+final code, public/hidden results, token usage, and repair cycles. Before new
+builds, Jarvis retrieves a small number of relevant prior successful or repaired
+experiences as reference patterns. This is practical engineering memory, not
+Qwen fine-tuning.
+
 Acquisition trajectories are appended to
 `data/capabilities/acquisition_trajectories.jsonl` by default. Each record
-contains the goal, gap detection result, specification, actions/observations,
-test results, promotion decision, original execution result, and final outcome.
+contains the goal, gap detection result, specification, plan, implementation,
+public test result, repair history, hidden verification, promotion decision,
+original execution result, second-call reuse result, and final outcome.
 
 Run the mock v0.4 demo without loading Qwen:
 
@@ -644,5 +671,5 @@ python -m training.capability_acquisition_v04_demo --mock-brain
 Cheapest real-Qwen smoke path through an OpenAI-compatible endpoint:
 
 ```bash
-python -m training.capability_acquisition_v04_demo --brain-provider openai_compatible --task-count 1
+python -m training.capability_acquisition_v04_demo --brain-provider openai_compatible --task-count 3 --benchmark-dir data/benchmark_runs/v04_qwen_software_engineer_smoke_01
 ```

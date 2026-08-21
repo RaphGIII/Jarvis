@@ -1,0 +1,94 @@
+{
+  "CAPABILITY_ACQUISITION_SUCCESS_RATE": 0.0,
+  "CONFIG": {
+    "benchmark_dir": "data\\benchmark_runs\\v04_real_qwen_01",
+    "brain_provider": "openai_compatible",
+    "local_test_backend": false,
+    "mock_brain": false,
+    "persistent": false,
+    "quiet": false,
+    "task_count": 3
+  },
+  "DEVELOPMENT_WALL_TIME_SECONDS": 586.3403045000014,
+  "FIRST_ATTEMPT_SUCCESS_RATE": 0.0,
+  "INVALID_ACTION_RATE": 0.0,
+  "MEAN_REPAIR_ITERATIONS": 7.0,
+  "MEAN_STEPS_TO_ACQUISITION": 14.0,
+  "PROMOTION_FAILURES": 3,
+  "REGISTRY_PATH": "data\\benchmark_runs\\v04_real_qwen_01\\runtime\\registry.json",
+  "RESULTS": [
+    {
+      "capability_id": "text.line_count",
+      "error": "public tests did not pass; hidden verifier did not pass; entrypoint main.py does not exist",
+      "execution_success": false,
+      "goal": "Count non-empty lines in supplied text. Use capability text.line_count.",
+      "hidden_success": false,
+      "invalid_action_rate": 0.0,
+      "output": {},
+      "promoted": false,
+      "public_success": false,
+      "repair_iterations": 7,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": false,
+      "steps_to_acquisition": 14,
+      "success": false,
+      "trajectory_id": "a58548c893b64a3da034cb4e84ac7d28"
+    },
+    {
+      "capability_id": "csv_column_mode",
+      "error": "public tests did not pass; hidden verifier did not pass; entrypoint main.py does not exist",
+      "execution_success": false,
+      "goal": "Read CSV text and return the most common value in a selected column. Use capability data.csv_column_mode.",
+      "hidden_success": false,
+      "invalid_action_rate": 0.0,
+      "output": {},
+      "promoted": false,
+      "public_success": false,
+      "repair_iterations": 7,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": false,
+      "steps_to_acquisition": 14,
+      "success": false,
+      "trajectory_id": "c671c7619eb347a48d0f96319c5b8cf8"
+    },
+    {
+      "capability_id": "files.extension_summary",
+      "error": "public tests did not pass; hidden verifier did not pass; entrypoint main.py does not exist",
+      "execution_success": false,
+      "goal": "Summarize file extensions from a list of paths. Use capability files.extension_summary.",
+      "hidden_success": false,
+      "invalid_action_rate": 0.0,
+      "output": {},
+      "promoted": false,
+      "public_success": false,
+      "repair_iterations": 7,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": false,
+      "steps_to_acquisition": 14,
+      "success": false,
+      "trajectory_id": "48967ba0e3724d1db03568e062962fa0"
+    }
+  ],
+  "SECOND_CALL_DIRECT_USE_SUCCESS_RATE": 0.0,
+  "TASK_COUNT": 3,
+  "TRAJECTORY_PATH": "data\\benchmark_runs\\v04_real_qwen_01\\runtime\\acquisition_trajectories.jsonl",
+  "VERSION": "v0.4"
+}

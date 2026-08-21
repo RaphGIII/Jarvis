@@ -9,21 +9,27 @@
     "quiet": true,
     "task_count": 2
   },
-  "DEVELOPMENT_WALL_TIME_SECONDS": 3.882365099998424,
-  "FIRST_ATTEMPT_SUCCESS_RATE": 0.0,
+  "DEVELOPMENT_WALL_TIME_SECONDS": 2.104772700000467,
+  "INITIAL_IMPLEMENTATION_PASS_RATE": 0.0,
   "INVALID_ACTION_RATE": 0.0,
-  "MEAN_REPAIR_ITERATIONS": 1.0,
-  "MEAN_STEPS_TO_ACQUISITION": 4.0,
+  "MEAN_LLM_CALLS_PER_CAPABILITY": 2.0,
+  "MEAN_REPAIR_CYCLES": 1.0,
+  "MEAN_STEPS_TO_ACQUISITION": 2.0,
+  "MEAN_TOKENS_PER_CAPABILITY": 2.0,
   "PROMOTION_FAILURES": 0,
   "REGISTRY_PATH": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_mock_demo_runs_withou0\\demo\\runtime\\registry.json",
+  "REPAIR_SUCCESS_RATE": 1.0,
   "RESULTS": [
     {
       "capability_id": "text.line_count",
+      "development_state": "COMPLETE",
       "error": "",
       "execution_success": true,
-      "goal": "Count non-empty lines in supplied text. Use capability text.line_count.",
+      "goal": "Count non-empty lines in supplied text.",
       "hidden_success": true,
+      "initial_implementation_pass": false,
       "invalid_action_rate": 0.0,
+      "llm_calls": 2,
       "output": {
         "lines": 2
       },
@@ -38,17 +44,24 @@
         "status": "missing"
       },
       "second_call_success": true,
-      "steps_to_acquisition": 4,
+      "steps_to_acquisition": 2,
       "success": true,
-      "trajectory_id": "bf14c9eb75234457957caef1fd3bd633"
+      "token_usage": {
+        "generated_tokens": 2,
+        "total_tokens": 2
+      },
+      "trajectory_id": "ddb21669d47d45ddbbfaf4df21ad27fc"
     },
     {
       "capability_id": "data.csv_column_mode",
+      "development_state": "COMPLETE",
       "error": "",
       "execution_success": true,
-      "goal": "Read CSV text and return the most common value in a selected column. Use capability data.csv_column_mode.",
+      "goal": "Read CSV text and return the most common value in a selected column.",
       "hidden_success": true,
+      "initial_implementation_pass": false,
       "invalid_action_rate": 0.0,
+      "llm_calls": 2,
       "output": {
         "frequency": 2,
         "value": "py"
@@ -64,9 +77,13 @@
         "status": "missing"
       },
       "second_call_success": true,
-      "steps_to_acquisition": 4,
+      "steps_to_acquisition": 2,
       "success": true,
-      "trajectory_id": "58348149ce5944e2a1658fdc576f0f5f"
+      "token_usage": {
+        "generated_tokens": 2,
+        "total_tokens": 2
+      },
+      "trajectory_id": "f6e47139e29743449d7c12ac151e19ea"
     }
   ],
   "SECOND_CALL_DIRECT_USE_SUCCESS_RATE": 1.0,

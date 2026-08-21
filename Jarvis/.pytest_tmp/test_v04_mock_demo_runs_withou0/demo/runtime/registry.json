@@ -3,7 +3,7 @@
     "data.csv_column_mode": {
       "capability_id": "data.csv_column_mode",
       "creation_metadata": {
-        "created_at": "2026-08-21T17:21:16.221783+00:00",
+        "created_at": "2026-08-21T18:14:39.307003+00:00",
         "source": "capability_acquisition_v04"
       },
       "dependencies": [],
@@ -33,7 +33,7 @@
     "text.line_count": {
       "capability_id": "text.line_count",
       "creation_metadata": {
-        "created_at": "2026-08-21T17:21:14.253181+00:00",
+        "created_at": "2026-08-21T18:14:38.222415+00:00",
         "source": "capability_acquisition_v04"
       },
       "dependencies": [],

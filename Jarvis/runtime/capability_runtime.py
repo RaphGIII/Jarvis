@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import uuid
 from dataclasses import dataclass
@@ -21,10 +20,10 @@ from capabilities.resolver import CapabilityResolver
 from capabilities.specification import SkillSpecificationGenerator
 from capabilities.trajectory import AcquisitionTrajectory, AcquisitionTrajectoryStore
 from capabilities.workspace import SkillWorkspaceManager
+from development.memory import DevelopmentMemory
+from development.software_engineer import AutonomousSoftwareEngineer, ProjectRequest
+from environments.coding.environment import CodingEnvironment
 from environments.coding.sandbox_backend import DisabledSandboxBackend, DockerSandboxBackend, SandboxBackend, SandboxPolicy
-from learning.representations.semantic import DeterministicTextEncoder
-from runtime.jarvis_runtime import JarvisRuntime, JarvisRuntimeConfig
-from runtime.runtime_state import RuntimeMode
 
 
 @dataclass
@@ -33,10 +32,12 @@ class CapabilityRuntimeConfig:
     skills_root: str = "skills"
     max_build_steps: int = 14
     num_action_candidates: int = 6
+    max_repair_cycles: int = 4
     use_docker: bool = True
     production_controller: str = "heuristic"
     learned_controller_mode: str = "shadow"
     seed: int = 404
+    trace: bool = False
 
 
 class CapabilityAcquisitionRuntime:
@@ -63,6 +64,13 @@ class CapabilityAcquisitionRuntime:
         self.promoter = SkillPromoter(skills_root / "installed", self.registry)
         self.executor = CapabilityExecutor(self.root / "execution", self.backend)
         self.trajectory_store = AcquisitionTrajectoryStore(self.root / "acquisition_trajectories.jsonl")
+        self.development_memory = DevelopmentMemory(self.root / "development_memory.jsonl")
+        self.software_engineer = AutonomousSoftwareEngineer(
+            brain=brain,
+            backend=self.backend,
+            memory=self.development_memory,
+            trace=self.config.trace,
+        )
 
     def handle_goal(
         self,
@@ -70,6 +78,7 @@ class CapabilityAcquisitionRuntime:
         *,
         request_payload: dict[str, Any] | None = None,
         expected_output: dict[str, Any] | None = None,
+        second_goal: str | None = None,
         spec: SkillSpecification | None = None,
         hidden_workspace: Path | None = None,
         hidden_test_command: list[str] | None = None,
@@ -118,28 +127,40 @@ class CapabilityAcquisitionRuntime:
             AcquisitionStage.BUILD.value,
             {"workspace": str(staged.root), "public_tests": str(staged.public_tests_path), "protected_hashes": staged.protected_hashes},
         )
-        task = staged.to_task(
-            self._task_description(goal, skill_spec),
+        build_result = self.software_engineer.build(
+            ProjectRequest(
+                goal=goal,
+                specification=skill_spec,
+                workspace=staged.root,
+                test_command=["python", "-m", "unittest", "test_public.py"],
+                protected_paths={"test_public.py", "skill_spec.json"},
+                permissions=list(skill_spec.permissions),
+                dependency_restrictions=list(skill_spec.constraints),
+                max_repair_cycles=self.config.max_repair_cycles,
+            )
+        )
+        public_success = bool(build_result.success)
+        verifier_task = staged.to_task(
+            "External hidden verifier for staged capability.",
             hidden_workspace=hidden_workspace,
             hidden_test_command=hidden_test_command or ([sys.executable, "hidden_verifier.py"] if hidden_workspace is not None else None),
-            max_steps=self.config.max_build_steps,
+            max_steps=1,
         )
-        build_runtime = self._make_build_runtime(staged.root)
-        metrics = build_runtime.run_episode(task, RuntimeMode.EVAL)
-        public_success = bool(metrics.get("success", False))
-        hidden_result = build_runtime.final_hidden_verification() if public_success else {"ran": False, "success": False, "runs": 0}
+        verifier_environment = CodingEnvironment(verifier_task, backend=self.backend)
+        hidden_result = verifier_environment.run_final_hidden_verifier() if public_success else {"ran": False, "success": False, "runs": 0}
         hidden_success = bool(hidden_result.get("success", False))
-        transitions = [transition.metadata for transition in build_runtime.state.trajectory.transitions] if build_runtime.state.trajectory else []
+        trajectory.record(AcquisitionStage.PLAN.value, {"plan": build_result.plan, "summary": build_result.summary})
+        trajectory.record(AcquisitionStage.IMPLEMENT.value, {"files": [item.to_dict() for item in build_result.files], "llm_calls": build_result.llm_calls})
         trajectory.record(
             AcquisitionStage.TEST.value,
             {
                 "public_success": public_success,
                 "hidden_success": hidden_success,
-                "metrics": metrics,
+                "test_result": build_result.public_test_result.to_dict() if build_result.public_test_result else None,
                 "hidden_runs": hidden_result.get("runs", 0),
             },
         )
-        trajectory.record(AcquisitionStage.REPAIR.value, {"transitions": transitions})
+        trajectory.record(AcquisitionStage.REPAIR.value, {"repairs": build_result.repairs, "failures": build_result.failures})
         trajectory.record(AcquisitionStage.VERIFY.value, {"hidden_result": {"ran": hidden_result.get("ran", False), "success": hidden_success}})
 
         promotion = self.promoter.promote(skill_spec, staged, public_success=public_success, hidden_success=hidden_success)
@@ -152,9 +173,12 @@ class CapabilityAcquisitionRuntime:
                 capability_id=skill_spec.capability_id,
                 public_success=public_success,
                 hidden_success=hidden_success,
-                steps_to_acquisition=int(metrics.get("steps", 0)),
-                repair_iterations=self._repair_iterations(transitions),
-                invalid_action_rate=self._invalid_action_rate(transitions),
+                steps_to_acquisition=1 + build_result.repair_cycles,
+                repair_iterations=build_result.repair_cycles,
+                initial_implementation_pass=public_success and build_result.repair_cycles == 0,
+                llm_calls=build_result.llm_calls,
+                token_usage=build_result.token_usage,
+                development_state=build_result.final_state.value,
                 trajectory_id=trajectory.trajectory_id,
                 error="; ".join(promotion.errors),
             )
@@ -164,7 +188,7 @@ class CapabilityAcquisitionRuntime:
         execution = self.executor.execute(promotion.manifest, payload)
         execution_ok = self._execution_matches(execution.success, execution.output, expected_output)
         trajectory.record(AcquisitionStage.EXECUTE.value, execution.__dict__)
-        second_resolution = self.resolver.resolve(goal)
+        second_resolution = self.resolver.resolve(second_goal or goal)
         second_execution = (
             self.executor.execute(second_resolution.manifest, payload)
             if second_resolution.status == "available" and second_resolution.manifest is not None
@@ -191,9 +215,12 @@ class CapabilityAcquisitionRuntime:
             hidden_success=hidden_success,
             execution_success=execution_ok,
             second_call_success=second_execution_ok,
-            steps_to_acquisition=int(metrics.get("steps", 0)),
-            repair_iterations=self._repair_iterations(transitions),
-            invalid_action_rate=self._invalid_action_rate(transitions),
+            steps_to_acquisition=1 + build_result.repair_cycles,
+            repair_iterations=build_result.repair_cycles,
+            initial_implementation_pass=public_success and build_result.repair_cycles == 0,
+            llm_calls=build_result.llm_calls,
+            token_usage=build_result.token_usage,
+            development_state=build_result.final_state.value,
             trajectory_id=trajectory.trajectory_id,
             output=execution.output,
             error=execution.error,
@@ -201,65 +228,10 @@ class CapabilityAcquisitionRuntime:
         self.trajectory_store.save(trajectory, result.to_dict())
         return result
 
-    def _make_build_runtime(self, data_dir: Path) -> JarvisRuntime:
-        return JarvisRuntime(
-            brain=self.brain,
-            semantic_text_encoder=DeterministicTextEncoder(embedding_dim=64),
-            sandbox_backend=self.backend,
-            data_dir=data_dir / ".runtime",
-            mode=RuntimeMode.EVAL,
-            config=JarvisRuntimeConfig(
-                latent_dim=32,
-                hidden_dim=32,
-                replay_capacity=200,
-                num_action_candidates=self.config.num_action_candidates,
-                train_exploration_epsilon=0.0,
-                eval_controller=self.config.production_controller,
-                production_controller=self.config.production_controller,
-                learned_controller_mode=self.config.learned_controller_mode,
-                load_latest_checkpoints=False,
-                seed=self.config.seed,
-                tensorboard_subdir="tensorboard/capability_v04",
-            ),
-        )
-
     def _default_backend(self) -> SandboxBackend:
         if self.config.use_docker and DockerSandboxBackend.is_available():
             return DockerSandboxBackend(policy=SandboxPolicy(timeout_seconds=20.0))
         return DisabledSandboxBackend()
-
-    @staticmethod
-    def _task_description(goal: str, spec: SkillSpecification) -> str:
-        public_spec = spec.to_dict()
-        return (
-            "Acquire the missing Jarvis capability as a local Python skill.\n"
-            "Create main.py with def run(payload: dict) -> dict. Do not edit tests or skill_spec.json.\n"
-            "Hidden verifier contents are unavailable and must not be guessed.\n"
-            f"Original user goal: {goal}\n"
-            f"Skill specification:\n{json.dumps(public_spec, indent=2, sort_keys=True)}"
-        )
-
-    @staticmethod
-    def _repair_iterations(transitions: list[dict[str, Any]]) -> int:
-        count = 0
-        for metadata in transitions:
-            action = metadata.get("action") or {}
-            metrics = metadata.get("objective_metrics") or {}
-            if action.get("action_type") == "RUN_TESTS" and metrics.get("tests_failed", 0):
-                count += 1
-        return count
-
-    @staticmethod
-    def _invalid_action_rate(transitions: list[dict[str, Any]]) -> float:
-        if not transitions:
-            return 0.0
-        invalid = [
-            1.0
-            if (metadata.get("objective_metrics") or {}).get("invalid_action", False)
-            else 0.0
-            for metadata in transitions
-        ]
-        return sum(invalid) / len(invalid)
 
     @staticmethod
     def _execution_matches(success: bool, output: dict[str, Any], expected_output: dict[str, Any] | None) -> bool:

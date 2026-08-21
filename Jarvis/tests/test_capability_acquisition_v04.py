@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import inspect
 from pathlib import Path
 
 from capabilities.models import CapabilityManifest, SkillSpecification
@@ -9,6 +10,8 @@ from capabilities.promotion import SkillPromoter
 from capabilities.registry import CapabilityRegistry
 from capabilities.resolver import CapabilityResolver
 from capabilities.workspace import SkillWorkspaceManager
+from development.memory import DevelopmentMemory
+from development.software_engineer import AutonomousSoftwareEngineer, ProjectRequest
 from environments.coding.actions import ActionCandidate, ActionType
 from environments.coding.environment import CodingEnvironment
 from environments.coding.sandbox_backend import LocalTestSandboxBackend
@@ -29,6 +32,15 @@ def _runtime(tmp_path: Path, tasks):
         backend=LocalTestSandboxBackend(),
         config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_build_steps=6),
     )
+
+
+class ProtectedEditBrain:
+    provider_name = "protected_edit"
+    model_name = "ProtectedEditBrain"
+    last_metadata = {"generated_tokens": 1, "total_tokens": 1}
+
+    def generate_structured(self, prompt, schema, *, max_tokens=700, temperature=0.2, top_p=0.9):
+        return '{"summary":"bad","files":[{"path":"test_public.py","content":"pass"}]}'
 
 
 def test_v04_persistent_capability_registry(tmp_path):
@@ -99,6 +111,145 @@ def test_v04_hidden_verifier_is_not_in_staged_workspace(tmp_path, monkeypatch):
     assert "hidden_verifier.py" not in "\n".join(event["stage"] + str(event["payload"]) for event in runtime.trajectory_store.load_all()[0]["events"])
 
 
+def test_v04_greenfield_engine_does_not_use_low_level_action_loop():
+    source = inspect.getsource(CapabilityAcquisitionRuntime.handle_goal)
+    assert "run_episode" not in source
+    assert "ActionCandidate" not in source
+
+
+def test_v04_software_engineer_initial_build_runs_tests_automatically(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    factory = _factory(tmp_path)
+    task = factory.make_tasks(1)[0]
+    hidden = factory.create_hidden_verifier(task)
+    brain = MockCapabilityBrain([task], fail_first=False)
+    runtime = CapabilityAcquisitionRuntime(
+        brain=brain,
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_build_steps=6),
+    )
+
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
+
+    assert result.success
+    assert result.initial_implementation_pass
+    assert result.repair_iterations == 0
+    assert brain.implementation_calls == 1
+    assert brain.repair_calls == 0
+
+
+def test_v04_failure_output_reaches_repair_generation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    factory = _factory(tmp_path)
+    task = factory.make_tasks(1)[0]
+    hidden = factory.create_hidden_verifier(task)
+    brain = MockCapabilityBrain([task], fail_first=True)
+    prompts = []
+    original = brain.generate_structured
+
+    def capture(prompt, schema, **kwargs):
+        if "Repair the current project" in prompt:
+            prompts.append(prompt)
+        return original(prompt, schema, **kwargs)
+
+    brain.generate_structured = capture
+    runtime = CapabilityAcquisitionRuntime(
+        brain=brain,
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_build_steps=6),
+    )
+
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
+
+    assert result.success
+    assert brain.repair_calls == 1
+    assert prompts
+    assert "Exact public test" in prompts[0]
+    assert "AssertionError" in prompts[0] or "FAIL:" in prompts[0]
+
+
+def test_v04_multi_file_greenfield_project_promotes_and_executes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    factory = _factory(tmp_path)
+    task = factory.make_tasks(2)[1]
+    hidden = factory.create_hidden_verifier(task)
+    runtime = CapabilityAcquisitionRuntime(
+        brain=MockCapabilityBrain([task], fail_first=False, multi_file=True),
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_build_steps=6),
+    )
+
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
+    manifest = runtime.registry.get(task.specification.capability_id)
+
+    assert result.success
+    assert manifest is not None
+    assert (Path(manifest.source_location) / "helper.py").exists()
+
+
+def test_v04_multiple_repair_cycles_are_supported(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    factory = _factory(tmp_path)
+    task = factory.make_tasks(1)[0]
+    hidden = factory.create_hidden_verifier(task)
+    brain = MockCapabilityBrain([task], fail_first=True, repair_failures=1)
+    runtime = CapabilityAcquisitionRuntime(
+        brain=brain,
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_repair_cycles=3),
+    )
+
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
+
+    assert result.success
+    assert result.repair_iterations == 2
+    assert brain.repair_calls == 2
+
+
+def test_v04_malformed_structured_output_fails_without_promotion(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    factory = _factory(tmp_path)
+    task = factory.make_tasks(1)[0]
+    hidden = factory.create_hidden_verifier(task)
+    brain = MockCapabilityBrain([task], malformed_first=True)
+    runtime = CapabilityAcquisitionRuntime(
+        brain=brain,
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_repair_cycles=1),
+    )
+
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
+
+    assert not result.success
+    assert not result.promoted
+    assert brain.implementation_calls == 1
+    assert not runtime.registry.has(task.specification.capability_id)
+
+
+def test_v04_software_engineer_rejects_protected_file_materialization(tmp_path):
+    task = _factory(tmp_path).make_tasks(1)[0]
+    staged = SkillWorkspaceManager(tmp_path / "staging").create(task.specification, "candidate")
+    engineer = AutonomousSoftwareEngineer(
+        brain=ProtectedEditBrain(),
+        backend=LocalTestSandboxBackend(),
+        memory=DevelopmentMemory(tmp_path / "memory.jsonl"),
+    )
+
+    result = engineer.build(
+        ProjectRequest(
+            goal=task.goal,
+            specification=task.specification,
+            workspace=staged.root,
+            test_command=["python", "-m", "unittest", "test_public.py"],
+            protected_paths={"test_public.py", "skill_spec.json"},
+            max_repair_cycles=0,
+        )
+    )
+
+    assert not result.success
+    assert "protected path" in result.error
+
+
 def test_v04_successful_acquisition_promotion_execution_and_second_call(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     factory = _factory(tmp_path)
@@ -106,12 +257,12 @@ def test_v04_successful_acquisition_promotion_execution_and_second_call(tmp_path
     hidden = factory.create_hidden_verifier(task)
     runtime = _runtime(tmp_path, [task])
 
-    first = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, hidden_workspace=hidden)
+    first = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
     second = CapabilityAcquisitionRuntime(
         brain=MockCapabilityBrain([task]),
         backend=LocalTestSandboxBackend(),
         config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, max_build_steps=6),
-    ).handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output)
+    ).handle_goal(task.second_goal, request_payload=task.request_payload, expected_output=task.expected_output)
 
     assert first.success
     assert first.promoted
@@ -133,7 +284,7 @@ def test_v04_failed_promotion_when_hidden_verifier_fails(tmp_path, monkeypatch):
     hidden = factory.create_hidden_verifier(bad_task)
     runtime = _runtime(tmp_path, [task])
 
-    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, hidden_workspace=hidden)
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
 
     assert not result.success
     assert not result.promoted
@@ -163,7 +314,7 @@ def test_v04_trajectory_records_successful_and_failed_attempts(tmp_path, monkeyp
     task = factory.make_tasks(1)[0]
     hidden = factory.create_hidden_verifier(task)
     runtime = _runtime(tmp_path, [task])
-    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, hidden_workspace=hidden)
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
 
     records = runtime.trajectory_store.load_all()
     stages = [event["stage"] for event in records[0]["events"]]
@@ -172,6 +323,23 @@ def test_v04_trajectory_records_successful_and_failed_attempts(tmp_path, monkeyp
     assert "specification" in stages
     assert "promote" in stages
     assert records[0]["outcome"]["promoted"] is True
+
+
+def test_v04_development_memory_persists_and_retrieves_success_and_failure_patterns(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    factory = _factory(tmp_path)
+    task = factory.make_tasks(1)[0]
+    hidden = factory.create_hidden_verifier(task)
+    runtime = _runtime(tmp_path, [task])
+    result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
+
+    records = runtime.development_memory.load_all()
+    retrieved = runtime.development_memory.retrieve(task.second_goal, task.specification.to_dict(), failure_text="AssertionError")
+
+    assert result.success
+    assert records
+    assert records[0].failures
+    assert retrieved
 
 
 def test_v04_shadow_learning_mode_cannot_change_selected_action(tmp_path):
@@ -215,6 +383,7 @@ def test_v04_benchmark_catalog_has_15_distinct_capability_tasks(tmp_path):
 
     assert len(tasks) == 15
     assert len(capability_ids) == len(set(capability_ids))
+    assert all(task.specification.capability_id not in task.goal for task in tasks)
     assert len({tuple(sorted(task.expected_output.keys())) for task in tasks}) > 8
 
 
@@ -232,4 +401,6 @@ def test_v04_mock_demo_runs_without_qwen(tmp_path, monkeypatch):
 
     assert metrics["CAPABILITY_ACQUISITION_SUCCESS_RATE"] == 1.0
     assert metrics["SECOND_CALL_DIRECT_USE_SUCCESS_RATE"] == 1.0
+    assert "INITIAL_IMPLEMENTATION_PASS_RATE" in metrics
+    assert "MEAN_LLM_CALLS_PER_CAPABILITY" in metrics
     assert Path(metrics["RESULT_PATH"]).exists()

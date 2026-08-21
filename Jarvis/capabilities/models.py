@@ -10,6 +10,8 @@ class AcquisitionStage(str, Enum):
     GOAL = "goal"
     GAP = "gap_detection"
     SPEC = "specification"
+    PLAN = "plan"
+    IMPLEMENT = "implement"
     BUILD = "build"
     TEST = "test"
     REPAIR = "repair"
@@ -169,6 +171,10 @@ class CapabilityAcquisitionResult:
     steps_to_acquisition: int = 0
     repair_iterations: int = 0
     invalid_action_rate: float = 0.0
+    initial_implementation_pass: bool = False
+    llm_calls: int = 0
+    token_usage: dict[str, int] = field(default_factory=dict)
+    development_state: str = ""
     trajectory_id: str = ""
     output: dict[str, Any] = field(default_factory=dict)
     error: str = ""

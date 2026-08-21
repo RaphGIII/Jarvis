@@ -13,6 +13,7 @@ from capabilities.models import SkillSpecification
 class CapabilityBenchmarkTask:
     task_id: str
     goal: str
+    second_goal: str
     request_payload: dict[str, Any]
     expected_output: dict[str, Any]
     specification: SkillSpecification
@@ -72,9 +73,11 @@ def _task(
     request_payload: dict[str, Any],
     expected_output: dict[str, Any],
 ) -> CapabilityBenchmarkTask:
+    natural_goal = objective
     return CapabilityBenchmarkTask(
         task_id=task_id,
-        goal=f"{objective} Use capability {capability_id}.",
+        goal=natural_goal,
+        second_goal=f"Please handle this related request: {objective.lower()}",
         request_payload=request_payload,
         expected_output=expected_output,
         specification=_spec(capability_id, objective, requirements, public_tests),

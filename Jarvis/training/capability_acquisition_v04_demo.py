@@ -29,15 +29,29 @@ class CapabilityAcquisitionV04Config:
 
 
 class MockCapabilityBrain:
-    """Test/demo stand-in for frozen Qwen. It emits specs and CodingWorld actions."""
+    """Test/demo stand-in for frozen Qwen. It emits specs and complete file bundles."""
 
     provider_name = "mock_capability"
     model_name = "MockCapabilityBrain"
 
-    def __init__(self, tasks: list[CapabilityBenchmarkTask]) -> None:
+    def __init__(
+        self,
+        tasks: list[CapabilityBenchmarkTask],
+        *,
+        fail_first: bool = True,
+        malformed_first: bool = False,
+        multi_file: bool = False,
+        repair_failures: int = 0,
+    ) -> None:
         self.tasks = tasks
         self.by_capability = {task.specification.capability_id: task for task in tasks}
         self.by_goal = {task.goal: task for task in tasks}
+        self.fail_first = fail_first
+        self.malformed_first = malformed_first
+        self.multi_file = multi_file
+        self.repair_failures = repair_failures
+        self.implementation_calls = 0
+        self.repair_calls = 0
         self.model = None
         self.last_metadata: dict[str, Any] = {}
 
@@ -54,13 +68,15 @@ class MockCapabilityBrain:
         top_p: float = 0.9,
     ) -> str:
         self.last_metadata = {"generated_tokens": 1, "total_tokens": 1, "finish_reason": "stop", "attempts": 1}
-        if "candidates" in (schema.get("properties") or {}):
-            return self._action_candidates(prompt)
+        properties = schema.get("properties") or {}
+        if "files" in properties:
+            is_repair = "diagnosis" in properties or "Repair the current project" in prompt
+            return self._file_bundle(prompt, repair=is_repair)
         task = self._task_from_prompt(prompt)
         return json.dumps(task.specification.to_dict())
 
     def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
-        return self._action_candidates(prompt)
+        return self._file_bundle(prompt, repair="Repair the current project" in prompt)
 
     def generate(self, prompt: str, *, max_tokens: int = 700, temperature: float = 0.2, top_p: float | None = None) -> str:
         if "Decide if one installed capability" in prompt:
@@ -70,31 +86,29 @@ class MockCapabilityBrain:
     def think(self, user_prompt: str, max_tokens: int = 700) -> str:
         return self.generate(user_prompt, max_tokens=max_tokens)
 
-    def _action_candidates(self, prompt: str) -> str:
+    def _file_bundle(self, prompt: str, *, repair: bool) -> str:
+        if self.malformed_first and self.implementation_calls == 0 and not repair:
+            self.implementation_calls += 1
+            return "not json"
         capability_id = _extract_capability_id(prompt)
-        code = implementation_for_capability(capability_id)
-        tests_pass = "'ran': True" in prompt and "'failed': 0" in prompt and "'passed':" in prompt
-        candidates = []
-        if tests_pass:
-            candidates.append({"action_type": "FINISH", "arguments": {}, "reasoning_summary": "Public tests pass.", "confidence": 0.95, "estimated_cost": 0.1})
-        candidates.extend(
-            [
-                {
-                    "action_type": "WRITE_FILE",
-                    "arguments": {"path": "main.py", "content": code},
-                    "reasoning_summary": "Create the requested capability implementation.",
-                    "confidence": 1.0,
-                    "estimated_cost": 0.1,
-                },
-                {"action_type": "RUN_TESTS", "arguments": {}, "reasoning_summary": "Run generated public acceptance tests.", "confidence": 0.55, "estimated_cost": 2.0},
-                {"action_type": "LIST_FILES", "arguments": {}, "reasoning_summary": "Inspect staged workspace.", "confidence": 0.2, "estimated_cost": 0.5},
-            ]
-        )
-        return json.dumps({"candidates": candidates})
+        if repair:
+            self.repair_calls += 1
+        else:
+            self.implementation_calls += 1
+        broken = (self.fail_first and not repair) or (repair and self.repair_calls <= self.repair_failures)
+        files = implementation_files_for_capability(capability_id, broken=broken, multi_file=self.multi_file)
+        payload = {
+            "summary": "Create a complete local skill implementation.",
+            "plan": "Implement run(payload) using deterministic standard-library code.",
+            "files": files,
+        }
+        if repair:
+            payload["diagnosis"] = "Public tests failed; replace implementation with schema-correct behavior."
+        return json.dumps(payload)
 
     def _task_from_prompt(self, prompt: str) -> CapabilityBenchmarkTask:
         for task in self.tasks:
-            if task.specification.capability_id in prompt or task.goal in prompt:
+            if task.specification.capability_id in prompt or task.goal in prompt or task.second_goal in prompt:
                 return task
         return self.tasks[0]
 
@@ -120,6 +134,7 @@ def run_capability_acquisition_v04_demo(config: CapabilityAcquisitionV04Config |
             data_dir=str(root / "runtime"),
             skills_root=str(root / "skills"),
             use_docker=not config.local_test_backend,
+            trace=not config.quiet,
         ),
     )
 
@@ -133,11 +148,16 @@ def run_capability_acquisition_v04_demo(config: CapabilityAcquisitionV04Config |
             task.goal,
             request_payload=task.request_payload,
             expected_output=task.expected_output,
+            second_goal=task.second_goal,
             hidden_workspace=hidden_workspace,
         )
         _log(config, f"[SPEC] {task.specification.capability_id}")
-        _log(config, f"[BUILD] steps={result.steps_to_acquisition} invalid={result.invalid_action_rate:.3f}")
+        _log(config, f"[PLAN] state={result.development_state}")
+        _log(config, f"[IMPLEMENT] llm_calls={result.llm_calls}")
+        _log(config, f"[BUILD] cycles={result.repair_iterations} invalid={result.invalid_action_rate:.3f}")
         _log(config, f"[TEST] public={result.public_success}")
+        if result.repair_iterations:
+            _log(config, f"[REPAIR {result.repair_iterations}/{runtime.config.max_repair_cycles}]")
         _log(config, f"[VERIFY] hidden={result.hidden_success}")
         _log(config, f"[PROMOTE] promoted={result.promoted}")
         _log(config, f"[EXECUTE] success={result.execution_success}")
@@ -145,14 +165,19 @@ def run_capability_acquisition_v04_demo(config: CapabilityAcquisitionV04Config |
         results.append(result.to_dict())
 
     successes = [1.0 if item["success"] else 0.0 for item in results]
-    first_attempts = [1.0 if item["success"] and int(item["repair_iterations"]) == 0 else 0.0 for item in results]
+    first_attempts = [1.0 if item.get("initial_implementation_pass") else 0.0 for item in results]
+    repair_successes = [1.0 if item["success"] and int(item["repair_iterations"]) > 0 else 0.0 for item in results if int(item["repair_iterations"]) > 0]
+    total_tokens = [float((item.get("token_usage") or {}).get("total_tokens", 0)) for item in results]
     metrics = {
         "VERSION": "v0.4",
         "TASK_COUNT": len(tasks),
         "CAPABILITY_ACQUISITION_SUCCESS_RATE": mean(successes) if successes else 0.0,
-        "FIRST_ATTEMPT_SUCCESS_RATE": mean(first_attempts) if first_attempts else 0.0,
-        "MEAN_REPAIR_ITERATIONS": mean([float(item["repair_iterations"]) for item in results]) if results else 0.0,
+        "INITIAL_IMPLEMENTATION_PASS_RATE": mean(first_attempts) if first_attempts else 0.0,
+        "REPAIR_SUCCESS_RATE": mean(repair_successes) if repair_successes else 0.0,
+        "MEAN_REPAIR_CYCLES": mean([float(item["repair_iterations"]) for item in results]) if results else 0.0,
         "MEAN_STEPS_TO_ACQUISITION": mean([float(item["steps_to_acquisition"]) for item in results]) if results else 0.0,
+        "MEAN_LLM_CALLS_PER_CAPABILITY": mean([float(item["llm_calls"]) for item in results]) if results else 0.0,
+        "MEAN_TOKENS_PER_CAPABILITY": mean(total_tokens) if total_tokens else 0.0,
         "PROMOTION_FAILURES": sum(1 for item in results if not item["promoted"]),
         "SECOND_CALL_DIRECT_USE_SUCCESS_RATE": mean([1.0 if item["second_call_success"] else 0.0 for item in results]) if results else 0.0,
         "INVALID_ACTION_RATE": mean([float(item["invalid_action_rate"]) for item in results]) if results else 0.0,
@@ -167,6 +192,17 @@ def run_capability_acquisition_v04_demo(config: CapabilityAcquisitionV04Config |
     output_path.write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
     metrics["RESULT_PATH"] = str(output_path)
     return metrics
+
+
+def implementation_files_for_capability(capability_id: str, *, broken: bool = False, multi_file: bool = False) -> list[dict[str, str]]:
+    if broken:
+        return [{"path": "main.py", "content": "def run(payload):\n    return {'result': None}\n"}]
+    if multi_file:
+        return [
+            {"path": "main.py", "content": "from helper import run_impl\n\n\ndef run(payload):\n    return run_impl(payload)\n"},
+            {"path": "helper.py", "content": implementation_for_capability(capability_id).replace("def run(payload: dict) -> dict:", "def run_impl(payload: dict) -> dict:")},
+        ]
+    return [{"path": "main.py", "content": implementation_for_capability(capability_id)}]
 
 
 def implementation_for_capability(capability_id: str) -> str:
@@ -344,9 +380,12 @@ def main() -> None:
         "VERSION",
         "TASK_COUNT",
         "CAPABILITY_ACQUISITION_SUCCESS_RATE",
-        "FIRST_ATTEMPT_SUCCESS_RATE",
-        "MEAN_REPAIR_ITERATIONS",
+        "INITIAL_IMPLEMENTATION_PASS_RATE",
+        "REPAIR_SUCCESS_RATE",
+        "MEAN_REPAIR_CYCLES",
         "MEAN_STEPS_TO_ACQUISITION",
+        "MEAN_LLM_CALLS_PER_CAPABILITY",
+        "MEAN_TOKENS_PER_CAPABILITY",
         "PROMOTION_FAILURES",
         "SECOND_CALL_DIRECT_USE_SUCCESS_RATE",
         "INVALID_ACTION_RATE",

@@ -1,0 +1,46 @@
+{
+  "acceptance_criteria": [
+    "The skill must accept a text string in the payload under 'text'",
+    "It must return the count of non-empty lines as an integer in the response",
+    "Empty lines (containing only whitespace or newlines) should not be counted",
+    "The skill must use only Python standard library dependencies"
+  ],
+  "allowed_dependencies": [],
+  "capability_id": "text.line_count",
+  "constraints": [],
+  "functional_requirements": [],
+  "inputs": {},
+  "metadata": {},
+  "objective": "Count non-empty lines in supplied text",
+  "outputs": {},
+  "permissions": [],
+  "proposed_file_structure": [
+    "main.py"
+  ],
+  "public_tests": [
+    {
+      "expected_output": {
+        "line_count": 3
+      },
+      "input": {
+        "text": "line1\n\nline2\n   \nline3"
+      }
+    },
+    {
+      "expected_output": {
+        "line_count": 0
+      },
+      "input": {
+        "text": "   \n\n\n"
+      }
+    },
+    {
+      "expected_output": {
+        "line_count": 3
+      },
+      "input": {
+        "text": "a\nb\nc"
+      }
+    }
+  ]
+}

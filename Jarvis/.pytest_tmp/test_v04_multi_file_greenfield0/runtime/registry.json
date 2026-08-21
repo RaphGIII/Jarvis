@@ -1,0 +1,35 @@
+{
+  "capabilities": {
+    "data.csv_column_mode": {
+      "capability_id": "data.csv_column_mode",
+      "creation_metadata": {
+        "created_at": "2026-08-21T18:14:28.021052+00:00",
+        "source": "capability_acquisition_v04"
+      },
+      "dependencies": [],
+      "description": "Read CSV text and return the most common value in a selected column.",
+      "entrypoint": "main.py",
+      "input_schema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "output_schema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "permissions_required": [],
+      "source_location": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_multi_file_greenfield0\\skills\\installed\\data.csv_column_mode\\1.0.0",
+      "status": "active",
+      "tests_location": "D:\\Jarvis\\Jarvis\\.pytest_tmp\\test_v04_multi_file_greenfield0\\skills\\installed\\data.csv_column_mode\\1.0.0\\test_public.py",
+      "validation_status": {
+        "hidden_verifier": true,
+        "permission_policy": true,
+        "protected_files_pristine": true,
+        "public_tests": true,
+        "syntax_build": true
+      },
+      "version": "1.0.0"
+    }
+  },
+  "schema_version": 1
+}
