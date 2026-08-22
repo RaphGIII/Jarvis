@@ -1,1 +1,0 @@
-{"CONTROLLER_ABLATIONS": {"full": {"episodes": [{"candidate_scores": [{"action": {"action_type": "PATCH_FILE"}, "raw_q_score": 1.0}]}], "controller_diagnostics": {"mean_gate": 0.5}}}}

@@ -1,2 +1,0 @@
-def contaminated():
-    return 'baseline'
