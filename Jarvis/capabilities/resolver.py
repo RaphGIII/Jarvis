@@ -77,7 +77,37 @@ class CapabilityResolver:
 
 
 def _terms(text: str) -> set[str]:
-    return {term for term in re.split(r"[^a-z0-9]+", text.lower()) if len(term) > 2}
+    raw = {term for term in re.split(r"[^a-z0-9]+", text.lower()) if len(term) > 2}
+    expanded = set(raw)
+    synonyms = {
+        "actual": {"non", "empty"},
+        "content": {"text", "line"},
+        "string": {"text"},
+        "strings": {"text"},
+        "many": {"count"},
+        "number": {"count"},
+        "amount": {"count"},
+        "common": {"mode", "frequency"},
+        "frequent": {"mode", "frequency"},
+        "filename": {"file", "name"},
+        "filenames": {"file", "name"},
+        "dictionary": {"dict", "record"},
+        "dictionaries": {"dict", "record"},
+    }
+    for term in list(raw):
+        expanded.add(_singular(term))
+        expanded.update(synonyms.get(term, set()))
+    return {term for term in expanded if len(term) > 2}
+
+
+def _singular(term: str) -> str:
+    if term.endswith("ies") and len(term) > 4:
+        return term[:-3] + "y"
+    if term.endswith("es") and len(term) > 4:
+        return term[:-2]
+    if term.endswith("s") and len(term) > 3:
+        return term[:-1]
+    return term
 
 
 def _extract_json(text: str) -> str:

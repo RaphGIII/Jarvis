@@ -165,7 +165,10 @@ class CapabilityAcquisitionResult:
     capability_id: str | None = None
     promoted: bool = False
     public_success: bool = False
+    internal_verification_success: bool = False
+    reviewer_approved: bool = False
     hidden_success: bool = False
+    blind_repair_success: bool = False
     execution_success: bool = False
     second_call_success: bool = False
     steps_to_acquisition: int = 0

@@ -206,7 +206,7 @@ def test_v04_multiple_repair_cycles_are_supported(tmp_path, monkeypatch):
     assert brain.repair_calls == 2
 
 
-def test_v04_malformed_structured_output_fails_without_promotion(tmp_path, monkeypatch):
+def test_v04_malformed_structured_output_regenerates_without_qwen_failure(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     factory = _factory(tmp_path)
     task = factory.make_tasks(1)[0]
@@ -220,10 +220,10 @@ def test_v04_malformed_structured_output_fails_without_promotion(tmp_path, monke
 
     result = runtime.handle_goal(task.goal, request_payload=task.request_payload, expected_output=task.expected_output, second_goal=task.second_goal, hidden_workspace=hidden)
 
-    assert not result.success
-    assert not result.promoted
-    assert brain.implementation_calls == 1
-    assert not runtime.registry.has(task.specification.capability_id)
+    assert result.success
+    assert result.promoted
+    assert brain.implementation_calls == 2
+    assert runtime.registry.has(task.specification.capability_id)
 
 
 def test_v04_software_engineer_rejects_protected_file_materialization(tmp_path):

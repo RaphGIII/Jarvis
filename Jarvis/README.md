@@ -596,13 +596,17 @@ USER GOAL
   -> CapabilityResolver
   -> missing capability
   -> SkillSpecification
+  -> executable contract
   -> staging workspace
   -> AutonomousSoftwareEngineer
   -> complete implementation bundle
   -> deterministic materialization
   -> automatic public tests
+  -> Jarvis-owned internal adversarial tests
+  -> independent reviewer
   -> failure-driven full-file repair loop
-  -> hidden verifier
+  -> external hidden verifier
+  -> optional blind generalization repair
   -> versioned promotion
   -> CapabilityRegistry
   -> execute original request
@@ -618,6 +622,44 @@ UNDERSTAND -> PLAN -> IMPLEMENT -> TEST -> DIAGNOSE -> REVISE
 
 On failure, it enters `FAILED` after the repair budget is exhausted or after an
 unsafe generated path/protected file attempt.
+
+### Internal QA and Review
+
+The v0.4 engineering path now separates roles while keeping Qwen frozen:
+
+```text
+Architect:      compiles SkillSpecification into an executable contract
+Implementer:    writes complete file bundles
+TestEngineer:   creates Jarvis-owned public-contract tests outside the editable tree
+Reviewer:       approves/rejects and may recommend extra black-box tests
+Repairer:       receives exact public/internal failures and reviewer findings
+Orchestrator:   runs tests, protects paths, verifies hidden acceptance, promotes
+```
+
+The generated internal QA suite is stored outside the implementation workspace
+and mounted/read from there during execution. It includes ordinary cases,
+boundary cases, empty inputs, duplicate/order/tie cases where relevant, and
+small deterministic metamorphic checks. The implementation can read neither
+hidden verifier code nor hidden expected outputs.
+
+Capability promotion now requires all of:
+
+```text
+public_success
+internal_verification_success
+reviewer_approved
+hidden_success
+protected files pristine
+manifest validates
+permission policy passes
+```
+
+If public tests, internal QA, and reviewer approval pass but the hidden verifier
+fails, Jarvis may run a bounded blind-generalization repair. The repair prompt
+contains only "external acceptance verification failed" plus the visible
+contract, current implementation, public/internal results, and reviewer
+findings. Hidden verifier source, inputs, expected outputs, and traceback remain
+secret.
 
 The persistent registry is stored as JSON and records:
 
@@ -651,16 +693,40 @@ instead of being silently granted.
 
 Development memory is stored in JSONL and records task/spec fingerprints,
 architecture plan, generated implementation, failures, diagnoses, repairs,
-final code, public/hidden results, token usage, and repair cycles. Before new
-builds, Jarvis retrieves a small number of relevant prior successful or repaired
-experiences as reference patterns. This is practical engineering memory, not
-Qwen fine-tuning.
+final code, public/internal/reviewer/hidden/promotion/execution/second-call
+results, token usage, normal repair cycles, and blind repair cycles. Public
+test success alone is not treated as successful engineering memory. Final
+successful examples are those that survive the full lifecycle; failed and
+partial experiences remain useful repair memory. This is practical engineering
+memory, not Qwen fine-tuning.
 
 Acquisition trajectories are appended to
 `data/capabilities/acquisition_trajectories.jsonl` by default. Each record
 contains the goal, gap detection result, specification, plan, implementation,
 public test result, repair history, hidden verification, promotion decision,
 original execution result, second-call reuse result, and final outcome.
+
+## Autonomous Repository Engineering
+
+The same high-level engineering engine is available for safe repository
+self-improvement experiments through `development.RepositoryEngineer`.
+
+```text
+SelfImprovementGoal
+  -> isolated git worktree
+  -> targeted repository context
+  -> structured multi-file proposal
+  -> path/protected-file validation
+  -> targeted tests / full acceptance commands
+  -> git diff + deterministic evidence
+  -> SELF_IMPROVEMENT_CANDIDATE_READY
+```
+
+The live checkout is not overwritten. Candidates are produced in disposable
+worktrees, protected files are compared against the source checkout, and final
+promotion still requires explicit human approval. Repository engineering
+trajectories are persisted as JSONL for future SFT/LoRA/preference/RL data, but
+Qwen is not trained in this milestone.
 
 Run the mock v0.4 demo without loading Qwen:
 
@@ -672,4 +738,10 @@ Cheapest real-Qwen smoke path through an OpenAI-compatible endpoint:
 
 ```bash
 python -m training.capability_acquisition_v04_demo --brain-provider openai_compatible --task-count 3 --benchmark-dir data/benchmark_runs/v04_qwen_software_engineer_smoke_01
+```
+
+Safe repository self-improvement experiment with real Qwen:
+
+```bash
+python -m training.self_improvement_demo --real-brain --brain-provider openai_compatible --goal "Improve semantic capability reuse" --benchmark-dir data/benchmark_runs/self_improvement_qwen_smoke_01
 ```

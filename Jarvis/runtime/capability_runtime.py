@@ -33,6 +33,7 @@ class CapabilityRuntimeConfig:
     max_build_steps: int = 14
     num_action_candidates: int = 6
     max_repair_cycles: int = 4
+    max_blind_repair_cycles: int = 2
     use_docker: bool = True
     production_controller: str = "heuristic"
     learned_controller_mode: str = "shadow"
@@ -127,19 +128,21 @@ class CapabilityAcquisitionRuntime:
             AcquisitionStage.BUILD.value,
             {"workspace": str(staged.root), "public_tests": str(staged.public_tests_path), "protected_hashes": staged.protected_hashes},
         )
-        build_result = self.software_engineer.build(
-            ProjectRequest(
-                goal=goal,
-                specification=skill_spec,
-                workspace=staged.root,
-                test_command=["python", "-m", "unittest", "test_public.py"],
-                protected_paths={"test_public.py", "skill_spec.json"},
-                permissions=list(skill_spec.permissions),
-                dependency_restrictions=list(skill_spec.constraints),
-                max_repair_cycles=self.config.max_repair_cycles,
-            )
+        project_request = ProjectRequest(
+            goal=goal,
+            specification=skill_spec,
+            workspace=staged.root,
+            test_command=["python", "-m", "unittest", "test_public.py"],
+            protected_paths={"test_public.py", "skill_spec.json"},
+            permissions=list(skill_spec.permissions),
+            dependency_restrictions=list(skill_spec.constraints),
+            max_repair_cycles=self.config.max_repair_cycles,
+            max_blind_repair_cycles=self.config.max_blind_repair_cycles,
         )
-        public_success = bool(build_result.success)
+        build_result = self.software_engineer.build(project_request)
+        public_success = bool(build_result.public_test_result and build_result.public_test_result.success)
+        internal_success = bool(build_result.internal_verification_success)
+        reviewer_approved = bool(build_result.reviewer_approved)
         verifier_task = staged.to_task(
             "External hidden verifier for staged capability.",
             hidden_workspace=hidden_workspace,
@@ -147,23 +150,55 @@ class CapabilityAcquisitionRuntime:
             max_steps=1,
         )
         verifier_environment = CodingEnvironment(verifier_task, backend=self.backend)
-        hidden_result = verifier_environment.run_final_hidden_verifier() if public_success else {"ran": False, "success": False, "runs": 0}
+        can_run_hidden = public_success and internal_success and reviewer_approved
+        hidden_result = verifier_environment.run_final_hidden_verifier() if can_run_hidden else {"ran": False, "success": False, "runs": 0}
         hidden_success = bool(hidden_result.get("success", False))
+        blind_repair_success = False
+        blind_cycles = 0
+        while can_run_hidden and not hidden_success and blind_cycles < self.config.max_blind_repair_cycles:
+            blind_cycles += 1
+            trajectory.record(
+                AcquisitionStage.REPAIR.value,
+                {"phase": "blind_hidden_repair", "cycle": blind_cycles, "message": "external acceptance verification failed"},
+            )
+            build_result = self.software_engineer.blind_generalization_repair(project_request, build_result)
+            public_success = bool(build_result.public_test_result and build_result.public_test_result.success)
+            internal_success = bool(build_result.internal_verification_success)
+            reviewer_approved = bool(build_result.reviewer_approved)
+            can_run_hidden = public_success and internal_success and reviewer_approved
+            if not can_run_hidden:
+                hidden_result = {"ran": False, "success": False, "runs": hidden_result.get("runs", 0)}
+                hidden_success = False
+                break
+            verifier_environment = CodingEnvironment(verifier_task, backend=self.backend)
+            hidden_result = verifier_environment.run_final_hidden_verifier()
+            hidden_success = bool(hidden_result.get("success", False))
+            blind_repair_success = hidden_success
         trajectory.record(AcquisitionStage.PLAN.value, {"plan": build_result.plan, "summary": build_result.summary})
         trajectory.record(AcquisitionStage.IMPLEMENT.value, {"files": [item.to_dict() for item in build_result.files], "llm_calls": build_result.llm_calls})
         trajectory.record(
             AcquisitionStage.TEST.value,
             {
                 "public_success": public_success,
+                "internal_verification_success": internal_success,
+                "reviewer_approved": reviewer_approved,
                 "hidden_success": hidden_success,
                 "test_result": build_result.public_test_result.to_dict() if build_result.public_test_result else None,
+                "internal_test_result": build_result.internal_test_result.to_dict() if build_result.internal_test_result else None,
                 "hidden_runs": hidden_result.get("runs", 0),
             },
         )
         trajectory.record(AcquisitionStage.REPAIR.value, {"repairs": build_result.repairs, "failures": build_result.failures})
         trajectory.record(AcquisitionStage.VERIFY.value, {"hidden_result": {"ran": hidden_result.get("ran", False), "success": hidden_success}})
 
-        promotion = self.promoter.promote(skill_spec, staged, public_success=public_success, hidden_success=hidden_success)
+        promotion = self.promoter.promote(
+            skill_spec,
+            staged,
+            public_success=public_success,
+            internal_success=internal_success,
+            reviewer_approved=reviewer_approved,
+            hidden_success=hidden_success,
+        )
         trajectory.record(AcquisitionStage.PROMOTE.value, {"promoted": promotion.promoted, "errors": promotion.errors, "manifest": promotion.manifest.to_dict() if promotion.manifest else None})
         if not promotion.promoted or promotion.manifest is None:
             result = CapabilityAcquisitionResult(
@@ -172,15 +207,29 @@ class CapabilityAcquisitionRuntime:
                 resolution=resolution,
                 capability_id=skill_spec.capability_id,
                 public_success=public_success,
+                internal_verification_success=internal_success,
+                reviewer_approved=reviewer_approved,
                 hidden_success=hidden_success,
+                blind_repair_success=blind_repair_success,
                 steps_to_acquisition=1 + build_result.repair_cycles,
-                repair_iterations=build_result.repair_cycles,
-                initial_implementation_pass=public_success and build_result.repair_cycles == 0,
+                repair_iterations=build_result.repair_cycles + build_result.blind_repair_cycles,
+                initial_implementation_pass=bool(build_result.success and build_result.repair_cycles == 0),
                 llm_calls=build_result.llm_calls,
                 token_usage=build_result.token_usage,
                 development_state=build_result.final_state.value,
                 trajectory_id=trajectory.trajectory_id,
                 error="; ".join(promotion.errors),
+            )
+            self.software_engineer.record_lifecycle_memory(
+                project_request,
+                build_result,
+                public_success=public_success,
+                internal_verification_success=internal_success,
+                reviewer_approved=reviewer_approved,
+                hidden_success=hidden_success,
+                promotion_success=False,
+                execution_success=False,
+                second_call_success=False,
             )
             self.trajectory_store.save(trajectory, result.to_dict())
             return result
@@ -212,18 +261,32 @@ class CapabilityAcquisitionRuntime:
             capability_id=promotion.manifest.capability_id,
             promoted=True,
             public_success=public_success,
+            internal_verification_success=internal_success,
+            reviewer_approved=reviewer_approved,
             hidden_success=hidden_success,
+            blind_repair_success=blind_repair_success,
             execution_success=execution_ok,
             second_call_success=second_execution_ok,
             steps_to_acquisition=1 + build_result.repair_cycles,
-            repair_iterations=build_result.repair_cycles,
-            initial_implementation_pass=public_success and build_result.repair_cycles == 0,
+            repair_iterations=build_result.repair_cycles + build_result.blind_repair_cycles,
+            initial_implementation_pass=bool(build_result.success and build_result.repair_cycles == 0),
             llm_calls=build_result.llm_calls,
             token_usage=build_result.token_usage,
             development_state=build_result.final_state.value,
             trajectory_id=trajectory.trajectory_id,
             output=execution.output,
             error=execution.error,
+        )
+        self.software_engineer.record_lifecycle_memory(
+            project_request,
+            build_result,
+            public_success=public_success,
+            internal_verification_success=internal_success,
+            reviewer_approved=reviewer_approved,
+            hidden_success=hidden_success,
+            promotion_success=True,
+            execution_success=execution_ok,
+            second_call_success=second_execution_ok,
         )
         self.trajectory_store.save(trajectory, result.to_dict())
         return result

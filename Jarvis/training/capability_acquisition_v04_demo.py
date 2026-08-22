@@ -50,6 +50,8 @@ class MockCapabilityBrain:
         self.malformed_first = malformed_first
         self.multi_file = multi_file
         self.repair_failures = repair_failures
+        self.review_calls = 0
+        self.test_engineer_calls = 0
         self.implementation_calls = 0
         self.repair_calls = 0
         self.model = None
@@ -69,6 +71,20 @@ class MockCapabilityBrain:
     ) -> str:
         self.last_metadata = {"generated_tokens": 1, "total_tokens": 1, "finish_reason": "stop", "attempts": 1}
         properties = schema.get("properties") or {}
+        if "cases" in properties:
+            self.test_engineer_calls += 1
+            return json.dumps({"cases": []})
+        if "approved" in properties:
+            self.review_calls += 1
+            return json.dumps(
+                {
+                    "approved": True,
+                    "contract_violations": [],
+                    "risk_cases": [],
+                    "recommended_tests": [],
+                    "repair_required": False,
+                }
+            )
         if "files" in properties:
             is_repair = "diagnosis" in properties or "Repair the current project" in prompt
             return self._file_bundle(prompt, repair=is_repair)
@@ -156,9 +172,11 @@ def run_capability_acquisition_v04_demo(config: CapabilityAcquisitionV04Config |
         _log(config, f"[IMPLEMENT] llm_calls={result.llm_calls}")
         _log(config, f"[BUILD] cycles={result.repair_iterations} invalid={result.invalid_action_rate:.3f}")
         _log(config, f"[TEST] public={result.public_success}")
+        _log(config, f"[INTERNAL QA] pass={result.internal_verification_success}")
+        _log(config, f"[REVIEW] approved={result.reviewer_approved}")
         if result.repair_iterations:
             _log(config, f"[REPAIR {result.repair_iterations}/{runtime.config.max_repair_cycles}]")
-        _log(config, f"[VERIFY] hidden={result.hidden_success}")
+        _log(config, f"[VERIFY] hidden={result.hidden_success} blind_repair={result.blind_repair_success}")
         _log(config, f"[PROMOTE] promoted={result.promoted}")
         _log(config, f"[EXECUTE] success={result.execution_success}")
         _log(config, f"[SECOND CALL] success={result.second_call_success}")
@@ -173,6 +191,10 @@ def run_capability_acquisition_v04_demo(config: CapabilityAcquisitionV04Config |
         "TASK_COUNT": len(tasks),
         "CAPABILITY_ACQUISITION_SUCCESS_RATE": mean(successes) if successes else 0.0,
         "INITIAL_IMPLEMENTATION_PASS_RATE": mean(first_attempts) if first_attempts else 0.0,
+        "INTERNAL_QA_PASS_RATE": mean([1.0 if item.get("internal_verification_success") else 0.0 for item in results]) if results else 0.0,
+        "REVIEW_PASS_RATE": mean([1.0 if item.get("reviewer_approved") else 0.0 for item in results]) if results else 0.0,
+        "HIDDEN_PASS_RATE": mean([1.0 if item.get("hidden_success") else 0.0 for item in results]) if results else 0.0,
+        "BLIND_REPAIR_SUCCESS_RATE": mean([1.0 if item.get("blind_repair_success") else 0.0 for item in results]) if results else 0.0,
         "REPAIR_SUCCESS_RATE": mean(repair_successes) if repair_successes else 0.0,
         "MEAN_REPAIR_CYCLES": mean([float(item["repair_iterations"]) for item in results]) if results else 0.0,
         "MEAN_STEPS_TO_ACQUISITION": mean([float(item["steps_to_acquisition"]) for item in results]) if results else 0.0,
@@ -381,6 +403,10 @@ def main() -> None:
         "TASK_COUNT",
         "CAPABILITY_ACQUISITION_SUCCESS_RATE",
         "INITIAL_IMPLEMENTATION_PASS_RATE",
+        "INTERNAL_QA_PASS_RATE",
+        "REVIEW_PASS_RATE",
+        "HIDDEN_PASS_RATE",
+        "BLIND_REPAIR_SUCCESS_RATE",
         "REPAIR_SUCCESS_RATE",
         "MEAN_REPAIR_CYCLES",
         "MEAN_STEPS_TO_ACQUISITION",

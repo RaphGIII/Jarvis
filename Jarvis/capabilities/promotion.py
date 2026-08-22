@@ -31,10 +31,16 @@ class SkillPromoter:
         *,
         public_success: bool,
         hidden_success: bool,
+        internal_success: bool = True,
+        reviewer_approved: bool = True,
     ) -> PromotionDecision:
         errors = []
         if not public_success:
             errors.append("public tests did not pass")
+        if not internal_success:
+            errors.append("internal QA tests did not pass")
+        if not reviewer_approved:
+            errors.append("reviewer did not approve implementation")
         if not hidden_success:
             errors.append("hidden verifier did not pass")
         if not staged.protected_files_pristine():
@@ -63,6 +69,8 @@ class SkillPromoter:
         manifest.validation_status = {
             "syntax_build": True,
             "public_tests": True,
+            "internal_qa": True,
+            "reviewer_approved": True,
             "hidden_verifier": True,
             "protected_files_pristine": True,
             "permission_policy": True,

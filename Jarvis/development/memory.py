@@ -20,11 +20,29 @@ class DevelopmentExperience:
     repairs: list[dict[str, Any]] = field(default_factory=list)
     final_code: list[dict[str, str]] = field(default_factory=list)
     public_success: bool = False
+    internal_verification_success: bool = False
+    reviewer_approved: bool = False
     hidden_success: bool | None = None
+    promotion_success: bool = False
+    execution_success: bool = False
+    second_call_success: bool = False
     token_usage: dict[str, int] = field(default_factory=dict)
     repair_cycles: int = 0
+    blind_repair_cycles: int = 0
     failure_classes: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @property
+    def final_success(self) -> bool:
+        return bool(
+            self.public_success
+            and self.internal_verification_success
+            and self.reviewer_approved
+            and self.hidden_success
+            and self.promotion_success
+            and self.execution_success
+            and self.second_call_success
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -37,9 +55,16 @@ class DevelopmentExperience:
             "repairs": self.repairs,
             "final_code": self.final_code,
             "public_success": self.public_success,
+            "internal_verification_success": self.internal_verification_success,
+            "reviewer_approved": self.reviewer_approved,
             "hidden_success": self.hidden_success,
+            "promotion_success": self.promotion_success,
+            "execution_success": self.execution_success,
+            "second_call_success": self.second_call_success,
+            "final_success": self.final_success,
             "token_usage": self.token_usage,
             "repair_cycles": self.repair_cycles,
+            "blind_repair_cycles": self.blind_repair_cycles,
             "failure_classes": self.failure_classes,
             "created_at": self.created_at,
         }
@@ -56,9 +81,15 @@ class DevelopmentExperience:
             repairs=list(data.get("repairs") or []),
             final_code=list(data.get("final_code") or []),
             public_success=bool(data.get("public_success", False)),
+            internal_verification_success=bool(data.get("internal_verification_success", False)),
+            reviewer_approved=bool(data.get("reviewer_approved", False)),
             hidden_success=data.get("hidden_success"),
+            promotion_success=bool(data.get("promotion_success", False)),
+            execution_success=bool(data.get("execution_success", False)),
+            second_call_success=bool(data.get("second_call_success", False)),
             token_usage=dict(data.get("token_usage") or {}),
             repair_cycles=int(data.get("repair_cycles", 0)),
+            blind_repair_cycles=int(data.get("blind_repair_cycles", 0)),
             failure_classes=list(data.get("failure_classes") or []),
             created_at=str(data.get("created_at", datetime.now(timezone.utc).isoformat())),
         )
@@ -94,8 +125,9 @@ class DevelopmentMemory:
             target_terms = _terms(f"{exp.goal} {json.dumps(exp.spec, sort_keys=True)}")
             overlap = len(goal_terms & target_terms) / max(1, len(goal_terms))
             failure_overlap = len(failure_classes & set(exp.failure_classes)) * 0.3
-            success_bonus = 0.2 if exp.public_success else 0.0
-            score = overlap + failure_overlap + success_bonus
+            success_bonus = 0.2 if exp.final_success else 0.0
+            partial_penalty = -0.1 if exp.public_success and not exp.final_success else 0.0
+            score = overlap + failure_overlap + success_bonus + partial_penalty
             if score > 0:
                 scored.append((score, exp))
         scored.sort(key=lambda item: (item[0], item[1].created_at), reverse=True)
