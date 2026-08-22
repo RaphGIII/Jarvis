@@ -75,6 +75,13 @@ class LocalTestSandboxBackend:
             if not key.upper().startswith(("SECRET", "TOKEN", "API_KEY"))
         }
         clean_env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+        # Preserve PATH (and the venv marker) so the host Python interpreter
+        # actually running this backend can be located by name (e.g. "python").
+        # Without PATH, subprocess falls back to os.defpath, which does not
+        # include venv bin directories and breaks command resolution.
+        clean_env.setdefault("PATH", os.environ.get("PATH", os.defpath))
+        if "VIRTUAL_ENV" in os.environ:
+            clean_env.setdefault("VIRTUAL_ENV", os.environ["VIRTUAL_ENV"])
         clean_env["JARVIS_WORKSPACE"] = str(cwd.resolve())
         if verifier_workspace is not None:
             clean_env["PYTHONPATH"] = str(cwd.resolve())
