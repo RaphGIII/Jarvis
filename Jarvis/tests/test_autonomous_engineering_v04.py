@@ -410,3 +410,66 @@ def test_self_improvement_demo_runs_on_disposable_fixture(tmp_path):
     assert metrics["SUCCESS"] is True
     assert metrics["STATUS"] == "SELF_DEVELOPMENT_CANDIDATE_READY"
     assert Path(metrics["RESULT_PATH"]).exists()
+
+
+def test_review_from_payload_rejects_contradictory_approved_and_repair_required():
+    """A weak local model can emit approved=true with repair_required=true (both
+    literally, e.g. echoing schema example placeholders). Trusting `approved` in
+    that case would silently promote a candidate the model itself flagged as
+    needing repair, so this must be treated as malformed and fall back to the
+    deterministic reviewer (discovered via live small-model testing)."""
+    from development.software_engineer import _review_from_payload
+
+    finding = _review_from_payload(
+        {
+            "approved": True,
+            "contract_violations": [],
+            "risk_cases": [],
+            "recommended_tests": [],
+            "repair_required": True,
+        }
+    )
+    assert finding is None
+
+
+def test_review_from_payload_strips_placeholder_echoes():
+    """A weak local model can literally echo the "..." placeholder tokens from
+    the response-schema example as if they were real findings/tests. Those must
+    be filtered out rather than treated as genuine contract violations, risks,
+    or recommended tests."""
+    from development.software_engineer import _review_from_payload
+
+    finding = _review_from_payload(
+        {
+            "approved": True,
+            "contract_violations": ["..."],
+            "risk_cases": ["..."],
+            "recommended_tests": [{"name": "...", "input": {"value": "..."}, "expected": None, "raises": False}],
+            "repair_required": False,
+        }
+    )
+    assert finding is not None
+    assert finding.approved is True
+    assert finding.contract_violations == []
+    assert finding.risk_cases == []
+    assert finding.recommended_tests == []
+    assert finding.repair_required is False
+
+
+def test_review_from_payload_keeps_genuine_findings():
+    from development.software_engineer import _review_from_payload
+
+    finding = _review_from_payload(
+        {
+            "approved": False,
+            "contract_violations": ["main.py missing return type handling"],
+            "risk_cases": [],
+            "recommended_tests": [{"name": "negative_case", "input": {"value": -1}, "expected": {"ok": False}, "raises": False}],
+            "repair_required": True,
+        }
+    )
+    assert finding is not None
+    assert finding.approved is False
+    assert finding.contract_violations == ["main.py missing return type handling"]
+    assert len(finding.recommended_tests) == 1
+    assert finding.recommended_tests[0].name == "negative_case"

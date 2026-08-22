@@ -768,30 +768,64 @@ def _valid_bundle(bundle: dict[str, Any]) -> bool:
     return isinstance(files, list) and any(isinstance(item, dict) and item.get("path") and "content" in item for item in files)
 
 
+_PLACEHOLDER_TOKENS = {"...", "…", "<...>", "n/a", "none", ""}
+
+
+def _is_placeholder_text(value: str) -> bool:
+    return value.strip().strip(".").lower() in _PLACEHOLDER_TOKENS or set(value.strip()) <= {".", "…"}
+
+
+def _is_placeholder_payload(payload: dict[str, Any]) -> bool:
+    if not payload:
+        return False
+    return all(isinstance(v, str) and _is_placeholder_text(v) for v in payload.values())
+
+
 def _review_from_payload(payload: dict[str, Any]) -> Any | None:
+    """Parse a brain-generated reviewer response into a ReviewFinding.
+
+    Weak local models frequently echo the literal "..." placeholder tokens
+    from the response-schema example back as real findings, and can produce
+    self-contradictory output (approved=True but repair_required=True).
+    Both are treated as malformed so the caller falls back to the
+    deterministic AST-based reviewer instead of silently trusting
+    fabricated/contradictory review output (fail closed).
+    """
     if not isinstance(payload.get("approved"), bool):
         return None
+    approved = bool(payload.get("approved", False))
+    repair_required = bool(payload.get("repair_required", False))
+    if approved and repair_required:
+        return None
+
     from development.qa import InternalTestCase, ReviewFinding
+
+    violations = [str(item) for item in payload.get("contract_violations", []) if not _is_placeholder_text(str(item))]
+    risks = [str(item) for item in payload.get("risk_cases", []) if not _is_placeholder_text(str(item))]
 
     tests = []
     for item in payload.get("recommended_tests", []):
         if not isinstance(item, dict) or not isinstance(item.get("input"), dict):
             continue
+        name = str(item.get("name") or "review_case")
+        input_payload = dict(item.get("input") or {})
+        if _is_placeholder_text(name) or _is_placeholder_payload(input_payload):
+            continue
         expected = item.get("expected")
         tests.append(
             InternalTestCase(
-                name=str(item.get("name") or "review_case"),
-                payload=dict(item.get("input") or {}),
+                name=name,
+                payload=input_payload,
                 expected=expected if isinstance(expected, dict) else None,
                 raises=bool(item.get("raises", False)),
             )
         )
     return ReviewFinding(
-        approved=bool(payload.get("approved", False)),
-        contract_violations=[str(item) for item in payload.get("contract_violations", [])],
-        risk_cases=[str(item) for item in payload.get("risk_cases", [])],
+        approved=approved and not violations and not risks,
+        contract_violations=violations,
+        risk_cases=risks,
         recommended_tests=tests,
-        repair_required=bool(payload.get("repair_required", False)),
+        repair_required=repair_required or bool(violations) or bool(risks),
     )
 
 

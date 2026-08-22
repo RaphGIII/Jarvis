@@ -473,3 +473,84 @@ def test_v04_mock_demo_runs_without_qwen(tmp_path, monkeypatch):
     assert "INITIAL_IMPLEMENTATION_PASS_RATE" in metrics
     assert "MEAN_LLM_CALLS_PER_CAPABILITY" in metrics
     assert Path(metrics["RESULT_PATH"]).exists()
+
+
+def test_generated_public_test_file_executes_bool_and_null_expected_values(tmp_path):
+    """Regression test: public_tests containing JSON true/false/null must render as
+    executable Python (json.loads at import time), not raw JSON literals spliced
+    into source code (which previously produced `NameError: name 'true' is not
+    defined` -- discovered via a live local-LLM run whose spec legitimately used
+    boolean outputs, e.g. a leap-year predicate)."""
+    spec = SkillSpecification(
+        capability_id="local.bool_and_null_probe",
+        objective="Return booleans and nulls to exercise public-test rendering.",
+        public_tests=[
+            {"name": "true_case", "input": {"x": 1}, "expected": {"ok": True}},
+            {"name": "false_case", "input": {"x": 0}, "expected": {"ok": False}},
+            {"name": "null_case", "input": {"x": None}, "expected": {"ok": None}},
+        ],
+        proposed_file_structure=["main.py"],
+    )
+    staged = SkillWorkspaceManager(tmp_path / "staging").create(spec, "candidate")
+    (staged.root / "main.py").write_text(
+        "def run(payload: dict) -> dict:\n"
+        "    x = payload.get('x')\n"
+        "    if x == 1:\n"
+        "        return {'ok': True}\n"
+        "    if x == 0:\n"
+        "        return {'ok': False}\n"
+        "    return {'ok': None}\n",
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys as _sys
+
+    completed = subprocess.run(
+        [_sys.executable, "-m", "unittest", "test_public.py"],
+        cwd=staged.root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "NameError" not in completed.stderr
+
+
+def test_generated_hidden_verifier_executes_bool_and_null_expected_values(tmp_path):
+    """Same regression as above, for the hidden-verifier source generator used by
+    the benchmark curriculum (training/capability_curriculum.py)."""
+    from training.capability_curriculum import _hidden_verifier_source
+
+    hidden_tests = [
+        {"input": {"x": 1}, "expected": {"ok": True}},
+        {"input": {"x": 0}, "expected": {"ok": False}},
+        {"input": {"x": None}, "expected": {"ok": None}},
+    ]
+    source = _hidden_verifier_source(hidden_tests)
+    workdir = tmp_path / "hidden_probe"
+    workdir.mkdir()
+    (workdir / "hidden_verifier.py").write_text(source, encoding="utf-8")
+    (workdir / "main.py").write_text(
+        "def run(payload: dict) -> dict:\n"
+        "    x = payload.get('x')\n"
+        "    if x == 1:\n"
+        "        return {'ok': True}\n"
+        "    if x == 0:\n"
+        "        return {'ok': False}\n"
+        "    return {'ok': None}\n",
+        encoding="utf-8",
+    )
+
+    import subprocess
+    import sys as _sys
+
+    completed = subprocess.run(
+        [_sys.executable, "hidden_verifier.py"],
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "NameError" not in completed.stderr

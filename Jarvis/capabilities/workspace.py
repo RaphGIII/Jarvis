@@ -65,13 +65,14 @@ class SkillWorkspaceManager:
 
 
 def _render_public_tests(spec: SkillSpecification) -> str:
-    cases = json.dumps(spec.public_tests, indent=2, sort_keys=True)
-    return f'''import unittest
+    cases_json = json.dumps(json.dumps(spec.public_tests, sort_keys=True))
+    return f'''import json
+import unittest
 
 import main
 
 
-PUBLIC_CASES = {cases}
+PUBLIC_CASES = json.loads({cases_json})
 
 
 class PublicSkillTests(unittest.TestCase):

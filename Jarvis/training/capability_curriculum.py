@@ -241,10 +241,12 @@ def _catalog() -> list[CapabilityBenchmarkTask]:
 
 
 def _hidden_verifier_source(hidden_tests: list[dict[str, Any]]) -> str:
-    cases = json.dumps(hidden_tests, indent=2, sort_keys=True)
-    return f'''import main
+    cases_json = json.dumps(json.dumps(hidden_tests, sort_keys=True))
+    return f'''import json
 
-HIDDEN_CASES = {cases}
+import main
+
+HIDDEN_CASES = json.loads({cases_json})
 
 for case in HIDDEN_CASES:
     result = main.run(case.get("input", {{}}))
