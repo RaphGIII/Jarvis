@@ -23,7 +23,7 @@ cd /projects/repo/Jarvis
 python -m pytest tests/ -q         # full suite; ~50-60s
 ```
 
-Baseline as of this session: **186 passed, 5 skipped** (collected count
+Baseline as of this session: **191 passed, 5 skipped** (collected count
 grows as tests are added — don't assume a fixed number, always re-verify).
 The mission brief mentions "178 collected" from an earlier point in time;
 that number is stale, verify freshly each session.
@@ -179,3 +179,60 @@ black-box acceptance tests (TEST 1-8). As of this session:
   `development/repository_engineer.py`, and existing tests under
   `Jarvis/tests/` for what's already implemented before assuming anything
   is missing.
+
+## TEST 1 + TEST 5 completed this session (live Qwen2.5-Coder-0.5B)
+
+Full happy path proven end-to-end with the real local model (no mocks):
+goal "Given a temperature in Celsius, convert it to Fahrenheit." (verified
+NOT in any existing benchmark catalog via
+`training.capability_curriculum._catalog()`) went through gap-detection ->
+spec -> implement -> public tests -> internal QA -> reviewer approval ->
+hidden verifier -> promotion -> execution -> second-call reuse (same
+process), then a **second, brand-new process** with the brain replaced by
+a stub that raises `AssertionError` if called at all successfully
+re-resolved a related new-phrasing goal ("What is -40 degrees Celsius in
+Fahrenheit?") from the persisted `registry.json` and executed it with
+**zero brain calls** — proving cross-restart persistence (TEST 5) and
+capability reuse without rebuilding (mission step 15).
+
+Two real pipeline bugs found and fixed via these live runs (see commit
+`5c14361`):
+1. **Invalid JSON literals in generated test source**
+   (`capabilities/workspace.py:_render_public_tests`,
+   `training/capability_curriculum.py:_hidden_verifier_source`): both
+   f-string-interpolated `spec.public_tests`/`hidden_tests` directly into
+   Python source. JSON `true`/`false`/`null` are not valid Python literals
+   (`repr()` was used correctly elsewhere in `development/qa.py`, but not
+   here), so any test case with a bool/null crashed the harness before it
+   could even run. Fixed by double-JSON-encoding + `json.loads(...)`
+   inside the generated source.
+2. **Reviewer trusted contradictory/placeholder-echoed brain JSON**
+   (`development/software_engineer.py:_review_from_payload`): a weak local
+   model reliably emitted `approved=true` together with
+   `repair_required=true`, and literally echoed the `"..."` placeholder
+   token from the response-schema example
+   (`"contract_violations":["..."]`, `"risk_cases":["..."]`,
+   `{"name":"...","input":{"value":"..."}}`) as if these were genuine
+   findings — this caused capabilities to fail review forever with no
+   useful repair signal even after the implementation was already
+   correct. Fixed by treating a contradictory or placeholder-only payload
+   as malformed (return `None`), which makes the existing fallback path
+   use the deterministic AST-based `DeterministicReviewer` instead — this
+   is a fail-closed fallback (per the mission's Quality Gates), not a
+   weakened gate.
+
+Live test scripts (throwaway, not committed, safe to delete/recreate):
+`Jarvis/.agent_tmp/live_test1_run1.py` (process 1: builds + promotes via
+live LLM) and `Jarvis/.agent_tmp/live_test1_run2.py` (process 2: reuse
+proof with an intentionally-exploding brain). Scratch state lives at
+`Jarvis/.agent_tmp/live_test1_scratch/` — delete before re-running from
+scratch since it persists across invocations by design.
+
+**Gate-server note**: the local OpenAI-compatible server at
+`http://127.0.0.1:8123` only implements POST (a bare `GET /v1/models`
+returns HTTP 501 "Unsupported method" — that's normal, not a sign it's
+down). It can take 60-120s+ per request under load from a slow small
+model, so foreground `terminal` calls with the default soft-timeout can
+appear to hang/get killed even though the server is still fine; prefer
+launching live-model scripts with `nohup ... &` and polling/`sleep`ing
+rather than blocking a single foreground call.
