@@ -1,0 +1,118 @@
+{
+  "CAPABILITY_ACQUISITION_SUCCESS_RATE": 0.0,
+  "CONFIG": {
+    "benchmark_dir": "data\\benchmark_runs\\v04_engineer_real_01",
+    "brain_provider": "openai_compatible",
+    "local_test_backend": false,
+    "mock_brain": false,
+    "persistent": false,
+    "quiet": false,
+    "task_count": 3
+  },
+  "DEVELOPMENT_WALL_TIME_SECONDS": 77.76148309999917,
+  "INITIAL_IMPLEMENTATION_PASS_RATE": 0.3333333333333333,
+  "INVALID_ACTION_RATE": 0.0,
+  "MEAN_LLM_CALLS_PER_CAPABILITY": 2.0,
+  "MEAN_REPAIR_CYCLES": 1.0,
+  "MEAN_STEPS_TO_ACQUISITION": 2.0,
+  "MEAN_TOKENS_PER_CAPABILITY": 4201.0,
+  "PROMOTION_FAILURES": 3,
+  "REGISTRY_PATH": "data\\benchmark_runs\\v04_engineer_real_01\\runtime\\registry.json",
+  "REPAIR_SUCCESS_RATE": 0.0,
+  "RESULTS": [
+    {
+      "capability_id": "count_non_empty_lines",
+      "development_state": "COMPLETE",
+      "error": "hidden verifier did not pass",
+      "execution_success": false,
+      "goal": "Count non-empty lines in supplied text.",
+      "hidden_success": false,
+      "initial_implementation_pass": false,
+      "invalid_action_rate": 0.0,
+      "llm_calls": 3,
+      "output": {},
+      "promoted": false,
+      "public_success": true,
+      "repair_iterations": 2,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": false,
+      "steps_to_acquisition": 3,
+      "success": false,
+      "token_usage": {
+        "generated_tokens": 1125,
+        "total_tokens": 5655
+      },
+      "trajectory_id": "67d248a277a847eeb7249c6fa6ae22cd"
+    },
+    {
+      "capability_id": "csv_most_common_value",
+      "development_state": "FAILED",
+      "error": "public tests did not pass; hidden verifier did not pass",
+      "execution_success": false,
+      "goal": "Read CSV text and return the most common value in a selected column.",
+      "hidden_success": false,
+      "initial_implementation_pass": false,
+      "invalid_action_rate": 0.0,
+      "llm_calls": 2,
+      "output": {},
+      "promoted": false,
+      "public_success": false,
+      "repair_iterations": 1,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": false,
+      "steps_to_acquisition": 2,
+      "success": false,
+      "token_usage": {
+        "generated_tokens": 2161,
+        "total_tokens": 5260
+      },
+      "trajectory_id": "0c03147ad263407ca714f1f63e010a56"
+    },
+    {
+      "capability_id": "file_extension_summary",
+      "development_state": "COMPLETE",
+      "error": "hidden verifier did not pass",
+      "execution_success": false,
+      "goal": "Summarize file extensions from a list of paths.",
+      "hidden_success": false,
+      "initial_implementation_pass": true,
+      "invalid_action_rate": 0.0,
+      "llm_calls": 1,
+      "output": {},
+      "promoted": false,
+      "public_success": true,
+      "repair_iterations": 0,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "second_call_success": false,
+      "steps_to_acquisition": 1,
+      "success": false,
+      "token_usage": {
+        "generated_tokens": 471,
+        "total_tokens": 1688
+      },
+      "trajectory_id": "b8a4b6050d3048e4b87697da3d3247b0"
+    }
+  ],
+  "SECOND_CALL_DIRECT_USE_SUCCESS_RATE": 0.0,
+  "TASK_COUNT": 3,
+  "TRAJECTORY_PATH": "data\\benchmark_runs\\v04_engineer_real_01\\runtime\\acquisition_trajectories.jsonl",
+  "VERSION": "v0.4"
+}

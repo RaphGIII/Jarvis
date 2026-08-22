@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import shlex
+import tempfile
+import uuid
 from pathlib import Path
 
 from brain.providers import make_brain_provider_from_env
@@ -16,6 +18,8 @@ def run_self_developer_from_args(args: argparse.Namespace) -> dict:
     repo = Path(args.repo).resolve()
     benchmark_root = Path(args.benchmark_dir or (repo / "data" / "self_development")).resolve()
     benchmark_root.mkdir(parents=True, exist_ok=True)
+    configured_worktree_root = getattr(args, "worktree_root", None)
+    worktree_root = Path(configured_worktree_root).resolve() if configured_worktree_root else Path(tempfile.gettempdir()) / "jarvis_selfdev" / uuid.uuid4().hex[:12]
     goal = SelfImprovementGoal(
         objective=args.goal,
         success_criteria=list(args.success_criteria or []),
@@ -30,7 +34,7 @@ def run_self_developer_from_args(args: argparse.Namespace) -> dict:
     brain = make_brain_provider_from_env()
     engineer = RepositoryEngineer(
         brain=brain,
-        worktree_root=benchmark_root / "worktrees",
+        worktree_root=worktree_root,
         memory=SelfImprovementMemory(benchmark_root / "self_development_trajectories.jsonl"),
         timeout_seconds=float(args.timeout_seconds),
         max_cycles=int(args.max_cycles),
@@ -85,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--brain-provider", choices=["local_transformers", "openai_compatible"], default=None)
     parser.add_argument("--benchmark-dir", default=None)
+    parser.add_argument("--worktree-root", default=None)
     return parser
 
 

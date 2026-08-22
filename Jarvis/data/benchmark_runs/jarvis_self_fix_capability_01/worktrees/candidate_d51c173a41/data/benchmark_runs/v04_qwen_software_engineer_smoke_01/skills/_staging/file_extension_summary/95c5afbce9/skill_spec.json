@@ -1,0 +1,48 @@
+{
+  "acceptance_criteria": [
+    "The skill must parse a list of file paths",
+    "It must extract and count file extensions (case-insensitive)",
+    "It must return a dictionary with extension counts",
+    "No external dependencies beyond Python standard library are allowed"
+  ],
+  "allowed_dependencies": [],
+  "capability_id": "file_extension_summary",
+  "constraints": [],
+  "functional_requirements": [],
+  "inputs": {},
+  "metadata": {},
+  "objective": "Summarize file extensions from a list of paths",
+  "outputs": {},
+  "permissions": [],
+  "proposed_file_structure": [
+    "main.py"
+  ],
+  "public_tests": [
+    {
+      "expected_output": {
+        "jpg": 1,
+        "pdf": 2,
+        "py": 1,
+        "zip": 1
+      },
+      "input": [
+        "document.pdf",
+        "image.jpg",
+        "script.py",
+        "archive.zip",
+        "document.pdf"
+      ]
+    },
+    {
+      "expected_output": {
+        "csv": 1,
+        "txt": 2
+      },
+      "input": [
+        "report.txt",
+        "data.csv",
+        "report.txt"
+      ]
+    }
+  ]
+}

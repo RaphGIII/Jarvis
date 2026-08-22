@@ -1,0 +1,55 @@
+{
+  "acceptance_criteria": [
+    "The function correctly counts lines that are not empty (i.e., lines with at least one non-whitespace character).",
+    "Empty lines (e.g., lines containing only whitespace or newlines) are not counted.",
+    "The function handles edge cases such as empty input or input with only whitespace."
+  ],
+  "allowed_dependencies": [],
+  "capability_id": "count_non_empty_lines",
+  "constraints": [],
+  "functional_requirements": [],
+  "inputs": {
+    "text": {
+      "description": "The input text to analyze for non-empty lines.",
+      "type": "string"
+    }
+  },
+  "metadata": {},
+  "objective": "Count the number of non-empty lines in a supplied text string.",
+  "outputs": {
+    "line_count": {
+      "description": "The number of non-empty lines in the input text.",
+      "type": "integer"
+    }
+  },
+  "permissions": [],
+  "proposed_file_structure": [
+    "main.py"
+  ],
+  "public_tests": [
+    {
+      "expected_output": {
+        "line_count": 3
+      },
+      "input": "line1\nline2\n\nline3"
+    },
+    {
+      "expected_output": {
+        "line_count": 0
+      },
+      "input": "   \n\n   \n"
+    },
+    {
+      "expected_output": {
+        "line_count": 0
+      },
+      "input": ""
+    },
+    {
+      "expected_output": {
+        "line_count": 3
+      },
+      "input": "a\nb\nc"
+    }
+  ]
+}

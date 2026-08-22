@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import subprocess
 import uuid
 import stat
@@ -159,7 +160,7 @@ class RepositoryEngineer:
         self,
         *,
         brain: Any,
-        worktree_root: str | Path,
+        worktree_root: str | Path | None = None,
         memory: SelfImprovementMemory | None = None,
         timeout_seconds: float = 30.0,
         max_cycles: int = 5,
@@ -167,7 +168,8 @@ class RepositoryEngineer:
         structured_regeneration_attempts: int = 2,
     ) -> None:
         self.brain = brain
-        self.worktree_root = Path(worktree_root).resolve()
+        self.run_id = uuid.uuid4().hex[:12]
+        self.worktree_root = Path(worktree_root or (Path(tempfile.gettempdir()) / "jarvis_selfdev" / self.run_id)).resolve()
         self.worktree_root.mkdir(parents=True, exist_ok=True)
         self.memory = memory or SelfImprovementMemory(self.worktree_root / "self_improvement_trajectories.jsonl")
         self.timeout_seconds = timeout_seconds
@@ -191,16 +193,18 @@ class RepositoryEngineer:
         targeted_commands = list(acceptance_commands or goal.tests)
         full_commands = list(full_test_commands if full_test_commands is not None else goal.full_tests)
         bench_commands = list(benchmark_commands if benchmark_commands is not None else goal.benchmark_commands())
-        worktree = self._create_worktree(source)
         protected_hashes = self._hash_protected(source, goal.protected_paths)
+        worktree: Path | None = None
         trajectory: dict[str, Any] = {
             "goal": goal.to_dict(),
             "repository": str(source),
-            "worktree": str(worktree),
+            "worktree": "",
             "events": [],
         }
-        result = RepositoryCandidateResult(RepositoryStage.REJECTED, str(worktree))
         try:
+            worktree = self._create_worktree(source)
+            trajectory["worktree"] = str(worktree)
+            result = RepositoryCandidateResult(RepositoryStage.REJECTED, str(worktree))
             before_benchmarks = self._run_commands(worktree, bench_commands, stage=RepositoryStage.BENCHMARK)
             self._record(trajectory, RepositoryStage.BENCHMARK, {"when": "before", "results": [item.to_dict() for item in before_benchmarks]})
             context = self._investigate(worktree, goal, trajectory)
@@ -278,11 +282,12 @@ class RepositoryEngineer:
         except Exception as exc:
             result = RepositoryCandidateResult(
                 status=RepositoryStage.REJECTED,
-                worktree=str(worktree),
+                worktree=str(worktree or ""),
                 protected_pristine=False,
                 error=str(exc),
             )
-            self._write_result_artifacts(result, trajectory)
+            if worktree is not None:
+                self._write_result_artifacts(result, trajectory)
             self._record(trajectory, "FAILED", result.to_dict())
             self.memory.record({"trajectory_id": result.trajectory_id, **trajectory, "outcome": result.to_dict()})
             return result
@@ -349,17 +354,30 @@ class RepositoryEngineer:
     def _create_worktree(self, repository_path: Path) -> Path:
         worktree = self.worktree_root / f"candidate_{uuid.uuid4().hex[:10]}"
         worktree.parent.mkdir(parents=True, exist_ok=True)
+        self._assert_external_candidate_path(repository_path, worktree)
         if (repository_path / ".git").exists() and self._git_root(repository_path) == repository_path.resolve():
             completed = self._run_git_raw(repository_path, ["worktree", "add", "--detach", str(worktree), "HEAD"], check=False)
             if completed.returncode == 0:
                 return worktree.resolve()
-        shutil.copytree(repository_path, worktree, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".pytest_tmp*"))
+            if worktree.exists():
+                shutil.rmtree(worktree, onerror=_make_writable_and_retry)
+        shutil.copytree(repository_path, worktree, ignore=_fallback_copy_ignore)
         self._run_git_raw(worktree, ["init"], check=True)
         self._run_git_raw(worktree, ["config", "user.email", "jarvis@example.invalid"], check=True)
         self._run_git_raw(worktree, ["config", "user.name", "Jarvis RepositoryEngineer"], check=True)
         self._run_git_raw(worktree, ["add", "."], check=True)
         self._run_git_raw(worktree, ["commit", "-m", "baseline"], check=True)
         return worktree.resolve()
+
+    def _assert_external_candidate_path(self, source: Path, destination: Path) -> None:
+        source_root = source.resolve()
+        destination_root = destination.resolve(strict=False)
+        if destination_root == source_root:
+            raise ValueError("candidate worktree destination must not equal the source repository")
+        if destination_root.is_relative_to(source_root):
+            raise ValueError("candidate worktree destination must live outside the source repository")
+        if source_root.is_relative_to(destination_root):
+            raise ValueError("candidate worktree destination must not contain the source repository")
 
     def _investigate(self, worktree: Path, goal: SelfImprovementGoal, trajectory: dict[str, Any]) -> dict[str, Any]:
         context: dict[str, Any] = {
@@ -793,12 +811,45 @@ def _patch_schema() -> dict[str, Any]:
 
 
 def _visible_repo_file(path: Path, root: Path) -> bool:
-    ignored = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
-    if any(part in ignored or part.startswith(".pytest_tmp") for part in path.relative_to(root).parts):
+    parts = path.relative_to(root).parts
+    if any(_ignored_repo_part(part) or part.startswith(".pytest_tmp") for part in parts):
+        return False
+    normalized = path.relative_to(root).as_posix()
+    if normalized.startswith("data/benchmark_runs/"):
         return False
     if path.suffix.lower() in {".pyc", ".pt", ".sqlite", ".png", ".jpg", ".jpeg", ".gif", ".bin"}:
         return False
     return True
+
+
+def _fallback_copy_ignore(directory: str, names: list[str]) -> set[str]:
+    ignored = set()
+    for name in names:
+        if _ignored_repo_part(name) or name.startswith(".pytest_tmp") or name.endswith(".pyc"):
+            ignored.add(name)
+    directory_path = Path(directory)
+    if directory_path.name == "data":
+        ignored.update(name for name in names if name == "benchmark_runs")
+    return ignored
+
+
+def _ignored_repo_part(part: str) -> bool:
+    return part in {
+        ".git",
+        ".venv",
+        "venv",
+        "env",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "build",
+        "dist",
+        ".jarvis_worktrees",
+        "worktrees",
+        "jarvis_selfdev",
+    }
 
 
 def _path_matches(path: str, patterns: list[str]) -> bool:
@@ -891,7 +942,6 @@ def _safe_command_env() -> dict[str, str]:
         "SYSTEMROOT",
         "COMSPEC",
         "PATHEXT",
-        "PYTHONPATH",
         "JARVIS_BRAIN_PROVIDER",
         "JARVIS_BRAIN_BASE_URL",
         "JARVIS_BRAIN_MODEL",

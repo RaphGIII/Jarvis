@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 from development.repository_engineer import RepositoryEngineer, SelfImprovementGoal, SelfImprovementMemory
 from runtime.self_developer import run_self_developer_from_args
@@ -105,6 +106,21 @@ class RegressionBrain(IterativeRepoBrain):
                     {"path": "calc.py", "content": "def add(a, b):\n    return a + b\n"},
                     {"path": "other.py", "content": "def stable():\n    return False\n"},
                 ],
+                "new_files": [],
+                "deleted_files": [],
+            }
+        )
+
+
+class CandidateOnlyBrain(IterativeRepoBrain):
+    def generate_structured(self, prompt, schema, *, max_tokens=4000, temperature=0.2, top_p=0.9):
+        props = schema.get("properties") or {}
+        if "requests" in props or "plan" in props or "approved" in props:
+            return super().generate_structured(prompt, schema, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        return json.dumps(
+            {
+                "analysis": "Write a candidate-only source value.",
+                "files": [{"path": "calc.py", "content": "def add(a, b):\n    return 99\n"}],
                 "new_files": [],
                 "deleted_files": [],
             }
@@ -236,13 +252,126 @@ def test_self_developer_cli_real_repo_mode_with_mock_provider(tmp_path, monkeypa
             require_benchmark_improvement=True,
             metric_name="SCORE",
             max_cycles=1,
-            timeout_seconds=30.0,
-            brain_provider=None,
-            benchmark_dir=str(tmp_path / "selfdev"),
+                timeout_seconds=30.0,
+                brain_provider=None,
+                benchmark_dir=str(tmp_path / "selfdev"),
+                worktree_root=None,
+            )
         )
-    )
 
     assert payload["STATUS"] == "SELF_DEVELOPMENT_CANDIDATE_READY"
     assert payload["SUCCESS"] is True
     assert Path(payload["SUMMARY_PATH"]).exists()
     assert Path(payload["WORKTREE"]) != repo
+
+
+def test_self_developer_benchmark_dir_inside_source_does_not_nest_candidate(tmp_path, monkeypatch):
+    repo = _make_real_repo(tmp_path / "repo")
+    benchmark_dir = repo / "data" / "benchmark_runs" / "selfdev"
+    brain = IterativeRepoBrain(initial_multiplier="+")
+
+    import runtime.self_developer as cli
+
+    monkeypatch.setattr(cli, "make_brain_provider_from_env", lambda: brain)
+    payload = run_self_developer_from_args(
+        argparse.Namespace(
+            repo=str(repo),
+            goal="Improve calculator addition behavior.",
+            success_criteria=[],
+            allowed_path=["calc.py", "notes.md"],
+            protected_path=["test_calc.py", "test_full.py", "bench.py"],
+            test_command=["python -m unittest test_calc.py"],
+            full_test_command=["python -m unittest test_full.py"],
+            benchmark_command=["python bench.py"],
+            require_benchmark_improvement=True,
+            metric_name="SCORE",
+            max_cycles=1,
+            timeout_seconds=30.0,
+            brain_provider=None,
+            benchmark_dir=str(benchmark_dir),
+            worktree_root=None,
+        )
+    )
+
+    worktree = Path(payload["WORKTREE"]).resolve()
+    assert payload["SUCCESS"] is True
+    assert not worktree.is_relative_to(repo.resolve())
+    assert Path(payload["SUMMARY_PATH"]).resolve().is_relative_to(benchmark_dir.resolve())
+
+
+def test_self_developer_rejects_nested_worktree_destination_before_copy(tmp_path):
+    repo = _make_real_repo(tmp_path / "repo")
+    nested_root = repo / "data" / "benchmark_runs" / "bad" / "worktrees"
+    engineer = RepositoryEngineer(brain=IterativeRepoBrain(), worktree_root=nested_root, max_cycles=1)
+
+    result = engineer.improve(repo, _goal())
+
+    assert not result.success
+    assert "outside the source repository" in result.error
+    assert not any(nested_root.rglob("calc.py")) if nested_root.exists() else True
+
+
+def test_self_developer_git_worktree_uses_external_tracked_content_only(tmp_path):
+    repo = _make_real_repo(tmp_path / "repo")
+    (repo / ".venv" / "Scripts").mkdir(parents=True)
+    (repo / ".venv" / "Scripts" / "python.exe").write_text("not copied\n", encoding="utf-8")
+    (repo / "data" / "benchmark_runs" / "old").mkdir(parents=True)
+    (repo / "data" / "benchmark_runs" / "old" / "artifact.txt").write_text("old\n", encoding="utf-8")
+
+    result = RepositoryEngineer(brain=IterativeRepoBrain(initial_multiplier="+"), worktree_root=tmp_path / "external", max_cycles=1).improve(repo, _goal())
+    worktree = Path(result.worktree)
+
+    assert result.success
+    assert not worktree.resolve().is_relative_to(repo.resolve())
+    assert not (worktree / ".venv").exists()
+    assert not (worktree / "data" / "benchmark_runs").exists()
+    assert (repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a - b\n"
+
+
+def test_self_developer_fallback_copy_excludes_heavy_generated_dirs(tmp_path):
+    repo = tmp_path / "plain_repo"
+    repo.mkdir()
+    (repo / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (repo / "test_calc.py").write_text("from calc import add\nassert add(2, 3) == 5\n", encoding="utf-8")
+    for relative in [
+        ".venv/Lib/site-packages/pkg.py",
+        "data/benchmark_runs/old/result.json",
+        "node_modules/pkg/index.js",
+        "build/out.txt",
+        "__pycache__/calc.pyc",
+    ]:
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("generated\n", encoding="utf-8")
+    goal = SelfImprovementGoal(
+        objective="Fix add.",
+        allowed_paths=["calc.py", "notes.md"],
+        protected_paths=["test_calc.py"],
+        tests=[["python", "test_calc.py"]],
+    )
+
+    with mock.patch.object(RepositoryEngineer, "_git_root", return_value=None):
+        result = RepositoryEngineer(brain=IterativeRepoBrain(initial_multiplier="+"), worktree_root=tmp_path / "external", max_cycles=1).improve(repo, goal)
+
+    worktree = Path(result.worktree)
+    assert result.success
+    assert not (worktree / ".venv").exists()
+    assert not (worktree / "data" / "benchmark_runs").exists()
+    assert not (worktree / "node_modules").exists()
+    assert not (worktree / "build").exists()
+    assert not (worktree / "__pycache__").exists()
+
+
+def test_self_developer_commands_import_candidate_source_not_live_source(tmp_path):
+    repo = _make_real_repo(tmp_path / "repo")
+    goal = SelfImprovementGoal(
+        objective="Make command observe candidate source.",
+        allowed_paths=["calc.py"],
+        protected_paths=["test_calc.py"],
+        tests=[["python", "-c", "from calc import add; raise SystemExit(0 if add(2, 3) == 99 else 1)"]],
+    )
+
+    result = RepositoryEngineer(brain=CandidateOnlyBrain(), worktree_root=tmp_path / "external", max_cycles=1).improve(repo, goal)
+
+    assert result.success
+    assert (repo / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a - b\n"

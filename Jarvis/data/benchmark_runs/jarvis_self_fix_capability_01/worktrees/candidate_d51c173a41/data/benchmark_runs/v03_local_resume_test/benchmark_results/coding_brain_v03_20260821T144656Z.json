@@ -1,0 +1,4958 @@
+{
+  "ABSOLUTE_DELTA": 0.0,
+  "ACTION_GENERATOR": "QwenActionGenerator",
+  "BASELINE": {
+    "accumulators": {
+      "controller_scores": [
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.8506317260590466,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.8500000000000001,
+          "heuristic_score": 0.8500000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.899998712539673,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": 1.0,
+            "value": -1.0000032186508179,
+            "world": -1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2649688720703125,
+          "predicted_reward": 0.28338783979415894,
+          "q_score": 1.0,
+          "q_value": -0.10464172065258026,
+          "raw_score_components": {
+            "policy": -2.2649688720703125,
+            "q": -0.10464172065258026,
+            "value": -0.06819655746221542,
+            "world": 0.28338783979415894
+          },
+          "risk": 0.0,
+          "score": 0.8500000000000001,
+          "uncertainty": 0.7012634521180933,
+          "value_score": -1.0000032186508179,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.8506443879821084,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": false,
+          "learned_score": -0.9000012636184694,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": -1.0,
+            "value": 0.9999968409538269,
+            "world": 1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.3541154861450195,
+          "predicted_reward": 0.28505921363830566,
+          "q_score": -1.0,
+          "q_value": -0.11732986569404602,
+          "raw_score_components": {
+            "policy": -2.3541154861450195,
+            "q": -0.11732986569404602,
+            "value": -0.0658397227525711,
+            "world": 0.28505921363830566
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.7012887759642167,
+          "value_score": 0.9999968409538269,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.765661590614102,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": true,
+          "learned_score": -1.7000145733356478,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.000028371810913,
+            "q": -0.9999993443489075,
+            "value": 0.999988317489624,
+            "world": -0.9999985098838806
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2713608741760254,
+          "predicted_reward": 0.26732996106147766,
+          "q_score": -0.9999993443489075,
+          "q_value": -0.11784569174051285,
+          "raw_score_components": {
+            "policy": -2.2713608741760254,
+            "q": -0.11784569174051285,
+            "value": -0.07010584324598312,
+            "world": 0.26732996106147766
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.5313231812282041,
+          "value_score": 0.999988317489624,
+          "world_score": -0.9999985098838806
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7658116333412401,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": false,
+          "learned_score": 1.6999855279922487,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999716281890869,
+            "q": 1.0000007152557373,
+            "value": -1.000011682510376,
+            "world": 1.0000015497207642
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2629506587982178,
+          "predicted_reward": 0.28713560104370117,
+          "q_score": 1.0000007152557373,
+          "q_value": -0.1065564900636673,
+          "raw_score_components": {
+            "policy": -2.2629506587982178,
+            "q": -0.1065564900636673,
+            "value": -0.07074256241321564,
+            "world": 0.28713560104370117
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.5316232666824803,
+          "value_score": -1.000011682510376,
+          "world_score": 1.0000015497207642
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7648868121884085,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 1.70000216960907,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": 1.0000016689300537,
+            "value": -1.0,
+            "world": 1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.1943392753601074,
+          "predicted_reward": 0.16505920886993408,
+          "q_score": 1.0000016689300537,
+          "q_value": -0.14035378396511078,
+          "raw_score_components": {
+            "policy": -2.1943392753601074,
+            "q": -0.14035378396511078,
+            "value": -0.0746823400259018,
+            "world": 0.16505920886993408
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.5297736243768171,
+          "value_score": -1.0,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7645863363688642,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": -0.6,
+          "heuristic_score": -0.6,
+          "heuristic_winner": false,
+          "learned_score": -1.6999979078769685,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": -0.9999983906745911,
+            "value": 1.0,
+            "world": -1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.234745502471924,
+          "predicted_reward": 0.12539640069007874,
+          "q_score": -0.9999983906745911,
+          "q_value": -0.14945578575134277,
+          "raw_score_components": {
+            "policy": -2.234745502471924,
+            "q": -0.14945578575134277,
+            "value": -0.07121990621089935,
+            "world": 0.12539640069007874
+          },
+          "risk": 0.0,
+          "score": -0.6,
+          "uncertainty": 0.5291726727377284,
+          "value_score": 1.0,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7656135878779671,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 1.6999954581260681,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999976754188538,
+            "q": 0.9999986886978149,
+            "value": -1.0000056028366089,
+            "world": 1.0000008344650269
+          },
+          "novelty": 1.0,
+          "policy_score": -2.251955270767212,
+          "predicted_reward": 0.2609935998916626,
+          "q_score": 0.9999986886978149,
+          "q_value": -0.12235976755619049,
+          "raw_score_components": {
+            "policy": -2.251955270767212,
+            "q": -0.12235976755619049,
+            "value": -0.07326185703277588,
+            "world": 0.2609935998916626
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.5312271757559343,
+          "value_score": -1.0000056028366089,
+          "world_score": 1.0000008344650269
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7654698820954019,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -1.700004613399506,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.000002384185791,
+            "q": -1.000001311302185,
+            "value": 0.9999943375587463,
+            "world": -0.9999992251396179
+          },
+          "novelty": 1.0,
+          "policy_score": -2.3534584045410156,
+          "predicted_reward": 0.24202443659305573,
+          "q_score": -1.000001311302185,
+          "q_value": -0.133600652217865,
+          "raw_score_components": {
+            "policy": -2.3534584045410156,
+            "q": -0.133600652217865,
+            "value": -0.07193947583436966,
+            "world": 0.24202443659305573
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.5309397641908038,
+          "value_score": 0.9999943375587463,
+          "world_score": -0.9999992251396179
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7656868343100403,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 1.6999986648559573,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": 1.0,
+            "value": -1.0000033378601074,
+            "world": 1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.239983558654785,
+          "predicted_reward": 0.2706621289253235,
+          "q_score": 1.0,
+          "q_value": -0.1252366304397583,
+          "raw_score_components": {
+            "policy": -2.239983558654785,
+            "q": -0.1252366304397583,
+            "value": -0.07880885154008865,
+            "world": 0.2706621289253235
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.5313736686200806,
+          "value_score": -1.0000033378601074,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7654989234425804,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -1.7000013113021852,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": -1.0,
+            "value": 0.9999967217445374,
+            "world": -1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2938365936279297,
+          "predicted_reward": 0.24585789442062378,
+          "q_score": -1.0,
+          "q_value": -0.1367955505847931,
+          "raw_score_components": {
+            "policy": -2.2938365936279297,
+            "q": -0.1367955505847931,
+            "value": -0.07654359936714172,
+            "world": 0.24585789442062378
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.5309978468851609,
+          "value_score": 0.9999967217445374,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.765322079961047,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 1.7000040769577027,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0000065565109253,
+            "q": 1.0000014305114746,
+            "value": -1.0,
+            "world": 0.9999989867210388
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2524871826171875,
+          "predicted_reward": 0.2225145548582077,
+          "q_score": 1.0000014305114746,
+          "q_value": -0.12061156332492828,
+          "raw_score_components": {
+            "policy": -2.2524871826171875,
+            "q": -0.12061156332492828,
+            "value": -0.07795462012290955,
+            "world": 0.2225145548582077
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.530644159922094,
+          "value_score": -1.0,
+          "world_score": 0.9999989867210388
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.7652118927601612,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -1.6999960482120517,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.9999935030937195,
+            "q": -0.9999986290931702,
+            "value": 1.0,
+            "world": -1.000001072883606
+          },
+          "novelty": 1.0,
+          "policy_score": -2.289095640182495,
+          "predicted_reward": 0.20796984434127808,
+          "q_score": -0.9999986290931702,
+          "q_value": -0.1313011348247528,
+          "raw_score_components": {
+            "policy": -2.289095640182495,
+            "q": -0.1313011348247528,
+            "value": -0.07203830778598785,
+            "world": 0.20796984434127808
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.5304237855203223,
+          "value_score": 1.0,
+          "world_score": -1.000001072883606
+        }
+      ],
+      "episode_changed": [
+        0.0
+      ],
+      "episode_invalids": [
+        0.0
+      ],
+      "episode_success_when_changed": [],
+      "hidden_runs": [
+        0.0
+      ],
+      "invalids": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "prediction_losses": [
+        0.15125387037793794
+      ],
+      "q_errors": [
+        1.25607514038682
+      ],
+      "regressions": [
+        1.0
+      ],
+      "rewards": [
+        -8.267499999999998
+      ],
+      "steps": [
+        6.0
+      ],
+      "successes": [
+        0.0
+      ],
+      "tests_passed": [
+        0.0
+      ],
+      "value_errors": [
+        1.3801648030926785
+      ]
+    },
+    "controller_diagnostics": {
+      "action_selection_disagreement_rate_vs_heuristic": 0.0,
+      "candidate_count": 12,
+      "episodes_with_learned_override_rate": 0.0,
+      "learned_changed_heuristic_winner_rate": 0.0,
+      "mean_abs_contribution": {
+        "heuristic_score": 0.4291666666666667,
+        "learned_score": 1.5666666939854623,
+        "policy_score": 2.2719414432843528,
+        "q_score": 1.0000000149011612,
+        "value_score": 1.0000000049670537,
+        "world_score": 1.0000000149011612
+      },
+      "mean_gate": 0.0,
+      "success_rate_when_learned_changed_episode": 0.0
+    },
+    "episodes": 1,
+    "episodes_with_invalid_action_rate": 0.0,
+    "hidden_verifier_runs": 0.0,
+    "invalid_action_rate": 0.0,
+    "mean_reward": -8.267499999999998,
+    "mean_steps_to_solution": 6.0,
+    "q_prediction_error": 1.25607514038682,
+    "regression_rate": 1.0,
+    "success_rate": 0.0,
+    "tests_passed_delta": 0.0,
+    "value_prediction_error": 1.3801648030926785,
+    "world_model_prediction_loss": 0.15125387037793794
+  },
+  "BASELINE_HOLDOUT_SUCCESS_RATE": 0.0,
+  "BRAIN_PROVIDER": "MockAutonomousPatchBrain",
+  "CONFIG": {
+    "benchmark_dir": "data\\benchmark_runs\\v03_local_resume_test",
+    "brain_profile": null,
+    "brain_provider": null,
+    "candidate_count": 2,
+    "checkpoint_category": "best",
+    "coding_max_tokens": 300,
+    "eval_controller": "full",
+    "eval_controller_suite": true,
+    "eval_controller_suite_only": false,
+    "max_steps": 6,
+    "mock_brain": true,
+    "persistent": false,
+    "quick": false,
+    "quiet": false,
+    "resume": false,
+    "seed": 41,
+    "smoke": true,
+    "trace_actions": false,
+    "train_episodes": 1
+  },
+  "CONTROLLER_ABLATIONS": {
+    "full": {
+      "accumulators": {
+        "controller_scores": [
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.0994708835175543,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.8500000000000001,
+            "heuristic_score": 0.8500000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.8999919414520264,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999798536300659,
+              "q": 1.0,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2792160511016846,
+            "predicted_reward": 0.3301566243171692,
+            "q_score": 1.0,
+            "q_value": -0.06290435791015625,
+            "raw_score_components": {
+              "policy": -2.2792160511016846,
+              "q": -0.06290435791015625,
+              "value": -0.06053721159696579,
+              "world": 0.3301566243171692
+            },
+            "risk": 0.0,
+            "score": 0.8500000000000001,
+            "uncertainty": 0.1989417670351086,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09979696246710691,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": false,
+            "learned_score": -0.9000080585479736,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000020146369934,
+              "q": -1.0,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2910633087158203,
+            "predicted_reward": 0.3731990456581116,
+            "q_score": -1.0,
+            "q_value": -0.06647272408008575,
+            "raw_score_components": {
+              "policy": -2.2910633087158203,
+              "q": -0.06647272408008575,
+              "value": -0.05728723108768463,
+              "world": 0.3731990456581116
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19959392493421382,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09971253474553426,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": true,
+            "learned_score": -0.10000232458114633,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000030994415283,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2032699584960938,
+            "predicted_reward": 0.36205458641052246,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.06811121106147766,
+            "raw_score_components": {
+              "policy": -2.2032699584960938,
+              "q": -0.06811121106147766,
+              "value": -0.06151638925075531,
+              "world": 0.36205458641052246
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19942506949106853,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09955150963682116,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": false,
+            "learned_score": 0.09999762177467342,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999968409538269,
+              "q": 0.9999971985816956,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2793729305267334,
+            "predicted_reward": 0.3407992720603943,
+            "q_score": 0.9999971985816956,
+            "q_value": -0.06543029099702835,
+            "raw_score_components": {
+              "policy": -2.2793729305267334,
+              "q": -0.06543029099702835,
+              "value": -0.06324927508831024,
+              "world": 0.3407992720603943
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19910301927364232,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.17499655408389642,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.8999791622161866,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0000520944595337,
+              "q": 1.0,
+              "value": -1.0,
+              "world": 1.0
+            },
+            "novelty": 0.12871931493282318,
+            "policy_score": -2.2712795734405518,
+            "predicted_reward": 0.25943857431411743,
+            "q_score": 1.0,
+            "q_value": -0.10162630677223206,
+            "raw_score_components": {
+              "policy": -2.2712795734405518,
+              "q": -0.10162630677223206,
+              "value": -0.06815284490585327,
+              "world": 0.25943857431411743
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.22127379323496962,
+            "value_score": -1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.1748565807035475,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": -0.6,
+            "heuristic_score": -0.6,
+            "heuristic_winner": false,
+            "learned_score": -0.9000208377838135,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999479055404663,
+              "q": -1.0,
+              "value": 1.0,
+              "world": -1.0
+            },
+            "novelty": 0.12871931493282318,
+            "policy_score": -2.266702651977539,
+            "predicted_reward": 0.24096208810806274,
+            "q_score": -1.0,
+            "q_value": -0.1035991907119751,
+            "raw_score_components": {
+              "policy": -2.266702651977539,
+              "q": -0.1035991907119751,
+              "value": -0.06386971473693848,
+              "world": 0.24096208810806274
+            },
+            "risk": 0.0,
+            "score": -0.6,
+            "uncertainty": 0.22099384647427184,
+            "value_score": 1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.0992553219650731,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.899994057416916,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999938607215881,
+              "q": 0.9999973177909851,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.263765811920166,
+            "predicted_reward": 0.30170249938964844,
+            "q_score": 0.9999973177909851,
+            "q_value": -0.08780951052904129,
+            "raw_score_components": {
+              "policy": -2.263765811920166,
+              "q": -0.08780951052904129,
+              "value": -0.06688568741083145,
+              "world": 0.30170249938964844
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1985106439301462,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09939168203960765,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.9000059962272643,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000006079673767,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.302621603012085,
+            "predicted_reward": 0.31970202922821045,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.09056168794631958,
+            "raw_score_components": {
+              "policy": -2.302621603012085,
+              "q": -0.09056168794631958,
+              "value": -0.06397081166505814,
+              "world": 0.31970202922821045
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987833640792153,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09929547969138984,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.09993950128555307,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0001615285873413,
+              "q": 1.0000025033950806,
+              "value": -0.9999978542327881,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2452173233032227,
+            "predicted_reward": 0.30700331926345825,
+            "q_score": 1.0000025033950806,
+            "q_value": -0.09167953580617905,
+            "raw_score_components": {
+              "policy": -2.2452173233032227,
+              "q": -0.09167953580617905,
+              "value": -0.07135408371686935,
+              "world": 0.30700331926345825
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19859095938277968,
+            "value_score": -0.9999978542327881,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.0993880917628606,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.10006049871444689,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9998384714126587,
+              "q": -0.9999974966049194,
+              "value": 1.000002145767212,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.243741273880005,
+            "predicted_reward": 0.3192281126976013,
+            "q_score": -0.9999974966049194,
+            "q_value": -0.09467390179634094,
+            "raw_score_components": {
+              "policy": -2.243741273880005,
+              "q": -0.09467390179634094,
+              "value": -0.06786531209945679,
+              "world": 0.3192281126976013
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987761835257212,
+            "value_score": 1.000002145767212,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09906270955548141,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.09999206066131583,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000008225440979,
+              "q": 0.9999964237213135,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.256284236907959,
+            "predicted_reward": 0.27627766132354736,
+            "q_score": 0.9999964237213135,
+            "q_value": -0.08493218570947647,
+            "raw_score_components": {
+              "policy": -2.256284236907959,
+              "q": -0.08493218570947647,
+              "value": -0.07134169340133667,
+              "world": 0.27627766132354736
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19812541911096282,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "full",
+            "expected_information_gain": 0.09914529856407281,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.10000791549682608,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999918341636658,
+              "q": -1.0000035762786865,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2271335124969482,
+            "predicted_reward": 0.2871794104576111,
+            "q_score": -1.0000035762786865,
+            "q_value": -0.08701461553573608,
+            "raw_score_components": {
+              "policy": -2.2271335124969482,
+              "q": -0.08701461553573608,
+              "value": -0.06384876370429993,
+              "world": 0.2871794104576111
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.19829059712814562,
+            "value_score": 1.0,
+            "world_score": 1.0
+          }
+        ],
+        "episode_changed": [
+          0.0
+        ],
+        "episode_invalids": [
+          0.0
+        ],
+        "episode_success_when_changed": [],
+        "hidden_runs": [
+          0.0
+        ],
+        "invalids": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "prediction_losses": [
+          0.14698630571365356
+        ],
+        "q_errors": [
+          1.2950728153685729
+        ],
+        "regressions": [
+          1.0
+        ],
+        "rewards": [
+          -8.267499999999998
+        ],
+        "steps": [
+          6.0
+        ],
+        "successes": [
+          0.0
+        ],
+        "tests_passed": [
+          0.0
+        ],
+        "value_errors": [
+          1.3964909362172087
+        ]
+      },
+      "controller_diagnostics": {
+        "action_selection_disagreement_rate_vs_heuristic": 0.0,
+        "candidate_count": 12,
+        "episodes_with_learned_override_rate": 0.0,
+        "learned_changed_heuristic_winner_rate": 0.0,
+        "mean_abs_contribution": {
+          "heuristic_score": 0.4291666666666667,
+          "learned_score": 0.4999999980131785,
+          "policy_score": 2.260805686314901,
+          "q_score": 1.0,
+          "value_score": 1.0,
+          "world_score": 1.0
+        },
+        "mean_gate": 0.0,
+        "success_rate_when_learned_changed_episode": 0.0
+      },
+      "episodes": 1,
+      "episodes_with_invalid_action_rate": 0.0,
+      "hidden_verifier_runs": 0.0,
+      "invalid_action_rate": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps_to_solution": 6.0,
+      "q_prediction_error": 1.2950728153685729,
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "tests_passed_delta": 0.0,
+      "value_prediction_error": 1.3964909362172087,
+      "world_model_prediction_loss": 0.14698630571365356
+    },
+    "heuristic": {
+      "accumulators": {
+        "controller_scores": [
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.0994708835175543,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.8500000000000001,
+            "heuristic_score": 0.8500000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999798536300659,
+              "q": 1.0,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2792160511016846,
+            "predicted_reward": 0.3301566243171692,
+            "q_score": 1.0,
+            "q_value": -0.06290435791015625,
+            "raw_score_components": {
+              "policy": -2.2792160511016846,
+              "q": -0.06290435791015625,
+              "value": -0.06053721159696579,
+              "world": 0.3301566243171692
+            },
+            "risk": 0.0,
+            "score": 0.8500000000000001,
+            "uncertainty": 0.1989417670351086,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09979696246710691,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": false,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000020146369934,
+              "q": -1.0,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2910633087158203,
+            "predicted_reward": 0.3731990456581116,
+            "q_score": -1.0,
+            "q_value": -0.06647272408008575,
+            "raw_score_components": {
+              "policy": -2.2910633087158203,
+              "q": -0.06647272408008575,
+              "value": -0.05728723108768463,
+              "world": 0.3731990456581116
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19959392493421382,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09971253474553426,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": true,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000030994415283,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2032699584960938,
+            "predicted_reward": 0.36205458641052246,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.06811121106147766,
+            "raw_score_components": {
+              "policy": -2.2032699584960938,
+              "q": -0.06811121106147766,
+              "value": -0.06151638925075531,
+              "world": 0.36205458641052246
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19942506949106853,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09955150963682116,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": false,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999968409538269,
+              "q": 0.9999971985816956,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2793729305267334,
+            "predicted_reward": 0.3407992720603943,
+            "q_score": 0.9999971985816956,
+            "q_value": -0.06543029099702835,
+            "raw_score_components": {
+              "policy": -2.2793729305267334,
+              "q": -0.06543029099702835,
+              "value": -0.06324927508831024,
+              "world": 0.3407992720603943
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19910301927364232,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.6898143464417168,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000886917114258,
+              "q": 1.0,
+              "value": -1.0000019073486328,
+              "world": 0.9999991655349731
+            },
+            "novelty": 1.0,
+            "policy_score": -2.268237829208374,
+            "predicted_reward": 0.25549373030662537,
+            "q_score": 1.0,
+            "q_value": -0.10295483469963074,
+            "raw_score_components": {
+              "policy": -2.268237829208374,
+              "q": -0.10295483469963074,
+              "value": -0.06843613088130951,
+              "world": 0.25549373030662537
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.3796286928834337,
+            "value_score": -1.0000019073486328,
+            "world_score": 0.9999991655349731
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.6896787471166163,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": -0.6,
+            "heuristic_score": -0.6,
+            "heuristic_winner": false,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999112486839294,
+              "q": -1.0,
+              "value": 0.999998152256012,
+              "world": -1.0000008344650269
+            },
+            "novelty": 1.0,
+            "policy_score": -2.2709245681762695,
+            "predicted_reward": 0.2375946193933487,
+            "q_score": -1.0,
+            "q_value": -0.10506957769393921,
+            "raw_score_components": {
+              "policy": -2.2709245681762695,
+              "q": -0.10506957769393921,
+              "value": -0.06445687264204025,
+              "world": 0.2375946193933487
+            },
+            "risk": 0.0,
+            "score": -0.6,
+            "uncertainty": 0.3793574942332325,
+            "value_score": 0.999998152256012,
+            "world_score": -1.0000008344650269
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.0992553219650731,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999938607215881,
+              "q": 0.9999973177909851,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.263765811920166,
+            "predicted_reward": 0.30170249938964844,
+            "q_score": 0.9999973177909851,
+            "q_value": -0.08780951052904129,
+            "raw_score_components": {
+              "policy": -2.263765811920166,
+              "q": -0.08780951052904129,
+              "value": -0.06688568741083145,
+              "world": 0.30170249938964844
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1985106439301462,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09939168203960765,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000006079673767,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.302621603012085,
+            "predicted_reward": 0.31970202922821045,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.09056168794631958,
+            "raw_score_components": {
+              "policy": -2.302621603012085,
+              "q": -0.09056168794631958,
+              "value": -0.06397081166505814,
+              "world": 0.31970202922821045
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987833640792153,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09929547969138984,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0001615285873413,
+              "q": 1.0000025033950806,
+              "value": -0.9999978542327881,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2452173233032227,
+            "predicted_reward": 0.30700331926345825,
+            "q_score": 1.0000025033950806,
+            "q_value": -0.09167953580617905,
+            "raw_score_components": {
+              "policy": -2.2452173233032227,
+              "q": -0.09167953580617905,
+              "value": -0.07135408371686935,
+              "world": 0.30700331926345825
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19859095938277968,
+            "value_score": -0.9999978542327881,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.0993880917628606,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9998384714126587,
+              "q": -0.9999974966049194,
+              "value": 1.000002145767212,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.243741273880005,
+            "predicted_reward": 0.3192281126976013,
+            "q_score": -0.9999974966049194,
+            "q_value": -0.09467390179634094,
+            "raw_score_components": {
+              "policy": -2.243741273880005,
+              "q": -0.09467390179634094,
+              "value": -0.06786531209945679,
+              "world": 0.3192281126976013
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987761835257212,
+            "value_score": 1.000002145767212,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09906270955548141,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000008225440979,
+              "q": 0.9999964237213135,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.256284236907959,
+            "predicted_reward": 0.27627766132354736,
+            "q_score": 0.9999964237213135,
+            "q_value": -0.08493218570947647,
+            "raw_score_components": {
+              "policy": -2.256284236907959,
+              "q": -0.08493218570947647,
+              "value": -0.07134169340133667,
+              "world": 0.27627766132354736
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19812541911096282,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "heuristic",
+            "expected_information_gain": 0.09914529856407281,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": 0.0,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999918341636658,
+              "q": -1.0000035762786865,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2271335124969482,
+            "predicted_reward": 0.2871794104576111,
+            "q_score": -1.0000035762786865,
+            "q_value": -0.08701461553573608,
+            "raw_score_components": {
+              "policy": -2.2271335124969482,
+              "q": -0.08701461553573608,
+              "value": -0.06384876370429993,
+              "world": 0.2871794104576111
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.19829059712814562,
+            "value_score": 1.0,
+            "world_score": 1.0
+          }
+        ],
+        "episode_changed": [
+          0.0
+        ],
+        "episode_invalids": [
+          0.0
+        ],
+        "episode_success_when_changed": [],
+        "hidden_runs": [
+          0.0
+        ],
+        "invalids": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "prediction_losses": [
+          0.14650526642799377
+        ],
+        "q_errors": [
+          1.2948513940473398
+        ],
+        "regressions": [
+          1.0
+        ],
+        "rewards": [
+          -8.267499999999998
+        ],
+        "steps": [
+          6.0
+        ],
+        "successes": [
+          0.0
+        ],
+        "tests_passed": [
+          0.0
+        ],
+        "value_errors": [
+          1.3964905589694778
+        ]
+      },
+      "controller_diagnostics": {
+        "action_selection_disagreement_rate_vs_heuristic": 0.0,
+        "candidate_count": 12,
+        "episodes_with_learned_override_rate": 0.0,
+        "learned_changed_heuristic_winner_rate": 0.0,
+        "mean_abs_contribution": {
+          "heuristic_score": 0.4291666666666667,
+          "learned_score": 0.0,
+          "policy_score": 2.2609040339787803,
+          "q_score": 1.0,
+          "value_score": 1.0000000049670537,
+          "world_score": 1.0
+        },
+        "mean_gate": 0.0,
+        "success_rate_when_learned_changed_episode": 0.0
+      },
+      "episodes": 1,
+      "episodes_with_invalid_action_rate": 0.0,
+      "hidden_verifier_runs": 0.0,
+      "invalid_action_rate": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps_to_solution": 6.0,
+      "q_prediction_error": 1.2948513940473398,
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "tests_passed_delta": 0.0,
+      "value_prediction_error": 1.3964905589694778,
+      "world_model_prediction_loss": 0.14650526642799377
+    },
+    "policy": {
+      "accumulators": {
+        "controller_scores": [
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.0994708835175543,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.8500000000000001,
+            "heuristic_score": 0.8500000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.3999919414520264,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999798536300659,
+              "q": 1.0,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2792160511016846,
+            "predicted_reward": 0.3301566243171692,
+            "q_score": 1.0,
+            "q_value": -0.06290435791015625,
+            "raw_score_components": {
+              "policy": -2.2792160511016846,
+              "q": -0.06290435791015625,
+              "value": -0.06053721159696579,
+              "world": 0.3301566243171692
+            },
+            "risk": 0.0,
+            "score": 0.8500000000000001,
+            "uncertainty": 0.1989417670351086,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09979696246710691,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": false,
+            "learned_score": -0.40000805854797367,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000020146369934,
+              "q": -1.0,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2910633087158203,
+            "predicted_reward": 0.3731990456581116,
+            "q_score": -1.0,
+            "q_value": -0.06647272408008575,
+            "raw_score_components": {
+              "policy": -2.2910633087158203,
+              "q": -0.06647272408008575,
+              "value": -0.05728723108768463,
+              "world": 0.3731990456581116
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19959392493421382,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09971253474553426,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": true,
+            "learned_score": 0.40000123977661134,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000030994415283,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2032699584960938,
+            "predicted_reward": 0.36205458641052246,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.06811121106147766,
+            "raw_score_components": {
+              "policy": -2.2032699584960938,
+              "q": -0.06811121106147766,
+              "value": -0.06151638925075531,
+              "world": 0.36205458641052246
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19942506949106853,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09955150963682116,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": false,
+            "learned_score": -0.3999987363815308,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999968409538269,
+              "q": 0.9999971985816956,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2793729305267334,
+            "predicted_reward": 0.3407992720603943,
+            "q_score": 0.9999971985816956,
+            "q_value": -0.06543029099702835,
+            "raw_score_components": {
+              "policy": -2.2793729305267334,
+              "q": -0.06543029099702835,
+              "value": -0.06324927508831024,
+              "world": 0.3407992720603943
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19910301927364232,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09890525553262595,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.40003547668457035,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000886917114258,
+              "q": 1.0,
+              "value": -1.0000019073486328,
+              "world": 0.9999991655349731
+            },
+            "novelty": 0.0,
+            "policy_score": -2.268237829208374,
+            "predicted_reward": 0.25549373030662537,
+            "q_score": 1.0,
+            "q_value": -0.10295483469963074,
+            "raw_score_components": {
+              "policy": -2.268237829208374,
+              "q": -0.10295483469963074,
+              "value": -0.06843613088130951,
+              "world": 0.25549373030662537
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1978105110652519,
+            "value_score": -1.0000019073486328,
+            "world_score": 0.9999991655349731
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09876965620752537,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": -0.6,
+            "heuristic_score": -0.6,
+            "heuristic_winner": false,
+            "learned_score": -0.3999644994735718,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999112486839294,
+              "q": -1.0,
+              "value": 0.999998152256012,
+              "world": -1.0000008344650269
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2709245681762695,
+            "predicted_reward": 0.2375946193933487,
+            "q_score": -1.0,
+            "q_value": -0.10506957769393921,
+            "raw_score_components": {
+              "policy": -2.2709245681762695,
+              "q": -0.10506957769393921,
+              "value": -0.06445687264204025,
+              "world": 0.2375946193933487
+            },
+            "risk": 0.0,
+            "score": -0.6,
+            "uncertainty": 0.19753931241505074,
+            "value_score": 0.999998152256012,
+            "world_score": -1.0000008344650269
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.0992553219650731,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.39999754428863527,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999938607215881,
+              "q": 0.9999973177909851,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.263765811920166,
+            "predicted_reward": 0.30170249938964844,
+            "q_score": 0.9999973177909851,
+            "q_value": -0.08780951052904129,
+            "raw_score_components": {
+              "policy": -2.263765811920166,
+              "q": -0.08780951052904129,
+              "value": -0.06688568741083145,
+              "world": 0.30170249938964844
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1985106439301462,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09939168203960765,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.40000243186950685,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000006079673767,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.302621603012085,
+            "predicted_reward": 0.31970202922821045,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.09056168794631958,
+            "raw_score_components": {
+              "policy": -2.302621603012085,
+              "q": -0.09056168794631958,
+              "value": -0.06397081166505814,
+              "world": 0.31970202922821045
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987833640792153,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09929547969138984,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": -0.40006461143493655,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0001615285873413,
+              "q": 1.0000025033950806,
+              "value": -0.9999978542327881,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2452173233032227,
+            "predicted_reward": 0.30700331926345825,
+            "q_score": 1.0000025033950806,
+            "q_value": -0.09167953580617905,
+            "raw_score_components": {
+              "policy": -2.2452173233032227,
+              "q": -0.09167953580617905,
+              "value": -0.07135408371686935,
+              "world": 0.30700331926345825
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19859095938277968,
+            "value_score": -0.9999978542327881,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.0993880917628606,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": 0.3999353885650635,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9998384714126587,
+              "q": -0.9999974966049194,
+              "value": 1.000002145767212,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.243741273880005,
+            "predicted_reward": 0.3192281126976013,
+            "q_score": -0.9999974966049194,
+            "q_value": -0.09467390179634094,
+            "raw_score_components": {
+              "policy": -2.243741273880005,
+              "q": -0.09467390179634094,
+              "value": -0.06786531209945679,
+              "world": 0.3192281126976013
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987761835257212,
+            "value_score": 1.000002145767212,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09906270955548141,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": -0.40000329017639163,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000008225440979,
+              "q": 0.9999964237213135,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.256284236907959,
+            "predicted_reward": 0.27627766132354736,
+            "q_score": 0.9999964237213135,
+            "q_value": -0.08493218570947647,
+            "raw_score_components": {
+              "policy": -2.256284236907959,
+              "q": -0.08493218570947647,
+              "value": -0.07134169340133667,
+              "world": 0.27627766132354736
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19812541911096282,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy",
+            "expected_information_gain": 0.09914529856407281,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": 0.39999673366546634,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999918341636658,
+              "q": -1.0000035762786865,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2271335124969482,
+            "predicted_reward": 0.2871794104576111,
+            "q_score": -1.0000035762786865,
+            "q_value": -0.08701461553573608,
+            "raw_score_components": {
+              "policy": -2.2271335124969482,
+              "q": -0.08701461553573608,
+              "value": -0.06384876370429993,
+              "world": 0.2871794104576111
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.19829059712814562,
+            "value_score": 1.0,
+            "world_score": 1.0
+          }
+        ],
+        "episode_changed": [
+          0.0
+        ],
+        "episode_invalids": [
+          0.0
+        ],
+        "episode_success_when_changed": [],
+        "hidden_runs": [
+          0.0
+        ],
+        "invalids": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "prediction_losses": [
+          0.14650526642799377
+        ],
+        "q_errors": [
+          1.2948513940473398
+        ],
+        "regressions": [
+          1.0
+        ],
+        "rewards": [
+          -8.267499999999998
+        ],
+        "steps": [
+          6.0
+        ],
+        "successes": [
+          0.0
+        ],
+        "tests_passed": [
+          0.0
+        ],
+        "value_errors": [
+          1.3964905589694778
+        ]
+      },
+      "controller_diagnostics": {
+        "action_selection_disagreement_rate_vs_heuristic": 0.0,
+        "candidate_count": 12,
+        "episodes_with_learned_override_rate": 0.0,
+        "learned_changed_heuristic_winner_rate": 0.0,
+        "mean_abs_contribution": {
+          "heuristic_score": 0.4291666666666667,
+          "learned_score": 0.39999999602635705,
+          "policy_score": 2.2609040339787803,
+          "q_score": 1.0,
+          "value_score": 1.0000000049670537,
+          "world_score": 1.0
+        },
+        "mean_gate": 0.0,
+        "success_rate_when_learned_changed_episode": 0.0
+      },
+      "episodes": 1,
+      "episodes_with_invalid_action_rate": 0.0,
+      "hidden_verifier_runs": 0.0,
+      "invalid_action_rate": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps_to_solution": 6.0,
+      "q_prediction_error": 1.2948513940473398,
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "tests_passed_delta": 0.0,
+      "value_prediction_error": 1.3964905589694778,
+      "world_model_prediction_loss": 0.14650526642799377
+    },
+    "policy_q": {
+      "accumulators": {
+        "controller_scores": [
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.0994708835175543,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.8500000000000001,
+            "heuristic_score": 0.8500000000000001,
+            "heuristic_winner": true,
+            "learned_score": 1.6999919414520264,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999798536300659,
+              "q": 1.0,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2792160511016846,
+            "predicted_reward": 0.3301566243171692,
+            "q_score": 1.0,
+            "q_value": -0.06290435791015625,
+            "raw_score_components": {
+              "policy": -2.2792160511016846,
+              "q": -0.06290435791015625,
+              "value": -0.06053721159696579,
+              "world": 0.3301566243171692
+            },
+            "risk": 0.0,
+            "score": 0.8500000000000001,
+            "uncertainty": 0.1989417670351086,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09979696246710691,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": false,
+            "learned_score": -1.7000080585479738,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000020146369934,
+              "q": -1.0,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2910633087158203,
+            "predicted_reward": 0.3731990456581116,
+            "q_score": -1.0,
+            "q_value": -0.06647272408008575,
+            "raw_score_components": {
+              "policy": -2.2910633087158203,
+              "q": -0.06647272408008575,
+              "value": -0.05728723108768463,
+              "world": 0.3731990456581116
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19959392493421382,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09971253474553426,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": true,
+            "learned_score": -0.9000023245811464,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000030994415283,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2032699584960938,
+            "predicted_reward": 0.36205458641052246,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.06811121106147766,
+            "raw_score_components": {
+              "policy": -2.2032699584960938,
+              "q": -0.06811121106147766,
+              "value": -0.06151638925075531,
+              "world": 0.36205458641052246
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19942506949106853,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09955150963682116,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": false,
+            "learned_score": 0.8999976217746735,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999968409538269,
+              "q": 0.9999971985816956,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2793729305267334,
+            "predicted_reward": 0.3407992720603943,
+            "q_score": 0.9999971985816956,
+            "q_value": -0.06543029099702835,
+            "raw_score_components": {
+              "policy": -2.2793729305267334,
+              "q": -0.06543029099702835,
+              "value": -0.06324927508831024,
+              "world": 0.3407992720603943
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19910301927364232,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09890525553262595,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 1.7000354766845704,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000886917114258,
+              "q": 1.0,
+              "value": -1.0000019073486328,
+              "world": 0.9999991655349731
+            },
+            "novelty": 0.0,
+            "policy_score": -2.268237829208374,
+            "predicted_reward": 0.25549373030662537,
+            "q_score": 1.0,
+            "q_value": -0.10295483469963074,
+            "raw_score_components": {
+              "policy": -2.268237829208374,
+              "q": -0.10295483469963074,
+              "value": -0.06843613088130951,
+              "world": 0.25549373030662537
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1978105110652519,
+            "value_score": -1.0000019073486328,
+            "world_score": 0.9999991655349731
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09876965620752537,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": -0.6,
+            "heuristic_score": -0.6,
+            "heuristic_winner": false,
+            "learned_score": -1.6999644994735719,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999112486839294,
+              "q": -1.0,
+              "value": 0.999998152256012,
+              "world": -1.0000008344650269
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2709245681762695,
+            "predicted_reward": 0.2375946193933487,
+            "q_score": -1.0,
+            "q_value": -0.10506957769393921,
+            "raw_score_components": {
+              "policy": -2.2709245681762695,
+              "q": -0.10506957769393921,
+              "value": -0.06445687264204025,
+              "world": 0.2375946193933487
+            },
+            "risk": 0.0,
+            "score": -0.6,
+            "uncertainty": 0.19753931241505074,
+            "value_score": 0.999998152256012,
+            "world_score": -1.0000008344650269
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.0992553219650731,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 1.699994057416916,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999938607215881,
+              "q": 0.9999973177909851,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.263765811920166,
+            "predicted_reward": 0.30170249938964844,
+            "q_score": 0.9999973177909851,
+            "q_value": -0.08780951052904129,
+            "raw_score_components": {
+              "policy": -2.263765811920166,
+              "q": -0.08780951052904129,
+              "value": -0.06688568741083145,
+              "world": 0.30170249938964844
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1985106439301462,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09939168203960765,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -1.7000059962272644,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000006079673767,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.302621603012085,
+            "predicted_reward": 0.31970202922821045,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.09056168794631958,
+            "raw_score_components": {
+              "policy": -2.302621603012085,
+              "q": -0.09056168794631958,
+              "value": -0.06397081166505814,
+              "world": 0.31970202922821045
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987833640792153,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09929547969138984,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.8999386429786683,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0001615285873413,
+              "q": 1.0000025033950806,
+              "value": -0.9999978542327881,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2452173233032227,
+            "predicted_reward": 0.30700331926345825,
+            "q_score": 1.0000025033950806,
+            "q_value": -0.09167953580617905,
+            "raw_score_components": {
+              "policy": -2.2452173233032227,
+              "q": -0.09167953580617905,
+              "value": -0.07135408371686935,
+              "world": 0.30700331926345825
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19859095938277968,
+            "value_score": -0.9999978542327881,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.0993880917628606,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.9000613570213317,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9998384714126587,
+              "q": -0.9999974966049194,
+              "value": 1.000002145767212,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.243741273880005,
+            "predicted_reward": 0.3192281126976013,
+            "q_score": -0.9999974966049194,
+            "q_value": -0.09467390179634094,
+            "raw_score_components": {
+              "policy": -2.243741273880005,
+              "q": -0.09467390179634094,
+              "value": -0.06786531209945679,
+              "world": 0.3192281126976013
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987761835257212,
+            "value_score": 1.000002145767212,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09906270955548141,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.8999920606613159,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000008225440979,
+              "q": 0.9999964237213135,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.256284236907959,
+            "predicted_reward": 0.27627766132354736,
+            "q_score": 0.9999964237213135,
+            "q_value": -0.08493218570947647,
+            "raw_score_components": {
+              "policy": -2.256284236907959,
+              "q": -0.08493218570947647,
+              "value": -0.07134169340133667,
+              "world": 0.27627766132354736
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19812541911096282,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q",
+            "expected_information_gain": 0.09914529856407281,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.9000079154968261,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999918341636658,
+              "q": -1.0000035762786865,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2271335124969482,
+            "predicted_reward": 0.2871794104576111,
+            "q_score": -1.0000035762786865,
+            "q_value": -0.08701461553573608,
+            "raw_score_components": {
+              "policy": -2.2271335124969482,
+              "q": -0.08701461553573608,
+              "value": -0.06384876370429993,
+              "world": 0.2871794104576111
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.19829059712814562,
+            "value_score": 1.0,
+            "world_score": 1.0
+          }
+        ],
+        "episode_changed": [
+          0.0
+        ],
+        "episode_invalids": [
+          0.0
+        ],
+        "episode_success_when_changed": [],
+        "hidden_runs": [
+          0.0
+        ],
+        "invalids": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "prediction_losses": [
+          0.14650526642799377
+        ],
+        "q_errors": [
+          1.2948513940473398
+        ],
+        "regressions": [
+          1.0
+        ],
+        "rewards": [
+          -8.267499999999998
+        ],
+        "steps": [
+          6.0
+        ],
+        "successes": [
+          0.0
+        ],
+        "tests_passed": [
+          0.0
+        ],
+        "value_errors": [
+          1.3964905589694778
+        ]
+      },
+      "controller_diagnostics": {
+        "action_selection_disagreement_rate_vs_heuristic": 0.0,
+        "candidate_count": 12,
+        "episodes_with_learned_override_rate": 0.0,
+        "learned_changed_heuristic_winner_rate": 0.0,
+        "mean_abs_contribution": {
+          "heuristic_score": 0.4291666666666667,
+          "learned_score": 1.299999996026357,
+          "policy_score": 2.2609040339787803,
+          "q_score": 1.0,
+          "value_score": 1.0000000049670537,
+          "world_score": 1.0
+        },
+        "mean_gate": 0.0,
+        "success_rate_when_learned_changed_episode": 0.0
+      },
+      "episodes": 1,
+      "episodes_with_invalid_action_rate": 0.0,
+      "hidden_verifier_runs": 0.0,
+      "invalid_action_rate": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps_to_solution": 6.0,
+      "q_prediction_error": 1.2948513940473398,
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "tests_passed_delta": 0.0,
+      "value_prediction_error": 1.3964905589694778,
+      "world_model_prediction_loss": 0.14650526642799377
+    },
+    "policy_q_value": {
+      "accumulators": {
+        "controller_scores": [
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.0994708835175543,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.8500000000000001,
+            "heuristic_score": 0.8500000000000001,
+            "heuristic_winner": true,
+            "learned_score": 1.2999919414520265,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999798536300659,
+              "q": 1.0,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2792160511016846,
+            "predicted_reward": 0.3301566243171692,
+            "q_score": 1.0,
+            "q_value": -0.06290435791015625,
+            "raw_score_components": {
+              "policy": -2.2792160511016846,
+              "q": -0.06290435791015625,
+              "value": -0.06053721159696579,
+              "world": 0.3301566243171692
+            },
+            "risk": 0.0,
+            "score": 0.8500000000000001,
+            "uncertainty": 0.1989417670351086,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09979696246710691,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": false,
+            "learned_score": -1.3000080585479736,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000020146369934,
+              "q": -1.0,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2910633087158203,
+            "predicted_reward": 0.3731990456581116,
+            "q_score": -1.0,
+            "q_value": -0.06647272408008575,
+            "raw_score_components": {
+              "policy": -2.2910633087158203,
+              "q": -0.06647272408008575,
+              "value": -0.05728723108768463,
+              "world": 0.3731990456581116
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19959392493421382,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09971253474553426,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.5499999999999999,
+            "heuristic_score": 0.5499999999999999,
+            "heuristic_winner": true,
+            "learned_score": -0.5000023245811464,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 1.0000030994415283,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2032699584960938,
+            "predicted_reward": 0.36205458641052246,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.06811121106147766,
+            "raw_score_components": {
+              "policy": -2.2032699584960938,
+              "q": -0.06811121106147766,
+              "value": -0.06151638925075531,
+              "world": 0.36205458641052246
+            },
+            "risk": 0.0,
+            "score": 0.5499999999999999,
+            "uncertainty": 0.19942506949106853,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09955150963682116,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": false,
+            "learned_score": 0.49999762177467344,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -0.9999968409538269,
+              "q": 0.9999971985816956,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2793729305267334,
+            "predicted_reward": 0.3407992720603943,
+            "q_score": 0.9999971985816956,
+            "q_value": -0.06543029099702835,
+            "raw_score_components": {
+              "policy": -2.2793729305267334,
+              "q": -0.06543029099702835,
+              "value": -0.06324927508831024,
+              "world": 0.3407992720603943
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19910301927364232,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09941841066765571,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.500000822544098,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0000184774398804,
+              "q": 1.0000063180923462,
+              "value": -1.0,
+              "world": 1.0000014305114746
+            },
+            "novelty": 0.0013810679083690047,
+            "policy_score": -2.1980488300323486,
+            "predicted_reward": 0.215506911277771,
+            "q_score": 1.0000063180923462,
+            "q_value": -0.10378281772136688,
+            "raw_score_components": {
+              "policy": -2.1980488300323486,
+              "q": -0.10378281772136688,
+              "value": -0.06678003072738647,
+              "world": 0.215506911277771
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1974557534269424,
+            "value_score": -1.0,
+            "world_score": 1.0000014305114746
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09933958408937818,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": -0.6,
+            "heuristic_score": -0.6,
+            "heuristic_winner": false,
+            "learned_score": -0.49999917745590206,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999815225601196,
+              "q": -0.9999936819076538,
+              "value": 1.0,
+              "world": -0.9999985694885254
+            },
+            "novelty": 0.0013810679083690047,
+            "policy_score": -2.185150146484375,
+            "predicted_reward": 0.20510180294513702,
+            "q_score": -0.9999936819076538,
+            "q_value": -0.10495657473802567,
+            "raw_score_components": {
+              "policy": -2.185150146484375,
+              "q": -0.10495657473802567,
+              "value": -0.0628388375043869,
+              "world": 0.20510180294513702
+            },
+            "risk": 0.0,
+            "score": -0.6,
+            "uncertainty": 0.19729810027038736,
+            "value_score": 1.0,
+            "world_score": -0.9999985694885254
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.0992553219650731,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 1.299994057416916,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999938607215881,
+              "q": 0.9999973177909851,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.263765811920166,
+            "predicted_reward": 0.30170249938964844,
+            "q_score": 0.9999973177909851,
+            "q_value": -0.08780951052904129,
+            "raw_score_components": {
+              "policy": -2.263765811920166,
+              "q": -0.08780951052904129,
+              "value": -0.06688568741083145,
+              "world": 0.30170249938964844
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.1985106439301462,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09939168203960765,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -1.3000059962272643,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000006079673767,
+              "q": -1.0000027418136597,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.302621603012085,
+            "predicted_reward": 0.31970202922821045,
+            "q_score": -1.0000027418136597,
+            "q_value": -0.09056168794631958,
+            "raw_score_components": {
+              "policy": -2.302621603012085,
+              "q": -0.09056168794631958,
+              "value": -0.06397081166505814,
+              "world": 0.31970202922821045
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987833640792153,
+            "value_score": 1.0,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09929547969138984,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.4999395012855531,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.0001615285873413,
+              "q": 1.0000025033950806,
+              "value": -0.9999978542327881,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2452173233032227,
+            "predicted_reward": 0.30700331926345825,
+            "q_score": 1.0000025033950806,
+            "q_value": -0.09167953580617905,
+            "raw_score_components": {
+              "policy": -2.2452173233032227,
+              "q": -0.09167953580617905,
+              "value": -0.07135408371686935,
+              "world": 0.30700331926345825
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19859095938277968,
+            "value_score": -0.9999978542327881,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.0993880917628606,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.5000604987144469,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9998384714126587,
+              "q": -0.9999974966049194,
+              "value": 1.000002145767212,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.243741273880005,
+            "predicted_reward": 0.3192281126976013,
+            "q_score": -0.9999974966049194,
+            "q_value": -0.09467390179634094,
+            "raw_score_components": {
+              "policy": -2.243741273880005,
+              "q": -0.09467390179634094,
+              "value": -0.06786531209945679,
+              "world": 0.3192281126976013
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.1987761835257212,
+            "value_score": 1.000002145767212,
+            "world_score": 1.0
+          },
+          {
+            "candidate": {
+              "action_type": "READ_FILE",
+              "arguments": {
+                "path": "solution.py"
+              },
+              "confidence": 0.55,
+              "estimated_cost": 0.5,
+              "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09906270955548141,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.4000000000000001,
+            "heuristic_score": 0.4000000000000001,
+            "heuristic_winner": true,
+            "learned_score": 0.49999206066131585,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": -1.000008225440979,
+              "q": 0.9999964237213135,
+              "value": -1.0,
+              "world": -1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.256284236907959,
+            "predicted_reward": 0.27627766132354736,
+            "q_score": 0.9999964237213135,
+            "q_value": -0.08493218570947647,
+            "raw_score_components": {
+              "policy": -2.256284236907959,
+              "q": -0.08493218570947647,
+              "value": -0.07134169340133667,
+              "world": 0.27627766132354736
+            },
+            "risk": 0.0,
+            "score": 0.4000000000000001,
+            "uncertainty": 0.19812541911096282,
+            "value_score": -1.0,
+            "world_score": -1.0
+          },
+          {
+            "candidate": {
+              "action_type": "RUN_TESTS",
+              "arguments": {},
+              "confidence": 0.45,
+              "estimated_cost": 2.0,
+              "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+            },
+            "controller_changed_heuristic": false,
+            "controller_gate": 0.0,
+            "controller_mode": "policy_q_value",
+            "expected_information_gain": 0.09914529856407281,
+            "feasibility_reason": "",
+            "feasible": true,
+            "final_score": 0.20000000000000004,
+            "heuristic_score": 0.20000000000000004,
+            "heuristic_winner": false,
+            "learned_score": -0.5000079154968261,
+            "learned_weight": 0.0,
+            "normalized_score_components": {
+              "policy": 0.9999918341636658,
+              "q": -1.0000035762786865,
+              "value": 1.0,
+              "world": 1.0
+            },
+            "novelty": 0.0,
+            "policy_score": -2.2271335124969482,
+            "predicted_reward": 0.2871794104576111,
+            "q_score": -1.0000035762786865,
+            "q_value": -0.08701461553573608,
+            "raw_score_components": {
+              "policy": -2.2271335124969482,
+              "q": -0.08701461553573608,
+              "value": -0.06384876370429993,
+              "world": 0.2871794104576111
+            },
+            "risk": 0.0,
+            "score": 0.20000000000000004,
+            "uncertainty": 0.19829059712814562,
+            "value_score": 1.0,
+            "world_score": 1.0
+          }
+        ],
+        "episode_changed": [
+          0.0
+        ],
+        "episode_invalids": [
+          0.0
+        ],
+        "episode_success_when_changed": [],
+        "hidden_runs": [
+          0.0
+        ],
+        "invalids": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "prediction_losses": [
+          0.15379715959231058
+        ],
+        "q_errors": [
+          1.2947133968770506
+        ],
+        "regressions": [
+          1.0
+        ],
+        "rewards": [
+          -8.267499999999998
+        ],
+        "steps": [
+          6.0
+        ],
+        "successes": [
+          0.0
+        ],
+        "tests_passed": [
+          0.0
+        ],
+        "value_errors": [
+          1.3964427833010755
+        ]
+      },
+      "controller_diagnostics": {
+        "action_selection_disagreement_rate_vs_heuristic": 0.0,
+        "candidate_count": 12,
+        "episodes_with_learned_override_rate": 0.0,
+        "learned_changed_heuristic_winner_rate": 0.0,
+        "mean_abs_contribution": {
+          "heuristic_score": 0.4291666666666667,
+          "learned_score": 0.7666666646798452,
+          "policy_score": 2.2479070822397866,
+          "q_score": 1.0,
+          "value_score": 1.0,
+          "world_score": 1.0
+        },
+        "mean_gate": 0.0,
+        "success_rate_when_learned_changed_episode": 0.0
+      },
+      "episodes": 1,
+      "episodes_with_invalid_action_rate": 0.0,
+      "hidden_verifier_runs": 0.0,
+      "invalid_action_rate": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps_to_solution": 6.0,
+      "q_prediction_error": 1.2947133968770506,
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "tests_passed_delta": 0.0,
+      "value_prediction_error": 1.3964427833010755,
+      "world_model_prediction_loss": 0.15379715959231058
+    }
+  },
+  "CONTROLLER_ABLATION_TABLE": [
+    {
+      "controller_mean_gate": 0.0,
+      "disagreement_vs_heuristic": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps": 6.0,
+      "mode": "heuristic",
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "success_when_controller_overrides_heuristic": 0.0
+    },
+    {
+      "controller_mean_gate": 0.0,
+      "disagreement_vs_heuristic": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps": 6.0,
+      "mode": "policy",
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "success_when_controller_overrides_heuristic": 0.0
+    },
+    {
+      "controller_mean_gate": 0.0,
+      "disagreement_vs_heuristic": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps": 6.0,
+      "mode": "policy_q",
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "success_when_controller_overrides_heuristic": 0.0
+    },
+    {
+      "controller_mean_gate": 0.0,
+      "disagreement_vs_heuristic": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps": 6.0,
+      "mode": "policy_q_value",
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "success_when_controller_overrides_heuristic": 0.0
+    },
+    {
+      "controller_mean_gate": 0.0,
+      "disagreement_vs_heuristic": 0.0,
+      "mean_reward": -8.267499999999998,
+      "mean_steps": 6.0,
+      "mode": "full",
+      "regression_rate": 1.0,
+      "success_rate": 0.0,
+      "success_when_controller_overrides_heuristic": 0.0
+    }
+  ],
+  "DELTA": {
+    "holdout_success_rate": 0.0,
+    "mean_reward": 0.0,
+    "mean_steps": 0.0
+  },
+  "DEVICE": "cpu",
+  "EVAL_CONTROLLER": "full",
+  "FINAL": {
+    "accumulators": {
+      "controller_scores": [
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.28875145307092953,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.8500000000000001,
+          "heuristic_score": 0.8500000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.8999919414520264,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999798536300659,
+            "q": 1.0,
+            "value": -1.0,
+            "world": -1.0
+          },
+          "novelty": 0.3203209638595581,
+          "policy_score": -2.2792160511016846,
+          "predicted_reward": 0.3301566243171692,
+          "q_score": 1.0,
+          "q_value": -0.06290435791015625,
+          "raw_score_components": {
+            "policy": -2.2792160511016846,
+            "q": -0.06290435791015625,
+            "value": -0.06053721159696579,
+            "world": 0.3301566243171692
+          },
+          "risk": 0.0,
+          "score": 0.8500000000000001,
+          "uncertainty": 0.25718194228230096,
+          "value_score": -1.0,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.28907753202048214,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": false,
+          "learned_score": -0.9000080585479736,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.000020146369934,
+            "q": -1.0,
+            "value": 1.0,
+            "world": 1.0
+          },
+          "novelty": 0.3203209638595581,
+          "policy_score": -2.2910633087158203,
+          "predicted_reward": 0.3731990456581116,
+          "q_score": -1.0,
+          "q_value": -0.06647272408008575,
+          "raw_score_components": {
+            "policy": -2.2910633087158203,
+            "q": -0.06647272408008575,
+            "value": -0.05728723108768463,
+            "world": 0.3731990456581116
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.2578341001814062,
+          "value_score": 1.0,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.3386427235422712,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": true,
+          "learned_score": -0.10000232458114633,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0000030994415283,
+            "q": -1.0000027418136597,
+            "value": 1.0,
+            "world": 1.0
+          },
+          "novelty": 0.4043433964252472,
+          "policy_score": -2.2032699584960938,
+          "predicted_reward": 0.36205458641052246,
+          "q_score": -1.0000027418136597,
+          "q_value": -0.06811121106147766,
+          "raw_score_components": {
+            "policy": -2.2032699584960938,
+            "q": -0.06811121106147766,
+            "value": -0.06151638925075531,
+            "world": 0.36205458641052246
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.2729420506592953,
+          "value_score": 1.0,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.33848169843355813,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": false,
+          "learned_score": 0.09999762177467342,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.9999968409538269,
+            "q": 0.9999971985816956,
+            "value": -1.0,
+            "world": -1.0
+          },
+          "novelty": 0.4043433964252472,
+          "policy_score": -2.2793729305267334,
+          "predicted_reward": 0.3407992720603943,
+          "q_score": 0.9999971985816956,
+          "q_value": -0.06543029099702835,
+          "raw_score_components": {
+            "policy": -2.2793729305267334,
+            "q": -0.06543029099702835,
+            "value": -0.06324927508831024,
+            "world": 0.3407992720603943
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.27262000044186907,
+          "value_score": -1.0,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.27489577676310684,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.9000013947486878,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0000184774398804,
+            "q": 1.0000063180923462,
+            "value": -1.0,
+            "world": 1.0000014305114746
+          },
+          "novelty": 0.298342764377594,
+          "policy_score": -2.1980488300323486,
+          "predicted_reward": 0.215506911277771,
+          "q_score": 1.0000063180923462,
+          "q_value": -0.10378281772136688,
+          "raw_score_components": {
+            "policy": -2.1980488300323486,
+            "q": -0.10378281772136688,
+            "value": -0.06678003072738647,
+            "world": 0.215506911277771
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.2514487891486197,
+          "value_score": -1.0,
+          "world_score": 1.0000014305114746
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.2748169501848293,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": -0.6,
+          "heuristic_score": -0.6,
+          "heuristic_winner": false,
+          "learned_score": -0.8999986052513123,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999815225601196,
+            "q": -0.9999936819076538,
+            "value": 1.0,
+            "world": -0.9999985694885254
+          },
+          "novelty": 0.298342764377594,
+          "policy_score": -2.185150146484375,
+          "predicted_reward": 0.20510180294513702,
+          "q_score": -0.9999936819076538,
+          "q_value": -0.10495657473802567,
+          "raw_score_components": {
+            "policy": -2.185150146484375,
+            "q": -0.10495657473802567,
+            "value": -0.0628388375043869,
+            "world": 0.20510180294513702
+          },
+          "risk": 0.0,
+          "score": -0.6,
+          "uncertainty": 0.2512911359920646,
+          "value_score": 1.0,
+          "world_score": -0.9999985694885254
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.3154384452285188,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.899994057416916,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999938607215881,
+            "q": 0.9999973177909851,
+            "value": -1.0,
+            "world": -1.0
+          },
+          "novelty": 0.3658483624458313,
+          "policy_score": -2.263765811920166,
+          "predicted_reward": 0.30170249938964844,
+          "q_score": 0.9999973177909851,
+          "q_value": -0.08780951052904129,
+          "raw_score_components": {
+            "policy": -2.263765811920166,
+            "q": -0.08780951052904129,
+            "value": -0.06688568741083145,
+            "world": 0.30170249938964844
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.2650285280112064,
+          "value_score": -1.0,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.3155748053030534,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -0.9000059962272643,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.000006079673767,
+            "q": -1.0000027418136597,
+            "value": 1.0,
+            "world": 1.0
+          },
+          "novelty": 0.3658483624458313,
+          "policy_score": -2.302621603012085,
+          "predicted_reward": 0.31970202922821045,
+          "q_score": -1.0000027418136597,
+          "q_value": -0.09056168794631958,
+          "raw_score_components": {
+            "policy": -2.302621603012085,
+            "q": -0.09056168794631958,
+            "value": -0.06397081166505814,
+            "world": 0.31970202922821045
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.2653012481602755,
+          "value_score": 1.0,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.3087224720102368,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.09993950128555307,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0001615285873413,
+            "q": 1.0000025033950806,
+            "value": -0.9999978542327881,
+            "world": -1.0
+          },
+          "novelty": 0.3544149100780487,
+          "policy_score": -2.2452173233032227,
+          "predicted_reward": 0.30700331926345825,
+          "q_score": 1.0000025033950806,
+          "q_value": -0.09167953580617905,
+          "raw_score_components": {
+            "policy": -2.2452173233032227,
+            "q": -0.09167953580617905,
+            "value": -0.07135408371686935,
+            "world": 0.30700331926345825
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.26303003394242486,
+          "value_score": -0.9999978542327881,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.30881508408170755,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -0.10006049871444689,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9998384714126587,
+            "q": -0.9999974966049194,
+            "value": 1.000002145767212,
+            "world": 1.0
+          },
+          "novelty": 0.3544149100780487,
+          "policy_score": -2.243741273880005,
+          "predicted_reward": 0.3192281126976013,
+          "q_score": -0.9999974966049194,
+          "q_value": -0.09467390179634094,
+          "raw_score_components": {
+            "policy": -2.243741273880005,
+            "q": -0.09467390179634094,
+            "value": -0.06786531209945679,
+            "world": 0.3192281126976013
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.2632152580853664,
+          "value_score": 1.000002145767212,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.32540633046265804,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.09999206066131583,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.000008225440979,
+            "q": 0.9999964237213135,
+            "value": -1.0,
+            "world": -1.0
+          },
+          "novelty": 0.3830430507659912,
+          "policy_score": -2.256284236907959,
+          "predicted_reward": 0.27627766132354736,
+          "q_score": 0.9999964237213135,
+          "q_value": -0.08493218570947647,
+          "raw_score_components": {
+            "policy": -2.256284236907959,
+            "q": -0.08493218570947647,
+            "value": -0.07134169340133667,
+            "world": 0.27627766132354736
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.2677696101593249,
+          "value_score": -1.0,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.32548891947124947,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -0.10000791549682608,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999918341636658,
+            "q": -1.0000035762786865,
+            "value": 1.0,
+            "world": 1.0
+          },
+          "novelty": 0.3830430507659912,
+          "policy_score": -2.2271335124969482,
+          "predicted_reward": 0.2871794104576111,
+          "q_score": -1.0000035762786865,
+          "q_value": -0.08701461553573608,
+          "raw_score_components": {
+            "policy": -2.2271335124969482,
+            "q": -0.08701461553573608,
+            "value": -0.06384876370429993,
+            "world": 0.2871794104576111
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.2679347881765077,
+          "value_score": 1.0,
+          "world_score": 1.0
+        }
+      ],
+      "episode_changed": [
+        0.0
+      ],
+      "episode_invalids": [
+        0.0
+      ],
+      "episode_success_when_changed": [],
+      "hidden_runs": [
+        0.0
+      ],
+      "invalids": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "prediction_losses": [
+        0.15379715959231058
+      ],
+      "q_errors": [
+        1.2947133968770506
+      ],
+      "regressions": [
+        1.0
+      ],
+      "rewards": [
+        -8.267499999999998
+      ],
+      "steps": [
+        6.0
+      ],
+      "successes": [
+        0.0
+      ],
+      "tests_passed": [
+        0.0
+      ],
+      "value_errors": [
+        1.3964427833010755
+      ]
+    },
+    "controller_diagnostics": {
+      "action_selection_disagreement_rate_vs_heuristic": 0.0,
+      "candidate_count": 12,
+      "episodes_with_learned_override_rate": 0.0,
+      "learned_changed_heuristic_winner_rate": 0.0,
+      "mean_abs_contribution": {
+        "heuristic_score": 0.4291666666666667,
+        "learned_score": 0.4999999980131785,
+        "policy_score": 2.2479070822397866,
+        "q_score": 1.0,
+        "value_score": 1.0,
+        "world_score": 1.0
+      },
+      "mean_gate": 0.0,
+      "success_rate_when_learned_changed_episode": 0.0
+    },
+    "episodes": 1,
+    "episodes_with_invalid_action_rate": 0.0,
+    "hidden_verifier_runs": 0.0,
+    "invalid_action_rate": 0.0,
+    "mean_reward": -8.267499999999998,
+    "mean_steps_to_solution": 6.0,
+    "q_prediction_error": 1.2947133968770506,
+    "regression_rate": 1.0,
+    "success_rate": 0.0,
+    "tests_passed_delta": 0.0,
+    "value_prediction_error": 1.3964427833010755,
+    "world_model_prediction_loss": 0.15379715959231058
+  },
+  "FINAL_HOLDOUT_SUCCESS_RATE": 0.0,
+  "HOLDOUT_TASK_COUNT": 1,
+  "MODEL": "MockAutonomousPatchBrain",
+  "PARAMETERS_CHANGED": {
+    "ActionEncoder": "YES",
+    "ObservationEncoder": "YES",
+    "Policy": "YES",
+    "Q Network": "YES",
+    "Qwen": "NO",
+    "Value": "YES",
+    "WorldModel": "YES"
+  },
+  "PERFORMANCE": {
+    "breakdown": {
+      "brain_candidate_generation": {
+        "percent": 0.04370503241104611,
+        "seconds": 0.007729700003437756
+      },
+      "docker_execution": {
+        "percent": 83.61252170069542,
+        "seconds": 14.78776409999773
+      },
+      "optimizer_training_update": {
+        "percent": 3.3585053180886426,
+        "seconds": 0.5939874000005148
+      },
+      "other": {
+        "percent": 10.581512653083628,
+        "seconds": 1.8714530999923227
+      },
+      "policy_q_world_scoring": {
+        "percent": 1.5921117327424235,
+        "seconds": 0.28158190000431205
+      },
+      "semantic_action_encoding": {
+        "percent": 0.16675671873882533,
+        "seconds": 0.029492700000446348
+      },
+      "semantic_observation_encoding": {
+        "percent": 0.6448868442400095,
+        "seconds": 0.11405509999985952
+      }
+    },
+    "counters": {
+      "brain_requests": 18.0,
+      "candidate_cache_hits": 34.0,
+      "candidate_regeneration_count": 0.0,
+      "candidate_regeneration_success_count": 0.0,
+      "candidates_generated": 104.0,
+      "duplicate_candidates": 0.0,
+      "fallback_backfill_count": 0.0,
+      "generation_length_truncation_count": 0.0,
+      "malformed_items": 0.0,
+      "parse_error_count": 0.0,
+      "schema_invalid_candidates": 0.0,
+      "structured_generation_failures": 0.0,
+      "structured_generation_requests": 0.0,
+      "valid_candidates": 37.0,
+      "zero_valid_qwen_candidates": 0.0
+    },
+    "timings": {
+      "brain_candidate_generation": {
+        "count": 52,
+        "kind": "component",
+        "mean_seconds": 0.00014864807698918763,
+        "percent": 0.04370503241104611,
+        "seconds": 0.007729700003437756
+      },
+      "docker_execution": {
+        "count": 52,
+        "kind": "component",
+        "mean_seconds": 0.2843800788461102,
+        "percent": 83.61252170069542,
+        "seconds": 14.78776409999773
+      },
+      "optimizer_training_update": {
+        "count": 52,
+        "kind": "component",
+        "mean_seconds": 0.011422834615394515,
+        "percent": 3.3585053180886426,
+        "seconds": 0.5939874000005148
+      },
+      "policy_q_world_scoring": {
+        "count": 52,
+        "kind": "component",
+        "mean_seconds": 0.005415036538544462,
+        "percent": 1.5921117327424235,
+        "seconds": 0.28158190000431205
+      },
+      "semantic_action_encoding": {
+        "count": 52,
+        "kind": "component",
+        "mean_seconds": 0.0005671673077008913,
+        "percent": 0.16675671873882533,
+        "seconds": 0.029492700000446348
+      },
+      "semantic_observation_encoding": {
+        "count": 104,
+        "kind": "component",
+        "mean_seconds": 0.0010966836538448032,
+        "percent": 0.6448868442400095,
+        "seconds": 0.11405509999985952
+      },
+      "total_episode": {
+        "count": 9,
+        "kind": "total",
+        "mean_seconds": 1.9651182222220693,
+        "percent": 0.0,
+        "seconds": 17.686063999998623
+      },
+      "total_step": {
+        "count": 52,
+        "kind": "total",
+        "mean_seconds": 0.33979166346148304,
+        "percent": 0.0,
+        "seconds": 17.669166499997118
+      }
+    },
+    "total_episode_seconds": 17.686063999998623,
+    "total_step_seconds": 17.669166499997118,
+    "wall_time_seconds": 17.686063999998623
+  },
+  "PERFORMANCE_TEXT": "WALL TIME: 17.686s\nBREAKDOWN:\nbrain_candidate_generation: 0.008s | 0.0%\nsemantic_observation_encoding: 0.114s | 0.6%\nsemantic_action_encoding: 0.029s | 0.2%\npolicy_q_world_scoring: 0.282s | 1.6%\ndocker_execution: 14.788s | 83.6%\noptimizer_training_update: 0.594s | 3.4%\nother: 1.871s | 10.6%\nTOTALS:\ntotal_episode: 17.686s | n=9\ntotal_step: 17.669s | n=52\nbrain_requests: 18\ncandidate_cache_hits: 34\ncandidate_regeneration_count: 0\ncandidate_regeneration_success_count: 0\ncandidates_generated: 104\nduplicate_candidates: 0\nfallback_backfill_count: 0\ngeneration_length_truncation_count: 0\nmalformed_items: 0\nparse_error_count: 0\nschema_invalid_candidates: 0\nstructured_generation_failures: 0\nstructured_generation_requests: 0\nvalid_candidates: 37\nzero_valid_qwen_candidates: 0",
+  "PERSISTENCE_MODE": "temporary",
+  "PERSISTENT_EXPERIENCE": 4,
+  "PROMOTED_BEST": true,
+  "QWEN_TRAINABLE": false,
+  "REPLAY_SIZE": 4,
+  "SANDBOX_AVAILABLE": true,
+  "SEED": 41,
+  "SEMANTIC_ENCODER": "DeterministicTextEncoder",
+  "TENSORBOARD": "tensorboard --logdir data\\benchmark_runs\\v03_local_resume_test\\runtime\\tensorboard\\coding_v03",
+  "TRAIN_TASK_COUNT": 1,
+  "VALIDATION": {
+    "accumulators": {
+      "controller_scores": [
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6900555079633539,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.8500000000000001,
+          "heuristic_score": 0.8500000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.1000004053115845,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": 1.0,
+            "value": -0.9999989867210388,
+            "world": -1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.284566640853882,
+          "predicted_reward": 0.2873270511627197,
+          "q_score": 1.0,
+          "q_value": -0.07092270255088806,
+          "raw_score_components": {
+            "policy": -2.284566640853882,
+            "q": -0.07092270255088806,
+            "value": -0.06623493134975433,
+            "world": 0.2873270511627197
+          },
+          "risk": 0.0,
+          "score": 0.8500000000000001,
+          "uncertainty": 0.3801110159267079,
+          "value_score": -0.9999989867210388,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6904580230965759,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": false,
+          "learned_score": -0.09999957084655758,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": -1.0,
+            "value": 1.000001072883606,
+            "world": 1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.260559320449829,
+          "predicted_reward": 0.34045904874801636,
+          "q_score": -1.0,
+          "q_value": -0.07343544065952301,
+          "raw_score_components": {
+            "policy": -2.260559320449829,
+            "q": -0.07343544065952301,
+            "value": -0.05891392379999161,
+            "world": 0.34045904874801636
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.3809160461931517,
+          "value_score": 1.000001072883606,
+          "world_score": 1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6898526631973007,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.5499999999999999,
+          "heuristic_score": 0.5499999999999999,
+          "heuristic_winner": true,
+          "learned_score": -0.10000410079956051,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": -1.0000038146972656,
+            "value": 1.0000014305114746,
+            "world": 1.0000007152557373
+          },
+          "novelty": 1.0,
+          "policy_score": -2.1423139572143555,
+          "predicted_reward": 0.2605515420436859,
+          "q_score": -1.0000038146972656,
+          "q_value": -0.06661557406187057,
+          "raw_score_components": {
+            "policy": -2.1423139572143555,
+            "q": -0.06661557406187057,
+            "value": -0.06034846231341362,
+            "world": 0.2605515420436859
+          },
+          "risk": 0.0,
+          "score": 0.5499999999999999,
+          "uncertainty": 0.37970532639460125,
+          "value_score": 1.0000014305114746,
+          "world_score": 1.0000007152557373
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6897067321746638,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": false,
+          "learned_score": 0.0999958992004395,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": 0.9999961853027344,
+            "value": -0.9999986290931702,
+            "world": -0.9999992251396179
+          },
+          "novelty": 1.0,
+          "policy_score": -2.1987853050231934,
+          "predicted_reward": 0.24128864705562592,
+          "q_score": 0.9999961853027344,
+          "q_value": -0.06465743482112885,
+          "raw_score_components": {
+            "policy": -2.1987853050231934,
+            "q": -0.06465743482112885,
+            "value": -0.06302005052566528,
+            "world": 0.24128864705562592
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.37941346434932766,
+          "value_score": -0.9999986290931702,
+          "world_score": -0.9999992251396179
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6895836456481255,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.10001273155212409,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": 1.0000090599060059,
+            "value": -0.999999463558197,
+            "world": -0.999998152256012
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2463996410369873,
+          "predicted_reward": 0.2250412255525589,
+          "q_score": 1.0000090599060059,
+          "q_value": -0.09547019749879837,
+          "raw_score_components": {
+            "policy": -2.2463996410369873,
+            "q": -0.09547019749879837,
+            "value": -0.06899359822273254,
+            "world": 0.2250412255525589
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.3791672912962508,
+          "value_score": -0.999999463558197,
+          "world_score": -0.999998152256012
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.689645591468522,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": -0.6,
+          "heuristic_score": -0.6,
+          "heuristic_winner": false,
+          "learned_score": -0.09998731613159167,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": -0.9999909400939941,
+            "value": 1.0000004768371582,
+            "world": 1.0000017881393433
+          },
+          "novelty": 1.0,
+          "policy_score": -2.234668016433716,
+          "predicted_reward": 0.23321807384490967,
+          "q_score": -0.9999909400939941,
+          "q_value": -0.09629471600055695,
+          "raw_score_components": {
+            "policy": -2.234668016433716,
+            "q": -0.09629471600055695,
+            "value": -0.061777543276548386,
+            "world": 0.23321807384490967
+          },
+          "risk": 0.0,
+          "score": -0.6,
+          "uncertainty": 0.37929118293704406,
+          "value_score": 1.0000004768371582,
+          "world_score": 1.0000017881393433
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6894462263493827,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.09999918937683105,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0,
+            "q": 1.0,
+            "value": -1.0,
+            "world": -1.0000020265579224
+          },
+          "novelty": 1.0,
+          "policy_score": -2.220846652984619,
+          "predicted_reward": 0.20690187811851501,
+          "q_score": 1.0,
+          "q_value": -0.08359169960021973,
+          "raw_score_components": {
+            "policy": -2.220846652984619,
+            "q": -0.08359169960021973,
+            "value": -0.06437775492668152,
+            "world": 0.20690187811851501
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.37889245269876537,
+          "value_score": -1.0,
+          "world_score": -1.0000020265579224
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6895010029050437,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -0.10000083446502683,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.0,
+            "q": -1.0,
+            "value": 1.0,
+            "world": 0.9999979138374329
+          },
+          "novelty": 1.0,
+          "policy_score": -2.181851387023926,
+          "predicted_reward": 0.2141323834657669,
+          "q_score": -1.0,
+          "q_value": -0.08480650186538696,
+          "raw_score_components": {
+            "policy": -2.181851387023926,
+            "q": -0.08480650186538696,
+            "value": -0.05881034582853317,
+            "world": 0.2141323834657669
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.3790020058100873,
+          "value_score": 1.0,
+          "world_score": 0.9999979138374329
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.2569206459955735,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.09999675750732417,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -1.0000059604644775,
+            "q": 1.0,
+            "value": -1.0,
+            "world": -1.000002145767212
+          },
+          "novelty": 0.2681844234466553,
+          "policy_score": -2.22188138961792,
+          "predicted_reward": 0.19514024257659912,
+          "q_score": 1.0,
+          "q_value": -0.08461333811283112,
+          "raw_score_components": {
+            "policy": -2.22188138961792,
+            "q": -0.08461333811283112,
+            "value": -0.06485718488693237,
+            "world": 0.19514024257659912
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.2456568685444918,
+          "value_score": -1.0,
+          "world_score": -1.000002145767212
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.25697241567752577,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -0.10000329017639159,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 0.9999939799308777,
+            "q": -1.0,
+            "value": 1.0,
+            "world": 0.9999977946281433
+          },
+          "novelty": 0.2681844234466553,
+          "policy_score": -2.1820895671844482,
+          "predicted_reward": 0.2019738405942917,
+          "q_score": -1.0,
+          "q_value": -0.08563356101512909,
+          "raw_score_components": {
+            "policy": -2.1820895671844482,
+            "q": -0.08563356101512909,
+            "value": -0.05841384828090668,
+            "world": 0.2019738405942917
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.24576040790839626,
+          "value_score": 1.0,
+          "world_score": 0.9999977946281433
+        },
+        {
+          "candidate": {
+            "action_type": "READ_FILE",
+            "arguments": {
+              "path": "solution.py"
+            },
+            "confidence": 0.55,
+            "estimated_cost": 0.5,
+            "reasoning_summary": "Inspect the implementation file. Expected: Expose source for patching."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.689998582366741,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.4000000000000001,
+          "heuristic_score": 0.4000000000000001,
+          "heuristic_winner": true,
+          "learned_score": 0.10001263618469236,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": -0.9999706149101257,
+            "q": 1.0,
+            "value": -0.9999977946281433,
+            "world": -1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.240323781967163,
+          "predicted_reward": 0.27981287240982056,
+          "q_score": 1.0,
+          "q_value": -0.08574837446212769,
+          "raw_score_components": {
+            "policy": -2.240323781967163,
+            "q": -0.08574837446212769,
+            "value": -0.06864968687295914,
+            "world": 0.27981287240982056
+          },
+          "risk": 0.0,
+          "score": 0.4000000000000001,
+          "uncertainty": 0.3799971647334821,
+          "value_score": -0.9999977946281433,
+          "world_score": -1.0
+        },
+        {
+          "candidate": {
+            "action_type": "RUN_TESTS",
+            "arguments": {},
+            "confidence": 0.45,
+            "estimated_cost": 2.0,
+            "reasoning_summary": "Run objective tests before editing. Expected: Collect public failure signal."
+          },
+          "controller_changed_heuristic": false,
+          "controller_gate": 0.0,
+          "controller_mode": "full",
+          "expected_information_gain": 0.6901003992918766,
+          "feasibility_reason": "",
+          "feasible": true,
+          "final_score": 0.20000000000000004,
+          "heuristic_score": 0.20000000000000004,
+          "heuristic_winner": false,
+          "learned_score": -0.0999873638153076,
+          "learned_weight": 0.0,
+          "normalized_score_components": {
+            "policy": 1.000029444694519,
+            "q": -1.0,
+            "value": 1.000002145767212,
+            "world": 1.0
+          },
+          "novelty": 1.0,
+          "policy_score": -2.2322120666503906,
+          "predicted_reward": 0.29325270652770996,
+          "q_score": -1.0,
+          "q_value": -0.08865287899971008,
+          "raw_score_components": {
+            "policy": -2.2322120666503906,
+            "q": -0.08865287899971008,
+            "value": -0.06524263322353363,
+            "world": 0.29325270652770996
+          },
+          "risk": 0.0,
+          "score": 0.20000000000000004,
+          "uncertainty": 0.3802007985837531,
+          "value_score": 1.000002145767212,
+          "world_score": 1.0
+        }
+      ],
+      "episode_changed": [
+        0.0
+      ],
+      "episode_invalids": [
+        0.0
+      ],
+      "episode_success_when_changed": [],
+      "hidden_runs": [
+        0.0
+      ],
+      "invalids": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "prediction_losses": [
+        0.16236147284507751
+      ],
+      "q_errors": [
+        1.296756352285544
+      ],
+      "regressions": [
+        1.0
+      ],
+      "rewards": [
+        -8.267499999999998
+      ],
+      "steps": [
+        6.0
+      ],
+      "successes": [
+        0.0
+      ],
+      "tests_passed": [
+        0.0
+      ],
+      "value_errors": [
+        1.401230700314045
+      ]
+    },
+    "controller_diagnostics": {
+      "action_selection_disagreement_rate_vs_heuristic": 0.0,
+      "candidate_count": 12,
+      "episodes_with_learned_override_rate": 0.0,
+      "learned_changed_heuristic_winner_rate": 0.0,
+      "mean_abs_contribution": {
+        "heuristic_score": 0.4291666666666667,
+        "learned_score": 0.10000000794728596,
+        "policy_score": 2.220541477203369,
+        "q_score": 1.0,
+        "value_score": 1.0,
+        "world_score": 0.999999980131785
+      },
+      "mean_gate": 0.0,
+      "success_rate_when_learned_changed_episode": 0.0
+    },
+    "episodes": 1,
+    "episodes_with_invalid_action_rate": 0.0,
+    "hidden_verifier_runs": 0.0,
+    "invalid_action_rate": 0.0,
+    "mean_reward": -8.267499999999998,
+    "mean_steps_to_solution": 6.0,
+    "q_prediction_error": 1.296756352285544,
+    "regression_rate": 1.0,
+    "success_rate": 0.0,
+    "tests_passed_delta": 0.0,
+    "value_prediction_error": 1.401230700314045,
+    "world_model_prediction_loss": 0.16236147284507751
+  },
+  "VALIDATION_TASK_COUNT": 1
+}

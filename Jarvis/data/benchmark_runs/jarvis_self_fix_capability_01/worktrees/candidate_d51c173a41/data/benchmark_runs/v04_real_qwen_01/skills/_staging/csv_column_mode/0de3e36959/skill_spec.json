@@ -1,0 +1,40 @@
+{
+  "acceptance_criteria": [
+    "The skill must parse CSV text input safely",
+    "It must identify the selected column by name",
+    "It must compute and return the most frequent value in that column",
+    "No external dependencies beyond Python standard library are allowed"
+  ],
+  "allowed_dependencies": [],
+  "capability_id": "csv_column_mode",
+  "constraints": [],
+  "functional_requirements": [],
+  "inputs": {},
+  "metadata": {},
+  "objective": "Read CSV text and return the most common value in a selected column",
+  "outputs": {},
+  "permissions": [],
+  "proposed_file_structure": [
+    "main.py"
+  ],
+  "public_tests": [
+    {
+      "expected_output": {
+        "most_common_value": 30
+      },
+      "input": {
+        "column": "age",
+        "csv_text": "name,age\nAlice,30\nBob,25\nAlice,25\nCharlie,30"
+      }
+    },
+    {
+      "expected_output": {
+        "most_common_value": 3
+      },
+      "input": {
+        "column": "count",
+        "csv_text": "fruit,count\napple,5\nbanana,3\napple,7\norange,3"
+      }
+    }
+  ]
+}

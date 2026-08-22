@@ -1,0 +1,49 @@
+{
+  "acceptance_criteria": [
+    "Public tests pass.",
+    "Hidden verifier passes.",
+    "Original request executes through the installed skill."
+  ],
+  "allowed_dependencies": [],
+  "capability_id": "files.extension_summary",
+  "constraints": [
+    "Use Python standard library only.",
+    "No network access.",
+    "Expose run(payload: dict) -> dict."
+  ],
+  "functional_requirements": [
+    "Normalize extension case.",
+    "Use empty string for extensionless files."
+  ],
+  "inputs": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "metadata": {},
+  "objective": "Summarize file extensions from a list of paths.",
+  "outputs": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "permissions": [],
+  "proposed_file_structure": [
+    "main.py"
+  ],
+  "public_tests": [
+    {
+      "expected": {
+        "": 1,
+        ".py": 1,
+        ".txt": 1
+      },
+      "input": {
+        "paths": [
+          "a.py",
+          "b.TXT",
+          "README"
+        ]
+      },
+      "name": "extensions"
+    }
+  ]
+}
