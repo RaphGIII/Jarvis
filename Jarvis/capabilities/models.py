@@ -9,6 +9,7 @@ from typing import Any
 class AcquisitionStage(str, Enum):
     GOAL = "goal"
     GAP = "gap_detection"
+    RESEARCH = "research"
     SPEC = "specification"
     PLAN = "plan"
     IMPLEMENT = "implement"

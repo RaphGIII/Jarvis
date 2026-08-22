@@ -387,6 +387,75 @@ def test_v04_benchmark_catalog_has_15_distinct_capability_tasks(tmp_path):
     assert len({tuple(sorted(task.expected_output.keys())) for task in tasks}) > 8
 
 
+def test_v04_research_note_reaches_specification_metadata_and_trajectory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from capabilities.research import CapabilityResearcher, ResearchNote
+
+    class _StubResearcher(CapabilityResearcher):
+        def research(self, goal):
+            return ResearchNote(
+                query="sha-256 checksum hexdigest",
+                source="https://docs.python.org/3/library/hashlib.html",
+                summary="hashlib.sha256(data).hexdigest() returns the hex digest as a string.",
+                fetched=True,
+            )
+
+    class _SpecEchoingBrain:
+        provider_name = "spec_echo"
+        model_name = "SpecEchoingBrain"
+        last_metadata = {"generated_tokens": 1, "total_tokens": 1}
+
+        def __init__(self) -> None:
+            self.seen_research_in_prompt = False
+
+        def generate(self, prompt, *, max_tokens=700, temperature=0.2, top_p=None):
+            if "Decide if one installed capability" in prompt:
+                return '{"status":"missing","capability_id":"","reason":"none","confidence":0.0}'
+            if "hashlib.sha256(data).hexdigest()" in prompt:
+                self.seen_research_in_prompt = True
+            return (
+                '{"capability_id":"local.sha256.checksum","objective":"Compute a sha256 checksum of a string.",'
+                '"functional_requirements":["Hash the input text."],'
+                '"inputs":{"type":"object","additionalProperties":true},'
+                '"outputs":{"type":"object","additionalProperties":true},'
+                '"constraints":["Use Python standard library only."],'
+                '"allowed_dependencies":[],"permissions":[],'
+                '"acceptance_criteria":["Public examples pass."],'
+                '"public_tests":[{"name":"hashes","input":{"text":"abc"},'
+                '"expected":{"result":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}}],'
+                '"proposed_file_structure":["main.py"]}'
+            )
+
+    brain = _SpecEchoingBrain()
+    runtime = CapabilityAcquisitionRuntime(
+        brain=brain,
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False),
+        researcher=_StubResearcher(),
+    )
+
+    result = runtime.handle_goal("Compute a sha256 checksum of a string.")
+
+    assert brain.seen_research_in_prompt
+    records = runtime.trajectory_store.load_all()
+    research_events = [event for event in records[-1]["events"] if event["stage"] == "research"]
+    assert research_events
+    assert research_events[0]["payload"]["fetched"] is True
+    assert "hashlib" in research_events[0]["payload"]["source"]
+    spec_events = [event for event in records[-1]["events"] if event["stage"] == "specification"]
+    assert spec_events[0]["payload"]["specification"]["metadata"]["research"]["fetched"] is True
+
+
+def test_v04_research_disabled_by_default_config_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runtime = CapabilityAcquisitionRuntime(
+        brain=None,
+        backend=LocalTestSandboxBackend(),
+        config=CapabilityRuntimeConfig(data_dir=str(tmp_path / "runtime"), use_docker=False, enable_research=False),
+    )
+    assert runtime.researcher is None
+
+
 def test_v04_mock_demo_runs_without_qwen(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     metrics = run_capability_acquisition_v04_demo(

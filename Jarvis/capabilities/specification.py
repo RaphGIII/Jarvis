@@ -35,14 +35,19 @@ class SkillSpecificationGenerator:
         self.brain = brain
         self.attempts = max(1, attempts)
 
-    def generate(self, goal: str) -> SkillSpecification:
+    def generate(self, goal: str, *, research_note: Any | None = None) -> SkillSpecification:
         if self.brain is not None:
-            spec = self._generate_with_brain(goal)
+            spec = self._generate_with_brain(goal, research_note)
             if spec is not None:
+                if research_note is not None:
+                    spec.metadata.setdefault("research", research_note.to_dict())
                 return spec
-        return self._fallback_spec(goal)
+        spec = self._fallback_spec(goal)
+        if research_note is not None:
+            spec.metadata.setdefault("research", research_note.to_dict())
+        return spec
 
-    def _generate_with_brain(self, goal: str) -> SkillSpecification | None:
+    def _generate_with_brain(self, goal: str, research_note: Any | None) -> SkillSpecification | None:
         prompt = (
             "Return JSON only. Create a safe local Jarvis SkillSpecification for this missing capability.\n"
             "The skill must expose main.py with def run(payload: dict) -> dict.\n"
@@ -51,6 +56,7 @@ class SkillSpecificationGenerator:
             "(do not reuse an unrelated example like {\"text\": \"hello\"} unless the goal is literally about text).\n"
             "Use only Python standard library dependencies unless the request absolutely requires more.\n"
             "Do not request credentials, network, browser, email, or external permissions unless the goal explicitly requires them.\n"
+            f"{_research_context(research_note)}"
             f"Goal: {goal}"
         )
         last_error: str | None = None
@@ -132,3 +138,12 @@ class SkillSpecificationGenerator:
 def _extract_json(text: str) -> str:
     match = re.search(r"(\{.*\})", text.strip(), flags=re.DOTALL)
     return match.group(1) if match else text
+
+
+def _research_context(research_note: Any | None) -> str:
+    if research_note is None or not getattr(research_note, "fetched", False):
+        return ""
+    return (
+        f"Research notes from {research_note.source} (query: {research_note.query}):\n"
+        f"{research_note.summary}\n"
+    )

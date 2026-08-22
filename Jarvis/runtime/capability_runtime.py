@@ -16,6 +16,7 @@ from capabilities.models import (
 from capabilities.permissions import PermissionPolicy
 from capabilities.promotion import SkillPromoter
 from capabilities.registry import CapabilityRegistry
+from capabilities.research import CapabilityResearcher
 from capabilities.resolver import CapabilityResolver
 from capabilities.specification import SkillSpecificationGenerator
 from capabilities.trajectory import AcquisitionTrajectory, AcquisitionTrajectoryStore
@@ -39,6 +40,7 @@ class CapabilityRuntimeConfig:
     learned_controller_mode: str = "shadow"
     seed: int = 404
     trace: bool = False
+    enable_research: bool = True
 
 
 class CapabilityAcquisitionRuntime:
@@ -50,6 +52,7 @@ class CapabilityAcquisitionRuntime:
         brain: Any | None = None,
         backend: SandboxBackend | None = None,
         config: CapabilityRuntimeConfig | None = None,
+        researcher: CapabilityResearcher | None = None,
     ) -> None:
         self.config = config or CapabilityRuntimeConfig()
         self.root = Path(self.config.data_dir)
@@ -59,6 +62,7 @@ class CapabilityAcquisitionRuntime:
         self.registry = CapabilityRegistry(self.root / "registry.json")
         self.resolver = CapabilityResolver(self.registry, brain=brain)
         self.spec_generator = SkillSpecificationGenerator(brain=brain)
+        self.researcher = researcher if researcher is not None else (CapabilityResearcher() if self.config.enable_research else None)
         self.permission_policy = PermissionPolicy()
         skills_root = Path(self.config.skills_root)
         self.workspace_manager = SkillWorkspaceManager(skills_root / "_staging")
@@ -108,7 +112,13 @@ class CapabilityAcquisitionRuntime:
             self.trajectory_store.save(trajectory, result.to_dict())
             return result
 
-        skill_spec = spec or self.spec_generator.generate(goal)
+        research_note = None
+        if spec is None and self.researcher is not None:
+            research_note = self.researcher.research(goal)
+            if research_note is not None:
+                trajectory.record(AcquisitionStage.RESEARCH.value, research_note.to_dict())
+
+        skill_spec = spec or self.spec_generator.generate(goal, research_note=research_note)
         spec_errors = skill_spec.validate()
         trajectory.record(AcquisitionStage.SPEC.value, {"specification": skill_spec.to_dict(), "validation_errors": spec_errors})
         if spec_errors:
