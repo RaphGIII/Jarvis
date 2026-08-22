@@ -120,6 +120,14 @@ class SkillSpecification:
             errors.append("acceptance_criteria are required")
         if not self.public_tests:
             errors.append("public_tests are required")
+        else:
+            for index, case in enumerate(self.public_tests):
+                if not isinstance(case, dict) or not isinstance(case.get("input"), dict):
+                    errors.append(f"public_tests[{index}] must be an object with an 'input' object")
+                elif "expected" not in case and not case.get("expected_keys") and not case.get("raises"):
+                    errors.append(
+                        f"public_tests[{index}] must set 'expected', 'expected_keys', or 'raises'"
+                    )
         if "main.py" not in self.proposed_file_structure:
             errors.append("main.py must be part of proposed_file_structure")
         return errors

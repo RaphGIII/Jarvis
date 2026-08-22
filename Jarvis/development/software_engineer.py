@@ -545,6 +545,9 @@ class AutonomousSoftwareEngineer:
             "Generate a complete implementation bundle in one response. Use full-file contents.\n"
             "Do not modify public tests, hidden tests, skill_spec.json, or security/promotion files.\n"
             "The public API contract is: main.py must expose def run(payload: dict) -> dict.\n"
+            "The specification's public_tests define the exact payload keys `run` will receive and the exact "
+            "keys/values it must return; implement run() to match those keys literally, even if they differ "
+            "from words used in the goal text.\n"
             f"Original goal: {request.goal}\n"
             f"Specification:\n{json.dumps(request.specification.to_dict(), indent=2, sort_keys=True)}\n"
             f"Dependency restrictions: {json.dumps(request.dependency_restrictions)}\n"
@@ -571,6 +574,8 @@ class AutonomousSoftwareEngineer:
         return (
             "Return JSON only. Role: Repairer. Repair the current project using full-file replacements for changed files.\n"
             "Do not modify public tests, hidden tests, skill_spec.json, or security/promotion files.\n"
+            "The specification's public_tests define the exact payload keys `run` will receive and the exact "
+            "keys/values it must return; the failing tests below show the literal keys expected. Match them exactly.\n"
             f"{blind_text}"
             f"Original goal: {request.goal}\n"
             f"Specification:\n{json.dumps(request.specification.to_dict(), indent=2, sort_keys=True)}\n"
@@ -579,7 +584,7 @@ class AutonomousSoftwareEngineer:
             f"Verification failure summary:\n{json.dumps(self._verification_failure_summary(result), indent=2, sort_keys=True)}\n"
             f"Previous repair history:\n{json.dumps(result.repairs, indent=2, sort_keys=True)}\n"
             f"Relevant prior repair patterns:\n{self._memory_context(prior)}\n"
-            "Response schema: {\"diagnosis\":\"...\",\"files\":[{\"path\":\"main.py\",\"content\":\"complete corrected file\"}]}"
+            "Response schema: {\"diagnosis\":\"...\",\"files\":[{\"path\":\"main.py\",\"content\":\"...\"}]}"
         )
 
     def _review_prompt(

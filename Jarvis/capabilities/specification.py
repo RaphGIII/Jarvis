@@ -31,8 +31,9 @@ def skill_specification_json_schema() -> dict[str, Any]:
 class SkillSpecificationGenerator:
     """Creates a structured skill specification for a missing capability."""
 
-    def __init__(self, brain: Any | None = None) -> None:
+    def __init__(self, brain: Any | None = None, *, attempts: int = 3) -> None:
         self.brain = brain
+        self.attempts = max(1, attempts)
 
     def generate(self, goal: str) -> SkillSpecification:
         if self.brain is not None:
@@ -45,25 +46,63 @@ class SkillSpecificationGenerator:
         prompt = (
             "Return JSON only. Create a safe local Jarvis SkillSpecification for this missing capability.\n"
             "The skill must expose main.py with def run(payload: dict) -> dict.\n"
+            "The public_tests entries must use the exact keys the implementation will read from `payload` and "
+            "the exact keys it will write into the returned dict, matching the goal's actual inputs/outputs "
+            "(do not reuse an unrelated example like {\"text\": \"hello\"} unless the goal is literally about text).\n"
             "Use only Python standard library dependencies unless the request absolutely requires more.\n"
             "Do not request credentials, network, browser, email, or external permissions unless the goal explicitly requires them.\n"
             f"Goal: {goal}"
         )
-        try:
-            if hasattr(self.brain, "generate_structured"):
-                raw = self.brain.generate_structured(
+        last_error: str | None = None
+        for _ in range(self.attempts):
+            raw = self._request_raw(prompt)
+            if raw is None:
+                return None
+            try:
+                spec = SkillSpecification.from_dict(json.loads(_extract_json(raw)))
+            except Exception as exc:
+                last_error = f"Response was not valid JSON: {exc}"
+                prompt = self._retry_prompt(goal, last_error)
+                continue
+            errors = spec.validate()
+            if not errors:
+                return spec
+            last_error = "; ".join(errors)
+            prompt = self._retry_prompt(goal, last_error)
+        return None
+
+    def _request_raw(self, prompt: str) -> str | None:
+        if hasattr(self.brain, "generate_structured"):
+            try:
+                return self.brain.generate_structured(
                     prompt,
                     skill_specification_json_schema(),
                     max_tokens=700,
                     temperature=0.2,
                     top_p=0.9,
                 )
-            else:
-                raw = self.brain.generate(prompt, max_tokens=700, temperature=0.2, top_p=0.9)
-            spec = SkillSpecification.from_dict(json.loads(_extract_json(raw)))
+            except NotImplementedError:
+                pass
+            except Exception:
+                return None
+        try:
+            return self.brain.generate(prompt, max_tokens=700, temperature=0.2, top_p=0.9)
         except Exception:
             return None
-        return spec if not spec.validate() else None
+
+    @staticmethod
+    def _retry_prompt(goal: str, error: str) -> str:
+        return (
+            "Return JSON only. Create a safe local Jarvis SkillSpecification for this missing capability.\n"
+            "The skill must expose main.py with def run(payload: dict) -> dict.\n"
+            "The public_tests entries must use the exact keys the implementation will read from `payload` and "
+            "the exact keys it will write into the returned dict, matching the goal's actual inputs/outputs.\n"
+            "Use only Python standard library dependencies unless the request absolutely requires more.\n"
+            "Do not request credentials, network, browser, email, or external permissions unless the goal explicitly requires them.\n"
+            f"Goal: {goal}\n\n"
+            f"Your previous response was invalid: {error}\n"
+            "Regenerate complete, valid JSON only."
+        )
 
     @staticmethod
     def _fallback_spec(goal: str) -> SkillSpecification:
@@ -82,7 +121,7 @@ class SkillSpecificationGenerator:
             public_tests=[
                 {
                     "name": "returns_object",
-                    "input": {"text": "hello"},
+                    "input": {"value": "sample"},
                     "expected_keys": ["result"],
                 }
             ],
