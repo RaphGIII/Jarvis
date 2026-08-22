@@ -44,7 +44,6 @@ class CodingRewardEngine:
             and current_tests.get("failed", 0) == 0
             and current_tests.get("passed", 0) > 0
         )
-        completion = 1.0 if action.action_type == ActionType.FINISH and environment_step.success else 0.0
         step_cost = min(1.0, max(0.0, action.estimated_cost / 10.0))
         error_text = f"{environment_step.action_result.stderr}\n{environment_step.action_result.stdout}".lower()
         syntax_or_runtime_error = 1.0 if any(token in error_text for token in ["syntaxerror", "traceback", "exception"]) else 0.0

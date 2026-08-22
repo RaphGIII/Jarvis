@@ -401,6 +401,25 @@ class RepositoryEngineer:
         source = Path(repository_path).resolve()
         if not source.exists() or not source.is_dir():
             raise ValueError(f"Repository path does not exist: {source}")
+
+        worktree_state = self.checkpoint.state.get(RepositoryStage.WORKTREE_CREATED, {}) if self.checkpoint else {}
+        saved_worktree = worktree_state.get("worktree")
+        resuming = bool(saved_worktree and Path(saved_worktree).exists())
+        if resuming:
+            saved_goal = worktree_state.get("goal")
+            current_fingerprint = _stable_hash(json.dumps(goal.to_dict(), sort_keys=True))
+            if saved_goal is not None and worktree_state.get("goal_fingerprint") != current_fingerprint:
+                # A resumed run must keep operating under the ORIGINAL goal
+                # (allowed_paths/protected_paths/tests/etc.), not whatever the
+                # caller happens to pass on the --resume invocation. Silently
+                # accepting a different goal here would let a resumed run lose
+                # its permission boundaries (e.g. protected_paths) if the
+                # operator forgets to repeat every CLI flag identically.
+                goal = SelfImprovementGoal(**saved_goal)
+                acceptance_commands = None
+                full_test_commands = None
+                benchmark_commands = None
+
         targeted_commands = list(acceptance_commands or goal.tests)
         full_commands = list(full_test_commands if full_test_commands is not None else goal.full_tests)
         bench_commands = list(benchmark_commands if benchmark_commands is not None else goal.benchmark_commands())
@@ -413,12 +432,19 @@ class RepositoryEngineer:
             "events": [],
         }
         try:
-            saved_worktree = (self.checkpoint.state.get(RepositoryStage.WORKTREE_CREATED, {}) if self.checkpoint else {}).get("worktree")
-            worktree = Path(saved_worktree).resolve() if saved_worktree and Path(saved_worktree).exists() else self._create_worktree(source)
+            worktree = Path(saved_worktree).resolve() if resuming else self._create_worktree(source)
             trajectory["worktree"] = str(worktree)
             result = RepositoryCandidateResult(RepositoryStage.REJECTED, str(worktree))
-            if self.checkpoint:
-                self.checkpoint.save(RepositoryStage.WORKTREE_CREATED, {"worktree": str(worktree), "source": str(source), "goal_fingerprint": _stable_hash(json.dumps(goal.to_dict(), sort_keys=True))})
+            if self.checkpoint and not resuming:
+                self.checkpoint.save(
+                    RepositoryStage.WORKTREE_CREATED,
+                    {
+                        "worktree": str(worktree),
+                        "source": str(source),
+                        "goal": goal.to_dict(),
+                        "goal_fingerprint": _stable_hash(json.dumps(goal.to_dict(), sort_keys=True)),
+                    },
+                )
             saved_before = (self.checkpoint.state.get(RepositoryStage.BENCHMARK_BEFORE_COMPLETE, {}) if self.checkpoint else {}).get("results")
             before_benchmarks = [RepositoryCommandResult(**item) for item in saved_before] if saved_before else self._run_commands(worktree, bench_commands, stage=RepositoryStage.BENCHMARK)
             if self.checkpoint and not saved_before:

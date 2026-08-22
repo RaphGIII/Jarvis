@@ -29,10 +29,8 @@ from learning.policy.policy import NeuralPolicy, PolicyConfig
 from learning.policy.value import NeuralValueFunction, ValueConfig
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import (
-    DeterministicTextEncoder,
     LightweightLocalEmbeddingProvider,
     ProjectionEncoder,
-    QwenHiddenStateTextEncoder,
     SemanticObservationFeatures,
     SemanticTextEncoder,
 )

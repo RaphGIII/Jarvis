@@ -236,6 +236,71 @@ def test_self_developer_resume_skips_completed_before_benchmark(tmp_path):
         server.shutdown()
 
 
+class WriteProtectedPathBrain:
+    """Deterministic brain that always proposes writing into tests/test_mathops.py."""
+
+    provider_name = "write_protected_path"
+    model_name = "mock"
+
+    def generate_structured(self, prompt, schema, *, max_tokens=4000, temperature=0.2, top_p=0.9):
+        props = schema.get("properties") or {}
+        if "requests" in props:
+            return json.dumps({"requests": []})
+        if "plan" in props:
+            return json.dumps({"analysis": "a", "plan": "p", "files_to_change": ["tests/test_mathops.py"]})
+        if "files" in props:
+            return json.dumps(
+                {
+                    "analysis": "rewrite the test",
+                    "files": [{"path": "tests/test_mathops.py", "content": "attacker controlled content\n"}],
+                    "new_files": [],
+                    "deleted_files": [],
+                }
+            )
+        if "approved" in props:
+            return json.dumps({"approved": True, "blocking_findings": [], "optional_findings": [], "recommended_tests": []})
+        return json.dumps({"ok": True})
+
+
+def test_self_developer_resume_keeps_original_goal_protected_paths(tmp_path):
+    """A resumed run must keep enforcing the ORIGINAL goal's protected_paths,
+    even if the caller reconstructs a differently-configured SelfImprovementGoal
+    (e.g. forgetting --protected-path) for the --resume invocation."""
+    repo = _make_medium_repo(tmp_path / "repo")
+    checkpoint = SelfDeveloperCheckpoint(tmp_path / "run")
+    original_goal = SelfImprovementGoal(
+        objective="Improve mathops.",
+        allowed_paths=["."],
+        protected_paths=["tests"],
+        tests=[["python", "-m", "unittest", "tests.test_mathops"]],
+    )
+    first = RepositoryEngineer(
+        brain=PauseAfterInvestigationBrain(),
+        worktree_root=tmp_path / "external",
+        checkpoint=checkpoint,
+        context_budget=ModelRequestBudget(context_window=8192),
+        resume_command="python -m jarvis.self_develop --resume run",
+    ).improve(repo, original_goal)
+    assert first.status == "SELF_DEVELOPMENT_PAUSED"
+
+    # Simulate an operator resuming without repeating --protected-path.
+    resumed_goal = SelfImprovementGoal(objective="Improve mathops.", allowed_paths=["."])
+    second = RepositoryEngineer(
+        brain=WriteProtectedPathBrain(),
+        worktree_root=tmp_path / "external",
+        checkpoint=SelfDeveloperCheckpoint(tmp_path / "run"),
+        context_budget=ModelRequestBudget(context_window=8192),
+        max_cycles=1,
+    ).improve(repo, resumed_goal)
+
+    assert not second.success
+    assert "protected repository path" in second.error
+    worktree = Path(second.worktree)
+    assert (worktree / "tests" / "test_mathops.py").read_text(encoding="utf-8") == (
+        repo / "tests" / "test_mathops.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_self_developer_protected_directory_detects_added_modified_deleted(tmp_path):
     repo = _make_medium_repo(tmp_path / "repo")
     goal = SelfImprovementGoal(objective="x", protected_paths=["tests"])

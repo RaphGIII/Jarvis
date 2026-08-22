@@ -50,7 +50,7 @@ def run_self_developer_from_args(args: argparse.Namespace) -> dict:
         resume_command=resume_command,
     )
     preflight = checkpoint.state.get("PREFLIGHT_COMPLETE") or engineer.preflight()
-    print(f"[PREFLIGHT] provider=OK", flush=True)
+    print("[PREFLIGHT] provider=OK", flush=True)
     print(f"[PREFLIGHT] structured_generation={preflight.get('structured_generation', 'OK')}", flush=True)
     print(f"[PREFLIGHT] context_window={preflight.get('context_window', getattr(args, 'context_window', None) or 8192)}", flush=True)
     result = engineer.improve(
