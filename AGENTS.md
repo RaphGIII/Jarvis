@@ -23,7 +23,7 @@ cd /projects/repo/Jarvis
 python -m pytest tests/ -q         # full suite; ~50-60s
 ```
 
-Baseline as of this session: **177 passed, 5 skipped** (collected count
+Baseline as of this session: **186 passed, 5 skipped** (collected count
 grows as tests are added — don't assume a fixed number, always re-verify).
 The mission brief mentions "178 collected" from an earlier point in time;
 that number is stale, verify freshly each session.
@@ -121,10 +121,61 @@ See the full mission brief for the 20-point requirements list and 8
 black-box acceptance tests (TEST 1-8). As of this session:
 - Capability-acquisition pipeline bug-hunting via live small-model runs:
   3 real bugs found and fixed (see above), full regression suite green.
-- Broader mission checklist (capability registry persistence, self-
-  development worktree flow, permission gates, provider-failure/resume,
-  local-only mode demonstration, etc.) has NOT been re-verified end-to-end
-  in this session — check `runtime/`, `capabilities/registry.py`,
+  Committed as `89d6f23`.
+- TEST 2 (research-based capability acquisition): `capabilities/research.py`
+  (`CapabilityResearcher`) added, wired into `capabilities/specification.py`
+  and `runtime/capability_runtime.py`, tests in
+  `tests/test_capability_research.py`. Committed as `468d2a7`.
+- TEST 4 (self-development against the real Jarvis repo, live Qwen2.5-Coder
+  -0.5B-Instruct local LLM): ran `runtime/self_developer.py` end-to-end
+  against `/projects/repo/Jarvis` with the goal "make pyflakes clean" on 6
+  real files with genuine unused-import/unused-var/f-string lint issues.
+  The run executed the full loop (preflight -> investigate x4 rounds -> plan
+  -> 4 patch/repair cycles -> targeted tests each cycle) and correctly
+  self-rejected (`SELF_DEVELOPMENT_CANDIDATE_REJECTED`) because the 0.5B
+  model could never produce a pyflakes-clean bundle within the cycle
+  budget — an honest failure of model capability, not a pipeline bug (see
+  "Known-good architecture behavior" above; same principle applies here).
+  Isolation held perfectly: `git status` on `/projects/repo/Jarvis` showed
+  **zero changes** to the real source tree even though the candidate
+  worktree ended up with corrupted test files.
+  - **Real bug found and fixed via this run**: an accidental CLI
+    `--resume` invocation (from a process that got killed and manually
+    resumed with different args, omitting `--protected-path tests`)
+    revealed that `RepositoryEngineer.improve()` computed a
+    `goal_fingerprint` at `WORKTREE_CREATED` but never validated/used it on
+    resume — a resumed run silently trusted whatever `SelfImprovementGoal`
+    the caller reconstructed instead of the originally-checkpointed one, so
+    forgetting a flag like `--protected-path` on resume silently dropped
+    that permission boundary for the rest of the run (this is exactly how
+    the candidate worktree's `tests/*.py` files got clobbered — the LLM
+    was allowed to "repair" by rewriting test files once `protected_paths`
+    was gone). Fixed by persisting the full goal dict alongside the
+    fingerprint and always reloading the checkpointed goal (with its
+    tests/full_tests/benchmarks) on resume, ignoring the CLI-reconstructed
+    one. Regression test:
+    `tests/test_self_developer_production_gate.py::test_self_developer_resume_keeps_original_goal_protected_paths`.
+    Also fixed the 6 real pyflakes findings by hand (unused imports in
+    `capabilities/executor.py`, `capabilities/registry.py`,
+    `development/software_engineer.py`, `runtime/jarvis_runtime.py`; unused
+    var in `environments/coding/reward.py`; f-string-no-placeholder in
+    `runtime/self_developer.py`). Committed as `a57d0bc`. Full suite:
+    186 passed, 5 skipped, no regressions.
+  - **Operational lesson**: when driving `self_developer.py` interactively
+    across multiple shell turns, always resume with the *exact same* CLI
+    flags (or better, rely on the fix above which now makes this safe
+    regardless). A single self-developer run can take 15-20+ minutes
+    end-to-end against a 0.5B local model (each LLM call is slow); launch
+    it backgrounded (`nohup ... &`) and poll
+    `<run_dir>/self_developer_checkpoint.json`'s `last_stage` field rather
+    than blocking a terminal call on it.
+- Broader mission checklist items not yet re-verified end-to-end this
+  session: capability registry persistence/reuse across restart (TEST 1,
+  5), multi-file software test (TEST 3), permission gate (TEST 6),
+  provider-failure/resume (TEST 7 — related code exists, see
+  `_provider_failure_payload`/`RepositoryStage.PAUSED`/`resume_command` in
+  `development/repository_engineer.py`, but not freshly re-demonstrated),
+  local-only mode (TEST 8). Check `runtime/`, `capabilities/registry.py`,
   `development/repository_engineer.py`, and existing tests under
   `Jarvis/tests/` for what's already implemented before assuming anything
   is missing.
