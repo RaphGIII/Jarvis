@@ -1,0 +1,131 @@
+{
+  "BLIND_REPAIR_SUCCESS_RATE": 0.0,
+  "CAPABILITY_ACQUISITION_SUCCESS_RATE": 0.0,
+  "CONFIG": {
+    "benchmark_dir": "data\\benchmark_runs\\v04_qwen_software_engineer_smoke_01",
+    "brain_provider": "openai_compatible",
+    "local_test_backend": false,
+    "mock_brain": false,
+    "persistent": false,
+    "quiet": false,
+    "task_count": 3
+  },
+  "DEVELOPMENT_WALL_TIME_SECONDS": 199.42288429999996,
+  "HIDDEN_PASS_RATE": 0.0,
+  "INITIAL_IMPLEMENTATION_PASS_RATE": 0.0,
+  "INTERNAL_QA_PASS_RATE": 0.3333333333333333,
+  "INVALID_ACTION_RATE": 0.0,
+  "MEAN_LLM_CALLS_PER_CAPABILITY": 7.0,
+  "MEAN_REPAIR_CYCLES": 4.0,
+  "MEAN_STEPS_TO_ACQUISITION": 5.0,
+  "MEAN_TOKENS_PER_CAPABILITY": 20605.666666666668,
+  "PROMOTION_FAILURES": 3,
+  "REGISTRY_PATH": "data\\benchmark_runs\\v04_qwen_software_engineer_smoke_01\\runtime\\registry.json",
+  "REPAIR_SUCCESS_RATE": 0.0,
+  "RESULTS": [
+    {
+      "blind_repair_success": false,
+      "capability_id": "count_non_empty_lines",
+      "development_state": "FAILED",
+      "error": "reviewer did not approve implementation; hidden verifier did not pass",
+      "execution_success": false,
+      "goal": "Count non-empty lines in supplied text.",
+      "hidden_success": false,
+      "initial_implementation_pass": false,
+      "internal_verification_success": true,
+      "invalid_action_rate": 0.0,
+      "llm_calls": 11,
+      "output": {},
+      "promoted": false,
+      "public_success": true,
+      "repair_iterations": 4,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "reviewer_approved": false,
+      "second_call_success": false,
+      "steps_to_acquisition": 5,
+      "success": false,
+      "token_usage": {
+        "generated_tokens": 3066,
+        "total_tokens": 29306
+      },
+      "trajectory_id": "7ca1cd2a3cb84fca818872c64e156098"
+    },
+    {
+      "blind_repair_success": false,
+      "capability_id": "csv_most_common_value",
+      "development_state": "FAILED",
+      "error": "internal QA tests did not pass; reviewer did not approve implementation; hidden verifier did not pass",
+      "execution_success": false,
+      "goal": "Read CSV text and return the most common value in a selected column.",
+      "hidden_success": false,
+      "initial_implementation_pass": false,
+      "internal_verification_success": false,
+      "invalid_action_rate": 0.0,
+      "llm_calls": 5,
+      "output": {},
+      "promoted": false,
+      "public_success": true,
+      "repair_iterations": 4,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "reviewer_approved": false,
+      "second_call_success": false,
+      "steps_to_acquisition": 5,
+      "success": false,
+      "token_usage": {
+        "generated_tokens": 3175,
+        "total_tokens": 18164
+      },
+      "trajectory_id": "9ee9cea5f3994039bd358f01ef48004f"
+    },
+    {
+      "blind_repair_success": false,
+      "capability_id": "file_extension_summary",
+      "development_state": "FAILED",
+      "error": "internal QA tests did not pass; reviewer did not approve implementation; hidden verifier did not pass",
+      "execution_success": false,
+      "goal": "Summarize file extensions from a list of paths.",
+      "hidden_success": false,
+      "initial_implementation_pass": false,
+      "internal_verification_success": false,
+      "invalid_action_rate": 0.0,
+      "llm_calls": 5,
+      "output": {},
+      "promoted": false,
+      "public_success": true,
+      "repair_iterations": 4,
+      "resolution": {
+        "capability_id": null,
+        "confidence": 0.0,
+        "manifest": null,
+        "reason": "No installed capability matched the request.",
+        "status": "missing"
+      },
+      "reviewer_approved": false,
+      "second_call_success": false,
+      "steps_to_acquisition": 5,
+      "success": false,
+      "token_usage": {
+        "generated_tokens": 1678,
+        "total_tokens": 14347
+      },
+      "trajectory_id": "8f23c1b82d7b42a4bb2c9968546aaff2"
+    }
+  ],
+  "REVIEW_PASS_RATE": 0.0,
+  "SECOND_CALL_DIRECT_USE_SUCCESS_RATE": 0.0,
+  "TASK_COUNT": 3,
+  "TRAJECTORY_PATH": "data\\benchmark_runs\\v04_qwen_software_engineer_smoke_01\\runtime\\acquisition_trajectories.jsonl",
+  "VERSION": "v0.4"
+}

@@ -706,27 +706,57 @@ contains the goal, gap detection result, specification, plan, implementation,
 public test result, repair history, hidden verification, promotion decision,
 original execution result, second-call reuse result, and final outcome.
 
-## Autonomous Repository Engineering
+## JARVIS SELF-DEVELOPER v1
 
-The same high-level engineering engine is available for safe repository
-self-improvement experiments through `development.RepositoryEngineer`.
+SelfDeveloper v1 is the bridge between Codex-style repository optimization and
+Jarvis memory. It uses the same frozen high-level brain interface, but targets a
+real repository checkout through `development.RepositoryEngineer` and the CLI
+entry point `python -m jarvis.self_develop`.
 
 ```text
 SelfImprovementGoal
-  -> isolated git worktree
-  -> targeted repository context
-  -> structured multi-file proposal
-  -> path/protected-file validation
-  -> targeted tests / full acceptance commands
-  -> git diff + deterministic evidence
-  -> SELF_IMPROVEMENT_CANDIDATE_READY
+  -> isolated git worktree or isolated repository copy
+  -> UNDERSTAND repository tools
+  -> PLAN
+  -> IMPLEMENT structured multi-file proposal
+  -> TEST_TARGETED
+  -> DIAGNOSE / REPAIR loop with prior stdout/stderr and diff
+  -> REVIEW
+  -> TEST_FULL
+  -> BENCHMARK before/after comparison
+  -> EVALUATE
+  -> SELF_DEVELOPMENT_CANDIDATE_READY or SELF_DEVELOPMENT_CANDIDATE_REJECTED
 ```
 
 The live checkout is not overwritten. Candidates are produced in disposable
-worktrees, protected files are compared against the source checkout, and final
-promotion still requires explicit human approval. Repository engineering
-trajectories are persisted as JSONL for future SFT/LoRA/preference/RL data, but
-Qwen is not trained in this milestone.
+worktrees, protected files are compared byte-for-byte against the source
+checkout, and final promotion still requires explicit human approval. Repository
+engineering trajectories are persisted as JSONL for future SFT/LoRA/preference
+or RL data, but Qwen is not trained in this milestone.
+
+Repository tools available to the brain are deliberately bounded:
+
+```text
+tree, search_text, read_file, read_file_range, find_symbol_import,
+inspect_tests, git_diff
+```
+
+Implementation uses complete-file structured proposals only. The orchestrator
+validates `allowed_paths` and `protected_paths`, runs targeted tests first, then
+full tests, then benchmark commands. Python command execution inherits only a
+small allowlist of runtime variables; API keys are never included in prompts or
+logs, and generated commands run with `PYTHONDONTWRITEBYTECODE=1` so bytecode
+caches cannot create stale test outcomes or noisy diffs.
+
+Run SelfDeveloper v1 against the real Jarvis repository:
+
+```bash
+python -m jarvis.self_develop --repo D:\Jarvis\Jarvis --goal "Improve capability acquisition reliability without changing public contracts." --allowed-path capabilities --allowed-path development --allowed-path runtime --allowed-path tests --protected-path data --protected-path .git --test-command "python -m pytest tests/test_autonomous_engineering_v04.py -q" --full-test-command "python -m pytest -q" --benchmark-command "python -m training.capability_acquisition_v04_demo --mock-brain --task-count 3 --benchmark-dir data/benchmark_runs/self_developer_v1_mock" --max-cycles 5 --brain-provider openai_compatible --benchmark-dir data/benchmark_runs/self_developer_v1_real_repo
+```
+
+The command reports the candidate worktree, diff path, result JSON path,
+targeted/full-test status, before/after benchmark metrics, and inspection
+commands. A ready candidate is evidence, not an automatic merge.
 
 Run the mock v0.4 demo without loading Qwen:
 

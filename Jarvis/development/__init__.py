@@ -8,7 +8,14 @@ from development.software_engineer import (
     AutonomousSoftwareEngineer,
 )
 from development.qa import ExecutableContract, InternalTestCase, InternalTestSuite, ReviewFinding
-from development.repository_engineer import RepositoryCandidateResult, RepositoryEngineer, SelfImprovementGoal, SelfImprovementMemory
+from development.repository_engineer import (
+    RepositoryCandidateResult,
+    RepositoryEngineer,
+    RepositoryReview,
+    RepositoryStage,
+    SelfImprovementGoal,
+    SelfImprovementMemory,
+)
 
 __all__ = [
     "AutonomousSoftwareEngineer",
@@ -22,6 +29,8 @@ __all__ = [
     "ProjectRequest",
     "RepositoryCandidateResult",
     "RepositoryEngineer",
+    "RepositoryReview",
+    "RepositoryStage",
     "ReviewFinding",
     "SelfImprovementGoal",
     "SelfImprovementMemory",

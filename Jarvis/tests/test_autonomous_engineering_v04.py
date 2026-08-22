@@ -368,7 +368,7 @@ def test_repository_engineer_creates_isolated_multifile_candidate(tmp_path):
 
     result = engineer.improve(repo, goal, goal.tests)
 
-    assert result.status == "SELF_IMPROVEMENT_CANDIDATE_READY"
+    assert result.status == "SELF_DEVELOPMENT_CANDIDATE_READY"
     assert Path(result.worktree) != repo
     assert (repo / "util.py").read_text(encoding="utf-8") == "def answer():\n    return 1\n"
     assert "helper.py" in result.diff
@@ -408,5 +408,5 @@ def test_self_improvement_demo_runs_on_disposable_fixture(tmp_path):
     )
 
     assert metrics["SUCCESS"] is True
-    assert metrics["STATUS"] == "SELF_IMPROVEMENT_CANDIDATE_READY"
+    assert metrics["STATUS"] == "SELF_DEVELOPMENT_CANDIDATE_READY"
     assert Path(metrics["RESULT_PATH"]).exists()
