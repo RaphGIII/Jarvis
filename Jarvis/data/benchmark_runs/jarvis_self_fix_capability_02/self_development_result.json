@@ -1,0 +1,16 @@
+{
+  "APPLY_COMMAND": "git -C D:\\Jarvis\\Jarvis diff --no-index . C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\f91397afe8fd\\candidate_6b2affa55e",
+  "BENCHMARKS_AFTER": [],
+  "BENCHMARKS_BEFORE": [],
+  "CHANGED_FILES": [],
+  "DIFF_PATH": "",
+  "FULL_TESTS_PASSED": true,
+  "INSPECT_COMMAND": "git -C C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\f91397afe8fd\\candidate_6b2affa55e diff",
+  "PROTECTED_PRISTINE": false,
+  "RESULT_PATH": "C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\f91397afe8fd\\candidate_6b2affa55e\\SELF_DEVELOPMENT_RESULT.json",
+  "REVIEW": null,
+  "STATUS": "SELF_DEVELOPMENT_CANDIDATE_REJECTED",
+  "SUCCESS": false,
+  "TARGETED_TESTS_PASSED": true,
+  "WORKTREE": "C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\f91397afe8fd\\candidate_6b2affa55e"
+}

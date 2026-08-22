@@ -14,8 +14,24 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+try:
+    from brain.providers import ProviderError, StructuredGenerationUnsupported
+except Exception:  # pragma: no cover - keeps repository tooling importable in minimal test envs
+    ProviderError = RuntimeError  # type: ignore
+    StructuredGenerationUnsupported = NotImplementedError  # type: ignore
+
 
 class RepositoryStage:
+    PREFLIGHT_COMPLETE = "PREFLIGHT_COMPLETE"
+    WORKTREE_CREATED = "WORKTREE_CREATED"
+    BENCHMARK_BEFORE_COMPLETE = "BENCHMARK_BEFORE_COMPLETE"
+    PLAN_COMPLETE = "PLAN_COMPLETE"
+    PATCH_CYCLE = "PATCH_CYCLE"
+    TARGETED_TESTS = "TARGETED_TESTS"
+    REVIEW_STAGE = "REVIEW_STAGE"
+    FULL_TESTS = "FULL_TESTS"
+    BENCHMARK_AFTER = "BENCHMARK_AFTER"
+    EVALUATION_COMPLETE = "EVALUATION_COMPLETE"
     UNDERSTAND = "UNDERSTAND"
     PLAN = "PLAN"
     IMPLEMENT = "IMPLEMENT"
@@ -28,6 +44,13 @@ class RepositoryStage:
     EVALUATE = "EVALUATE"
     CANDIDATE_READY = "SELF_DEVELOPMENT_CANDIDATE_READY"
     REJECTED = "SELF_DEVELOPMENT_CANDIDATE_REJECTED"
+    PAUSED = "SELF_DEVELOPMENT_PAUSED"
+
+
+class ProtectionState:
+    PRISTINE = "PRISTINE"
+    MODIFIED = "MODIFIED"
+    NOT_EVALUATED = "NOT_EVALUATED"
 
 
 @dataclass
@@ -42,6 +65,7 @@ class SelfImprovementGoal:
     benchmarks: list[list[str]] = field(default_factory=list)
     require_benchmark_improvement: bool = False
     metric_name: str | None = None
+    metric_minimums: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -64,6 +88,8 @@ class RepositoryCommandResult:
     stderr: str = ""
     return_code: int | None = None
     metrics: dict[str, float] = field(default_factory=dict)
+    cwd: str = ""
+    executable: str = ""
 
     @property
     def combined_output(self) -> str:
@@ -95,6 +121,7 @@ class RepositoryCandidateResult:
     benchmarks_after: list[RepositoryCommandResult] = field(default_factory=list)
     review: RepositoryReview | None = None
     protected_pristine: bool = True
+    protection_state: str = ProtectionState.NOT_EVALUATED
     changed_files: list[str] = field(default_factory=list)
     diff_path: str = ""
     result_path: str = ""
@@ -102,6 +129,9 @@ class RepositoryCandidateResult:
     trajectory_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     cycles: int = 0
     error: str = ""
+    failure_kind: str = ""
+    resume_command: str = ""
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -153,6 +183,154 @@ class SelfImprovementMemory:
         return [record for _, record in scored[:limit]]
 
 
+@dataclass
+class ModelRequestBudget:
+    context_window: int = 8192
+    safety_margin: int = 256
+    chars_per_token: float = 4.0
+    stage_desired_outputs: dict[str, int] = field(
+        default_factory=lambda: {
+            RepositoryStage.UNDERSTAND: 512,
+            RepositoryStage.PLAN: 768,
+            RepositoryStage.IMPLEMENT: 1800,
+            RepositoryStage.REPAIR: 1800,
+            RepositoryStage.REVIEW: 512,
+        }
+    )
+    observations: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_env(cls, context_window: int | None = None) -> "ModelRequestBudget":
+        return cls(context_window=int(context_window or os.getenv("JARVIS_BRAIN_CONTEXT_WINDOW", "8192")))
+
+    def estimate_tokens(self, text: str) -> int:
+        return max(1, int(len(text) / self.chars_per_token) + 1)
+
+    def prepare(self, stage: str, prompt: str, desired_output_tokens: int | None = None) -> tuple[str, int, dict[str, Any]]:
+        desired = int(desired_output_tokens or self.stage_desired_outputs.get(stage, 768))
+        prompt_tokens = self.estimate_tokens(prompt)
+        allowed_output = max(64, min(desired, self.context_window - prompt_tokens - self.safety_margin))
+        compacted = False
+        if prompt_tokens + allowed_output + self.safety_margin > self.context_window:
+            allowed_input_tokens = max(256, self.context_window - desired - self.safety_margin)
+            prompt = _compact_text(prompt, int(allowed_input_tokens * self.chars_per_token))
+            compacted = True
+            prompt_tokens = self.estimate_tokens(prompt)
+            allowed_output = max(64, min(desired, self.context_window - prompt_tokens - self.safety_margin))
+        if prompt_tokens + allowed_output + self.safety_margin > self.context_window:
+            raise ValueError(
+                f"CONTEXT_OVERFLOW stage={stage} input_tokens={prompt_tokens} output_tokens={allowed_output} context_window={self.context_window}"
+            )
+        record = {
+            "stage": stage,
+            "estimated_input_tokens": prompt_tokens,
+            "desired_output_tokens": desired,
+            "allowed_output_tokens": allowed_output,
+            "context_window": self.context_window,
+            "safety_margin": self.safety_margin,
+            "compacted": compacted,
+        }
+        self.observations.append(record)
+        return prompt, allowed_output, record
+
+
+class RepositoryContextManager:
+    def __init__(self, *, char_budget: int = 18000) -> None:
+        self.char_budget = char_budget
+        self.tree: list[str] = []
+        self.inspected_files: dict[str, str] = {}
+        self.file_hashes: dict[str, str] = {}
+        self.searches: list[dict[str, Any]] = []
+        self.test_files: list[str] = []
+        self.notes: list[dict[str, Any]] = []
+        self.recent_failures: list[dict[str, Any]] = []
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tree": self.tree,
+            "inspected_files": self.inspected_files,
+            "file_hashes": self.file_hashes,
+            "searches": self.searches,
+            "test_files": self.test_files,
+            "notes": self.notes,
+            "recent_failures": self.recent_failures,
+        }
+
+    def add_tree(self, paths: list[str]) -> None:
+        seen = set(self.tree)
+        for path in paths:
+            if path not in seen:
+                self.tree.append(path)
+                seen.add(path)
+        self.tree = self.tree[:240]
+
+    def add_file(self, path: str, content: str) -> None:
+        self.inspected_files[path] = content[:8000]
+        self.file_hashes[path] = _stable_hash(content)
+        self._enforce_budget()
+
+    def add_search(self, observation: dict[str, Any]) -> None:
+        key = json.dumps(observation, sort_keys=True)
+        if all(json.dumps(item, sort_keys=True) != key for item in self.searches):
+            self.searches.append(observation)
+        self.searches = self.searches[-24:]
+
+    def add_tests(self, paths: list[str]) -> None:
+        for path in paths:
+            if path not in self.test_files:
+                self.test_files.append(path)
+        self.test_files = self.test_files[:80]
+
+    def add_note(self, observation: dict[str, Any]) -> None:
+        self.notes.append(observation)
+        self.notes = self.notes[-12:]
+
+    def add_failures(self, failures: list[RepositoryCommandResult]) -> None:
+        self.recent_failures = [item.to_dict() for item in failures][-6:]
+
+    def selected_file_context(self, plan: dict[str, Any] | None = None, *, include_files: bool = False) -> dict[str, str]:
+        if not include_files:
+            return {key: f"{len(value)} chars" for key, value in self.inspected_files.items()}
+        wanted = [str(item) for item in (plan or {}).get("files_to_change", []) if item]
+        selected: dict[str, str] = {}
+        for path in wanted:
+            if path in self.inspected_files:
+                selected[path] = self.inspected_files[path]
+        for path, content in self.inspected_files.items():
+            if path not in selected and len(selected) < 8:
+                selected[path] = content
+        return selected
+
+    def _enforce_budget(self) -> None:
+        while sum(len(value) for value in self.inspected_files.values()) > self.char_budget and len(self.inspected_files) > 1:
+            key = next(iter(self.inspected_files))
+            self.inspected_files.pop(key, None)
+            self.file_hashes.pop(key, None)
+
+
+class SelfDeveloperCheckpoint:
+    def __init__(self, run_dir: str | Path | None = None, *, run_id: str | None = None) -> None:
+        if run_dir is None:
+            run_dir = Path(tempfile.gettempdir()) / "jarvis_selfdev_runs" / (run_id or uuid.uuid4().hex[:12])
+        self.run_dir = Path(run_dir).resolve()
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.path = self.run_dir / "self_developer_checkpoint.json"
+        self.state: dict[str, Any] = self.load()
+
+    def load(self) -> dict[str, Any]:
+        if self.path.exists():
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        return {"schema_version": 1, "events": []}
+
+    def save(self, stage: str, payload: dict[str, Any]) -> None:
+        self.state["last_stage"] = stage
+        self.state[stage] = _sanitize_for_log(payload)
+        self.state.setdefault("events", []).append({"stage": stage, "timestamp": datetime.now(timezone.utc).isoformat()})
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.state, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(self.path)
+
+
 class RepositoryEngineer:
     """Iterative autonomous repository candidate builder with worktree isolation."""
 
@@ -166,6 +344,9 @@ class RepositoryEngineer:
         max_cycles: int = 5,
         max_investigation_rounds: int = 4,
         structured_regeneration_attempts: int = 2,
+        context_budget: ModelRequestBudget | None = None,
+        checkpoint: SelfDeveloperCheckpoint | None = None,
+        resume_command: str = "",
     ) -> None:
         self.brain = brain
         self.run_id = uuid.uuid4().hex[:12]
@@ -176,6 +357,36 @@ class RepositoryEngineer:
         self.max_cycles = max_cycles
         self.max_investigation_rounds = max_investigation_rounds
         self.structured_regeneration_attempts = structured_regeneration_attempts
+        self.context_budget = context_budget or ModelRequestBudget.from_env()
+        self.checkpoint = checkpoint
+        self.resume_command = resume_command
+
+    def preflight(self) -> dict[str, Any]:
+        payload = {
+            "provider": getattr(self.brain, "provider_name", type(self.brain).__name__),
+            "model": getattr(self.brain, "model_name", ""),
+            "context_window": self.context_budget.context_window,
+            "structured_generation": "UNKNOWN",
+        }
+        if not hasattr(self.brain, "health_check") and not hasattr(self.brain, "capabilities"):
+            payload["health"] = {"ok": True, "mock_provider": True}
+            payload["structured_generation"] = "SKIPPED_FOR_TEST_MOCK"
+            if self.checkpoint:
+                self.checkpoint.save(RepositoryStage.PREFLIGHT_COMPLETE, payload)
+            return payload
+        if hasattr(self.brain, "health_check"):
+            health = self.brain.health_check()
+            payload["health"] = health
+            if not health.get("ok", False):
+                raise RuntimeError(f"provider preflight failed: {health.get('error')}")
+        schema = {"type": "object", "additionalProperties": False, "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+        raw = self._generate_json("Return {\"ok\": true}.", schema, stage="PREFLIGHT", desired_output_tokens=64, temperature=0.0)
+        if raw.get("ok") is not True:
+            raise RuntimeError("structured-generation preflight failed")
+        payload["structured_generation"] = "OK"
+        if self.checkpoint:
+            self.checkpoint.save(RepositoryStage.PREFLIGHT_COMPLETE, payload)
+        return payload
 
     def improve(
         self,
@@ -202,14 +413,24 @@ class RepositoryEngineer:
             "events": [],
         }
         try:
-            worktree = self._create_worktree(source)
+            saved_worktree = (self.checkpoint.state.get(RepositoryStage.WORKTREE_CREATED, {}) if self.checkpoint else {}).get("worktree")
+            worktree = Path(saved_worktree).resolve() if saved_worktree and Path(saved_worktree).exists() else self._create_worktree(source)
             trajectory["worktree"] = str(worktree)
             result = RepositoryCandidateResult(RepositoryStage.REJECTED, str(worktree))
-            before_benchmarks = self._run_commands(worktree, bench_commands, stage=RepositoryStage.BENCHMARK)
+            if self.checkpoint:
+                self.checkpoint.save(RepositoryStage.WORKTREE_CREATED, {"worktree": str(worktree), "source": str(source), "goal_fingerprint": _stable_hash(json.dumps(goal.to_dict(), sort_keys=True))})
+            saved_before = (self.checkpoint.state.get(RepositoryStage.BENCHMARK_BEFORE_COMPLETE, {}) if self.checkpoint else {}).get("results")
+            before_benchmarks = [RepositoryCommandResult(**item) for item in saved_before] if saved_before else self._run_commands(worktree, bench_commands, stage=RepositoryStage.BENCHMARK)
+            if self.checkpoint and not saved_before:
+                self.checkpoint.save(RepositoryStage.BENCHMARK_BEFORE_COMPLETE, {"results": [item.to_dict() for item in before_benchmarks]})
             self._record(trajectory, RepositoryStage.BENCHMARK, {"when": "before", "results": [item.to_dict() for item in before_benchmarks]})
             context = self._investigate(worktree, goal, trajectory)
             prior = self.memory.retrieve(goal.objective, limit=3)
-            plan = self._request_plan(goal, context, prior, trajectory)
+            saved_plan = (self.checkpoint.state.get(RepositoryStage.PLAN_COMPLETE, {}) if self.checkpoint else {}).get("plan")
+            plan = saved_plan if isinstance(saved_plan, dict) else self._request_plan(goal, context, prior, trajectory)
+            self._ensure_plan_files_read(worktree, context, plan)
+            if self.checkpoint and not saved_plan:
+                self.checkpoint.save(RepositoryStage.PLAN_COMPLETE, {"plan": plan, "context": _context_for_prompt(context)})
             last_failures: list[RepositoryCommandResult] = []
             last_targeted: list[RepositoryCommandResult] = []
             last_full: list[RepositoryCommandResult] = []
@@ -221,18 +442,29 @@ class RepositoryEngineer:
                     if cycle == 1
                     else self._request_repair(goal, context, plan, last_failures, review, trajectory)
                 )
-                self._apply_proposal(worktree, source, goal, proposal)
+                self._apply_proposal(worktree, source, goal, proposal, context)
+                if not self._current_diff(worktree).strip():
+                    last_failures = [RepositoryCommandResult(["proposal"], False, stderr="NO_EFFECTIVE_CHANGE", return_code=1)]
+                    self._record(trajectory, RepositoryStage.DIAGNOSE, {"cycle": cycle, "reason": "NO_EFFECTIVE_CHANGE"})
+                    continue
+                if self.checkpoint:
+                    self.checkpoint.save(f"PATCH_CYCLE_{cycle}", {"proposal": _redact_large(proposal), "diff": self._current_diff(worktree)[-12000:]})
                 self._record(trajectory, RepositoryStage.IMPLEMENT if cycle == 1 else RepositoryStage.REPAIR, _redact_large(proposal) | {"cycle": cycle})
                 targeted = self._run_commands(worktree, targeted_commands, stage=RepositoryStage.TEST_TARGETED)
                 last_targeted = targeted
+                if self.checkpoint:
+                    self.checkpoint.save(f"TARGETED_TESTS_{cycle}", {"results": [item.to_dict() for item in targeted]})
                 self._record(trajectory, RepositoryStage.TEST_TARGETED, {"cycle": cycle, "results": [item.to_dict() for item in targeted]})
                 if targeted and not all(item.success for item in targeted):
                     last_failures = targeted
+                    context.setdefault("recent_failures", [item.to_dict() for item in targeted])
                     self._record(trajectory, RepositoryStage.DIAGNOSE, self._diagnosis_payload(worktree, last_failures))
                     continue
                 diff = self._current_diff(worktree)
                 review = self._request_review(goal, context, diff, targeted, trajectory)
                 self._record(trajectory, RepositoryStage.REVIEW, review.to_dict() | {"cycle": cycle})
+                if self.checkpoint:
+                    self.checkpoint.save(f"REVIEW_{cycle}", review.to_dict())
                 if review.recommended_tests:
                     extra = self._run_commands(worktree, review.recommended_tests, stage=RepositoryStage.TEST_TARGETED)
                     targeted.extend(extra)
@@ -246,14 +478,19 @@ class RepositoryEngineer:
                     continue
                 full = self._run_commands(worktree, full_commands, stage=RepositoryStage.TEST_FULL)
                 last_full = full
+                if self.checkpoint:
+                    self.checkpoint.save(f"FULL_TESTS_{cycle}", {"results": [item.to_dict() for item in full]})
                 self._record(trajectory, RepositoryStage.TEST_FULL, {"cycle": cycle, "results": [item.to_dict() for item in full]})
                 if full and not all(item.success for item in full):
                     last_failures = full
                     continue
                 after_benchmarks = self._run_commands(worktree, bench_commands, stage=RepositoryStage.BENCHMARK)
+                if self.checkpoint:
+                    self.checkpoint.save(f"BENCHMARK_AFTER_{cycle}", {"results": [item.to_dict() for item in after_benchmarks]})
                 self._record(trajectory, RepositoryStage.BENCHMARK, {"when": "after", "cycle": cycle, "results": [item.to_dict() for item in after_benchmarks]})
                 benchmark_ok = self._benchmarks_ok(goal, before_benchmarks, after_benchmarks)
-                protected_pristine = self._protected_pristine(source, worktree, protected_hashes)
+                protection_state = self._protected_state(source, worktree, protected_hashes)
+                protected_pristine = protection_state == ProtectionState.PRISTINE
                 diff = self._current_diff(worktree)
                 changed_files = self._changed_files(worktree)
                 ready = bool(diff.strip() and protected_pristine and benchmark_ok and (not targeted or all(item.success for item in targeted)) and (not full or all(item.success for item in full)))
@@ -268,6 +505,7 @@ class RepositoryEngineer:
                     benchmarks_after=after_benchmarks,
                     review=review,
                     protected_pristine=protected_pristine,
+                    protection_state=protection_state,
                     changed_files=changed_files,
                     rationale=str(proposal.get("analysis", "")),
                     cycles=cycle,
@@ -275,16 +513,23 @@ class RepositoryEngineer:
                 )
                 self._write_result_artifacts(result, trajectory)
                 self._record(trajectory, RepositoryStage.EVALUATE, result.to_dict())
+                if self.checkpoint:
+                    self.checkpoint.save(RepositoryStage.EVALUATION_COMPLETE, result.to_dict())
                 self.memory.record({"trajectory_id": result.trajectory_id, **trajectory, "outcome": result.to_dict()})
                 return result
             result = self._rejected(worktree, trajectory, last_failures, before_benchmarks, last_targeted, last_full, review, max_dev_cycles)
             return result
         except Exception as exc:
+            provider_failure = _provider_failure_payload(exc)
+            status = RepositoryStage.PAUSED if provider_failure else RepositoryStage.REJECTED
             result = RepositoryCandidateResult(
-                status=RepositoryStage.REJECTED,
+                status=status,
                 worktree=str(worktree or ""),
-                protected_pristine=False,
+                protected_pristine=True if worktree is not None else False,
+                protection_state=ProtectionState.NOT_EVALUATED,
                 error=str(exc),
+                failure_kind=provider_failure.get("kind", "") if provider_failure else "",
+                resume_command=self.resume_command,
             )
             if worktree is not None:
                 self._write_result_artifacts(result, trajectory)
@@ -292,14 +537,15 @@ class RepositoryEngineer:
             self.memory.record({"trajectory_id": result.trajectory_id, **trajectory, "outcome": result.to_dict()})
             return result
 
-    def project_tree(self, repository_path: str | Path, *, limit: int = 240) -> list[str]:
+    def project_tree(self, repository_path: str | Path, path: str | None = None, *, limit: int = 240) -> list[str]:
         root = Path(repository_path).resolve()
+        scope = self._safe_subtree_path(root, path) if path else root
         files = []
-        for path in sorted(root.rglob("*")):
+        for candidate in sorted(scope.rglob("*")):
             if len(files) >= limit:
                 break
-            if path.is_file() and _visible_repo_file(path, root):
-                files.append(path.relative_to(root).as_posix())
+            if candidate.is_file() and _visible_repo_file(candidate, root):
+                files.append(candidate.relative_to(root).as_posix())
         return files
 
     def read_file(self, repository_path: str | Path, relative_path: str, *, max_chars: int = 8000) -> str:
@@ -315,13 +561,13 @@ class RepositoryEngineer:
         high = min(len(lines), int(end))
         return "\n".join(f"{idx}: {lines[idx - 1]}" for idx in range(low, high + 1))
 
-    def search_text(self, repository_path: str | Path, query: str, *, limit: int = 40) -> list[str]:
+    def search_text(self, repository_path: str | Path, query: str, path: str | None = None, *, limit: int = 40) -> list[str]:
         root = Path(repository_path).resolve()
         matches = []
-        for relative in self.project_tree(root, limit=1000):
-            path = root / relative
+        for relative in self.project_tree(root, path=path, limit=1000):
+            file_path = root / relative
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = file_path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             for line_number, line in enumerate(text.splitlines(), start=1):
@@ -332,11 +578,11 @@ class RepositoryEngineer:
                 break
         return matches
 
-    def find_symbol_or_import(self, repository_path: str | Path, name: str, *, limit: int = 40) -> list[str]:
+    def find_symbol_or_import(self, repository_path: str | Path, name: str, path: str | None = None, *, limit: int = 40) -> list[str]:
         pattern = re.compile(rf"\b(class|def|from|import)\b.*\b{re.escape(name)}\b|\b{re.escape(name)}\b")
         root = Path(repository_path).resolve()
         matches = []
-        for relative in self.project_tree(root, limit=1000):
+        for relative in self.project_tree(root, path=path, limit=1000):
             if not relative.endswith(".py"):
                 continue
             text = (root / relative).read_text(encoding="utf-8", errors="replace")
@@ -348,8 +594,8 @@ class RepositoryEngineer:
                 break
         return matches
 
-    def inspect_tests(self, repository_path: str | Path, *, limit: int = 80) -> list[str]:
-        return [item for item in self.project_tree(repository_path, limit=1000) if item.endswith(".py") and ("test" in Path(item).name.lower())][:limit]
+    def inspect_tests(self, repository_path: str | Path, path: str | None = None, *, limit: int = 80) -> list[str]:
+        return [item for item in self.project_tree(repository_path, path=path, limit=1000) if item.endswith(".py") and ("test" in Path(item).name.lower())][:limit]
 
     def _create_worktree(self, repository_path: Path) -> Path:
         worktree = self.worktree_root / f"candidate_{uuid.uuid4().hex[:10]}"
@@ -380,13 +626,10 @@ class RepositoryEngineer:
             raise ValueError("candidate worktree destination must not contain the source repository")
 
     def _investigate(self, worktree: Path, goal: SelfImprovementGoal, trajectory: dict[str, Any]) -> dict[str, Any]:
-        context: dict[str, Any] = {
-            "tree": self.project_tree(worktree),
-            "inspected_files": {},
-            "searches": [],
-            "test_files": self.inspect_tests(worktree),
-            "notes": [],
-        }
+        manager = RepositoryContextManager()
+        manager.add_tree(self.project_tree(worktree))
+        manager.add_tests(self.inspect_tests(worktree))
+        context = manager.to_dict()
         fallback_terms = [term for term in sorted(_terms(goal.objective)) if len(term) > 4][:6]
         fallback_requests = [{"tool": "search_text", "query": term} for term in fallback_terms]
         fallback_requests.extend({"tool": "read_file", "path": path} for path in self._likely_files(context, goal)[:8])
@@ -399,16 +642,31 @@ class RepositoryEngineer:
             observations = [self._run_repository_tool(worktree, request, goal) for request in requests[:8]]
             for observation in observations:
                 if observation.get("tool") == "read_file":
-                    context["inspected_files"][observation["path"]] = observation.get("content", "")
+                    manager.add_file(observation["path"], observation.get("content", ""))
+                elif observation.get("tool") == "tree":
+                    manager.add_tree(observation.get("results", []))
                 elif observation.get("tool") in {"search_text", "find_symbol_import"}:
-                    context["searches"].append(observation)
+                    manager.add_search(observation)
                 elif observation.get("tool") == "inspect_tests":
-                    context["test_files"] = observation.get("results", [])
+                    manager.add_tests(observation.get("results", []))
                 else:
-                    context["notes"].append(observation)
+                    manager.add_note(observation)
+            context = manager.to_dict()
             self._record(trajectory, RepositoryStage.UNDERSTAND, {"round": round_index, "requests": requests, "observations": _compact_observations(observations)})
+            if self.checkpoint:
+                self.checkpoint.save(f"INVESTIGATION_ROUND_{round_index}", {"context": _context_for_prompt(context), "requests": requests})
             if context["inspected_files"] and round_index >= 2:
                 break
+        if not context["inspected_files"]:
+            for path in self._likely_files(context, goal)[:3]:
+                try:
+                    content = self.read_file(worktree, path)
+                    manager.add_file(path, content)
+                except Exception:
+                    continue
+            context = manager.to_dict()
+        if not context["inspected_files"]:
+            raise ValueError("investigation quality gate failed: no relevant source file was inspected")
         return context
 
     def _request_investigation(self, goal: SelfImprovementGoal, context: dict[str, Any], round_index: int) -> list[dict[str, Any]]:
@@ -443,7 +701,7 @@ class RepositoryEngineer:
             f"Round: {round_index}\nGoal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
             f"Known context:\n{json.dumps(_context_for_prompt(context), indent=2, sort_keys=True)}"
         )
-        payload = self._generate_json(prompt, schema, max_tokens=1200, temperature=0.1)
+        payload = self._generate_json(prompt, schema, stage=RepositoryStage.UNDERSTAND, desired_output_tokens=512, temperature=0.1)
         requests = payload.get("requests") if isinstance(payload, dict) else []
         if not isinstance(requests, list):
             return []
@@ -453,10 +711,12 @@ class RepositoryEngineer:
         tool = str(request.get("tool", "")).strip()
         try:
             if tool == "tree":
-                return {"tool": tool, "results": self.project_tree(worktree)}
+                path = str(request.get("path") or "")
+                return {"tool": tool, "path": path, "results": self.project_tree(worktree, path=path or None)}
             if tool == "search_text":
                 query = str(request.get("query", ""))
-                return {"tool": tool, "query": query, "results": self.search_text(worktree, query)}
+                path = str(request.get("path") or "")
+                return {"tool": tool, "query": query, "path": path, "results": self.search_text(worktree, query, path=path or None)}
             if tool == "read_file":
                 path = str(request.get("path", ""))
                 return {"tool": tool, "path": path, "content": self.read_file(worktree, path)}
@@ -465,9 +725,11 @@ class RepositoryEngineer:
                 return {"tool": tool, "path": path, "content": self.read_file_range(worktree, path, int(request.get("start", 1)), int(request.get("end", 120)))}
             if tool == "find_symbol_import":
                 symbol = str(request.get("symbol") or request.get("query") or "")
-                return {"tool": tool, "symbol": symbol, "results": self.find_symbol_or_import(worktree, symbol)}
+                path = str(request.get("path") or "")
+                return {"tool": tool, "symbol": symbol, "path": path, "results": self.find_symbol_or_import(worktree, symbol, path=path or None)}
             if tool == "inspect_tests":
-                return {"tool": tool, "results": self.inspect_tests(worktree)}
+                path = str(request.get("path") or "")
+                return {"tool": tool, "path": path, "results": self.inspect_tests(worktree, path=path or None)}
             if tool == "git_diff":
                 return {"tool": tool, "diff": self._current_diff(worktree)}
             return {"tool": tool, "error": "unsupported repository tool"}
@@ -492,7 +754,7 @@ class RepositoryEngineer:
             f"Repository context:\n{json.dumps(_context_for_prompt(context), indent=2, sort_keys=True)}\n"
             f"Relevant prior self-development memory:\n{json.dumps(_prior_for_prompt(prior), indent=2, sort_keys=True)}"
         )
-        plan = self._generate_json(prompt, schema, max_tokens=1600, temperature=0.1)
+        plan = self._generate_json(prompt, schema, stage=RepositoryStage.PLAN, desired_output_tokens=768, temperature=0.1)
         self._record(trajectory, RepositoryStage.PLAN, plan if isinstance(plan, dict) else {"plan": ""})
         return plan if isinstance(plan, dict) else {"analysis": "", "plan": ""}
 
@@ -502,7 +764,7 @@ class RepositoryEngineer:
             "Use complete file replacements. Do not alter protected paths. Final readiness requires deterministic tests.\n"
             f"SelfImprovementGoal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
             f"Plan:\n{json.dumps(plan, indent=2, sort_keys=True)}\n"
-            f"Repository context:\n{json.dumps(_context_for_prompt(context, include_files=True), indent=2, sort_keys=True)}\n"
+            f"Repository context:\n{json.dumps(_context_for_prompt(context, include_files=True, plan=plan), indent=2, sort_keys=True)}\n"
             f"Relevant prior memory:\n{json.dumps(_prior_for_prompt(prior), indent=2, sort_keys=True)}"
         )
         return self._generate_patch_bundle(prompt)
@@ -525,13 +787,14 @@ class RepositoryEngineer:
             f"Current diff:\n{diff[-12000:]}\n"
             f"Failures:\n{json.dumps([item.to_dict() for item in failures], indent=2, sort_keys=True)}\n"
             f"Reviewer findings:\n{json.dumps(review.to_dict(), indent=2, sort_keys=True)}\n"
-            f"Relevant files:\n{json.dumps(_context_for_prompt(context, include_files=True), indent=2, sort_keys=True)}"
+            f"Relevant files:\n{json.dumps(_context_for_prompt(context, include_files=True, plan=plan), indent=2, sort_keys=True)}"
         )
         return self._generate_patch_bundle(prompt)
 
     def _generate_patch_bundle(self, prompt: str) -> dict[str, Any]:
         schema = _patch_schema()
-        payload = self._generate_json(prompt, schema, max_tokens=6000, temperature=0.2)
+        stage = RepositoryStage.REPAIR if "Repository Repairer" in prompt else RepositoryStage.IMPLEMENT
+        payload = self._generate_json(prompt, schema, stage=stage, desired_output_tokens=1800, temperature=0.2)
         if not isinstance(payload.get("files"), list):
             raise ValueError("repository proposal did not contain files")
         payload.setdefault("new_files", [])
@@ -558,14 +821,14 @@ class RepositoryEngineer:
             f"Targeted test results:\n{json.dumps([item.to_dict() for item in targeted], indent=2, sort_keys=True)}\n"
             f"Relevant context:\n{json.dumps(_context_for_prompt(context), indent=2, sort_keys=True)}"
         )
-        payload = self._generate_json(prompt, schema, max_tokens=1800, temperature=0.1)
+        payload = self._generate_json(prompt, schema, stage=RepositoryStage.REVIEW, desired_output_tokens=512, temperature=0.1)
         if not isinstance(payload, dict) or not isinstance(payload.get("approved"), bool):
-            return RepositoryReview(approved=True)
+            return self._deterministic_review_fallback(diff, targeted, "malformed reviewer output")
         blocking = payload.get("blocking_findings", [])
         optional = payload.get("optional_findings", [])
         recommended = payload.get("recommended_tests", [])
         if not isinstance(blocking, list) or not isinstance(optional, list) or not isinstance(recommended, list):
-            return RepositoryReview(approved=True)
+            return self._deterministic_review_fallback(diff, targeted, "invalid reviewer fields")
         return RepositoryReview(
             approved=bool(payload.get("approved", False)),
             blocking_findings=[str(item) for item in blocking],
@@ -573,14 +836,21 @@ class RepositoryEngineer:
             recommended_tests=[list(map(str, item)) for item in recommended if isinstance(item, list)],
         )
 
-    def _generate_json(self, prompt: str, schema: dict[str, Any], *, max_tokens: int, temperature: float) -> dict[str, Any]:
+    def _deterministic_review_fallback(self, diff: str, targeted: list[RepositoryCommandResult], reason: str) -> RepositoryReview:
+        if diff.strip() and (not targeted or all(item.success for item in targeted)):
+            return RepositoryReview(approved=True, optional_findings=[f"REVIEW_FALLBACK_USED: {reason}"])
+        return RepositoryReview(approved=False, blocking_findings=[f"REVIEW_UNAVAILABLE: {reason}"])
+
+    def _generate_json(self, prompt: str, schema: dict[str, Any], *, stage: str, desired_output_tokens: int, temperature: float) -> dict[str, Any]:
         last_raw = ""
         for attempt in range(1, self.structured_regeneration_attempts + 2):
-            raw = self._generate_structured(prompt, schema, max_tokens=max_tokens, temperature=temperature)
+            budgeted_prompt, max_tokens, budget_record = self.context_budget.prepare(stage, prompt, desired_output_tokens)
+            raw = self._generate_structured(budgeted_prompt, schema, max_tokens=max_tokens, temperature=temperature)
             last_raw = raw
             try:
                 data = json.loads(_extract_json(raw))
                 if isinstance(data, dict):
+                    data.setdefault("_budget", budget_record)
                     return data
             except json.JSONDecodeError:
                 pass
@@ -591,19 +861,39 @@ class RepositoryEngineer:
         if hasattr(self.brain, "generate_structured"):
             try:
                 return self.brain.generate_structured(prompt, schema, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
-            except (AttributeError, NotImplementedError, RuntimeError, ValueError, TypeError):
+            except (AttributeError, NotImplementedError, StructuredGenerationUnsupported):
                 pass
         if hasattr(self.brain, "generate_coding"):
             return self.brain.generate_coding(prompt, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
         return self.brain.generate(prompt, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
 
-    def _apply_proposal(self, worktree: Path, source: Path, goal: SelfImprovementGoal, proposal: dict[str, Any]) -> None:
+    def _ensure_plan_files_read(self, worktree: Path, context: dict[str, Any], plan: dict[str, Any]) -> None:
+        for relative in [str(item) for item in plan.get("files_to_change", []) if item]:
+            if relative in context.get("inspected_files", {}):
+                continue
+            path = self._safe_read_path(worktree, relative)
+            content = path.read_text(encoding="utf-8", errors="replace")
+            context.setdefault("inspected_files", {})[relative] = content[:8000]
+            context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
+
+    def _apply_proposal(self, worktree: Path, source: Path, goal: SelfImprovementGoal, proposal: dict[str, Any], context: dict[str, Any]) -> None:
         for item in [*proposal.get("files", []), *proposal.get("new_files", [])]:
             if not isinstance(item, dict):
                 continue
             path = self._safe_path(worktree, source, str(item.get("path", "")), goal)
+            relative = str(item.get("path", "")).replace("\\", "/")
+            if path.exists():
+                current = path.read_text(encoding="utf-8", errors="replace")
+                if relative not in context.get("inspected_files", {}):
+                    context.setdefault("inspected_files", {})[relative] = current[:8000]
+                    context.setdefault("file_hashes", {})[relative] = _stable_hash(current)
+                expected_hash = context.get("file_hashes", {}).get(relative)
+                if expected_hash and expected_hash != _stable_hash(current):
+                    raise ValueError(f"implementation quality gate failed: stale file context for {relative}")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(str(item.get("content", "")), encoding="utf-8")
+            context.setdefault("inspected_files", {})[relative] = str(item.get("content", ""))[:8000]
+            context.setdefault("file_hashes", {})[relative] = _stable_hash(str(item.get("content", "")))
         for relative in proposal.get("deleted_files", []):
             path = self._safe_path(worktree, source, str(relative), goal)
             if path.exists():
@@ -633,6 +923,8 @@ class RepositoryEngineer:
                     stderr=completed.stderr[-8000:],
                     return_code=completed.returncode,
                     metrics=_extract_metrics(output),
+                    cwd=str(worktree),
+                    executable=command[0],
                 )
             )
             self._clear_python_caches(worktree)
@@ -660,10 +952,13 @@ class RepositoryEngineer:
     def _benchmarks_ok(self, goal: SelfImprovementGoal, before: list[RepositoryCommandResult], after: list[RepositoryCommandResult]) -> bool:
         if after and not all(item.success for item in after):
             return False
+        after_metrics = _merge_metrics(after)
+        for metric, minimum in goal.metric_minimums.items():
+            if after_metrics.get(metric, float("-inf")) < float(minimum):
+                return False
         if not goal.require_benchmark_improvement:
             return True
         before_metrics = _merge_metrics(before)
-        after_metrics = _merge_metrics(after)
         if goal.metric_name:
             return after_metrics.get(goal.metric_name, float("-inf")) > before_metrics.get(goal.metric_name, float("-inf"))
         common = set(before_metrics) & set(after_metrics)
@@ -700,6 +995,7 @@ class RepositoryEngineer:
             benchmarks_before=before,
             review=review,
             protected_pristine=False,
+            protection_state=ProtectionState.NOT_EVALUATED,
             changed_files=self._changed_files(worktree),
             error="development cycles exhausted before deterministic acceptance",
             cycles=cycles or self.max_cycles,
@@ -738,23 +1034,78 @@ class RepositoryEngineer:
             raise ValueError(f"repository file does not exist: {relative_path}")
         return path
 
+    def _safe_subtree_path(self, root: Path, relative_path: str | None) -> Path:
+        if not relative_path:
+            return root
+        raw = Path(relative_path)
+        if raw.is_absolute() or ".." in raw.parts:
+            raise ValueError(f"unsafe repository subtree path: {relative_path}")
+        path = (root / raw).resolve(strict=False)
+        if not path.is_relative_to(root.resolve()):
+            raise ValueError(f"subtree path escapes repository: {relative_path}")
+        if not path.exists():
+            return path
+        if path.is_file():
+            return path.parent
+        return path
+
     def _hash_protected(self, source: Path, protected_paths: list[str]) -> dict[str, str]:
-        hashes = {}
+        hashes: dict[str, str] = {}
         for relative in protected_paths:
-            path = (source / relative).resolve(strict=False)
+            raw = Path(relative)
+            if raw.is_absolute() or ".." in raw.parts:
+                raise ValueError(f"unsafe protected path: {relative}")
+            path = (source / raw).resolve(strict=False)
+            if not path.is_relative_to(source.resolve()):
+                raise ValueError(f"protected path escapes repository: {relative}")
             if path.exists() and path.is_file():
-                hashes[relative] = sha256(path.read_bytes()).hexdigest()
+                hashes[raw.as_posix()] = sha256(path.read_bytes()).hexdigest()
+            elif path.exists() and path.is_dir():
+                root_key = raw.as_posix().rstrip("/") + "/"
+                entries: list[str] = []
+                for child in sorted(path.rglob("*")):
+                    if child.is_file() and _visible_repo_file(child, source):
+                        rel = child.relative_to(source).as_posix()
+                        entries.append(rel)
+                        hashes[rel] = sha256(child.read_bytes()).hexdigest()
+                hashes[root_key] = "DIR:" + _stable_hash("\n".join(entries))
         return hashes
 
     def _protected_pristine(self, source: Path, worktree: Path, protected_hashes: dict[str, str]) -> bool:
+        return self._protected_state(source, worktree, protected_hashes) == ProtectionState.PRISTINE
+
+    def _protected_state(self, source: Path, worktree: Path, protected_hashes: dict[str, str]) -> str:
         for relative, expected in protected_hashes.items():
+            if expected.startswith("DIR:"):
+                continue
             source_path = (source / relative).resolve(strict=False)
             candidate_path = (worktree / relative).resolve(strict=False)
             if not candidate_path.exists() or sha256(candidate_path.read_bytes()).hexdigest() != expected:
-                return False
+                return ProtectionState.MODIFIED
             if source_path.exists() and sha256(source_path.read_bytes()).hexdigest() != expected:
-                return False
-        return True
+                return ProtectionState.MODIFIED
+        protected_roots = set()
+        for relative in protected_hashes:
+            parts = Path(relative).parts
+            if parts:
+                protected_roots.add(parts[0])
+        for root_name in protected_roots:
+            source_root = source / root_name
+            candidate_root = worktree / root_name
+            if candidate_root.exists() and source_root.exists() and source_root.is_dir():
+                expected_files = {
+                    path
+                    for path, value in protected_hashes.items()
+                    if not value.startswith("DIR:") and (path == root_name or path.startswith(root_name + "/"))
+                }
+                actual_files = {
+                    path.relative_to(worktree).as_posix()
+                    for path in candidate_root.rglob("*")
+                    if path.is_file() and _visible_repo_file(path, worktree)
+                }
+                if actual_files != expected_files:
+                    return ProtectionState.MODIFIED
+        return ProtectionState.PRISTINE
 
     def _git(self, worktree: Path, args: list[str], *, check: bool) -> subprocess.CompletedProcess:
         return self._run_git_raw(worktree, args, check=check)
@@ -817,6 +1168,8 @@ def _visible_repo_file(path: Path, root: Path) -> bool:
     normalized = path.relative_to(root).as_posix()
     if normalized.startswith("data/benchmark_runs/"):
         return False
+    if normalized.startswith("skills/_staging/"):
+        return False
     if path.suffix.lower() in {".pyc", ".pt", ".sqlite", ".png", ".jpg", ".jpeg", ".gif", ".bin"}:
         return False
     return True
@@ -830,6 +1183,8 @@ def _fallback_copy_ignore(directory: str, names: list[str]) -> set[str]:
     directory_path = Path(directory)
     if directory_path.name == "data":
         ignored.update(name for name in names if name == "benchmark_runs")
+    if directory_path.name == "skills":
+        ignored.update(name for name in names if name == "_staging")
     return ignored
 
 
@@ -843,6 +1198,9 @@ def _ignored_repo_part(part: str) -> bool:
         ".pytest_cache",
         ".mypy_cache",
         ".ruff_cache",
+        ".runtime",
+        ".cache",
+        "_staging",
         "node_modules",
         "build",
         "dist",
@@ -881,7 +1239,7 @@ def _redact_large(payload: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
-def _context_for_prompt(context: dict[str, Any], *, include_files: bool = False) -> dict[str, Any]:
+def _context_for_prompt(context: dict[str, Any], *, include_files: bool = False, plan: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = {
         "tree_excerpt": list(context.get("tree", []))[:160],
         "searches": context.get("searches", [])[-12:],
@@ -889,10 +1247,17 @@ def _context_for_prompt(context: dict[str, Any], *, include_files: bool = False)
         "notes": context.get("notes", [])[-8:],
     }
     inspected = context.get("inspected_files", {})
-    payload["inspected_files"] = {
-        key: (value if include_files else f"{len(value)} chars")
-        for key, value in list(inspected.items())[:20]
-    }
+    if include_files:
+        wanted = [str(item) for item in (plan or {}).get("files_to_change", []) if item]
+        selected = {path: inspected[path] for path in wanted if path in inspected}
+        for key, value in inspected.items():
+            if key not in selected and len(selected) < 8:
+                selected[key] = value
+        payload["inspected_files"] = selected
+    else:
+        payload["inspected_files"] = {key: f"{len(value)} chars" for key, value in list(inspected.items())[:20]}
+    if context.get("recent_failures"):
+        payload["recent_failures"] = context.get("recent_failures", [])[-6:]
     return payload
 
 
@@ -934,6 +1299,29 @@ def _merge_metrics(results: list[RepositoryCommandResult]) -> dict[str, float]:
     for result in results:
         merged.update(result.metrics)
     return merged
+
+
+def _compact_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    head = max_chars // 2
+    tail = max_chars - head
+    return text[:head] + "\n\n[...SELFDEVELOPER_CONTEXT_COMPACTED...]\n\n" + text[-tail:]
+
+
+def _provider_failure_payload(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, ProviderError):
+        return {
+            "kind": exc.kind,
+            "status": exc.status,
+            "message": exc.message,
+            "attempt": exc.attempt,
+            "model": exc.model,
+        }
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, ProviderError):
+        return _provider_failure_payload(cause)
+    return {}
 
 
 def _safe_command_env() -> dict[str, str]:

@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import torch
 
-from brain.providers import LocalTransformersBrainProvider, OpenAICompatibleBrainProvider, OpenAICompatibleConfig
+from brain.providers import LocalTransformersBrainProvider, OpenAICompatibleBrainProvider, OpenAICompatibleConfig, ProviderError
 from environments.coding.actions import ActionCandidate, ActionType
 from learning.representations.action_encoding import SemanticActionEncoder
 from learning.representations.semantic import LightweightLocalEmbeddingProvider
@@ -166,6 +166,78 @@ def test_openai_compatible_provider_sends_guided_json_schema_to_server():
         assert provider.last_metadata["generated_tokens"] == 11
         assert provider.last_metadata["total_tokens"] == 31
         assert provider.last_metadata["attempts"] == 1
+    finally:
+        server.shutdown()
+
+
+def test_openai_compatible_provider_classifies_context_overflow_without_retry():
+    calls = {"count": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls["count"] += 1
+            body = b'{"error":{"message":"maximum context length exceeded"}}'
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return None
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = OpenAICompatibleBrainProvider(
+            OpenAICompatibleConfig(base_url=f"http://127.0.0.1:{server.server_port}", api_key="secret", model="remote-test", timeout=5, retries=3)
+        )
+        try:
+            provider.generate_structured("too large", {"type": "object"}, max_tokens=100)
+            raise AssertionError("expected ProviderError")
+        except ProviderError as exc:
+            assert exc.kind == "context_overflow"
+            assert exc.status == 400
+            assert exc.attempt == 1
+            assert "secret" not in exc.message
+        assert calls["count"] == 1
+    finally:
+        server.shutdown()
+
+
+def test_openai_compatible_provider_retries_transient_502():
+    calls = {"count": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                body = b"temporary upstream failure"
+                self.send_response(502)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = json.dumps({"choices": [{"message": {"content": "{\"ok\": true}"}}]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return None
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        provider = OpenAICompatibleBrainProvider(
+            OpenAICompatibleConfig(base_url=f"http://127.0.0.1:{server.server_port}", api_key="", model="remote-test", timeout=5, retries=2, backoff_seconds=0.01)
+        )
+        assert provider.generate_structured("ok", {"type": "object"}, max_tokens=20) == "{\"ok\": true}"
+        assert calls["count"] == 2
     finally:
         server.shutdown()
 

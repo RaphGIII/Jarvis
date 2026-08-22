@@ -748,10 +748,13 @@ small allowlist of runtime variables; API keys are never included in prompts or
 logs, and generated commands run with `PYTHONDONTWRITEBYTECODE=1` so bytecode
 caches cannot create stale test outcomes or noisy diffs.
 
-Run SelfDeveloper v1 against the real Jarvis repository:
+Run SelfDeveloper v1 against the real Jarvis repository. This command performs
+provider preflight before any benchmark, enforces an 8192-token request budget,
+stores checkpoints under the run directory, uses an external worktree root, and
+requires the capability benchmark success rate threshold:
 
 ```bash
-python -m jarvis.self_develop --repo D:\Jarvis\Jarvis --goal "Improve capability acquisition reliability without changing public contracts." --allowed-path capabilities --allowed-path development --allowed-path runtime --allowed-path tests --protected-path data --protected-path .git --test-command "python -m pytest tests/test_autonomous_engineering_v04.py -q" --full-test-command "python -m pytest -q" --benchmark-command "python -m training.capability_acquisition_v04_demo --mock-brain --task-count 3 --benchmark-dir data/benchmark_runs/self_developer_v1_mock" --max-cycles 5 --brain-provider openai_compatible --benchmark-dir data/benchmark_runs/self_developer_v1_real_repo
+python -m jarvis.self_develop --repo D:\Jarvis\Jarvis --goal "Improve capability acquisition reliability without changing public contracts." --allowed-path capabilities --allowed-path development --allowed-path runtime --allowed-path brain --allowed-path training --protected-path tests --protected-path training --protected-path data --protected-path .git --test-command "python -m pytest tests/test_autonomous_engineering_v04.py tests/test_capability_acquisition_v04.py -q" --full-test-command "python -m pytest -q" --benchmark-command "python -m training.capability_acquisition_v04_demo --brain-provider openai_compatible --task-count 3 --benchmark-dir data/benchmark_runs/jarvis_self_fix_capability_01/candidate_benchmark" --require-benchmark-improvement --metric-name CAPABILITY_ACQUISITION_SUCCESS_RATE --metric-min CAPABILITY_ACQUISITION_SUCCESS_RATE=0.667 --context-window 8192 --max-cycles 5 --brain-provider openai_compatible --run-id jarvis_self_fix_capability_01 --benchmark-dir data/benchmark_runs/jarvis_self_fix_capability_01 --worktree-root D:\Jarvis\.jarvis_worktrees\jarvis_self_fix_capability_01
 ```
 
 The command reports the candidate worktree, diff path, result JSON path,

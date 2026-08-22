@@ -39,6 +39,26 @@ class BrainProvider(Protocol):
         ...
 
 
+class StructuredGenerationUnsupported(NotImplementedError):
+    """Raised only when a provider genuinely cannot do guided JSON."""
+
+
+@dataclass
+class ProviderError(RuntimeError):
+    kind: str
+    status: int | None = None
+    message: str = ""
+    model: str = ""
+    attempt: int = 0
+    stage: str = ""
+
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(
+            self,
+            f"ProviderError(kind={self.kind!r}, status={self.status!r}, model={self.model!r}, attempt={self.attempt!r}, message={self.message!r})",
+        )
+
+
 class LocalTransformersBrainProvider:
     """Provider wrapper around the existing local Transformers/JarvisBrain path."""
 
@@ -70,7 +90,7 @@ class LocalTransformersBrainProvider:
         temperature: float = 0.6,
         top_p: float = 0.9,
     ) -> str:
-        raise NotImplementedError("Local Transformers provider does not support guided JSON generation.")
+        raise StructuredGenerationUnsupported("Local Transformers provider does not support guided JSON generation.")
 
     def think(self, user_prompt: str, max_tokens: int = MAX_NEW_TOKENS) -> str:
         return self.generate(user_prompt, max_tokens=max_tokens)
@@ -96,6 +116,7 @@ class OpenAICompatibleConfig:
     max_tokens: int = 450
     retries: int = 1
     backoff_seconds: float = 0.5
+    context_window: int = 8192
 
 
 class OpenAICompatibleBrainProvider:
@@ -123,6 +144,7 @@ class OpenAICompatibleBrainProvider:
                 top_p=float(os.getenv("JARVIS_BRAIN_TOP_P", "0.9")),
                 max_tokens=int(os.getenv("JARVIS_BRAIN_MAX_TOKENS", "450")),
                 retries=int(os.getenv("JARVIS_BRAIN_RETRIES", "1")),
+                context_window=int(os.getenv("JARVIS_BRAIN_CONTEXT_WINDOW", "8192")),
             )
         )
 
@@ -163,9 +185,15 @@ class OpenAICompatibleBrainProvider:
     def health_check(self) -> dict[str, Any]:
         try:
             self.generate("Return OK.", max_tokens=4, temperature=0.0, top_p=1.0)
-            return {"ok": True, "provider": self.provider_name, "model": self.model_name}
+            return {"ok": True, "provider": self.provider_name, "model": self.model_name, "context_window": self.config.context_window}
         except Exception as exc:
-            return {"ok": False, "provider": self.provider_name, "model": self.model_name, "error": type(exc).__name__}
+            return {
+                "ok": False,
+                "provider": self.provider_name,
+                "model": self.model_name,
+                "error": _provider_error_payload(exc),
+                "context_window": self.config.context_window,
+            }
 
     def capabilities(self) -> dict[str, Any]:
         return {"chat": True, "coding": True, "embeddings": False, "local": False, "structured_generation": True}
@@ -218,11 +246,73 @@ class OpenAICompatibleBrainProvider:
                     "attempts": attempt + 1,
                 }
                 return str(content)
-            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError) as exc:
+            except urllib.error.HTTPError as exc:
+                error = self._classify_http_error(exc, attempt + 1)
+                last_error = error
+                if not _retryable_provider_error(error) or attempt >= self.config.retries:
+                    raise error from exc
+                time.sleep(self.config.backoff_seconds * (2**attempt))
+            except (urllib.error.URLError, TimeoutError) as exc:
+                error = ProviderError(kind="provider_connection_error", message=_safe_error_message(str(exc)), model=self.config.model, attempt=attempt + 1)
+                last_error = error
+                if attempt >= self.config.retries:
+                    raise error from exc
+                time.sleep(self.config.backoff_seconds * (2**attempt))
+            except (KeyError, IndexError, json.JSONDecodeError) as exc:
+                error = ProviderError(kind="bad_provider_response", message=_safe_error_message(str(exc)), model=self.config.model, attempt=attempt + 1)
+                last_error = error
+                raise error from exc
+            except Exception as exc:
                 last_error = exc
-                if attempt < self.config.retries:
-                    time.sleep(self.config.backoff_seconds * (2**attempt))
-        raise RuntimeError(f"OpenAI-compatible brain provider unavailable: {type(last_error).__name__}") from last_error
+                raise
+        if isinstance(last_error, ProviderError):
+            raise last_error
+        raise ProviderError(kind="provider_unavailable", message=type(last_error).__name__ if last_error else "unknown", model=self.config.model) from last_error
+
+    def _classify_http_error(self, exc: urllib.error.HTTPError, attempt: int) -> ProviderError:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:1200]
+        except Exception:
+            body = str(exc)
+        message = _safe_error_message(body or str(exc))
+        lowered = message.lower()
+        if "maximum context" in lowered or "context length" in lowered or "too many tokens" in lowered:
+            kind = "context_overflow"
+        elif exc.code == 429:
+            kind = "rate_limited"
+        elif exc.code in {500, 502, 503, 504}:
+            kind = "server_error"
+        elif exc.code in {400, 404, 422}:
+            kind = "deterministic_provider_error"
+        else:
+            kind = "provider_http_error"
+        return ProviderError(kind=kind, status=exc.code, message=message, model=self.config.model, attempt=attempt)
+
+
+def _retryable_provider_error(error: ProviderError) -> bool:
+    return error.kind in {"rate_limited", "server_error", "provider_connection_error"}
+
+
+def _safe_error_message(message: str) -> str:
+    redacted = message
+    for key in ["JARVIS_BRAIN_API_KEY", "API_KEY", "TOKEN", "SECRET"]:
+        secret = os.getenv(key)
+        if secret:
+            redacted = redacted.replace(secret, "<redacted>")
+    return redacted[:1200]
+
+
+def _provider_error_payload(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, ProviderError):
+        return {
+            "kind": exc.kind,
+            "status": exc.status,
+            "message": exc.message,
+            "model": exc.model,
+            "attempt": exc.attempt,
+        }
+    return {"kind": type(exc).__name__, "message": _safe_error_message(str(exc))}
 
 
 def make_brain_provider_from_env() -> BrainProvider:
