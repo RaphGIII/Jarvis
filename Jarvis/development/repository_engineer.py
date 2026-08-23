@@ -15,6 +15,15 @@ from pathlib import Path
 from typing import Any
 
 from brain.json_utils import lenient_json_loads
+from development.edit_engine import (
+    EditBudget,
+    EditEngine,
+    EditError,
+    EditResult,
+    PathPolicy,
+    edit_schema,
+    parse_bundle,
+)
 
 try:
     from brain.providers import ProviderError, StructuredGenerationUnsupported
@@ -47,6 +56,49 @@ class RepositoryStage:
     CANDIDATE_READY = "SELF_DEVELOPMENT_CANDIDATE_READY"
     REJECTED = "SELF_DEVELOPMENT_CANDIDATE_REJECTED"
     PAUSED = "SELF_DEVELOPMENT_PAUSED"
+
+
+#: Edit failures that represent a violated boundary rather than a near-miss.
+#: Re-prompting the model on these would just invite a second attempt at the
+#: same boundary, so they end the run.
+_FATAL_EDIT_KINDS = frozenset(
+    {"protected_path", "path_not_allowed", "path_escape", "unsafe_path", "symlink_target"}
+)
+
+
+def _correction_hint(error: EditError) -> str:
+    """Turn an :class:`EditError` kind into advice the model can act on."""
+
+    hints = {
+        "no_unique_match": (
+            "Your search text does not appear in the file. Pick a DIFFERENT anchor "
+            "that you can see verbatim in CURRENT CODE below."
+        ),
+        "ambiguous_search": (
+            "Your search text appears more than once. Add one or two neighbouring "
+            "lines so the anchor becomes unique."
+        ),
+        "stale_context": (
+            "The file changed since you last saw it. Use only the CURRENT CODE below."
+        ),
+        "no_effective_edit": (
+            "Your replacement was identical to what is already there. Make a real change."
+        ),
+        "missing_target": (
+            "That file does not exist. Either target an existing file, or add it via new_files."
+        ),
+        "create_over_existing": (
+            "That file already exists. Edit it with search/replace instead of new_files."
+        ),
+        "rewrite_too_large": (
+            "Do not rewrite the whole file. Emit small search/replace edits instead."
+        ),
+        "empty_search": "Every edit needs a non-empty search anchor copied from CURRENT CODE.",
+        "invalid_edit": (
+            "Each entry of files[] needs a path plus either search+replace, or content."
+        ),
+    }
+    return hints.get(error.kind, "Emit a corrected minimal patch.")
 
 
 class ProtectionState:
@@ -362,6 +414,10 @@ class RepositoryEngineer:
         self.context_budget = context_budget or ModelRequestBudget.from_env()
         self.checkpoint = checkpoint
         self.resume_command = resume_command
+        #: The trajectory of the run currently in progress.  Helper methods deep
+        #: in the patch path need somewhere to record what they observed without
+        #: threading the dict through every signature.
+        self._active_trajectory: dict[str, Any] = {"events": []}
 
     def preflight(self) -> dict[str, Any]:
         payload = {
@@ -433,6 +489,7 @@ class RepositoryEngineer:
             "worktree": "",
             "events": [],
         }
+        self._active_trajectory = trajectory
         try:
             worktree = Path(saved_worktree).resolve() if resuming else self._create_worktree(source)
             trajectory["worktree"] = str(worktree)
@@ -465,12 +522,45 @@ class RepositoryEngineer:
             review = RepositoryReview(False, ["not reviewed"])
             max_dev_cycles = max_cycles or self.max_cycles
             for cycle in range(1, max_dev_cycles + 1):
-                proposal = (
-                    self._request_patch(goal, context, plan, prior, trajectory)
-                    if cycle == 1
-                    else self._request_repair(goal, context, plan, last_failures, review, trajectory)
-                )
-                self._apply_proposal(worktree, source, goal, proposal, context)
+                try:
+                    proposal = (
+                        self._request_patch(goal, context, plan, prior, trajectory)
+                        if cycle == 1
+                        else self._request_repair(goal, context, plan, last_failures, review, trajectory)
+                    )
+                    self._apply_proposal(worktree, source, goal, proposal, context)
+                except EditError as exc:
+                    # A patch that could not be applied is an ordinary event in
+                    # autonomous development, not the end of the mission: the
+                    # next cycle gets the failure as diagnostic evidence and
+                    # tries again.  Policy violations are the exception -- they
+                    # must terminate the run rather than be retried.
+                    if exc.kind in _FATAL_EDIT_KINDS:
+                        raise
+                    last_failures = [
+                        RepositoryCommandResult(
+                            ["patch"], False, stderr=f"{exc.kind}: {exc.detail}", return_code=1
+                        )
+                    ]
+                    self._record(
+                        trajectory,
+                        RepositoryStage.DIAGNOSE,
+                        {"cycle": cycle, "reason": "PATCH_NOT_APPLIED", "kind": exc.kind, "detail": exc.detail},
+                    )
+                    continue
+                except ValueError as exc:
+                    if _provider_failure_payload(exc):
+                        raise
+                    last_failures = [
+                        RepositoryCommandResult(["patch"], False, stderr=str(exc), return_code=1)
+                    ]
+                    self._record(
+                        trajectory,
+                        RepositoryStage.DIAGNOSE,
+                        {"cycle": cycle, "reason": "PATCH_GENERATION_FAILED", "detail": str(exc)},
+                    )
+                    continue
+
                 changed_now = self._assert_changed_files_allowed(
                     worktree,
                     goal,
@@ -961,397 +1051,141 @@ class RepositoryEngineer:
             context.setdefault("inspected_files", {})[relative] = content[:8000]
             context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
 
-    def _apply_proposal(self, worktree: Path, source: Path, goal: SelfImprovementGoal, proposal: dict[str, Any], context: dict[str, Any]) -> None:
-        import difflib
-        import os
-        import re
-
-        max_changed_lines = int(os.getenv("JARVIS_BUILD_MAX_CHANGED_LINES", "160"))
-        max_new_file_chars = int(os.getenv("JARVIS_BUILD_MAX_NEW_FILE_CHARS", "16000"))
-
-        def normalize_newlines(value: str) -> str:
-            return value.replace("\r\n", "\n").replace("\r", "\n")
-
-        def canonical(value: str) -> str:
-            value = normalize_newlines(value)
-            rows = []
-            for line in value.splitlines():
-                compact = re.sub(r"[ \t]+", " ", line.strip())
-                if compact:
-                    rows.append(compact)
-            return "\n".join(rows)
-
-        def changed_line_count(before: str, after: str) -> int:
-            matcher = difflib.SequenceMatcher(
-                None,
-                before.splitlines(),
-                after.splitlines(),
-                autojunk=False,
-            )
-            total = 0
-            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                if tag != "equal":
-                    total += max(i2 - i1, j2 - j1)
-            return total
-
-        def locate_span(current: str, search: str, relative: str):
-            search = normalize_newlines(search)
-
-            if not search:
-                raise ValueError(
-                    f"patch quality gate failed: empty search for {relative}"
-                )
-
-            if len(search) > 4000:
-                raise ValueError(
-                    f"patch quality gate failed: edit too large for {relative}"
-                )
-
-            count = current.count(search)
-
-            if count == 1:
-                start = current.index(search)
-                return start, start + len(search), "exact"
-
-            if count > 1:
-                raise ValueError(
-                    f"patch quality gate failed: search must match exactly once in {relative}; matched {count}"
-                )
-
-            search_lines = search.splitlines()
-            if not search_lines:
-                search_lines = [search]
-
-            if len(search_lines) > 12:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            current_lines = current.splitlines(keepends=True)
-            if not current_lines:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            offsets = [0]
-            for line in current_lines:
-                offsets.append(offsets[-1] + len(line))
-
-            target = canonical(search)
-            if not target:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            window_sizes = {
-                max(1, len(search_lines) - 1),
-                len(search_lines),
-                len(search_lines) + 1,
-            }
-
-            candidates = []
-
-            for size in sorted(window_sizes):
-                if size < 1 or size > len(current_lines):
-                    continue
-
-                for index in range(0, len(current_lines) - size + 1):
-                    start = offsets[index]
-                    end = offsets[index + size]
-                    candidate = current[start:end]
-                    candidate_canon = canonical(candidate)
-
-                    if not candidate_canon:
-                        continue
-
-                    if candidate_canon == target:
-                        candidates.append((1.0, start, end, candidate, "canonical"))
-                        continue
-
-                    ratio = difflib.SequenceMatcher(
-                        None,
-                        target,
-                        candidate_canon,
-                        autojunk=False,
-                    ).ratio()
-
-                    candidates.append((ratio, start, end, candidate, "fuzzy"))
-
-            exact_canonical = [
-                item for item in candidates
-                if item[0] == 1.0
-            ]
-
-            if len(exact_canonical) == 1:
-                _, start, end, _, mode = exact_canonical[0]
-                return start, end, mode
-
-            if len(exact_canonical) > 1:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            candidates.sort(key=lambda item: item[0], reverse=True)
-
-            if not candidates:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            best = candidates[0]
-            second_score = candidates[1][0] if len(candidates) > 1 else 0.0
-
-            minimum = 0.88 if len(search_lines) <= 2 else 0.91
-
-            if best[0] < minimum:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            if second_score >= best[0] - 0.035:
-                raise ValueError(
-                    f"patch quality gate failed: no safe unique match for {relative}"
-                )
-
-            _, start, end, _, mode = best
-            return start, end, mode
-
-        def load_existing(path: Path):
-            raw = path.read_bytes()
-            bom = raw.startswith(b"\xef\xbb\xbf")
-            decoded = raw.decode("utf-8-sig")
-            newline = "\r\n" if "\r\n" in decoded else "\n"
-            normalized = normalize_newlines(decoded)
-            return raw, normalized, bom, newline
-
-        def encode_existing(text: str, bom: bool, newline: str) -> bytes:
-            if newline == "\r\n":
-                text = text.replace("\n", "\r\n")
-            payload = text.encode("utf-8")
-            if bom:
-                payload = b"\xef\xbb\xbf" + payload
-            return payload
-
-        def apply_once(bundle: dict[str, Any]) -> None:
-            edits = bundle.get("files", [])
-
-            if not isinstance(edits, list):
-                raise ValueError("patch quality gate failed: invalid edits")
-
-            if len(edits) > 8:
-                raise ValueError("patch quality gate failed: too many edits")
-
-            originals: dict[Path, str] = {}
-            original_bytes: dict[Path, bytes] = {}
-            working: dict[Path, str] = {}
-            formats: dict[Path, tuple[bool, str]] = {}
-            relatives: dict[Path, str] = {}
-
-            def ensure_loaded(path: Path, relative: str) -> str:
-                if path in working:
-                    return working[path]
-
-                if not path.exists() or not path.is_file():
-                    raise ValueError(
-                        f"patch quality gate failed: existing edit target does not exist: {relative}"
-                    )
-
-                raw_bytes, current, bom, newline = load_existing(path)
-
-                expected_hash = context.get("file_hashes", {}).get(relative)
-                if expected_hash and expected_hash != _stable_hash(current):
-                    raise ValueError(
-                        f"implementation quality gate failed: stale file context for {relative}"
-                    )
-
-                originals[path] = current
-                original_bytes[path] = raw_bytes
-                working[path] = current
-                formats[path] = (bom, newline)
-                relatives[path] = relative
-
-                return current
-
-            for item in edits:
-                if not isinstance(item, dict):
-                    raise ValueError("patch quality gate failed: invalid edit")
-
-                relative = str(item.get("path", "")).replace("\\", "/")
-                path = self._safe_path(worktree, source, relative, goal)
-
-                current = ensure_loaded(path, relative)
-
-                search = normalize_newlines(str(item.get("search", "")))
-                replacement = normalize_newlines(str(item.get("replace", "")))
-
-                if len(replacement) > 4000:
-                    raise ValueError(
-                        f"patch quality gate failed: edit too large for {relative}"
-                    )
-
-                start, end, mode = locate_span(current, search, relative)
-                matched = current[start:end]
-
-                if (
-                    mode != "exact"
-                    and matched.endswith("\n")
-                    and not replacement.endswith("\n")
-                    and not search.endswith("\n")
-                ):
-                    replacement += "\n"
-
-                updated = current[:start] + replacement + current[end:]
-
-                if updated == current:
-                    raise ValueError(
-                        f"patch quality gate failed: no effective edit for {relative}"
-                    )
-
-                working[path] = updated
-
-            new_files = []
-            for item in bundle.get("new_files", []):
-                if not isinstance(item, dict):
-                    raise ValueError("patch quality gate failed: invalid new file")
-
-                relative = str(item.get("path", "")).replace("\\", "/")
-                path = self._safe_path(worktree, source, relative, goal)
-
-                if path.exists() or path in working:
-                    raise ValueError(
-                        f"patch quality gate failed: new_files cannot replace existing file: {relative}"
-                    )
-
-                content = normalize_newlines(str(item.get("content", "")))
-
-                if len(content) > max_new_file_chars:
-                    raise ValueError(
-                        f"patch quality gate failed: new file too large: {relative}"
-                    )
-
-                new_files.append((path, relative, content))
-
-            deleted = []
-            for relative_value in bundle.get("deleted_files", []):
-                relative = str(relative_value).replace("\\", "/")
-                path = self._safe_path(worktree, source, relative, goal)
-
-                if path in working:
-                    raise ValueError(
-                        f"patch quality gate failed: cannot edit and delete same file: {relative}"
-                    )
-
-                if path.exists():
-                    raw_bytes, current, _, _ = load_existing(path)
-                    deleted.append((path, relative, raw_bytes, current))
-
-            total_changed = 0
-
-            for path, updated in working.items():
-                total_changed += changed_line_count(originals[path], updated)
-
-            for _, _, _, current in deleted:
-                total_changed += len(current.splitlines())
-
-            if total_changed > max_changed_lines:
-                raise ValueError(
-                    f"patch quality gate failed: changed-line budget exceeded: "
-                    f"{total_changed} > {max_changed_lines}"
-                )
-
-            backup_bytes = {
-                **original_bytes,
-                **{path: raw for path, _, raw, _ in deleted},
-            }
-            created_paths = []
-
-            try:
-                for path, updated in working.items():
-                    bom, newline = formats[path]
-                    path.write_bytes(
-                        encode_existing(updated, bom, newline)
-                    )
-
-                for path, _, content in new_files:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(content, encoding="utf-8", newline="\n")
-                    created_paths.append(path)
-
-                for path, _, _, _ in deleted:
-                    if path.exists():
-                        path.unlink()
-
-            except Exception:
-                for path, raw_bytes in backup_bytes.items():
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(raw_bytes)
-
-                for path in created_paths:
-                    if path.exists() and path not in backup_bytes:
-                        path.unlink()
-
-                raise
-
-            for path, updated in working.items():
-                relative = relatives[path]
-                context.setdefault("inspected_files", {})[relative] = updated[:8000]
-                context.setdefault("file_hashes", {})[relative] = _stable_hash(updated)
-
-            for _, relative, content in new_files:
-                context.setdefault("inspected_files", {})[relative] = content[:8000]
-                context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
-
-            for _, relative, _, _ in deleted:
-                context.setdefault("inspected_files", {}).pop(relative, None)
-                context.setdefault("file_hashes", {}).pop(relative, None)
-
+    def _edit_engine(
+        self,
+        worktree: Path,
+        source: Path,
+        goal: SelfImprovementGoal,
+        context: dict[str, Any],
+    ) -> EditEngine:
+        policy = PathPolicy(
+            worktree,
+            allowed_paths=goal.allowed_paths,
+            protected_paths=goal.protected_paths,
+            live_root=source,
+        )
+        return EditEngine(
+            policy,
+            budget=EditBudget.from_env(os.getenv),
+            expected_hashes=dict(context.get("file_hashes", {})),
+        )
+
+    def _apply_proposal(
+        self,
+        worktree: Path,
+        source: Path,
+        goal: SelfImprovementGoal,
+        proposal: dict[str, Any],
+        context: dict[str, Any],
+    ) -> EditResult:
+        """Apply a model-proposed change bundle, correcting it if it misses.
+
+        The deterministic work lives in :mod:`development.edit_engine`; what
+        this method adds is the *recovery* loop.  A local model routinely gets
+        an anchor slightly wrong on the first try, and treating that as a failed
+        mission would make the whole system useless.  So a recoverable
+        :class:`EditError` -- a stale, ambiguous or unmatched anchor -- is fed
+        back to the model together with the current file content, up to
+        ``JARVIS_BUILD_PATCH_CORRECTIONS`` times.
+
+        Non-recoverable errors (a protected path, an escape attempt, a blown
+        budget) are re-raised immediately: those are policy decisions, and
+        asking the model to try again would only be asking it to attack the
+        boundary a second time.
+        """
+
+        corrections = max(0, int(os.getenv("JARVIS_BUILD_PATCH_CORRECTIONS", "3")))
         current_bundle = proposal
-        last_error = None
+        attempt = 0
 
-        for application_attempt in range(1, 4):
+        while True:
+            attempt += 1
+            engine = self._edit_engine(worktree, source, goal, context)
             try:
-                apply_once(current_bundle)
-
-                if current_bundle is not proposal:
-                    proposal.clear()
-                    proposal.update(current_bundle)
-
-                self._clear_python_caches(worktree)
-                return
-
-            except ValueError as exc:
-                last_error = exc
-                message = str(exc)
-
-                retryable = "no safe unique match" in message
-
-                if not retryable or application_attempt >= 3:
+                plan = parse_bundle(current_bundle)
+                result = engine.apply(plan)
+            except EditError as exc:
+                if not exc.recoverable or attempt > corrections:
                     raise
-
-                focused = _focused_edit_context(
-                    worktree,
-                    goal,
-                    context,
-                    max_chars=5500,
+                self._record(
+                    self._active_trajectory,
+                    RepositoryStage.DIAGNOSE,
+                    {"patch_correction": attempt, "kind": exc.kind, "detail": exc.detail},
                 )
+                try:
+                    current_bundle = self._request_patch_correction(
+                        worktree, goal, context, current_bundle, exc
+                    )
+                except EditError:
+                    raise
+                except Exception:
+                    # If we cannot even ask for a correction (no brain wired,
+                    # provider down, malformed response), the useful thing to
+                    # report is the edit problem itself, not the failure of the
+                    # attempt to fix it.
+                    raise exc from None
+                continue
 
-                retry_prompt = (
-                    "Return JSON only. Role: Repository Patch Corrector.\n"
-                    "The previous patch was NOT written because its search text did not match the current file safely.\n"
-                    "Generate a corrected minimal search/replace patch using CURRENT CODE below as absolute ground truth.\n"
-                    "Copy the search text directly from CURRENT CODE. Prefer a unique 1-3 line search block.\n"
-                    "Do not rewrite complete files. Do not change protected paths.\n"
-                    f"Goal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
-                    f"Application error:\n{message}\n"
-                    f"Previous proposal:\n{json.dumps(current_bundle, indent=2, sort_keys=True)}\n"
-                    f"CURRENT CODE:\n{focused}\n"
-                )
+            if current_bundle is not proposal:
+                # Surface the bundle that actually landed, so trajectory logs
+                # and checkpoints describe reality rather than the first guess.
+                proposal.clear()
+                proposal.update(current_bundle)
 
-                current_bundle = self._generate_patch_bundle(retry_prompt)
+            self._sync_context_after_edit(worktree, context, result)
+            self._clear_python_caches(worktree)
+            return result
 
-        raise last_error
+    def _request_patch_correction(
+        self,
+        worktree: Path,
+        goal: SelfImprovementGoal,
+        context: dict[str, Any],
+        bundle: dict[str, Any],
+        error: EditError,
+    ) -> dict[str, Any]:
+        focused = _focused_edit_context(worktree, goal, context, max_chars=5500)
+        previous = json.dumps(bundle, indent=2, sort_keys=True)
+        if len(previous) > 3000:
+            previous = previous[:3000] + "\n...[truncated]"
 
+        prompt = (
+            "Return JSON only. Role: Repository Patch Corrector.\n"
+            "Your previous patch was NOT written to disk because it could not be applied safely.\n"
+            "Nothing has changed on disk. Produce a corrected patch.\n"
+            f"Failure kind: {error.kind}\n"
+            f"Failure detail: {error.detail}\n"
+            f"{_correction_hint(error)}\n"
+            "Copy every search string CHARACTER-FOR-CHARACTER from CURRENT CODE below.\n"
+            "CURRENT CODE is the absolute ground truth. Never guess an older version of a line.\n"
+            "Do not rewrite whole files. Do not touch protected paths.\n"
+            f"Goal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
+            f"Previous rejected patch:\n{previous}\n"
+            f"CURRENT CODE:\n{focused}\n"
+        )
+        return self._generate_patch_bundle(prompt)
 
+    def _sync_context_after_edit(
+        self, worktree: Path, context: dict[str, Any], result: EditResult
+    ) -> None:
+        """Re-read edited files so the next prompt sees post-edit reality."""
+
+        inspected = context.setdefault("inspected_files", {})
+        hashes = context.setdefault("file_hashes", {})
+
+        for applied in result.applied:
+            if applied.deleted:
+                inspected.pop(applied.path, None)
+                hashes.pop(applied.path, None)
+                continue
+            path = worktree / applied.path
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            inspected[applied.path] = text[:8000]
+            hashes[applied.path] = _stable_hash(text)
 
     def _run_commands(self, worktree: Path, commands: list[list[str]], *, stage: str) -> list[RepositoryCommandResult]:
         results = []
@@ -1471,7 +1305,17 @@ class RepositoryEngineer:
         return any(after_metrics[key] > before_metrics[key] for key in common)
 
     def _write_result_artifacts(self, result: RepositoryCandidateResult, trajectory: dict[str, Any]) -> None:
-        root = Path(result.worktree)
+        """Persist the diff and the full trajectory next to -- not inside -- the worktree.
+
+        These files are Jarvis's own output, not part of the candidate.  Written
+        inside the worktree they would show up in ``git diff`` as candidate
+        content, and on a resumed run the leftovers from the previous attempt
+        would trip the write-scope gate before the first patch is even applied.
+        """
+
+        worktree = Path(result.worktree)
+        root = worktree.parent / f"{worktree.name}_artifacts"
+        root.mkdir(parents=True, exist_ok=True)
         diff_path = root / "SELF_DEVELOPMENT_DIFF.patch"
         result_path = root / "SELF_DEVELOPMENT_RESULT.json"
         if result.diff:
@@ -1763,14 +1607,17 @@ def _focused_edit_context(worktree, goal, context, *, max_chars=5000):
             if remaining <= 0:
                 break
 
-            body = "\n".join(
-                f"{index + 1:05d}: {lines[index]}"
-                for index in range(start, end)
-            )
+            # Deliberately NOT line-numbered.  The prompt asks the model to
+            # copy search anchors character-for-character out of this block, and
+            # a numeric gutter is copied along with everything else -- producing
+            # anchors that can never match the real file.  The line range lives
+            # in the header instead, where it is informative but uncopyable.
+            body = "\n".join(lines[index] for index in range(start, end))
 
             block = (
                 f"\n--- {relative} lines {start + 1}-{end} ---\n"
                 f"{body}\n"
+                f"--- end {relative} ---\n"
             )
 
             if len(block) > remaining:
@@ -1786,52 +1633,14 @@ def _focused_edit_context(worktree, goal, context, *, max_chars=5000):
 
 
 def _patch_schema() -> dict[str, Any]:
-    edit_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "path": {"type": "string"},
-            "search": {"type": "string"},
-            "replace": {"type": "string"},
-        },
-        "required": ["path", "search", "replace"],
-    }
+    """Change-bundle schema for guided generation.
 
-    new_file_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "path": {"type": "string"},
-            "content": {"type": "string"},
-        },
-        "required": ["path", "content"],
-    }
+    Defined once in :mod:`development.edit_engine` so the schema the model
+    is constrained to and the parser that consumes its output can never
+    drift apart.
+    """
 
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "analysis": {"type": "string"},
-            "files": {
-                "type": "array",
-                "items": edit_schema,
-                "maxItems": 8,
-            },
-            "new_files": {
-                "type": "array",
-                "items": new_file_schema,
-                "maxItems": 4,
-            },
-            "deleted_files": {
-                "type": "array",
-                "items": {"type": "string"},
-                "maxItems": 4,
-            },
-        },
-        "required": ["analysis", "files"],
-    }
-
-
+    return edit_schema()
 
 
 def _visible_repo_file(path: Path, root: Path) -> bool:

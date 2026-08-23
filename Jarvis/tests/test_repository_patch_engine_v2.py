@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from development.edit_engine import EditBudget
 from development.repository_engineer import (
     RepositoryEngineer,
     SelfImprovementGoal,
@@ -29,12 +30,29 @@ def goal():
     )
 
 
-def test_schema_uses_search_replace_edits():
+def test_schema_offers_targeted_edits_and_bounds_whole_file_rewrites():
+    """Targeted edits are the primary verb; a rewrite is possible but bounded.
+
+    The earlier version of this test asserted that ``content`` was absent from
+    the schema altogether, as a blunt way of stopping a weak model from
+    rewriting a large file.  The bound now lives where it belongs -- in
+    :class:`~development.edit_engine.EditBudget` -- so the schema can also
+    express legitimate small rewrites and new-file creation.
+    """
+
     item = _patch_schema()["properties"]["files"]["items"]
 
     assert "search" in item["properties"]
     assert "replace" in item["properties"]
-    assert "content" not in item["properties"]
+    assert set(item["properties"]["op"]["enum"]) == {
+        "replace",
+        "insert_before",
+        "insert_after",
+        "rewrite",
+    }
+
+    # The real protection against whole-file clobbering.
+    assert EditBudget().max_rewrite_chars <= 12000
 
 
 def test_exact_edit_changes_only_target(tmp_path):
