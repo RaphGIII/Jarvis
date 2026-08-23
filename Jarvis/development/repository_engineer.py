@@ -798,18 +798,32 @@ class RepositoryEngineer:
         return plan if isinstance(plan, dict) else {"analysis": "", "plan": ""}
 
     def _request_patch(self, goal: SelfImprovementGoal, context: dict[str, Any], plan: dict[str, Any], prior: list[dict[str, Any]], trajectory: dict[str, Any]) -> dict[str, Any]:
+        worktree = Path(trajectory["worktree"])
+        focused = _focused_edit_context(worktree, goal, context, max_chars=5000)
+
+        plan_text = json.dumps(plan, indent=2, sort_keys=True)
+        if len(plan_text) > 2200:
+            plan_text = plan_text[:2200] + "\n...[truncated]"
+
+        prior_text = json.dumps(_prior_for_prompt(prior), indent=2, sort_keys=True)
+        if len(prior_text) > 900:
+            prior_text = prior_text[:900] + "\n...[truncated]"
+
         prompt = (
-            "Return JSON only. Role: Repository Implementer. Produce the SMALLEST safe repository edit.\n"
-            "For EXISTING files, the `files` array contains exact search/replace edits, NOT complete file contents.\n"
-            "Each edit must contain path, search, replace. `search` must be copied exactly from the current repository context and must match exactly once.\n"
-            "Prefer one tiny edit. Never rewrite an entire existing file. Maximum 8 edits.\n"
-            "Use `new_files` only for genuinely new files. Do not alter protected paths. Final readiness requires deterministic tests.\n"
-            f"SelfImprovementGoal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
-            f"Plan:\n{json.dumps(plan, indent=2, sort_keys=True)}\n"
-            f"Repository context:\n{json.dumps(_context_for_prompt(context, include_files=True, plan=plan), indent=2, sort_keys=True)}\n"
-            f"Relevant prior memory:\n{json.dumps(_prior_for_prompt(prior), indent=2, sort_keys=True)}"
+            "Return JSON only. Role: Repository Implementer.\n"
+            "Produce the smallest safe edit that satisfies the goal.\n"
+            "For EXISTING files use exact search/replace edits only.\n"
+            "The search string should normally be only 1-3 lines and MUST come from the FOCUSED CURRENT CODE below.\n"
+            "Do not reconstruct or rewrite an existing file. Change only the smallest necessary token or lines.\n"
+            "Prefer one edit. Maximum 8 edits. Never modify protected paths.\n"
+            "If a requested literal is new, anchor the edit on nearby literals that already exist in the current code.\n"
+            f"Goal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
+            f"Plan:\n{plan_text}\n"
+            f"FOCUSED CURRENT CODE:\n{focused}\n"
+            f"Relevant prior memory:\n{prior_text}\n"
         )
         return self._generate_patch_bundle(prompt)
+
 
 
     def _request_repair(
@@ -821,20 +835,37 @@ class RepositoryEngineer:
         review: RepositoryReview,
         trajectory: dict[str, Any],
     ) -> dict[str, Any]:
-        diff = self._current_diff(Path(trajectory["worktree"]))
+        worktree = Path(trajectory["worktree"])
+        diff = self._current_diff(worktree)
+        focused = _focused_edit_context(worktree, goal, context, max_chars=5000)
+
+        failure_text = json.dumps(
+            [item.to_dict() for item in failures],
+            indent=2,
+            sort_keys=True,
+        )
+        if len(failure_text) > 3500:
+            failure_text = failure_text[-3500:]
+
+        review_text = json.dumps(review.to_dict(), indent=2, sort_keys=True)
+        if len(review_text) > 2200:
+            review_text = review_text[-2200:]
+
         prompt = (
-            "Return JSON only. Role: Repository Repairer. Diagnose the failure and produce the SMALLEST corrective edit.\n"
-            "For EXISTING files, `files` contains exact search/replace edits, never complete files.\n"
-            "Each search string must match exactly once. Prefer one tiny edit. Maximum 8 edits.\n"
-            "Do not weaken tests, benchmarks, hidden verifiers, safety policy, or protected paths.\n"
+            "Return JSON only. Role: Repository Repairer.\n"
+            "Repair the current candidate with the smallest possible search/replace edit.\n"
+            "Use CURRENT CODE below as ground truth. Never guess an old version of a line.\n"
+            "Search strings should normally be 1-3 lines copied from CURRENT CODE.\n"
+            "Do not rewrite complete existing files.\n"
+            "Do not weaken tests, hidden verifiers, benchmarks, safety policy, or protected paths.\n"
             f"Goal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
-            f"Plan:\n{json.dumps(plan, indent=2, sort_keys=True)}\n"
-            f"Current diff:\n{diff[-6000:]}\n"
-            f"Failures:\n{json.dumps([item.to_dict() for item in failures], indent=2, sort_keys=True)}\n"
-            f"Reviewer findings:\n{json.dumps(review.to_dict(), indent=2, sort_keys=True)}\n"
-            f"Relevant files:\n{json.dumps(_context_for_prompt(context, include_files=True, plan=plan), indent=2, sort_keys=True)}"
+            f"Current diff:\n{diff[-5000:]}\n"
+            f"Failures:\n{failure_text}\n"
+            f"Reviewer findings:\n{review_text}\n"
+            f"FOCUSED CURRENT CODE:\n{focused}\n"
         )
         return self._generate_patch_bundle(prompt)
+
 
 
     def _generate_patch_bundle(self, prompt: str) -> dict[str, Any]:
@@ -844,14 +875,15 @@ class RepositoryEngineer:
             prompt,
             schema,
             stage=stage,
-            desired_output_tokens=1000,
-            temperature=0.1,
+            desired_output_tokens=750,
+            temperature=0.0,
         )
         if not isinstance(payload.get("files"), list):
             raise ValueError("repository proposal did not contain edits")
         payload.setdefault("new_files", [])
         payload.setdefault("deleted_files", [])
         return payload
+
 
 
     def _request_review(self, goal: SelfImprovementGoal, context: dict[str, Any], diff: str, targeted: list[RepositoryCommandResult], trajectory: dict[str, Any]) -> RepositoryReview:
@@ -930,95 +962,395 @@ class RepositoryEngineer:
             context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
 
     def _apply_proposal(self, worktree: Path, source: Path, goal: SelfImprovementGoal, proposal: dict[str, Any], context: dict[str, Any]) -> None:
-        edits = proposal.get("files", [])
+        import difflib
+        import os
+        import re
 
-        if len(edits) > 8:
-            raise ValueError("patch quality gate failed: too many edits")
+        max_changed_lines = int(os.getenv("JARVIS_BUILD_MAX_CHANGED_LINES", "160"))
+        max_new_file_chars = int(os.getenv("JARVIS_BUILD_MAX_NEW_FILE_CHARS", "16000"))
 
-        for item in edits:
-            if not isinstance(item, dict):
-                raise ValueError("patch quality gate failed: invalid edit")
+        def normalize_newlines(value: str) -> str:
+            return value.replace("\r\n", "\n").replace("\r", "\n")
 
-            relative = str(item.get("path", "")).replace("\\", "/")
-            path = self._safe_path(worktree, source, relative, goal)
+        def canonical(value: str) -> str:
+            value = normalize_newlines(value)
+            rows = []
+            for line in value.splitlines():
+                compact = re.sub(r"[ \t]+", " ", line.strip())
+                if compact:
+                    rows.append(compact)
+            return "\n".join(rows)
 
-            if not path.exists() or not path.is_file():
-                raise ValueError(
-                    f"patch quality gate failed: existing edit target does not exist: {relative}"
-                )
+        def changed_line_count(before: str, after: str) -> int:
+            matcher = difflib.SequenceMatcher(
+                None,
+                before.splitlines(),
+                after.splitlines(),
+                autojunk=False,
+            )
+            total = 0
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag != "equal":
+                    total += max(i2 - i1, j2 - j1)
+            return total
 
-            current = path.read_text(encoding="utf-8", errors="replace")
-
-            if relative not in context.get("inspected_files", {}):
-                context.setdefault("inspected_files", {})[relative] = current[:8000]
-                context.setdefault("file_hashes", {})[relative] = _stable_hash(current)
-
-            expected_hash = context.get("file_hashes", {}).get(relative)
-
-            if expected_hash and expected_hash != _stable_hash(current):
-                raise ValueError(
-                    f"implementation quality gate failed: stale file context for {relative}"
-                )
-
-            search = str(item.get("search", ""))
-            replace = str(item.get("replace", ""))
+        def locate_span(current: str, search: str, relative: str):
+            search = normalize_newlines(search)
 
             if not search:
                 raise ValueError(
                     f"patch quality gate failed: empty search for {relative}"
                 )
 
-            # Prevent whole-file rewrites from masquerading as an edit.
-            if len(search) > 4000 or len(replace) > 4000:
+            if len(search) > 4000:
                 raise ValueError(
                     f"patch quality gate failed: edit too large for {relative}"
                 )
 
-            matches = current.count(search)
+            count = current.count(search)
 
-            if matches != 1:
+            if count == 1:
+                start = current.index(search)
+                return start, start + len(search), "exact"
+
+            if count > 1:
                 raise ValueError(
-                    f"patch quality gate failed: search must match exactly once in {relative}; matched {matches}"
+                    f"patch quality gate failed: search must match exactly once in {relative}; matched {count}"
                 )
 
-            updated = current.replace(search, replace, 1)
+            search_lines = search.splitlines()
+            if not search_lines:
+                search_lines = [search]
 
-            if updated == current:
+            if len(search_lines) > 12:
                 raise ValueError(
-                    f"patch quality gate failed: no effective edit for {relative}"
+                    f"patch quality gate failed: no safe unique match for {relative}"
                 )
 
-            path.write_text(updated, encoding="utf-8")
-
-            context.setdefault("inspected_files", {})[relative] = updated[:8000]
-            context.setdefault("file_hashes", {})[relative] = _stable_hash(updated)
-
-        for item in proposal.get("new_files", []):
-            if not isinstance(item, dict):
-                raise ValueError("patch quality gate failed: invalid new file")
-
-            relative = str(item.get("path", "")).replace("\\", "/")
-            path = self._safe_path(worktree, source, relative, goal)
-
-            if path.exists():
+            current_lines = current.splitlines(keepends=True)
+            if not current_lines:
                 raise ValueError(
-                    f"patch quality gate failed: new_files cannot replace existing file: {relative}"
+                    f"patch quality gate failed: no safe unique match for {relative}"
                 )
 
-            content = str(item.get("content", ""))
+            offsets = [0]
+            for line in current_lines:
+                offsets.append(offsets[-1] + len(line))
 
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            target = canonical(search)
+            if not target:
+                raise ValueError(
+                    f"patch quality gate failed: no safe unique match for {relative}"
+                )
 
-            context.setdefault("inspected_files", {})[relative] = content[:8000]
-            context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
+            window_sizes = {
+                max(1, len(search_lines) - 1),
+                len(search_lines),
+                len(search_lines) + 1,
+            }
 
-        for relative in proposal.get("deleted_files", []):
-            path = self._safe_path(worktree, source, str(relative), goal)
-            if path.exists():
-                path.unlink()
+            candidates = []
 
-        self._clear_python_caches(worktree)
+            for size in sorted(window_sizes):
+                if size < 1 or size > len(current_lines):
+                    continue
+
+                for index in range(0, len(current_lines) - size + 1):
+                    start = offsets[index]
+                    end = offsets[index + size]
+                    candidate = current[start:end]
+                    candidate_canon = canonical(candidate)
+
+                    if not candidate_canon:
+                        continue
+
+                    if candidate_canon == target:
+                        candidates.append((1.0, start, end, candidate, "canonical"))
+                        continue
+
+                    ratio = difflib.SequenceMatcher(
+                        None,
+                        target,
+                        candidate_canon,
+                        autojunk=False,
+                    ).ratio()
+
+                    candidates.append((ratio, start, end, candidate, "fuzzy"))
+
+            exact_canonical = [
+                item for item in candidates
+                if item[0] == 1.0
+            ]
+
+            if len(exact_canonical) == 1:
+                _, start, end, _, mode = exact_canonical[0]
+                return start, end, mode
+
+            if len(exact_canonical) > 1:
+                raise ValueError(
+                    f"patch quality gate failed: no safe unique match for {relative}"
+                )
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+
+            if not candidates:
+                raise ValueError(
+                    f"patch quality gate failed: no safe unique match for {relative}"
+                )
+
+            best = candidates[0]
+            second_score = candidates[1][0] if len(candidates) > 1 else 0.0
+
+            minimum = 0.88 if len(search_lines) <= 2 else 0.91
+
+            if best[0] < minimum:
+                raise ValueError(
+                    f"patch quality gate failed: no safe unique match for {relative}"
+                )
+
+            if second_score >= best[0] - 0.035:
+                raise ValueError(
+                    f"patch quality gate failed: no safe unique match for {relative}"
+                )
+
+            _, start, end, _, mode = best
+            return start, end, mode
+
+        def load_existing(path: Path):
+            raw = path.read_bytes()
+            bom = raw.startswith(b"\xef\xbb\xbf")
+            decoded = raw.decode("utf-8-sig")
+            newline = "\r\n" if "\r\n" in decoded else "\n"
+            normalized = normalize_newlines(decoded)
+            return raw, normalized, bom, newline
+
+        def encode_existing(text: str, bom: bool, newline: str) -> bytes:
+            if newline == "\r\n":
+                text = text.replace("\n", "\r\n")
+            payload = text.encode("utf-8")
+            if bom:
+                payload = b"\xef\xbb\xbf" + payload
+            return payload
+
+        def apply_once(bundle: dict[str, Any]) -> None:
+            edits = bundle.get("files", [])
+
+            if not isinstance(edits, list):
+                raise ValueError("patch quality gate failed: invalid edits")
+
+            if len(edits) > 8:
+                raise ValueError("patch quality gate failed: too many edits")
+
+            originals: dict[Path, str] = {}
+            original_bytes: dict[Path, bytes] = {}
+            working: dict[Path, str] = {}
+            formats: dict[Path, tuple[bool, str]] = {}
+            relatives: dict[Path, str] = {}
+
+            def ensure_loaded(path: Path, relative: str) -> str:
+                if path in working:
+                    return working[path]
+
+                if not path.exists() or not path.is_file():
+                    raise ValueError(
+                        f"patch quality gate failed: existing edit target does not exist: {relative}"
+                    )
+
+                raw_bytes, current, bom, newline = load_existing(path)
+
+                expected_hash = context.get("file_hashes", {}).get(relative)
+                if expected_hash and expected_hash != _stable_hash(current):
+                    raise ValueError(
+                        f"implementation quality gate failed: stale file context for {relative}"
+                    )
+
+                originals[path] = current
+                original_bytes[path] = raw_bytes
+                working[path] = current
+                formats[path] = (bom, newline)
+                relatives[path] = relative
+
+                return current
+
+            for item in edits:
+                if not isinstance(item, dict):
+                    raise ValueError("patch quality gate failed: invalid edit")
+
+                relative = str(item.get("path", "")).replace("\\", "/")
+                path = self._safe_path(worktree, source, relative, goal)
+
+                current = ensure_loaded(path, relative)
+
+                search = normalize_newlines(str(item.get("search", "")))
+                replacement = normalize_newlines(str(item.get("replace", "")))
+
+                if len(replacement) > 4000:
+                    raise ValueError(
+                        f"patch quality gate failed: edit too large for {relative}"
+                    )
+
+                start, end, mode = locate_span(current, search, relative)
+                matched = current[start:end]
+
+                if (
+                    mode != "exact"
+                    and matched.endswith("\n")
+                    and not replacement.endswith("\n")
+                    and not search.endswith("\n")
+                ):
+                    replacement += "\n"
+
+                updated = current[:start] + replacement + current[end:]
+
+                if updated == current:
+                    raise ValueError(
+                        f"patch quality gate failed: no effective edit for {relative}"
+                    )
+
+                working[path] = updated
+
+            new_files = []
+            for item in bundle.get("new_files", []):
+                if not isinstance(item, dict):
+                    raise ValueError("patch quality gate failed: invalid new file")
+
+                relative = str(item.get("path", "")).replace("\\", "/")
+                path = self._safe_path(worktree, source, relative, goal)
+
+                if path.exists() or path in working:
+                    raise ValueError(
+                        f"patch quality gate failed: new_files cannot replace existing file: {relative}"
+                    )
+
+                content = normalize_newlines(str(item.get("content", "")))
+
+                if len(content) > max_new_file_chars:
+                    raise ValueError(
+                        f"patch quality gate failed: new file too large: {relative}"
+                    )
+
+                new_files.append((path, relative, content))
+
+            deleted = []
+            for relative_value in bundle.get("deleted_files", []):
+                relative = str(relative_value).replace("\\", "/")
+                path = self._safe_path(worktree, source, relative, goal)
+
+                if path in working:
+                    raise ValueError(
+                        f"patch quality gate failed: cannot edit and delete same file: {relative}"
+                    )
+
+                if path.exists():
+                    raw_bytes, current, _, _ = load_existing(path)
+                    deleted.append((path, relative, raw_bytes, current))
+
+            total_changed = 0
+
+            for path, updated in working.items():
+                total_changed += changed_line_count(originals[path], updated)
+
+            for _, _, _, current in deleted:
+                total_changed += len(current.splitlines())
+
+            if total_changed > max_changed_lines:
+                raise ValueError(
+                    f"patch quality gate failed: changed-line budget exceeded: "
+                    f"{total_changed} > {max_changed_lines}"
+                )
+
+            backup_bytes = {
+                **original_bytes,
+                **{path: raw for path, _, raw, _ in deleted},
+            }
+            created_paths = []
+
+            try:
+                for path, updated in working.items():
+                    bom, newline = formats[path]
+                    path.write_bytes(
+                        encode_existing(updated, bom, newline)
+                    )
+
+                for path, _, content in new_files:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content, encoding="utf-8", newline="\n")
+                    created_paths.append(path)
+
+                for path, _, _, _ in deleted:
+                    if path.exists():
+                        path.unlink()
+
+            except Exception:
+                for path, raw_bytes in backup_bytes.items():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(raw_bytes)
+
+                for path in created_paths:
+                    if path.exists() and path not in backup_bytes:
+                        path.unlink()
+
+                raise
+
+            for path, updated in working.items():
+                relative = relatives[path]
+                context.setdefault("inspected_files", {})[relative] = updated[:8000]
+                context.setdefault("file_hashes", {})[relative] = _stable_hash(updated)
+
+            for _, relative, content in new_files:
+                context.setdefault("inspected_files", {})[relative] = content[:8000]
+                context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
+
+            for _, relative, _, _ in deleted:
+                context.setdefault("inspected_files", {}).pop(relative, None)
+                context.setdefault("file_hashes", {}).pop(relative, None)
+
+        current_bundle = proposal
+        last_error = None
+
+        for application_attempt in range(1, 4):
+            try:
+                apply_once(current_bundle)
+
+                if current_bundle is not proposal:
+                    proposal.clear()
+                    proposal.update(current_bundle)
+
+                self._clear_python_caches(worktree)
+                return
+
+            except ValueError as exc:
+                last_error = exc
+                message = str(exc)
+
+                retryable = "no safe unique match" in message
+
+                if not retryable or application_attempt >= 3:
+                    raise
+
+                focused = _focused_edit_context(
+                    worktree,
+                    goal,
+                    context,
+                    max_chars=5500,
+                )
+
+                retry_prompt = (
+                    "Return JSON only. Role: Repository Patch Corrector.\n"
+                    "The previous patch was NOT written because its search text did not match the current file safely.\n"
+                    "Generate a corrected minimal search/replace patch using CURRENT CODE below as absolute ground truth.\n"
+                    "Copy the search text directly from CURRENT CODE. Prefer a unique 1-3 line search block.\n"
+                    "Do not rewrite complete files. Do not change protected paths.\n"
+                    f"Goal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
+                    f"Application error:\n{message}\n"
+                    f"Previous proposal:\n{json.dumps(current_bundle, indent=2, sort_keys=True)}\n"
+                    f"CURRENT CODE:\n{focused}\n"
+                )
+
+                current_bundle = self._generate_patch_bundle(retry_prompt)
+
+        raise last_error
+
 
 
     def _run_commands(self, worktree: Path, commands: list[list[str]], *, stage: str) -> list[RepositoryCommandResult]:
@@ -1322,6 +1654,137 @@ class RepositoryEngineer:
         )
 
 
+def _focused_edit_context(worktree, goal, context, *, max_chars=5000):
+    import re
+
+    root = Path(worktree).resolve()
+    candidates = []
+
+    def add_candidate(relative):
+        relative = str(relative).replace("\\", "/").strip()
+        if not relative:
+            return
+
+        candidate = (root / relative).resolve()
+
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return
+
+        if candidate.is_file():
+            pair = (relative, candidate)
+            if pair not in candidates:
+                candidates.append(pair)
+
+    for relative in getattr(goal, "allowed_paths", []) or []:
+        add_candidate(relative)
+
+    for relative in context.get("inspected_files", {}).keys():
+        add_candidate(relative)
+
+    goal_text = json.dumps(goal.to_dict(), sort_keys=True)
+
+    tokens = re.findall(
+        r"/[A-Za-z0-9_.-]+|[A-Za-z_][A-Za-z0-9_.-]{2,}",
+        goal_text,
+    )
+
+    stopwords = {
+        "implementiere", "unterst?tzung", "zusaetzlichen", "zus?tzlichen",
+        "befehl", "veraendere", "ver?ndere", "ausschliesslich",
+        "ausschlie?lich", "halte", "minimal", "andere", "funktionalitaet",
+        "funktionalit?t", "repository", "change", "changes", "implement",
+        "support", "only", "file", "files", "goal", "allowed_paths",
+        "protected_paths", "objective",
+    }
+
+    keywords = []
+    for token in tokens:
+        lowered = token.lower()
+        if lowered in stopwords:
+            continue
+        if lowered not in keywords:
+            keywords.append(lowered)
+
+    chunks = []
+    remaining = max_chars
+
+    for relative, path in candidates[:12]:
+        if remaining <= 0:
+            break
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        lines = text.splitlines()
+
+        if not lines:
+            continue
+
+        if len(text) <= 3200:
+            selected_ranges = [(0, len(lines))]
+        else:
+            scored = []
+
+            for index, line in enumerate(lines):
+                lowered = line.lower()
+                score = 0
+
+                for keyword in keywords:
+                    if keyword in lowered:
+                        score += 4 if keyword.startswith("/") else 1
+
+                if score:
+                    scored.append((score, index))
+
+            scored.sort(key=lambda item: (-item[0], item[1]))
+
+            hit_indices = [index for _, index in scored[:6]]
+
+            if not hit_indices:
+                hit_indices = [0, max(0, len(lines) - 1)]
+
+            ranges = []
+            for index in sorted(hit_indices):
+                start = max(0, index - 9)
+                end = min(len(lines), index + 10)
+
+                if ranges and start <= ranges[-1][1] + 2:
+                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+                else:
+                    ranges.append((start, end))
+
+            selected_ranges = ranges
+
+        for start, end in selected_ranges:
+            if remaining <= 0:
+                break
+
+            body = "\n".join(
+                f"{index + 1:05d}: {lines[index]}"
+                for index in range(start, end)
+            )
+
+            block = (
+                f"\n--- {relative} lines {start + 1}-{end} ---\n"
+                f"{body}\n"
+            )
+
+            if len(block) > remaining:
+                block = block[:remaining]
+
+            chunks.append(block)
+            remaining -= len(block)
+
+    if not chunks:
+        return "(no focused editable code found)"
+
+    return "".join(chunks)
+
+
 def _patch_schema() -> dict[str, Any]:
     edit_schema = {
         "type": "object",
@@ -1367,6 +1830,7 @@ def _patch_schema() -> dict[str, Any]:
         },
         "required": ["analysis", "files"],
     }
+
 
 
 
