@@ -48,6 +48,41 @@ class FakeProvider:
         return {"coding": True}
 
 
+class _StubHandler(BaseHTTPRequestHandler):
+    """Base for the fake inference servers in this module.
+
+    Two details that are easy to get wrong and produced intermittent failures
+    on Windows before they were fixed:
+
+    ``protocol_version = "HTTP/1.1"`` keeps the connection open after a
+    response, so a client can still read an error body after the handler
+    returns. Under the HTTP/1.0 default the server tears the socket down first
+    and the client's read of a 4xx body fails with WinError 10053 -- which made
+    a test about error *classification* fail for reasons of socket timing.
+
+    ``drain()`` reads the request body even when the handler ignores it. With
+    keep-alive, bytes left unread stay in the buffer and are parsed as the
+    start of the next request, which breaks any test that makes two calls on
+    one connection.
+    """
+
+    protocol_version = "HTTP/1.1"
+
+    def drain(self) -> bytes:
+        length = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(length) if length else b""
+
+    def respond(self, status: int, body: bytes, content_type: str = "application/json") -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return None
+
+
 def test_local_provider_works_through_common_interface():
     provider = LocalTransformersBrainProvider(brain=FakeLocalBrain(), model_id="fake-local")
     assert provider.provider_name == "local_transformers"
@@ -83,7 +118,7 @@ def test_qwen_action_generator_falls_back_when_local_provider_has_no_guided_json
 def test_openai_compatible_provider_works_with_mocked_http_server():
     captured = {}
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(_StubHandler):
         def do_POST(self):
             length = int(self.headers["Content-Length"])
             captured["authorization"] = self.headers.get("Authorization")
@@ -126,7 +161,7 @@ def test_openai_compatible_provider_works_with_mocked_http_server():
 def test_openai_compatible_provider_sends_guided_json_schema_to_server():
     captured = {}
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(_StubHandler):
         def do_POST(self):
             length = int(self.headers["Content-Length"])
             captured["payload"] = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -173,8 +208,9 @@ def test_openai_compatible_provider_sends_guided_json_schema_to_server():
 def test_openai_compatible_provider_classifies_context_overflow_without_retry():
     calls = {"count": 0}
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(_StubHandler):
         def do_POST(self):
+            self.drain()
             calls["count"] += 1
             body = b'{"error":{"message":"maximum context length exceeded"}}'
             self.send_response(400)
@@ -209,8 +245,9 @@ def test_openai_compatible_provider_classifies_context_overflow_without_retry():
 def test_openai_compatible_provider_retries_transient_502():
     calls = {"count": 0}
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(_StubHandler):
         def do_POST(self):
+            self.drain()
             calls["count"] += 1
             if calls["count"] == 1:
                 body = b"temporary upstream failure"
@@ -245,8 +282,9 @@ def test_openai_compatible_provider_retries_transient_502():
 def test_provider_secrets_do_not_enter_observation_or_generator_metadata(tmp_path):
     secret = "super-secret-api-key"
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(_StubHandler):
         def do_POST(self):
+            self.drain()
             body = json.dumps({"choices": [{"message": {"content": "[{\"action_type\":\"RUN_TESTS\",\"arguments\":{}}]"}}]}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
