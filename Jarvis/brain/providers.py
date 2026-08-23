@@ -219,7 +219,22 @@ class OpenAICompatibleBrainProvider:
             "max_tokens": max_tokens,
         }
         if response_schema is not None:
-            payload["guided_json"] = response_schema
+            structured_mode = os.getenv("JARVIS_BRAIN_STRUCTURED_MODE", "guided_json").strip().lower()
+            if structured_mode == "response_format":
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "jarvis_response",
+                        "schema": response_schema,
+                    },
+                }
+            else:
+                payload["guided_json"] = response_schema
+
+        reasoning_effort = os.getenv("JARVIS_BRAIN_REASONING_EFFORT", "").strip()
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+
         body = json.dumps(payload).encode("utf-8")
         headers = {
     "Content-Type": "application/json",
