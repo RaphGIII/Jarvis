@@ -93,7 +93,20 @@ def _correction_hint(error: EditError) -> str:
         "rewrite_too_large": (
             "Do not rewrite the whole file. Emit small search/replace edits instead."
         ),
-        "empty_search": "Every edit needs a non-empty search anchor copied from CURRENT CODE.",
+        "rewrite_truncates_file": (
+            "You replaced a whole file with a fragment, which would delete the rest of it. "
+            "Emit a search/replace edit instead: put the EXACT existing lines you want to change "
+            "in 'search', and the new version of just those lines in 'replace'."
+        ),
+        "syntax_error": (
+            "Your replacement text broke the file's Python syntax. Look at the indentation: "
+            "the 'replace' text must line up with the code around the anchor exactly as it appears "
+            "in CURRENT CODE."
+        ),
+        "empty_search": (
+            "Every edit needs a non-empty 'search' anchor copied verbatim from CURRENT CODE, "
+            "plus the new version of those same lines in 'replace'."
+        ),
         "invalid_edit": (
             "Each entry of files[] needs a path plus either search+replace, or content."
         ),
@@ -1638,9 +1651,15 @@ def _patch_schema() -> dict[str, Any]:
     Defined once in :mod:`development.edit_engine` so the schema the model
     is constrained to and the parser that consumes its output can never
     drift apart.
+
+    Whole-file rewrites are excluded. Repository work means changing files that
+    already exist and are usually far longer than a small model can reproduce
+    faithfully; leaving the field in the schema let it answer a one-line request
+    with a three-line "rewrite" of a 189-line module, over and over. New files
+    still go through new_files, which is unaffected.
     """
 
-    return edit_schema()
+    return edit_schema(allow_rewrite=False)
 
 
 def _visible_repo_file(path: Path, root: Path) -> bool:

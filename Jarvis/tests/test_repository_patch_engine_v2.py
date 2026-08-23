@@ -30,29 +30,34 @@ def goal():
     )
 
 
-def test_schema_offers_targeted_edits_and_bounds_whole_file_rewrites():
-    """Targeted edits are the primary verb; a rewrite is possible but bounded.
+def test_repository_schema_makes_a_whole_file_rewrite_unrepresentable():
+    """For repository work the model may only emit anchored edits.
 
-    The earlier version of this test asserted that ``content`` was absent from
-    the schema altogether, as a blunt way of stopping a weak model from
-    rewriting a large file.  The bound now lives where it belongs -- in
-    :class:`~development.edit_engine.EditBudget` -- so the schema can also
-    express legitimate small rewrites and new-file creation.
+    The original version of this test asserted ``content`` was absent from the
+    schema. That was relaxed while the edit engine gained a rewrite verb, and a
+    live run immediately showed why the original instinct was right: asked to
+    add one command to a 189-line CLI, the local model answered with a
+    three-line "rewrite" sixteen times running. Prompting did not stop it;
+    removing the field from the schema does, because constrained decoding
+    cannot emit what the schema does not describe.
+
+    New files are unaffected -- they go through ``new_files``.
     """
 
-    item = _patch_schema()["properties"]["files"]["items"]
+    schema = _patch_schema()
+    item = schema["properties"]["files"]["items"]
 
     assert "search" in item["properties"]
     assert "replace" in item["properties"]
-    assert set(item["properties"]["op"]["enum"]) == {
-        "replace",
-        "insert_before",
-        "insert_after",
-        "rewrite",
-    }
+    assert "content" not in item["properties"]
+    assert set(item["required"]) == {"path", "search", "replace"}
+    assert "rewrite" not in item["properties"]["op"]["enum"]
 
-    # The real protection against whole-file clobbering.
+    assert "content" in schema["properties"]["new_files"]["items"]["properties"]
+
+    # The engine-level backstop, for callers that do allow rewrites.
     assert EditBudget().max_rewrite_chars <= 12000
+    assert EditBudget().min_retained_fraction >= 0.5
 
 
 def test_exact_edit_changes_only_target(tmp_path):

@@ -323,23 +323,30 @@ def test_new_content_is_accepted_as_a_synonym_for_content(tmp_path):
     assert (tmp_path / "a.py").read_text(encoding="utf-8") == "fresh\n"
 
 
-def test_empty_search_with_a_replacement_is_read_as_a_rewrite(tmp_path):
-    """There is nothing to anchor to, so the only coherent reading is a rewrite."""
+def test_empty_search_with_a_replacement_is_refused_on_a_file_with_content(tmp_path):
+    """An anchorless replacement cannot mean "discard everything else".
+
+    An earlier version of this engine read it as a whole-file rewrite. On a
+    live run that deleted a 243-line module, so the reading is now restricted
+    to files with nothing to lose (see the truncation tests below).
+    """
 
     _write(tmp_path, "a.py", "old\n")
-    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "fresh\n"}]}))
-    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "fresh\n"
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "fresh\n"}]}))
+    assert excinfo.value.kind == "empty_search"
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "old\n"
 
 
 def test_an_empty_search_rewrite_still_obeys_the_size_budget(tmp_path):
-    """Accepting the dialect must not become a way around the rewrite limit."""
+    """Where the reading IS allowed, it is still bounded like any rewrite."""
 
-    _write(tmp_path, "a.py", "old\n")
+    _write(tmp_path, "blank.py", "")  # an existing file, so this is a rewrite, not a create
     engine = _engine(tmp_path, budget=EditBudget(max_rewrite_chars=10))
     with pytest.raises(EditError) as excinfo:
-        engine.apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "y" * 200}]}))
+        engine.apply(parse_bundle({"files": [{"path": "blank.py", "search": "", "replace": "y" * 200}]}))
     assert excinfo.value.kind == "rewrite_too_large"
-    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "old\n"
+    assert (tmp_path / "blank.py").read_text(encoding="utf-8") == ""
 
 
 def test_an_empty_search_rewrite_still_obeys_protected_paths(tmp_path):
@@ -363,3 +370,147 @@ def test_the_rejection_message_names_the_keys_it_received(tmp_path):
 def test_new_files_also_accept_the_content_synonyms(tmp_path):
     _engine(tmp_path).apply(parse_bundle({"files": [], "new_files": [{"path": "b.py", "new_content": "made\n"}]}))
     assert (tmp_path / "b.py").read_text(encoding="utf-8") == "made\n"
+
+
+# ------------------------------------- protecting a file from being gutted
+
+def _big_module(lines=60):
+    body = "\n".join(f"def function_{index}():\n    return {index}\n" for index in range(lines))
+    return f"from __future__ import annotations\n\n{body}"
+
+
+def test_a_fragment_cannot_replace_a_whole_module(tmp_path):
+    """The live failure: a 243-line CLI replaced by a two-line fragment.
+
+    Both size budgets passed, because the *result* was tiny. Nothing bounded
+    how much a rewrite may remove, and removal is the direction that destroys
+    work.
+    """
+
+    original = _big_module()
+    path = _write(tmp_path, "cli.py", original)
+    fragment = 'if command.lower() in {"/quit", "/exit", "/bye"}:\n    return\n'
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(parse_bundle({"files": [{"path": "cli.py", "content": fragment}]}))
+
+    assert excinfo.value.kind == "rewrite_truncates_file"
+    assert excinfo.value.recoverable, "the model should be asked to send a real edit instead"
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_an_anchorless_replacement_never_overwrites_an_existing_file(tmp_path):
+    """The precise shape the local model emitted, with an empty search."""
+
+    original = _big_module()
+    path = _write(tmp_path, "cli.py", original)
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle({"files": [{"path": "cli.py", "search": "", "replace": "x = 1\n"}]})
+        )
+
+    assert excinfo.value.kind == "empty_search"
+    assert excinfo.value.recoverable
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_an_anchorless_replacement_still_creates_a_missing_file(tmp_path):
+    """The reading is only dangerous when there is content to destroy."""
+
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "fresh.py", "search": "", "replace": "x = 1\n"}]}))
+    assert (tmp_path / "fresh.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_an_anchorless_replacement_may_fill_an_empty_file(tmp_path):
+    _write(tmp_path, "empty.py", "")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "empty.py", "search": "", "replace": "x = 1\n"}]}))
+    assert (tmp_path / "empty.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_a_genuine_whole_file_rewrite_is_still_allowed(tmp_path):
+    """The guard must not block legitimate refactoring of a whole module."""
+
+    _write(tmp_path, "mod.py", _big_module(40))
+    rewritten = _big_module(38).replace("return 0", "return 999")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "mod.py", "content": rewritten}]}))
+    assert "999" in (tmp_path / "mod.py").read_text(encoding="utf-8")
+
+
+def test_small_files_may_still_be_gutted(tmp_path):
+    """Deleting most of a ten-line file is ordinary editing, not destruction."""
+
+    _write(tmp_path, "tiny.py", "a = 1\nb = 2\nc = 3\nd = 4\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "tiny.py", "content": "a = 1\n"}]}))
+    assert (tmp_path / "tiny.py").read_text(encoding="utf-8") == "a = 1\n"
+
+
+def test_deletion_still_works_and_is_not_confused_with_truncation(tmp_path):
+    _write(tmp_path, "gone.py", _big_module())
+    _engine(tmp_path).apply(parse_bundle({"files": [], "deleted_files": ["gone.py"]}))
+    assert not (tmp_path / "gone.py").exists()
+
+
+# --------------------------------------------- syntax as a post-condition
+
+def test_an_edit_that_breaks_python_syntax_is_refused(tmp_path):
+    """The live case: right anchor, right place, wrong indentation.
+
+    Without this the broken file reaches the test runner, where the failure
+    looks like a test error rather than the edit mistake it actually is.
+    """
+
+    original = "def main():\n    if flag:\n        print('a')\n        return\n"
+    path = _write(tmp_path, "cli.py", original)
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle(
+                {"files": [{"path": "cli.py", "search": "        print('a')", "replace": "if other:\n        print('b')"}]}
+            )
+        )
+
+    assert excinfo.value.kind == "syntax_error"
+    assert excinfo.value.recoverable
+    assert "indentation" in str(excinfo.value).lower()
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_a_syntax_failure_rolls_back_the_other_files_too(tmp_path):
+    good = _write(tmp_path, "good.py", "x = 1\n")
+    _write(tmp_path, "bad.py", "def f():\n    return 1\n")
+
+    with pytest.raises(EditError):
+        _engine(tmp_path).apply(
+            parse_bundle(
+                {
+                    "files": [
+                        {"path": "good.py", "search": "x = 1", "replace": "x = 2"},
+                        {"path": "bad.py", "search": "    return 1", "replace": "  return ("},
+                    ]
+                }
+            )
+        )
+
+    assert good.read_text(encoding="utf-8") == "x = 1\n", "atomicity must survive the syntax gate"
+
+
+def test_a_file_that_was_already_broken_can_still_be_repaired(tmp_path):
+    """The gate must not make a pre-existing syntax error unfixable."""
+
+    _write(tmp_path, "broken.py", "def f(:\n    pass\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "broken.py", "search": "def f(:", "replace": "def f():"}]}))
+    assert (tmp_path / "broken.py").read_text(encoding="utf-8") == "def f():\n    pass\n"
+
+
+def test_non_python_files_are_not_syntax_checked(tmp_path):
+    _write(tmp_path, "notes.md", "# title\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "notes.md", "search": "# title", "replace": "def f(: ["}]}))
+    assert "def f(: [" in (tmp_path / "notes.md").read_text(encoding="utf-8")
+
+
+def test_a_newly_created_python_file_is_syntax_checked(tmp_path):
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(parse_bundle({"files": [], "new_files": [{"path": "new.py", "content": "def f(:\n"}]}))
+    assert excinfo.value.kind == "syntax_error"
+    assert not (tmp_path / "new.py").exists()

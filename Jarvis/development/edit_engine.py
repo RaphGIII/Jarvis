@@ -86,6 +86,10 @@ class EditOperation:
     replace: str = ""
     content: str = ""
     occurrence: int | None = None
+    #: True when this became a REWRITE only because the model supplied a
+    #: replacement with no anchor.  Such an operation is a *guess* at intent,
+    #: not a declaration of it, and the engine holds it to a stricter standard.
+    anchorless: bool = False
 
     def describe(self) -> str:
         return f"{self.op.value}:{self.path}"
@@ -123,6 +127,13 @@ class EditBudget:
     #: Whole-file rewrites of large files are how weak models destroy code.
     #: Above this size a rewrite must be expressed as targeted edits instead.
     max_rewrite_chars: int = 12000
+    #: Files shorter than this are exempt from the shrink guard below --
+    #: gutting a ten-line file is ordinary editing.
+    truncation_floor_lines: int = 25
+    #: Fraction of a file's non-blank lines a rewrite must retain.  Below this
+    #: the "rewrite" is almost certainly a fragment the model meant to splice
+    #: in, and applying it would delete the rest of the file.
+    min_retained_fraction: float = 0.5
 
     @classmethod
     def from_env(cls, getenv: Callable[[str, str], str]) -> "EditBudget":
@@ -431,12 +442,27 @@ def _parse_edit(item: dict[str, Any]) -> EditOperation:
     elif content_value is not None:
         op = EditOp.REWRITE
     elif replace_value is not None:
-        # A replacement with a blank anchor is not an anchored edit at all --
-        # there is nothing to anchor to.  The only coherent reading is "make the
-        # file say this", so treat it as a rewrite.  It stays subject to the
-        # rewrite size budget and the path policy, so nothing is loosened.
+        # A replacement with a blank anchor cannot be an anchored edit -- there
+        # is nothing to anchor to.  It is recorded as a rewrite *candidate*;
+        # whether that reading is safe depends on what is currently in the file,
+        # which only the engine can see.  See EditEngine._stage_rewrite.
+        #
+        # This distinction is not academic.  Asked to add "/bye" to a 243-line
+        # CLI, the local model emitted exactly this shape with a two-line
+        # replacement, meaning "change this line".  Read as a rewrite it deleted
+        # the entire file, and both size budgets passed because the *result* was
+        # small.
         op = EditOp.REWRITE
         content_value = replace_value
+        return EditOperation(
+            op=op,
+            path=path,
+            search=search,
+            replace=normalize_newlines(str(replace_value)),
+            content=normalize_newlines(str(content_value)),
+            occurrence=occurrence_index,
+            anchorless=True,
+        )
     elif search.strip():
         raise EditError(
             "invalid_edit",
@@ -674,6 +700,7 @@ class EditEngine:
             self._stage(operation, state, result)
 
         self._enforce_change_budget(state, result)
+        self._check_syntax(state)
         self._commit(state)
         self._refresh_hashes(state)
         return result
@@ -763,6 +790,20 @@ class EditEngine:
             )
             return
         current = self._load(path, relative, state)
+
+        if operation.anchorless and current.strip():
+            # The model gave a replacement with no anchor for a file that
+            # already has content.  Reading that as "make the file this" would
+            # discard everything else in it, which is never what was meant.
+            raise EditError(
+                "empty_search",
+                f"edit for {relative} has replacement text but an empty search anchor. "
+                f"{relative} already has content, so copy the exact lines you want to change "
+                "into 'search', or send the complete new file as 'content'.",
+                path=relative,
+                recoverable=True,
+            )
+
         if len(content) > self.budget.max_rewrite_chars:
             raise EditError(
                 "rewrite_too_large",
@@ -773,9 +814,44 @@ class EditEngine:
             )
         if content == current:
             raise EditError("no_effective_edit", f"no effective edit for {relative}", path=relative, recoverable=True)
+
+        self._guard_against_truncation(relative, current, content)
         state.working[path] = content
         result.applied.append(
             AppliedEdit(path=relative, op=EditOp.REWRITE.value, match_mode="whole_file", changed_lines=changed_line_count(current, content))
+        )
+
+    def _guard_against_truncation(self, relative: str, current: str, replacement: str) -> None:
+        """Refuse a rewrite that would delete most of an existing file.
+
+        The size budgets bound how *large* a change may be; nothing bounded how
+        much a change may *remove*, and shrinking is the direction that destroys
+        work.  A model that replies with a fragment when asked to modify a file
+        produces a tiny, cheap, budget-passing edit that deletes hundreds of
+        lines -- exactly what happened to a 243-line CLI during a live run.
+
+        Deliberately not a total ban: deleting most of a small file is ordinary
+        editing, and an explicit whole-file rewrite of a large file is still
+        allowed as long as it is recognisably the same file.
+        """
+
+        current_lines = len([line for line in current.splitlines() if line.strip()])
+        if current_lines < self.budget.truncation_floor_lines:
+            return
+
+        new_lines = len([line for line in replacement.splitlines() if line.strip()])
+        if new_lines >= current_lines * self.budget.min_retained_fraction:
+            return
+
+        raise EditError(
+            "rewrite_truncates_file",
+            f"refusing to shrink {relative} from {current_lines} to {new_lines} non-blank lines "
+            f"({new_lines / max(1, current_lines):.0%} retained, minimum "
+            f"{self.budget.min_retained_fraction:.0%}). If you meant to change part of the file, "
+            "send a search/replace edit; if you really meant to replace all of it, send the complete "
+            "new file, not a fragment.",
+            path=relative,
+            recoverable=True,
         )
 
     def _stage_anchored(
@@ -872,6 +948,49 @@ class EditEngine:
                 f"changed-line budget exceeded: {total} > {self.budget.max_changed_lines}",
             )
 
+    def _check_syntax(self, state: "_WorkingState") -> None:
+        """Refuse a plan that would leave a Python file unable to parse.
+
+        Checked in memory, before anything is written, so the guarantee stays
+        all-or-nothing.  This is the cheapest verification in the system and one
+        of the most valuable: a small model editing by anchor routinely lands
+        the right text at the right place with the wrong indentation, and
+        without this the broken file reaches the test runner, where the failure
+        is reported as a test error rather than as the edit mistake it is.
+
+        A file that did not parse *before* the edit is left alone -- the edit is
+        not to blame for a pre-existing syntax error, and refusing would make it
+        impossible to repair one.
+        """
+
+        import ast
+
+        for path, text in state.working.items():
+            relative = state.relatives.get(path, path.name)
+            if not relative.endswith(".py"):
+                continue
+            try:
+                ast.parse(text)
+            except SyntaxError as exc:
+                original = state.originals.get(path)
+                if original is not None:
+                    try:
+                        ast.parse(original)
+                    except SyntaxError:
+                        continue  # it was already broken; not this edit's doing
+                line = exc.lineno or 0
+                context = "\n".join(
+                    f"{number:>5}: {content}"
+                    for number, content in enumerate(text.splitlines()[max(0, line - 4) : line + 2], start=max(1, line - 3))
+                )
+                raise EditError(
+                    "syntax_error",
+                    f"the edit would leave {relative} unparseable: {exc.msg} at line {line}. "
+                    f"Check the indentation of your replacement text.\n{context}",
+                    path=relative,
+                    recoverable=True,
+                ) from None
+
     def _commit(self, state: "_WorkingState") -> None:
         """Write everything, restoring the original bytes if anything fails."""
 
@@ -931,13 +1050,33 @@ class _WorkingState:
     deleted_relatives: set[str] = field(default_factory=set)
 
 
-def edit_schema(*, max_edits: int = 8, max_new_files: int = 4) -> dict[str, Any]:
+def edit_schema(*, max_edits: int = 8, max_new_files: int = 4, allow_rewrite: bool = True) -> dict[str, Any]:
     """JSON schema for the change bundle, for guided/structured generation.
 
     Placeholders in examples are deliberately meaningless (``"..."``): a
     plausible-looking English phrase in a schema example gets echoed back
     verbatim as content by small models.
+
+    ``allow_rewrite=False`` removes whole-file replacement from the schema
+    entirely, leaving only anchored edits for existing files and ``new_files``
+    for new ones.  Under constrained decoding that makes a destructive rewrite
+    *unrepresentable* rather than merely discouraged.  That distinction is not
+    theoretical: asked to add one command to a 189-line CLI, the local model
+    emitted a whole-file rewrite sixteen times in a row despite the prompt
+    telling it not to, because the schema still offered the field.
     """
+
+    edit_properties: dict[str, Any] = {
+        "path": {"type": "string"},
+        "op": {
+            "type": "string",
+            "enum": ["replace", "insert_before", "insert_after"] + (["rewrite"] if allow_rewrite else []),
+        },
+        "search": {"type": "string"},
+        "replace": {"type": "string"},
+    }
+    if allow_rewrite:
+        edit_properties["content"] = {"type": "string"}
 
     return {
         "type": "object",
@@ -950,14 +1089,8 @@ def edit_schema(*, max_edits: int = 8, max_new_files: int = 4) -> dict[str, Any]
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "properties": {
-                        "path": {"type": "string"},
-                        "op": {"type": "string", "enum": ["replace", "insert_before", "insert_after", "rewrite"]},
-                        "search": {"type": "string"},
-                        "replace": {"type": "string"},
-                        "content": {"type": "string"},
-                    },
-                    "required": ["path"],
+                    "properties": edit_properties,
+                    "required": ["path", "search", "replace"] if not allow_rewrite else ["path"],
                 },
             },
             "new_files": {

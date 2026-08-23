@@ -36,7 +36,13 @@ def run_self_developer_from_args(args: argparse.Namespace) -> dict:
         metric_name=args.metric_name,
         metric_minimums=_parse_metric_minimums(getattr(args, "metric_min", []) or []),
     )
-    brain = make_brain_provider_from_env()
+    brain = _build_brain(args)
+    # The prompt budget must match the context the provider was actually
+    # configured with.  Left to its 8192 default it would compact prompts that
+    # the model could have read in full -- the tuner measured 24576 usable on
+    # this machine, and paying for that measurement and then ignoring it would
+    # be worse than not measuring at all.
+    context_window = getattr(args, "context_window", None) or getattr(getattr(brain, "spec", None), "context_window", None)
     checkpoint = SelfDeveloperCheckpoint(benchmark_root)
     resume_command = f"python -m jarvis.self_develop --resume {benchmark_root}"
     engineer = RepositoryEngineer(
@@ -45,14 +51,14 @@ def run_self_developer_from_args(args: argparse.Namespace) -> dict:
         memory=SelfImprovementMemory(benchmark_root / "self_development_trajectories.jsonl"),
         timeout_seconds=float(args.timeout_seconds),
         max_cycles=int(args.max_cycles),
-        context_budget=ModelRequestBudget.from_env(getattr(args, "context_window", None)),
+        context_budget=ModelRequestBudget.from_env(context_window),
         checkpoint=checkpoint,
         resume_command=resume_command,
     )
     preflight = checkpoint.state.get("PREFLIGHT_COMPLETE") or engineer.preflight()
     print("[PREFLIGHT] provider=OK", flush=True)
     print(f"[PREFLIGHT] structured_generation={preflight.get('structured_generation', 'OK')}", flush=True)
-    print(f"[PREFLIGHT] context_window={preflight.get('context_window', getattr(args, 'context_window', None) or 8192)}", flush=True)
+    print(f"[PREFLIGHT] context_window={preflight.get('context_window', context_window or 8192)}", flush=True)
     result = engineer.improve(
         repo,
         goal,
@@ -87,6 +93,34 @@ def run_self_developer_from_args(args: argparse.Namespace) -> dict:
     output_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     payload["SUMMARY_PATH"] = str(output_path)
     return payload
+
+
+def _build_brain(args: argparse.Namespace):
+    """Select the model that will do the development work.
+
+    A tier is the normal way to ask -- ``--tier BUILD_LOCAL`` means "whatever
+    model currently fills the development role", which is what makes moving to a
+    bigger model or a home server a configuration change.  The older
+    ``--brain-provider`` route via ``JARVIS_BRAIN_*`` still works, because
+    existing scripts and the mock-provider tests use it.
+    """
+
+    tier_name = getattr(args, "tier", None)
+    if not tier_name:
+        return make_brain_provider_from_env()
+
+    from brain.providers import provider_for_spec
+    from brain.resources import ResourcePolicyStore
+    from brain.tiers import ModelCatalog, ModelTier
+
+    catalog = ModelCatalog()
+    # Honour the measured context window for this machine; running the coder at
+    # its 32k Modelfile default on an 8 GB card is what the tuner exists to
+    # prevent.
+    policy = ResourcePolicyStore(Path(__file__).resolve().parent.parent / "config" / "resources.json").load()
+    if policy is not None:
+        policy.apply_to(catalog)
+    return provider_for_spec(catalog.get(ModelTier(str(tier_name).upper())))
 
 
 def _split_command(value: str) -> list[str]:
@@ -138,6 +172,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-cycles", type=int, default=5)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--brain-provider", choices=["local_transformers", "openai_compatible"], default=None)
+    parser.add_argument(
+        "--tier",
+        default=None,
+        help="model tier to develop with, e.g. BUILD_LOCAL (preferred over --brain-provider)",
+    )
     parser.add_argument("--benchmark-dir", default=None)
     parser.add_argument("--worktree-root", default=None)
     parser.add_argument("--context-window", type=int, default=None)
