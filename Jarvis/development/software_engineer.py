@@ -588,6 +588,14 @@ class AutonomousSoftwareEngineer:
         )
 
     def _implementation_prompt(self, request: ProjectRequest, prior: list[DevelopmentExperience]) -> str:
+        # A weak local model tends to copy the shape of the schema example
+        # literally, including its file *count*: if the example shows one
+        # file, the model reliably returns exactly one file even when the
+        # specification mandates a second module (e.g. aggregator.py). Build
+        # the example from the specification's actual required files so a
+        # multi-file design is modeled, not just described in prose.
+        example_paths = list(dict.fromkeys(["main.py", *request.specification.proposed_file_structure]))
+        example_files = ", ".join(f'{{"path":"{path}","content":"..."}}' for path in example_paths)
         return (
             "Return JSON only. Role: Implementer. You are implementing an Architect-approved local Python capability.\n"
             "Generate a complete implementation bundle in one response. Use full-file contents.\n"
@@ -602,7 +610,8 @@ class AutonomousSoftwareEngineer:
             f"Permissions: {json.dumps(request.permissions)}\n"
             f"Current project state:\n{self._project_context(request)}\n"
             f"Relevant prior successful development patterns:\n{self._memory_context(prior)}\n"
-            "Response schema: {\"summary\":\"...\",\"plan\":\"...\",\"files\":[{\"path\":\"main.py\",\"content\":\"...\"}]}"
+            f"The files array MUST include one entry per required file below (do not omit any): {json.dumps(example_paths)}\n"
+            f"Response schema: {{\"summary\":\"...\",\"plan\":\"...\",\"files\":[{example_files}]}}"
         )
 
     def _repair_prompt(
