@@ -1,11 +1,15 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from brain.providers import BrainProvider, make_brain_provider_from_env
+from brain.providers import (
+    BrainProvider,
+    make_brain_provider_from_env,
+    make_build_remote_brain_provider_from_env,
+)
 
 
 class BrainTier(str, Enum):
@@ -63,7 +67,6 @@ class BrainRouter:
         remote_enabled: bool | None = None,
     ) -> None:
         self.fast_brain = fast_brain or make_brain_provider_from_env()
-        self.remote_brain = remote_brain
 
         if remote_enabled is None:
             remote_enabled = os.getenv(
@@ -71,6 +74,16 @@ class BrainRouter:
             ).strip().lower() in {"1", "true", "yes", "on"}
 
         self.remote_enabled = bool(remote_enabled)
+        self.remote_brain = remote_brain
+        self.remote_load_error = ""
+
+        if self.remote_enabled and self.remote_brain is None:
+            try:
+                self.remote_brain = (
+                    make_build_remote_brain_provider_from_env()
+                )
+            except Exception as exc:
+                self.remote_load_error = str(exc)
 
     def route(self, message: str) -> RouteDecision:
         normalized = f" {message.strip().lower()} "
@@ -87,6 +100,27 @@ class BrainRouter:
             "normal interaction fits the local brain",
         )
 
+    def require_build_brain(self) -> BrainProvider:
+        if not self.remote_enabled:
+            raise RemoteBrainUnavailable(
+                "This task requires BUILD_REMOTE, "
+                "but remote compute is disabled."
+            )
+
+        if self.remote_brain is None:
+            detail = (
+                f" Configuration error: {self.remote_load_error}"
+                if self.remote_load_error
+                else ""
+            )
+
+            raise RemoteBrainUnavailable(
+                "BUILD_REMOTE is enabled but no remote brain "
+                f"is available.{detail}"
+            )
+
+        return self.remote_brain
+
     def respond(self, message: str) -> tuple[str, RouteDecision]:
         decision = self.route(message)
 
@@ -97,13 +131,10 @@ class BrainRouter:
                 max_tokens=int(os.getenv("JARVIS_FAST_MAX_TOKENS", "512")),
             ), decision
 
-        if not self.remote_enabled or self.remote_brain is None:
-            raise RemoteBrainUnavailable(
-                "This task requires BUILD_REMOTE, but remote compute is disabled."
-            )
+        build_brain = self.require_build_brain()
 
         return self._generate(
-            self.remote_brain,
+            build_brain,
             message,
             max_tokens=int(os.getenv("JARVIS_BUILD_MAX_TOKENS", "1600")),
         ), decision

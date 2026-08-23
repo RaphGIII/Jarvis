@@ -337,3 +337,77 @@ def make_brain_provider_from_env() -> BrainProvider:
     if provider == "openai_compatible":
         return OpenAICompatibleBrainProvider.from_env()
     raise ValueError(f"Unsupported JARVIS_BRAIN_PROVIDER: {provider}")
+
+
+
+def make_build_remote_brain_provider_from_env() -> BrainProvider:
+    """
+    Build a remote coding provider from JARVIS_BUILD_REMOTE_* variables.
+
+    The local FAST_LOCAL JARVIS_BRAIN_* configuration is temporarily
+    hidden while the remote provider is constructed, preventing the
+    BUILD_REMOTE tier from accidentally inheriting Ollama/Qwen settings.
+    """
+
+    model = os.getenv("JARVIS_BUILD_REMOTE_MODEL", "").strip()
+    base_url = os.getenv(
+        "JARVIS_BUILD_REMOTE_BASE_URL", ""
+    ).strip()
+
+    if not model:
+        raise ValueError(
+            "JARVIS_BUILD_REMOTE_MODEL is not configured"
+        )
+
+    if not base_url:
+        raise ValueError(
+            "JARVIS_BUILD_REMOTE_BASE_URL is not configured"
+        )
+
+    remote_env: dict[str, str] = {}
+
+    prefix = "JARVIS_BUILD_REMOTE_"
+
+    for key, value in list(os.environ.items()):
+        if not key.startswith(prefix):
+            continue
+
+        suffix = key[len(prefix):]
+
+        if suffix == "ENABLED":
+            continue
+
+        remote_env[f"JARVIS_BRAIN_{suffix}"] = value
+
+    remote_env.setdefault(
+        "JARVIS_BRAIN_PROVIDER",
+        "openai_compatible",
+    )
+
+    existing_brain_keys = [
+        key
+        for key in list(os.environ)
+        if key.startswith("JARVIS_BRAIN_")
+    ]
+
+    saved = {
+        key: os.environ.get(key)
+        for key in existing_brain_keys
+    }
+
+    try:
+        for key in existing_brain_keys:
+            os.environ.pop(key, None)
+
+        os.environ.update(remote_env)
+
+        return make_brain_provider_from_env()
+
+    finally:
+        for key in list(os.environ):
+            if key.startswith("JARVIS_BRAIN_"):
+                os.environ.pop(key, None)
+
+        for key, value in saved.items():
+            if value is not None:
+                os.environ[key] = value
