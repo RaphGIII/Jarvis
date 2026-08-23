@@ -471,7 +471,11 @@ class RepositoryEngineer:
                     else self._request_repair(goal, context, plan, last_failures, review, trajectory)
                 )
                 self._apply_proposal(worktree, source, goal, proposal, context)
-                if not self._current_diff(worktree).strip():
+                changed_now = self._assert_changed_files_allowed(
+                    worktree,
+                    goal,
+                )
+                if not changed_now:
                     last_failures = [RepositoryCommandResult(["proposal"], False, stderr="NO_EFFECTIVE_CHANGE", return_code=1)]
                     self._record(trajectory, RepositoryStage.DIAGNOSE, {"cycle": cycle, "reason": "NO_EFFECTIVE_CHANGE"})
                     continue
@@ -479,6 +483,7 @@ class RepositoryEngineer:
                     self.checkpoint.save(f"PATCH_CYCLE_{cycle}", {"proposal": _redact_large(proposal), "diff": self._current_diff(worktree)[-12000:]})
                 self._record(trajectory, RepositoryStage.IMPLEMENT if cycle == 1 else RepositoryStage.REPAIR, _redact_large(proposal) | {"cycle": cycle})
                 targeted = self._run_commands(worktree, targeted_commands, stage=RepositoryStage.TEST_TARGETED)
+                self._assert_changed_files_allowed(worktree, goal)
                 last_targeted = targeted
                 if self.checkpoint:
                     self.checkpoint.save(f"TARGETED_TESTS_{cycle}", {"results": [item.to_dict() for item in targeted]})
@@ -495,6 +500,7 @@ class RepositoryEngineer:
                     self.checkpoint.save(f"REVIEW_{cycle}", review.to_dict())
                 if review.recommended_tests:
                     extra = self._run_commands(worktree, review.recommended_tests, stage=RepositoryStage.TEST_TARGETED)
+                    self._assert_changed_files_allowed(worktree, goal)
                     targeted.extend(extra)
                     last_targeted = targeted
                     self._record(trajectory, RepositoryStage.TEST_TARGETED, {"cycle": cycle, "review_recommended": [item.to_dict() for item in extra]})
@@ -505,6 +511,7 @@ class RepositoryEngineer:
                     last_failures = [RepositoryCommandResult(["review"], False, stderr="\n".join(review.blocking_findings), return_code=1)]
                     continue
                 full = self._run_commands(worktree, full_commands, stage=RepositoryStage.TEST_FULL)
+                self._assert_changed_files_allowed(worktree, goal)
                 last_full = full
                 if self.checkpoint:
                     self.checkpoint.save(f"FULL_TESTS_{cycle}", {"results": [item.to_dict() for item in full]})
@@ -513,6 +520,7 @@ class RepositoryEngineer:
                     last_failures = full
                     continue
                 after_benchmarks = self._run_commands(worktree, bench_commands, stage=RepositoryStage.BENCHMARK)
+                self._assert_changed_files_allowed(worktree, goal)
                 if self.checkpoint:
                     self.checkpoint.save(f"BENCHMARK_AFTER_{cycle}", {"results": [item.to_dict() for item in after_benchmarks]})
                 self._record(trajectory, RepositoryStage.BENCHMARK, {"when": "after", "cycle": cycle, "results": [item.to_dict() for item in after_benchmarks]})
@@ -520,7 +528,10 @@ class RepositoryEngineer:
                 protection_state = self._protected_state(source, worktree, protected_hashes)
                 protected_pristine = protection_state == ProtectionState.PRISTINE
                 diff = self._current_diff(worktree)
-                changed_files = self._changed_files(worktree)
+                changed_files = self._assert_changed_files_allowed(
+                    worktree,
+                    goal,
+                )
                 ready = bool(diff.strip() and protected_pristine and benchmark_ok and (not targeted or all(item.success for item in targeted)) and (not full or all(item.success for item in full)))
                 status = RepositoryStage.CANDIDATE_READY if ready else RepositoryStage.REJECTED
                 result = RepositoryCandidateResult(
@@ -974,8 +985,61 @@ class RepositoryEngineer:
         return self._git(worktree, ["diff", "--", "."], check=False).stdout
 
     def _changed_files(self, worktree: Path) -> list[str]:
-        completed = self._git(worktree, ["diff", "--name-only", "--", "."], check=False)
-        return [line.strip().replace("\\", "/") for line in completed.stdout.splitlines() if line.strip()]
+        changed: set[str] = set()
+
+        commands = [
+            ["diff", "--name-only", "--", "."],
+            ["diff", "--cached", "--name-only", "--", "."],
+            ["ls-files", "--others", "--exclude-standard", "--", "."],
+        ]
+
+        for args in commands:
+            completed = self._git(worktree, args, check=False)
+
+            for line in completed.stdout.splitlines():
+                relative = line.strip().replace("\\", "/")
+
+                if relative:
+                    changed.add(relative)
+
+        return sorted(changed)
+
+    def _assert_changed_files_allowed(
+        self,
+        worktree: Path,
+        goal: SelfImprovementGoal,
+    ) -> list[str]:
+        """
+        Independent fail-closed write-scope verification.
+
+        _safe_path() protects normal proposal writes. This second gate
+        verifies the actual Git-visible result so future writer bugs,
+        newly created files, or other side effects cannot silently
+        escape the declared write scope.
+        """
+        changed = self._changed_files(worktree)
+        violations: list[str] = []
+
+        for relative in changed:
+            if _path_matches(relative, goal.protected_paths):
+                violations.append(f"{relative} (protected)")
+                continue
+
+            if (
+                goal.allowed_paths
+                and not _path_matches(relative, goal.allowed_paths)
+            ):
+                violations.append(
+                    f"{relative} (outside allowed_paths)"
+                )
+
+        if violations:
+            raise ValueError(
+                "write scope violation: "
+                + ", ".join(sorted(violations))
+            )
+
+        return changed
 
     def _benchmarks_ok(self, goal: SelfImprovementGoal, before: list[RepositoryCommandResult], after: list[RepositoryCommandResult]) -> bool:
         if after and not all(item.success for item in after):
@@ -1087,7 +1151,7 @@ class RepositoryEngineer:
             if not path.is_relative_to(source.resolve()):
                 raise ValueError(f"protected path escapes repository: {relative}")
             if path.exists() and path.is_file():
-                hashes[raw.as_posix()] = sha256(path.read_bytes()).hexdigest()
+                hashes[raw.as_posix()] = _protection_digest(path)
             elif path.exists() and path.is_dir():
                 root_key = raw.as_posix().rstrip("/") + "/"
                 entries: list[str] = []
@@ -1095,7 +1159,7 @@ class RepositoryEngineer:
                     if child.is_file() and _visible_repo_file(child, source):
                         rel = child.relative_to(source).as_posix()
                         entries.append(rel)
-                        hashes[rel] = sha256(child.read_bytes()).hexdigest()
+                        hashes[rel] = _protection_digest(child)
                 hashes[root_key] = "DIR:" + _stable_hash("\n".join(entries))
         return hashes
 
@@ -1108,9 +1172,16 @@ class RepositoryEngineer:
                 continue
             source_path = (source / relative).resolve(strict=False)
             candidate_path = (worktree / relative).resolve(strict=False)
-            if not candidate_path.exists() or sha256(candidate_path.read_bytes()).hexdigest() != expected:
+            if (
+                not candidate_path.exists()
+                or _protection_digest(candidate_path) != expected
+            ):
                 return ProtectionState.MODIFIED
-            if source_path.exists() and sha256(source_path.read_bytes()).hexdigest() != expected:
+
+            if (
+                source_path.exists()
+                and _protection_digest(source_path) != expected
+            ):
                 return ProtectionState.MODIFIED
         protected_roots = set()
         for relative in protected_hashes:
@@ -1236,6 +1307,23 @@ def _ignored_repo_part(part: str) -> bool:
         "worktrees",
         "jarvis_selfdev",
     }
+
+
+def _protection_digest(path: Path) -> str:
+    """
+    Hash protected repository content deterministically across Git
+    worktrees on Windows.
+
+    Text files treat CRLF and LF as equivalent because Git may materialize
+    different working-tree line endings without changing repository
+    content. Binary files remain byte-exact.
+    """
+    data = path.read_bytes()
+
+    if b"\x00" not in data:
+        data = data.replace(b"\r\n", b"\n")
+
+    return sha256(data).hexdigest()
 
 
 def _path_matches(path: str, patterns: list[str]) -> bool:
