@@ -7,8 +7,9 @@ from types import SimpleNamespace
 
 import brain.providers as providers
 import jarvis.build_executor as build_executor_module
-from brain.router import BrainRouter, RemoteBrainUnavailable
-from jarvis.build_executor import BuildRemoteExecutor
+from brain.router import BrainRouter, BrainTier, RemoteBrainUnavailable
+from brain.tiers import ModelCatalog
+from jarvis.build_executor import BuildExecutor
 
 
 class FakeBrain:
@@ -29,31 +30,24 @@ class FakeBrain:
 def test_router_exposes_injected_build_brain():
     brain = FakeBrain()
 
-    router = BrainRouter(
-        fast_brain=brain,
-        remote_brain=brain,
-        remote_enabled=True,
-    )
+    router = BrainRouter(fast_brain=brain, build_brain=brain)
 
-    assert router.require_build_brain() is brain
+    assert router.brain(BrainTier.BUILD_LOCAL) is brain
 
 
-def test_router_blocks_build_brain_when_disabled():
-    brain = FakeBrain()
+def test_router_blocks_a_disabled_build_tier():
+    """A tier turned off in the catalog must never hand back a brain."""
 
-    router = BrainRouter(
-        fast_brain=brain,
-        remote_brain=brain,
-        remote_enabled=False,
-    )
+    catalog = ModelCatalog(environ={"JARVIS_BUILD_LOCAL_ENABLED": "0"})
+    router = BrainRouter(catalog=catalog)
 
     try:
-        router.require_build_brain()
+        router.brain(BrainTier.BUILD_LOCAL)
     except RemoteBrainUnavailable:
         pass
     else:
         raise AssertionError(
-            "disabled BUILD_REMOTE unexpectedly returned a brain"
+            "a disabled BUILD_LOCAL unexpectedly returned a brain"
         )
 
 
@@ -202,7 +196,7 @@ def test_build_executor_delegates_to_repository_engineer(
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    executor = BuildRemoteExecutor(
+    executor = BuildExecutor(
         repository_path=repo,
         brain=FakeBrain(),
         run_root=tmp_path / "runs",

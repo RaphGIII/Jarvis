@@ -72,13 +72,18 @@ class BuildExecutionResult:
         }
 
 
-class BuildRemoteExecutor:
+class BuildExecutor:
     """
     Thin interactive adapter around the existing RepositoryEngineer.
 
     It deliberately contains no planning, patch generation, review or
     promotion logic of its own. Those responsibilities remain inside
     RepositoryEngineer.
+
+    The brain it is handed is whatever tier the caller selected; by default
+    that is BUILD_LOCAL, so a repository change needs no remote compute. The
+    class was called BuildRemoteExecutor when remote inference was the only
+    way to do this work; the old name remains as an alias.
     """
 
     def __init__(
@@ -221,3 +226,7 @@ class BuildRemoteExecutor:
             candidate=candidate,
             benchmark_root=str(benchmark_root),
         )
+
+
+#: The name this class had when the heavy tier was necessarily remote.
+BuildRemoteExecutor = BuildExecutor
