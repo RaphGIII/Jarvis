@@ -21,3 +21,7 @@ pytest-v03-final/
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Tuned on each machine; not portable between hosts.
+Jarvis/config/resources.json
+Jarvis/.pytest_basetemp/

@@ -198,6 +198,38 @@ class OpenAICompatibleBrainProvider:
     def capabilities(self) -> dict[str, Any]:
         return {"chat": True, "coding": True, "embeddings": False, "local": False, "structured_generation": True}
 
+    def list_models(self) -> list[str]:
+        """Enumerate the models this endpoint serves.
+
+        An endpoint that does not implement ``GET /v1/models`` returns an empty
+        list rather than raising, because "cannot enumerate" is not the same as
+        "has no models" -- callers treat the empty list as "unknown" and fall
+        through to the generation probe, which is authoritative either way.
+        """
+
+        url = self.config.base_url.rstrip("/") + "/v1/models"
+        headers = {"Accept": "application/json"}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=min(15.0, self.config.timeout)) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError:
+            return []
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise ProviderError(
+                kind="provider_connection_error",
+                message=_safe_error_message(str(exc)),
+                model=self.config.model,
+            ) from exc
+        except json.JSONDecodeError:
+            return []
+        entries = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            return []
+        return [str(item.get("id", "")) for item in entries if isinstance(item, dict) and item.get("id")]
+
     def _chat_completion(
         self,
         prompt: str,
@@ -328,6 +360,42 @@ def _provider_error_payload(exc: Exception) -> dict[str, Any]:
             "attempt": exc.attempt,
         }
     return {"kind": type(exc).__name__, "message": _safe_error_message(str(exc))}
+
+
+def provider_for_spec(spec: Any) -> BrainProvider:
+    """Build the provider that serves a :class:`~brain.tiers.ModelSpec`.
+
+    This is the one place that maps a provider *name* to an implementation, so
+    adding a backend (llama.cpp, vLLM, a future home server) is a single new
+    branch here and a configuration change -- never a change to the autonomous
+    engine above it.
+    """
+
+    provider = str(getattr(spec, "provider", "")).strip().lower()
+
+    if provider == "ollama":
+        from brain.ollama import OllamaBrainProvider
+
+        return OllamaBrainProvider(spec, system_prompt=SYSTEM_PROMPT)
+
+    if provider in {"openai_compatible", "openai", "vllm"}:
+        return OpenAICompatibleBrainProvider(
+            OpenAICompatibleConfig(
+                base_url=spec.base_url,
+                api_key=spec.api_key(),
+                model=spec.model,
+                timeout=float(spec.timeout_seconds),
+                temperature=float(spec.temperature),
+                top_p=float(spec.top_p),
+                max_tokens=int(spec.max_output_tokens),
+                context_window=int(spec.context_window),
+            )
+        )
+
+    if provider == "local_transformers":
+        return LocalTransformersBrainProvider(model_id=spec.model)
+
+    raise ValueError(f"Unsupported provider for tier {getattr(spec, 'tier', '?')}: {provider!r}")
 
 
 def make_brain_provider_from_env() -> BrainProvider:
