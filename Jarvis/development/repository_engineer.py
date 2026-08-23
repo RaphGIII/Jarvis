@@ -799,14 +799,18 @@ class RepositoryEngineer:
 
     def _request_patch(self, goal: SelfImprovementGoal, context: dict[str, Any], plan: dict[str, Any], prior: list[dict[str, Any]], trajectory: dict[str, Any]) -> dict[str, Any]:
         prompt = (
-            "Return JSON only. Role: Repository Implementer. Produce a repository improvement candidate.\n"
-            "Use complete file replacements. Do not alter protected paths. Final readiness requires deterministic tests.\n"
+            "Return JSON only. Role: Repository Implementer. Produce the SMALLEST safe repository edit.\n"
+            "For EXISTING files, the `files` array contains exact search/replace edits, NOT complete file contents.\n"
+            "Each edit must contain path, search, replace. `search` must be copied exactly from the current repository context and must match exactly once.\n"
+            "Prefer one tiny edit. Never rewrite an entire existing file. Maximum 8 edits.\n"
+            "Use `new_files` only for genuinely new files. Do not alter protected paths. Final readiness requires deterministic tests.\n"
             f"SelfImprovementGoal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
             f"Plan:\n{json.dumps(plan, indent=2, sort_keys=True)}\n"
             f"Repository context:\n{json.dumps(_context_for_prompt(context, include_files=True, plan=plan), indent=2, sort_keys=True)}\n"
             f"Relevant prior memory:\n{json.dumps(_prior_for_prompt(prior), indent=2, sort_keys=True)}"
         )
         return self._generate_patch_bundle(prompt)
+
 
     def _request_repair(
         self,
@@ -819,26 +823,36 @@ class RepositoryEngineer:
     ) -> dict[str, Any]:
         diff = self._current_diff(Path(trajectory["worktree"]))
         prompt = (
-            "Return JSON only. Role: Repository Repairer. Diagnose failing deterministic evidence and return corrected complete files.\n"
+            "Return JSON only. Role: Repository Repairer. Diagnose the failure and produce the SMALLEST corrective edit.\n"
+            "For EXISTING files, `files` contains exact search/replace edits, never complete files.\n"
+            "Each search string must match exactly once. Prefer one tiny edit. Maximum 8 edits.\n"
             "Do not weaken tests, benchmarks, hidden verifiers, safety policy, or protected paths.\n"
             f"Goal:\n{json.dumps(goal.to_dict(), indent=2, sort_keys=True)}\n"
             f"Plan:\n{json.dumps(plan, indent=2, sort_keys=True)}\n"
-            f"Current diff:\n{diff[-12000:]}\n"
+            f"Current diff:\n{diff[-6000:]}\n"
             f"Failures:\n{json.dumps([item.to_dict() for item in failures], indent=2, sort_keys=True)}\n"
             f"Reviewer findings:\n{json.dumps(review.to_dict(), indent=2, sort_keys=True)}\n"
             f"Relevant files:\n{json.dumps(_context_for_prompt(context, include_files=True, plan=plan), indent=2, sort_keys=True)}"
         )
         return self._generate_patch_bundle(prompt)
 
+
     def _generate_patch_bundle(self, prompt: str) -> dict[str, Any]:
         schema = _patch_schema()
         stage = RepositoryStage.REPAIR if "Repository Repairer" in prompt else RepositoryStage.IMPLEMENT
-        payload = self._generate_json(prompt, schema, stage=stage, desired_output_tokens=1800, temperature=0.2)
+        payload = self._generate_json(
+            prompt,
+            schema,
+            stage=stage,
+            desired_output_tokens=1000,
+            temperature=0.1,
+        )
         if not isinstance(payload.get("files"), list):
-            raise ValueError("repository proposal did not contain files")
+            raise ValueError("repository proposal did not contain edits")
         payload.setdefault("new_files", [])
         payload.setdefault("deleted_files", [])
         return payload
+
 
     def _request_review(self, goal: SelfImprovementGoal, context: dict[str, Any], diff: str, targeted: list[RepositoryCommandResult], trajectory: dict[str, Any]) -> RepositoryReview:
         schema = {
@@ -916,28 +930,96 @@ class RepositoryEngineer:
             context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
 
     def _apply_proposal(self, worktree: Path, source: Path, goal: SelfImprovementGoal, proposal: dict[str, Any], context: dict[str, Any]) -> None:
-        for item in [*proposal.get("files", []), *proposal.get("new_files", [])]:
+        edits = proposal.get("files", [])
+
+        if len(edits) > 8:
+            raise ValueError("patch quality gate failed: too many edits")
+
+        for item in edits:
             if not isinstance(item, dict):
-                continue
-            path = self._safe_path(worktree, source, str(item.get("path", "")), goal)
+                raise ValueError("patch quality gate failed: invalid edit")
+
             relative = str(item.get("path", "")).replace("\\", "/")
+            path = self._safe_path(worktree, source, relative, goal)
+
+            if not path.exists() or not path.is_file():
+                raise ValueError(
+                    f"patch quality gate failed: existing edit target does not exist: {relative}"
+                )
+
+            current = path.read_text(encoding="utf-8", errors="replace")
+
+            if relative not in context.get("inspected_files", {}):
+                context.setdefault("inspected_files", {})[relative] = current[:8000]
+                context.setdefault("file_hashes", {})[relative] = _stable_hash(current)
+
+            expected_hash = context.get("file_hashes", {}).get(relative)
+
+            if expected_hash and expected_hash != _stable_hash(current):
+                raise ValueError(
+                    f"implementation quality gate failed: stale file context for {relative}"
+                )
+
+            search = str(item.get("search", ""))
+            replace = str(item.get("replace", ""))
+
+            if not search:
+                raise ValueError(
+                    f"patch quality gate failed: empty search for {relative}"
+                )
+
+            # Prevent whole-file rewrites from masquerading as an edit.
+            if len(search) > 4000 or len(replace) > 4000:
+                raise ValueError(
+                    f"patch quality gate failed: edit too large for {relative}"
+                )
+
+            matches = current.count(search)
+
+            if matches != 1:
+                raise ValueError(
+                    f"patch quality gate failed: search must match exactly once in {relative}; matched {matches}"
+                )
+
+            updated = current.replace(search, replace, 1)
+
+            if updated == current:
+                raise ValueError(
+                    f"patch quality gate failed: no effective edit for {relative}"
+                )
+
+            path.write_text(updated, encoding="utf-8")
+
+            context.setdefault("inspected_files", {})[relative] = updated[:8000]
+            context.setdefault("file_hashes", {})[relative] = _stable_hash(updated)
+
+        for item in proposal.get("new_files", []):
+            if not isinstance(item, dict):
+                raise ValueError("patch quality gate failed: invalid new file")
+
+            relative = str(item.get("path", "")).replace("\\", "/")
+            path = self._safe_path(worktree, source, relative, goal)
+
             if path.exists():
-                current = path.read_text(encoding="utf-8", errors="replace")
-                if relative not in context.get("inspected_files", {}):
-                    context.setdefault("inspected_files", {})[relative] = current[:8000]
-                    context.setdefault("file_hashes", {})[relative] = _stable_hash(current)
-                expected_hash = context.get("file_hashes", {}).get(relative)
-                if expected_hash and expected_hash != _stable_hash(current):
-                    raise ValueError(f"implementation quality gate failed: stale file context for {relative}")
+                raise ValueError(
+                    f"patch quality gate failed: new_files cannot replace existing file: {relative}"
+                )
+
+            content = str(item.get("content", ""))
+
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(str(item.get("content", "")), encoding="utf-8")
-            context.setdefault("inspected_files", {})[relative] = str(item.get("content", ""))[:8000]
-            context.setdefault("file_hashes", {})[relative] = _stable_hash(str(item.get("content", "")))
+            path.write_text(content, encoding="utf-8")
+
+            context.setdefault("inspected_files", {})[relative] = content[:8000]
+            context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
+
         for relative in proposal.get("deleted_files", []):
             path = self._safe_path(worktree, source, str(relative), goal)
             if path.exists():
                 path.unlink()
+
         self._clear_python_caches(worktree)
+
 
     def _run_commands(self, worktree: Path, commands: list[list[str]], *, stage: str) -> list[RepositoryCommandResult]:
         results = []
@@ -1241,23 +1323,51 @@ class RepositoryEngineer:
 
 
 def _patch_schema() -> dict[str, Any]:
-    file_schema = {
+    edit_schema = {
         "type": "object",
         "additionalProperties": False,
-        "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+        "properties": {
+            "path": {"type": "string"},
+            "search": {"type": "string"},
+            "replace": {"type": "string"},
+        },
+        "required": ["path", "search", "replace"],
+    }
+
+    new_file_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+        },
         "required": ["path", "content"],
     }
+
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
             "analysis": {"type": "string"},
-            "files": {"type": "array", "items": file_schema},
-            "new_files": {"type": "array", "items": file_schema},
-            "deleted_files": {"type": "array", "items": {"type": "string"}},
+            "files": {
+                "type": "array",
+                "items": edit_schema,
+                "maxItems": 8,
+            },
+            "new_files": {
+                "type": "array",
+                "items": new_file_schema,
+                "maxItems": 4,
+            },
+            "deleted_files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 4,
+            },
         },
         "required": ["analysis", "files"],
     }
+
 
 
 def _visible_repo_file(path: Path, root: Path) -> bool:
