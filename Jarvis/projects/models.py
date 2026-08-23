@@ -226,10 +226,11 @@ class StepRecord:
     task_id: str = ""
     success: bool = True
     #: Whether this step advanced the *work*, as opposed to merely completing.
-    #: A diagnosis can succeed brilliantly and move nothing, so the loop's
-    #: stuck-detector counts productivity rather than success -- otherwise
-    #: execute-fails / diagnose-succeeds alternates forever.
-    productive: bool = True
+    #: A diagnosis can succeed brilliantly and move nothing, and abandoning an
+    #: impossible task fails while genuinely advancing the plan -- so the loop's
+    #: stuck-detector counts productivity rather than success.  ``None`` means
+    #: "no opinion": the engine then treats productivity as equal to success.
+    productive: bool | None = None
     detail: dict[str, Any] = field(default_factory=dict)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     duration_seconds: float = 0.0

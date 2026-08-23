@@ -96,12 +96,16 @@ class ProjectEngine:
         hooks: EngineHooks | None = None,
         verifier: Callable[[Project, ToolContext], list[tuple[str, bool, str]]] | None = None,
         max_tool_calls_per_step: int = 4,
+        verify_interval: int = 3,
     ) -> None:
         self.brain = brain
         self.store = store
         self.tools = tools
         self.hooks = hooks or EngineHooks()
         self.max_tool_calls_per_step = max_tool_calls_per_step
+        #: How many EXECUTE steps may pass before checking in with a real
+        #: verification run.  See :meth:`_next_phase` for why this is not 1.
+        self.verify_interval = max(1, verify_interval)
         self._verify = verifier or self._default_verifier
 
     # ------------------------------------------------------------------
@@ -248,32 +252,56 @@ class ProjectEngine:
         """Choose the next phase from the project's own state.
 
         Deliberately deterministic.  Letting the model pick its own next phase
-        sounds flexible but in practice lets a weak model loop forever between
-        planning and re-planning without ever executing anything.
+        sounds flexible, but in practice a weak model loops between planning and
+        re-planning without ever executing anything.
+
+        The ordering here was corrected after a live run against the local 7B
+        model: the first version verified after *every* task, so with six tasks
+        still pending it failed, diagnosed "no tests were found" -- correctly,
+        because the tests had not been written yet -- and re-ran early tasks.
+        Two thirds of the step budget went on diagnosing a plan that had simply
+        not finished running.  Verification is now something the loop does when
+        the plan is done, plus occasionally in case the work is already
+        complete, and a verification failure with work still queued means
+        "carry on", not "something is wrong".
         """
 
         if not project.findings and not project.tasks:
             return Phase.INVESTIGATE
-        if not project.acceptance:
-            return Phase.DECOMPOSE
-        if not project.tasks:
+        if not project.acceptance or not project.tasks:
             return Phase.DECOMPOSE
 
-        # Everything actionable is finished: check the criteria for real.
-        if not project.ready_tasks():
-            if any(task.open for task in project.tasks):
-                # Only blocked or exhausted work remains.
-                return Phase.REPLAN
-            return Phase.VERIFY
-
+        ready = project.ready_tasks()
         last = project.steps[-1] if project.steps else None
-        if last and last.phase is Phase.EXECUTE:
-            return Phase.VERIFY if last.success else Phase.DIAGNOSE
-        if last and last.phase is Phase.DIAGNOSE:
-            return Phase.EXECUTE
-        if last and last.phase is Phase.VERIFY and not last.success:
-            return Phase.DIAGNOSE
+
+        if last is not None:
+            # A tool that failed needs to be understood before trying again.
+            if last.phase is Phase.EXECUTE and not last.success:
+                return Phase.DIAGNOSE
+            if last.phase is Phase.DIAGNOSE:
+                return Phase.EXECUTE if project.ready_tasks() else Phase.REPLAN
+            if last.phase is Phase.VERIFY and not last.success:
+                # Only investigate the failure once there is nothing left to build.
+                return Phase.EXECUTE if ready else Phase.DIAGNOSE
+
+        if not ready:
+            # Only blocked or exhausted work remains, or none at all.
+            return Phase.REPLAN if any(task.open for task in project.tasks) else Phase.VERIFY
+
+        # There is work queued.  Check in occasionally so an early finish is
+        # noticed, but do not pay for a full verification after every task.
+        if self._executes_since_verify(project) >= self.verify_interval:
+            return Phase.VERIFY
         return Phase.EXECUTE
+
+    def _executes_since_verify(self, project: Project) -> int:
+        count = 0
+        for step in reversed(project.steps):
+            if step.phase is Phase.VERIFY:
+                break
+            if step.phase is Phase.EXECUTE:
+                count += 1
+        return count
 
     def _run_phase(self, phase: Phase, project: Project, context: ToolContext) -> StepRecord:
         started = time.perf_counter()
@@ -291,11 +319,11 @@ class ProjectEngine:
         except Exception as exc:
             step = StepRecord(phase=phase, summary=f"{type(exc).__name__}: {exc}", success=False, productive=False)
         step.phase = phase
-        if not step.success and step.phase is not Phase.VERIFY:
-            # Invariant: a step that failed did not advance the work.  VERIFY is
-            # the one exception -- it reports failure while still having newly
-            # proved a criterion that was failing before, which is real progress.
-            step.productive = False
+        if step.productive is None:
+            # No explicit opinion: a step that failed did not advance the work.
+            # Phases that know better (VERIFY proving a new criterion, EXECUTE
+            # routing around an impossible task) say so themselves.
+            step.productive = step.success
         step.duration_seconds = time.perf_counter() - started
         return step
 
@@ -391,10 +419,17 @@ class ProjectEngine:
         prompt = (
             "Return JSON only. Break this goal into a small number of concrete tasks.\n"
             "Each task must be something one focused change can accomplish.\n"
+            "Plan ONLY work the tools below can actually perform. Do not plan steps like\n"
+            "initialising a git repository or setting up scaffolding that is not required.\n"
+            "Put source files directly in the workspace root; do not nest a directory named\n"
+            "after the project.\n"
             "Also give acceptance criteria. Every criterion SHOULD carry a `check`: an executable\n"
-            'command array such as ["python", "-m", "pytest", "-q", "tests/test_x.py"].\n'
+            'command array such as ["python", "-m", "pytest", "-q"].\n'
             "A criterion without a runnable check can never be proved, so it will not count.\n\n"
             f"{self._project_brief(project)}\n"
+            # Planning blind to the toolset produces plans that cannot be run;
+            # the planner needs the same capability list the executor gets.
+            f"Tools available to carry out each task:\n{self.tools.render_for_prompt()}\n"
         )
         payload = self._ask_json(prompt, schema, max_tokens=1100)
 
@@ -409,14 +444,23 @@ class ProjectEngine:
             added_tasks += 1
 
         added_criteria = 0
-        existing_criteria = {item.text.strip().lower() for item in project.acceptance}
+        existing_criteria = {_criterion_key(item.text) for item in project.acceptance}
+        # Two criteria that run the same command prove the same thing, so the
+        # second is pure cost: it doubles every verification run and clutters
+        # the brief.  Observed live -- the model proposed "The tests pass." next
+        # to a caller-supplied "the tests pass".
+        existing_checks = {tuple(item.check) for item in project.acceptance if item.check}
         for item in payload.get("acceptance") or []:
             text = str(item.get("text", "")).strip()
-            if not text or text.lower() in existing_criteria:
-                continue
             check = [str(part) for part in (item.get("check") or []) if str(part).strip()]
+            if not text or _criterion_key(text) in existing_criteria:
+                continue
+            if check and tuple(check) in existing_checks:
+                continue
             project.add_acceptance(text, check=check)
-            existing_criteria.add(text.lower())
+            existing_criteria.add(_criterion_key(text))
+            if check:
+                existing_checks.add(tuple(check))
             added_criteria += 1
 
         for text in payload.get("decisions") or []:
@@ -471,9 +515,16 @@ class ProjectEngine:
         prompt = (
             "Return JSON only. Carry out ONE task using the tools below.\n"
             "Emit the tool calls that actually perform the work -- writing files, running tests.\n"
-            "Read a file before editing it. Copy search anchors character-for-character.\n\n"
+            "Read a file before editing it. Copy search anchors character-for-character.\n"
+            "Put source files directly in the workspace root unless the task says otherwise; "
+            "do NOT create a nested directory named after the project.\n\n"
             f"TASK: {task.title}\n{task.detail}\n\n"
-            + (f"PREVIOUS ATTEMPT FAILED WITH:\n{task.last_error[:1500]}\n\n" if task.last_error else "")
+            + (f"THIS TASK'S PREVIOUS ATTEMPT FAILED WITH:\n{task.last_error[:1500]}\n\n" if task.last_error else "")
+            # The single most important context: what the acceptance check
+            # actually printed.  Without it the model rewrites the same stub
+            # over and over, because it never sees why the stub is wrong.
+            + self._failing_check_evidence(project)
+            + self._workspace_snapshot(context)
             + f"{self._project_brief(project)}\n"
             f"Available tools:\n{self.tools.render_for_prompt()}\n"
         )
@@ -505,6 +556,31 @@ class ProjectEngine:
                 lesson=_lesson_from(failures),
                 task_id=task.id,
             )
+
+            # A task whose every tool call was refused on policy grounds cannot
+            # ever succeed -- retrying it just spends the failure budget on a
+            # foregone conclusion.  Observed live: a plan step "initialise a git
+            # repository" was denied three times before the run gave up, while
+            # six perfectly workable tasks sat untouched behind it.
+            if all(not item.retryable for item in failures):
+                task.status = TaskStatus.ABANDONED
+                project.add_finding(
+                    f"task {task.title!r} is not possible with the permitted tools: {task.last_error[:220]}",
+                    source="engine",
+                    confidence=1.0,
+                )
+                remaining = bool(project.ready_tasks())
+                return StepRecord(
+                    phase=Phase.EXECUTE,
+                    summary=f"abandoned impossible task: {task.title}",
+                    success=False,
+                    # Routing around a task that can never work does advance the
+                    # plan, so long as there is other work to move on to.
+                    productive=remaining,
+                    task_id=task.id,
+                    tool_calls=[item.to_dict() for item in results],
+                )
+
             self._maybe_abandon(project, task)
             return StepRecord(
                 phase=Phase.EXECUTE,
@@ -594,10 +670,13 @@ class ProjectEngine:
         prompt = (
             "Return JSON only. Something failed. Work out WHY from the evidence, then say what to change.\n"
             "Base the diagnosis on the evidence text, not on what you expected to happen.\n"
+            "Quote the specific error from the evidence in your diagnosis.\n"
             "Set blocked_on_user only for something no amount of code can fix "
             "(a missing credential, a hardware decision) -- never for a failing test.\n\n"
             f"EVIDENCE:\n{evidence[:4000]}\n\n"
-            f"{self._project_brief(project)}\n"
+            + self._failing_check_evidence(project)
+            + self._workspace_snapshot(context)
+            + f"{self._project_brief(project)}\n"
         )
         payload = self._ask_json(prompt, schema, max_tokens=700)
 
@@ -611,15 +690,43 @@ class ProjectEngine:
             project.state = ProjectState.BLOCKED
             return StepRecord(phase=Phase.DIAGNOSE, summary=f"blocked: {payload['blocker']}", success=False)
 
+        # If something is already queued and retryable, the diagnosis is all
+        # that was needed: EXECUTE will retry it with this evidence attached.
+        # Creating a task here as well produced a duplicate for every failed
+        # tool call, and the duplicates then competed for the attempt budget.
+        already_queued = project.next_task()
+        if already_queued is not None:
+            if fix:
+                already_queued.detail = f"{already_queued.detail}\n\nRepair: {fix}".strip()
+            return StepRecord(
+                phase=Phase.DIAGNOSE,
+                summary=f"diagnosed: {diagnosis[:160]}",
+                success=bool(diagnosis),
+                productive=False,
+                task_id=already_queued.id,
+                detail={"diagnosis": diagnosis, "fix": fix, "retrying": already_queued.title},
+            )
+
         # Prefer reopening the task that failed over inventing a new one, so the
         # attempt counter keeps its meaning and the project cannot grow an
         # unbounded tail of near-duplicate tasks.
         reopened = self._reopen_failed_task(project, fix)
         if reopened is None and self._repair_budget_left(project):
             title = str(payload.get("new_task", "")).strip() or (fix[:110] if fix else "repair the failing behaviour")
-            reopened = project.add_task(
-                title, detail=f"{_AUTO_REPAIR}\n{diagnosis}\n\nProposed fix: {fix}", kind=project.kind
-            )
+            # A repeated diagnosis produces a repeated task title.  Creating it
+            # again just buys another three attempts at something already shown
+            # not to work; seen live as four identically-titled "install pytest"
+            # tasks consuming an entire step budget.
+            if any(task.title.strip().lower() == title.strip().lower() for task in project.tasks):
+                project.add_finding(
+                    f"diagnosis keeps proposing {title!r}, which has already been attempted; a different approach is needed",
+                    source="engine",
+                    confidence=1.0,
+                )
+            else:
+                reopened = project.add_task(
+                    title, detail=f"{_AUTO_REPAIR}\n{diagnosis}\n\nProposed fix: {fix}", kind=project.kind
+                )
         if reopened is None:
             # Every avenue this diagnosis can open has already been attempted.
             # Say so plainly rather than spawning another near-identical task.
@@ -705,16 +812,27 @@ class ProjectEngine:
         return auto_created < max(2, project.limits.max_task_attempts)
 
     def _reopen_failed_task(self, project: Project, fix: str) -> Task | None:
-        candidates = [task for task in project.tasks if task.status in {TaskStatus.DONE, TaskStatus.FAILED}]
-        if not candidates:
-            return None
-        task = candidates[-1]
-        if task.exhausted:
-            return None
-        task.status = TaskStatus.PENDING
-        if fix:
-            task.detail = f"{task.detail}\n\nRepair: {fix}".strip()
-        return task
+        """Reopen the task most likely to be responsible for the failure.
+
+        "Most likely" means the one most recently executed, taken from the step
+        trajectory rather than from list order.  An earlier version used
+        ``tasks[-1]``, which on a live run kept reopening "create a project
+        directory" while the actual defect sat in the implementation task.
+        """
+
+        recent_ids = [step.task_id for step in reversed(project.steps) if step.phase is Phase.EXECUTE and step.task_id]
+        by_id = {task.id: task for task in project.tasks}
+
+        for task_id in recent_ids:
+            task = by_id.get(task_id)
+            if task is None or task.exhausted or task.open:
+                continue
+            if task.status in {TaskStatus.DONE, TaskStatus.FAILED}:
+                task.status = TaskStatus.PENDING
+                if fix:
+                    task.detail = f"{task.detail}\n\nRepair: {fix}".strip()
+                return task
+        return None
 
     def _recent_failure_evidence(self, project: Project) -> str:
         parts: list[str] = []
@@ -742,13 +860,18 @@ class ProjectEngine:
             )
             output = result.output if isinstance(result.output, dict) else {}
             ok = bool(result.ok and output.get("success"))
-            evidence = (
-                f"$ {' '.join(criterion.check)}\n"
-                f"exit={output.get('returncode', 'n/a')}\n"
-                f"{str(output.get('stdout', ''))[-1500:]}\n{str(output.get('stderr', ''))[-1500:]}"
-                if result.ok
-                else f"$ {' '.join(criterion.check)}\n{result.error}"
-            )
+            if result.ok:
+                stdout = str(output.get("stdout", ""))
+                stderr = str(output.get("stderr", ""))
+                returncode = output.get("returncode", "n/a")
+                evidence = (
+                    f"$ {' '.join(criterion.check)}\n"
+                    f"exit={returncode}"
+                    + _explain_exit(criterion.check, returncode, f"{stdout}\n{stderr}")
+                    + f"\n{stdout[-1500:]}\n{stderr[-1500:]}"
+                )
+            else:
+                evidence = f"$ {' '.join(criterion.check)}\n{result.error}"
             criterion.satisfied = ok
             criterion.last_evidence = evidence[-3000:]
             criterion.last_checked_at = _now()
@@ -762,6 +885,61 @@ class ProjectEngine:
                 continue
             results.append(self.tools.invoke_payload(payload, context))
         return results
+
+    def _failing_check_evidence(self, project: Project) -> str:
+        """The output of the acceptance checks that are currently failing.
+
+        A local model cannot repair a defect it has never been shown.  Feeding
+        the real stdout/stderr back is what turns "write the file again" into
+        "the function returns None, so return the dict instead".
+        """
+
+        failing = [
+            item for item in project.objective_criteria() if not item.satisfied and item.last_evidence
+        ]
+        if not failing:
+            return ""
+        blocks = [
+            f"--- {item.text} ---\n{item.last_evidence[-1800:]}" for item in failing[:2]
+        ]
+        return "OUTPUT OF THE FAILING ACCEPTANCE CHECK (this is what you must make pass):\n" + "\n".join(blocks) + "\n\n"
+
+    def _workspace_snapshot(self, context: ToolContext, *, max_files: int = 12, max_chars: int = 4000) -> str:
+        """The files that exist now, with the small ones inlined.
+
+        Shown unnumbered and verbatim so a search anchor copied out of it can
+        actually match -- the same reasoning as in the repository engineer.
+        """
+
+        try:
+            from tools.builtin import iter_files, relative_to
+
+            paths = [path for path in iter_files(context.workspace, limit=200) if path.suffix in {".py", ".txt", ".md", ".toml", ".cfg", ".json"}]
+        except Exception:
+            return ""
+        if not paths:
+            return "WORKSPACE IS EMPTY.\n\n"
+
+        lines = ["CURRENT WORKSPACE FILES:"]
+        lines.extend(f"  {relative_to(context.workspace, path)}" for path in paths[:40])
+
+        remaining = max_chars
+        bodies: list[str] = []
+        for path in paths[:max_files]:
+            if remaining <= 0:
+                break
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n")
+            except OSError:
+                continue
+            name = relative_to(context.workspace, path)
+            block = f"\n--- {name} ---\n{text}\n--- end {name} ---\n"
+            if len(block) > remaining:
+                block = block[:remaining] + "\n...[truncated]\n"
+            bodies.append(block)
+            remaining -= len(block)
+
+        return "\n".join(lines) + "\n\nCURRENT FILE CONTENTS:" + "".join(bodies) + "\n\n"
 
     def _project_brief(self, project: Project) -> str:
         """The compact project state a prompt needs.
@@ -855,6 +1033,53 @@ def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
+
+
+#: pytest's documented exit codes.  A bare "exit=5" tells a small model
+#: nothing, and on a live run one concluded from it that pytest was not
+#: installed -- then spent twenty steps trying to install it, while the actual
+#: problem was that no test file had been written yet.  Spelling the meaning out
+#: costs one line and removes the whole failure mode.
+_PYTEST_EXIT_MEANINGS = {
+    0: "all tests passed",
+    1: "tests ran and some FAILED -- read the assertion output below and fix the code under test",
+    2: "the test run was interrupted",
+    3: "an internal pytest error occurred",
+    4: "pytest was used incorrectly (bad arguments)",
+    5: (
+        "pytest ran successfully but COLLECTED NO TESTS. pytest is installed and working. "
+        "You must CREATE a test file named test_*.py containing functions named test_*"
+    ),
+}
+
+
+def _explain_exit(command: list[str], returncode: Any, output: str) -> str:
+    """Turn an exit code into something a small model can act on."""
+
+    try:
+        code = int(returncode)
+    except (TypeError, ValueError):
+        return ""
+
+    rendered = " ".join(str(part) for part in command).lower()
+    if "pytest" in rendered and code in _PYTEST_EXIT_MEANINGS:
+        return f"  ({_PYTEST_EXIT_MEANINGS[code]})"
+    if code == 0:
+        return "  (success)"
+    lowered = output.lower()
+    if "modulenotfounderror" in lowered or "no module named" in lowered:
+        return "  (a module is missing -- install it with install_packages, or fix the import)"
+    if "syntaxerror" in lowered:
+        return "  (a source file does not parse -- fix the syntax error named below)"
+    return ""
+
+
+def _criterion_key(text: str) -> str:
+    """Normalise a criterion so trivial restatements collapse together."""
+
+    import re
+
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
 def _title_from(goal: str) -> str:

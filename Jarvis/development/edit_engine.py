@@ -374,8 +374,9 @@ def parse_bundle(bundle: dict[str, Any]) -> EditPlan:
         if not isinstance(item, dict):
             raise EditError("invalid_edit", "each new file must be an object")
         path = _require_path(item)
+        content = _first_present(item, _CONTENT_KEYS)
         operations.append(
-            EditOperation(op=EditOp.CREATE, path=path, content=normalize_newlines(str(item.get("content", ""))))
+            EditOperation(op=EditOp.CREATE, path=path, content=normalize_newlines(str(content if content is not None else "")))
         )
 
     for value in bundle.get("deleted_files") or []:
@@ -397,13 +398,26 @@ def _require_path(item: dict[str, Any]) -> str:
     return path
 
 
+#: Keys a model reaches for when it means "the whole new file contents".
+#: Every one of these was produced by a real local model in a live run; each
+#: costs a wasted cycle if it is rejected instead of understood.
+_CONTENT_KEYS = ("content", "new_content", "new_text", "text", "body", "file_content")
+
+
+def _first_present(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if item.get(key) is not None:
+            return item[key]
+    return None
+
+
 def _parse_edit(item: dict[str, Any]) -> EditOperation:
     path = _require_path(item)
     declared = str(item.get("op") or item.get("operation") or "").strip().lower()
 
-    search = normalize_newlines(str(item.get("search", item.get("anchor", ""))))
+    search = normalize_newlines(str(item.get("search", item.get("anchor", "")) or ""))
     replace_value = item.get("replace")
-    content_value = item.get("content")
+    content_value = _first_present(item, _CONTENT_KEYS)
     occurrence = item.get("occurrence")
     occurrence_index = int(occurrence) if isinstance(occurrence, (int, float)) and int(occurrence) > 0 else None
 
@@ -412,11 +426,18 @@ def _parse_edit(item: dict[str, Any]) -> EditOperation:
             op = EditOp(declared)
         except ValueError:
             raise EditError("invalid_edit", f"unsupported edit operation {declared!r} for {path}", path=path) from None
-    elif search and replace_value is not None:
+    elif search.strip() and replace_value is not None:
         op = EditOp.REPLACE
     elif content_value is not None:
         op = EditOp.REWRITE
-    elif search and content_value is None and replace_value is None:
+    elif replace_value is not None:
+        # A replacement with a blank anchor is not an anchored edit at all --
+        # there is nothing to anchor to.  The only coherent reading is "make the
+        # file say this", so treat it as a rewrite.  It stays subject to the
+        # rewrite size budget and the path policy, so nothing is loosened.
+        op = EditOp.REWRITE
+        content_value = replace_value
+    elif search.strip():
         raise EditError(
             "invalid_edit",
             f"edit for {path} has a search anchor but no 'replace' text",
@@ -426,7 +447,8 @@ def _parse_edit(item: dict[str, Any]) -> EditOperation:
     else:
         raise EditError(
             "invalid_edit",
-            f"edit for {path} must provide either search+replace or content",
+            f"edit for {path} needs either search+replace (to change part of a file) "
+            f"or content (to set the whole file). Got keys: {sorted(item)}",
             path=path,
             recoverable=True,
         )

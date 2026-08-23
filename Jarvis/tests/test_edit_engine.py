@@ -311,3 +311,55 @@ def test_lf_file_stays_lf(tmp_path):
     path = _write(tmp_path, "a.py", "value = 1\nother = 2\n")
     _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "value = 1", "replace": "value = 9"}]}))
     assert b"\r" not in path.read_bytes()
+
+
+# ------------------------------------------- dialects seen from real models
+
+def test_new_content_is_accepted_as_a_synonym_for_content(tmp_path):
+    """A live local model emitted `new_content`; rejecting it cost three cycles."""
+
+    _write(tmp_path, "a.py", "old\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "new_content": "fresh\n"}]}))
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "fresh\n"
+
+
+def test_empty_search_with_a_replacement_is_read_as_a_rewrite(tmp_path):
+    """There is nothing to anchor to, so the only coherent reading is a rewrite."""
+
+    _write(tmp_path, "a.py", "old\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "fresh\n"}]}))
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "fresh\n"
+
+
+def test_an_empty_search_rewrite_still_obeys_the_size_budget(tmp_path):
+    """Accepting the dialect must not become a way around the rewrite limit."""
+
+    _write(tmp_path, "a.py", "old\n")
+    engine = _engine(tmp_path, budget=EditBudget(max_rewrite_chars=10))
+    with pytest.raises(EditError) as excinfo:
+        engine.apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "y" * 200}]}))
+    assert excinfo.value.kind == "rewrite_too_large"
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "old\n"
+
+
+def test_an_empty_search_rewrite_still_obeys_protected_paths(tmp_path):
+    path = _write(tmp_path, "tests/test_x.py", "assert True\n")
+    engine = _engine(tmp_path, protected_paths=["tests"])
+    with pytest.raises(EditError) as excinfo:
+        engine.apply(parse_bundle({"files": [{"path": "tests/test_x.py", "search": "", "replace": "assert False\n"}]}))
+    assert excinfo.value.kind == "protected_path"
+    assert path.read_text(encoding="utf-8") == "assert True\n"
+
+
+def test_the_rejection_message_names_the_keys_it_received(tmp_path):
+    """A model can only correct an edit if the error says what was wrong with it."""
+
+    with pytest.raises(EditError) as excinfo:
+        parse_bundle({"files": [{"path": "a.py", "notes": "I forgot the content"}]})
+    assert "notes" in str(excinfo.value)
+    assert excinfo.value.recoverable
+
+
+def test_new_files_also_accept_the_content_synonyms(tmp_path):
+    _engine(tmp_path).apply(parse_bundle({"files": [], "new_files": [{"path": "b.py", "new_content": "made\n"}]}))
+    assert (tmp_path / "b.py").read_text(encoding="utf-8") == "made\n"

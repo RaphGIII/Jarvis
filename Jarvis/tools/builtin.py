@@ -230,11 +230,28 @@ def apply_edits(arguments: dict[str, Any], context: ToolContext) -> dict[str, An
 
 
 def write_file(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Create or overwrite one file, still via the edit engine's guarantees."""
+    """Create or overwrite one file, still via the edit engine's guarantees.
+
+    Idempotent by design.  ``write_file`` is a declaration of desired content,
+    so a file that already holds that content is a success, not a failure.  The
+    edit engine's "no effective edit" guard exists for *search/replace*, where a
+    no-op means the model's anchor did not do what it believed -- applying that
+    same rule here made an agent that re-asserted a correct file look like it
+    was failing, which then triggered pointless repair cycles.
+    """
 
     path = str(arguments["path"])
     content = str(arguments["content"])
     target = resolve_readable(context, path)
+
+    if target.exists() and target.is_file():
+        try:
+            current = target.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n")
+        except OSError:
+            current = None
+        if current is not None and current == content.replace("\r\n", "\n"):
+            return {"applied": [], "total_changed_lines": 0, "unchanged": True, "path": path}
+
     bundle = (
         {"analysis": "write_file", "files": [{"path": path, "content": content}]}
         if target.exists()

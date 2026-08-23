@@ -255,6 +255,33 @@ def test_write_file_creates_then_updates(registry, context, workspace):
     assert (workspace / "new.py").read_text(encoding="utf-8") == "x = 2\n"
 
 
+def test_write_file_is_idempotent(registry, context, workspace):
+    """Re-asserting content a file already has is success, not failure.
+
+    write_file declares desired content. Treating a no-op as an error made an
+    agent that correctly re-stated a finished file look like it was failing,
+    which then triggered pointless repair cycles -- seen in a live run.
+    """
+
+    assert call(registry, context, "write_file", path="same.py", content="x = 1\n").ok
+    result = call(registry, context, "write_file", path="same.py", content="x = 1\n")
+    assert result.ok
+    assert result.output["unchanged"] is True
+    assert (workspace / "same.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_apply_edits_still_rejects_a_no_op_search_replace(registry, context):
+    """The no-op guard still matters where it was designed to: anchored edits."""
+
+    result = call(
+        registry,
+        context,
+        "apply_edits",
+        files=[{"path": "app.py", "search": "return a + b", "replace": "return a + b"}],
+    )
+    assert not result.ok and result.error_kind == "no_effective_edit"
+
+
 # ------------------------------------------------------------------ process
 
 
