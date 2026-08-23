@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from brain.json_utils import lenient_json_loads
 from capabilities.models import SkillSpecification
 from development.memory import classify_failure
 from development.software_engineer import SoftwareTestResult
@@ -152,7 +153,7 @@ class InternalTestEngineer:
         }
         try:
             raw = self.brain.generate_structured(prompt, schema, max_tokens=1600, temperature=0.2, top_p=0.9)
-            data = json.loads(_extract_json(raw))
+            data = lenient_json_loads(_extract_json(raw))
         except Exception:
             return []
         cases: list[InternalTestCase] = []

@@ -412,6 +412,60 @@ def test_self_improvement_demo_runs_on_disposable_fixture(tmp_path):
     assert Path(metrics["RESULT_PATH"]).exists()
 
 
+def test_valid_bundle_rejects_placeholder_only_file_content():
+    """A weak local model can literally return the "..." schema-example
+    placeholder as a file's actual `content` instead of real code. That must
+    be treated as an invalid bundle (triggering retry/repair) rather than
+    written to disk as a broken file (discovered via live small-model
+    testing on a multi-file capability build)."""
+    from development.software_engineer import _valid_bundle
+
+    assert not _valid_bundle({"summary": "x", "files": [{"path": "main.py", "content": "..."}]})
+    assert not _valid_bundle({"summary": "x", "files": [{"path": "main.py", "content": "   ...   "}]})
+    assert _valid_bundle({"summary": "x", "files": [{"path": "main.py", "content": "def run(payload):\n    return {}\n"}]})
+    assert not _valid_bundle(
+        {
+            "summary": "x",
+            "files": [
+                {"path": "main.py", "content": "def run(payload):\n    return {}\n"},
+                {"path": "helper.py", "content": "..."},
+            ],
+        }
+    )
+
+
+def test_missing_required_files_flags_specification_mandated_files_not_provided():
+    """When the specification's proposed_file_structure mandates a helper
+    module (e.g. a multi-file design), a bundle that only returns main.py
+    must be flagged as missing that file so the caller retries/repairs with
+    an explicit corrective instruction, instead of silently accepting a
+    single-file bundle that can never satisfy a multi-file acceptance
+    criterion (discovered via live small-model testing on a multi-file
+    capability build: the model kept inlining everything into main.py)."""
+    from development.software_engineer import _missing_required_files
+
+    bundle_single_file = {"files": [{"path": "main.py", "content": "def run(payload):\n    return {}\n"}]}
+    assert _missing_required_files(bundle_single_file, ["aggregator.py"]) == ["aggregator.py"]
+    assert _missing_required_files(bundle_single_file, []) == []
+    assert _missing_required_files(bundle_single_file, None) == []
+
+    bundle_with_helper = {
+        "files": [
+            {"path": "main.py", "content": "import aggregator\n"},
+            {"path": "aggregator.py", "content": "def aggregate():\n    return {}\n"},
+        ]
+    }
+    assert _missing_required_files(bundle_with_helper, ["aggregator.py"]) == []
+
+    bundle_placeholder_helper = {
+        "files": [
+            {"path": "main.py", "content": "import aggregator\n"},
+            {"path": "aggregator.py", "content": "..."},
+        ]
+    }
+    assert _missing_required_files(bundle_placeholder_helper, ["aggregator.py"]) == ["aggregator.py"]
+
+
 def test_review_from_payload_rejects_contradictory_approved_and_repair_required():
     """A weak local model can emit approved=true with repair_required=true (both
     literally, e.g. echoing schema example placeholders). Trusting `approved` in

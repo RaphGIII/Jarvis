@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from brain.json_utils import lenient_json_loads
 from capabilities.models import SkillSpecification
 
 
@@ -65,7 +66,7 @@ class SkillSpecificationGenerator:
             if raw is None:
                 return None
             try:
-                spec = SkillSpecification.from_dict(json.loads(_extract_json(raw)))
+                spec = SkillSpecification.from_dict(lenient_json_loads(_extract_json(raw)))
             except Exception as exc:
                 last_error = f"Response was not valid JSON: {exc}"
                 prompt = self._retry_prompt(goal, last_error)

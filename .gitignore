@@ -13,6 +13,7 @@ env/
 
 # Generated test/benchmark artifacts (Jarvis)
 Jarvis/.pytest_tmp/
+Jarvis/.agent_tmp/
 pytest-current/
 pytest-temp/
 pytest-v03-final/

@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from brain.json_utils import lenient_json_loads
 from capabilities.models import CapabilityResolution
 from capabilities.registry import CapabilityRegistry
 
@@ -55,7 +56,7 @@ class CapabilityResolver:
         )
         try:
             raw = self.brain.generate(prompt, max_tokens=300, temperature=0.0, top_p=1.0)
-            data = json.loads(_extract_json(raw))
+            data = lenient_json_loads(_extract_json(raw))
         except Exception:
             return None
         capability_id = str(data.get("capability_id") or "")

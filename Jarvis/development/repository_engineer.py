@@ -14,6 +14,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from brain.json_utils import lenient_json_loads
+
 try:
     from brain.providers import ProviderError, StructuredGenerationUnsupported
 except Exception:  # pragma: no cover - keeps repository tooling importable in minimal test envs
@@ -874,7 +876,7 @@ class RepositoryEngineer:
             raw = self._generate_structured(budgeted_prompt, schema, max_tokens=max_tokens, temperature=temperature)
             last_raw = raw
             try:
-                data = json.loads(_extract_json(raw))
+                data = lenient_json_loads(_extract_json(raw))
                 if isinstance(data, dict):
                     data.setdefault("_budget", budget_record)
                     return data

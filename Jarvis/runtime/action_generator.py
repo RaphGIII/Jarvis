@@ -6,6 +6,7 @@ from hashlib import sha256
 import time
 from typing import Any, Protocol
 
+from brain.json_utils import lenient_json_loads
 from environments.coding.actions import ActionCandidate, ActionType
 from environments.coding.observation import CodingObservation
 
@@ -292,7 +293,7 @@ def parse_action_candidates(raw: str, return_metadata: bool = False):
         text = match.group(1)
     metadata: dict[str, Any] = {"malformed_items": 0, "schema_invalid_candidates": 0, "parse_error": "", "parse_error_count": 0}
     try:
-        parsed = json.loads(text)
+        parsed = lenient_json_loads(text)
     except json.JSONDecodeError as exc:
         metadata["parse_error"] = str(exc)
         metadata["parse_error_count"] = 1

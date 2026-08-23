@@ -7,6 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from brain.json_utils import lenient_json_loads
 from capabilities.models import SkillSpecification
 from development.memory import DevelopmentExperience, DevelopmentMemory, classify_failure
 from environments.coding.sandbox_backend import SandboxBackend
@@ -284,6 +285,14 @@ class AutonomousSoftwareEngineer:
         result: DevelopmentResult,
     ) -> dict[str, Any] | None:
         prompt = self._implementation_prompt(request, prior)
+        # The initial bundle must materialize every file the specification
+        # requires (e.g. a mandated helper module), not just main.py -- a
+        # weak model otherwise inlines everything into main.py and silently
+        # violates a multi-file design requirement, which then only surfaces
+        # much later (or not at all) at test/promotion time.
+        required_files = [
+            path for path in request.specification.proposed_file_structure if path != "main.py"
+        ]
         return self._request_valid_bundle(
             prompt,
             implementation_bundle_schema(),
@@ -292,6 +301,7 @@ class AutonomousSoftwareEngineer:
             temperature=0.2,
             state=DevelopmentState.IMPLEMENT,
             attempts=1 + max(0, request.structured_regeneration_attempts),
+            required_files=required_files,
         )
 
     def _request_repair(
@@ -323,6 +333,7 @@ class AutonomousSoftwareEngineer:
         temperature: float,
         state: DevelopmentState,
         attempts: int,
+        required_files: list[str] | None = None,
     ) -> dict[str, Any] | None:
         last_raw = ""
         for attempt in range(1, max(1, attempts) + 1):
@@ -332,7 +343,13 @@ class AutonomousSoftwareEngineer:
             self._accumulate_tokens(result)
             bundle = _parse_json_object(raw)
             valid = _valid_bundle(bundle)
-            self._record(result, state, {"raw_response_hash": _stable_hash(raw), "valid": valid, "attempt": attempt})
+            missing_files = _missing_required_files(bundle, required_files) if valid else []
+            valid = valid and not missing_files
+            self._record(
+                result,
+                state,
+                {"raw_response_hash": _stable_hash(raw), "valid": valid, "attempt": attempt, "missing_files": missing_files},
+            )
             if valid:
                 return bundle
             prompt = (
@@ -340,6 +357,11 @@ class AutonomousSoftwareEngineer:
                 + "\n\nYour previous response was not valid JSON for the required schema. "
                 "Regenerate JSON only with complete files."
             )
+            if missing_files:
+                prompt += (
+                    f" The response MUST include real, non-empty implementations for these required files: "
+                    f"{', '.join(missing_files)}."
+                )
         self._record(result, state, {"raw_response_hash": _stable_hash(last_raw), "valid": False, "regeneration_exhausted": True})
         return None
 
@@ -757,7 +779,7 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
     if match:
         text = match.group(1)
     try:
-        data = json.loads(text)
+        data = lenient_json_loads(text)
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
@@ -765,7 +787,33 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
 
 def _valid_bundle(bundle: dict[str, Any]) -> bool:
     files = bundle.get("files")
-    return isinstance(files, list) and any(isinstance(item, dict) and item.get("path") and "content" in item for item in files)
+    if not isinstance(files, list):
+        return False
+    real_files = [item for item in files if isinstance(item, dict) and item.get("path") and "content" in item]
+    if not real_files:
+        return False
+    # A weak local model can literally return the "..." placeholder token from
+    # the schema example as a file's actual `content` instead of generating
+    # real code (the flip side of the earlier placeholder-echo bug: giving the
+    # model an unambiguous placeholder stops it from parroting descriptive
+    # phrases, but doesn't stop it from emitting the placeholder itself as if
+    # it were a valid response). Any file whose content is just the
+    # placeholder makes the whole bundle invalid so the caller retries/repairs
+    # instead of writing a broken file.
+    return all(not _is_placeholder_text(str(item.get("content", ""))) for item in real_files)
+
+
+def _missing_required_files(bundle: dict[str, Any], required_files: list[str] | None) -> list[str]:
+    """Files the specification mandates (e.g. a required helper module) that
+    the bundle failed to provide with real, non-placeholder content."""
+    if not required_files:
+        return []
+    present = {
+        item.get("path")
+        for item in bundle.get("files", [])
+        if isinstance(item, dict) and item.get("path") and not _is_placeholder_text(str(item.get("content", "")))
+    }
+    return [path for path in required_files if path not in present]
 
 
 _PLACEHOLDER_TOKENS = {"...", "…", "<...>", "n/a", "none", ""}
