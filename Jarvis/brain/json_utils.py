@@ -13,17 +13,37 @@ JSON should go through :func:`lenient_json_loads` instead of calling
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+
+# The JSON spec only allows a backslash inside a string to be followed by one
+# of ", \, /, b, f, n, r, t, or a \uXXXX escape. Code-generating small models
+# routinely emit Python source (which allows `\'`) as a JSON string value and
+# over-escape single quotes as `\'`, which is not valid JSON. A backslash
+# never legitimately appears outside of a string in JSON, so it is safe to
+# strip an invalid escape's backslash anywhere in the document.
+_INVALID_ESCAPE = re.compile(r'\\(?!["\\/bfnrtu])')
+
+
+def _strip_invalid_escapes(text: str) -> str:
+    return _INVALID_ESCAPE.sub("", text)
 
 
 def lenient_json_loads(text: str) -> Any:
-    """Parse JSON, tolerating literal control characters inside strings.
+    """Parse JSON, tolerating common small-model JSON-generation mistakes.
 
-    Tries strict parsing first (the common, well-formed case) and only
-    falls back to ``strict=False`` if that fails, so this never changes
-    behavior for already-valid JSON.
+    Tries strict parsing first (the common, well-formed case), then
+    ``strict=False`` (tolerates literal control characters inside strings),
+    then repairs invalid backslash escapes (e.g. ``\\'``) that are valid in
+    Python string literals but not in JSON. Never changes behavior for
+    already-valid JSON.
     """
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        pass
+    try:
         return json.loads(text, strict=False)
+    except json.JSONDecodeError:
+        pass
+    return json.loads(_strip_invalid_escapes(text), strict=False)

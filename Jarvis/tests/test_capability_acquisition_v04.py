@@ -40,7 +40,11 @@ class ProtectedEditBrain:
     last_metadata = {"generated_tokens": 1, "total_tokens": 1}
 
     def generate_structured(self, prompt, schema, *, max_tokens=700, temperature=0.2, top_p=0.9):
-        return '{"summary":"bad","files":[{"path":"test_public.py","content":"pass"}]}'
+        return (
+            '{"summary":"bad","files":['
+            '{"path":"main.py","content":"def run(payload):\\n    return {}\\n"},'
+            '{"path":"test_public.py","content":"pass"}]}'
+        )
 
 
 def test_v04_persistent_capability_registry(tmp_path):

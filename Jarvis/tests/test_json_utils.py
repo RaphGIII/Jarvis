@@ -24,3 +24,17 @@ def test_lenient_json_loads_tolerates_literal_control_characters_in_strings():
 def test_lenient_json_loads_still_raises_on_genuinely_malformed_json():
     with pytest.raises(json.JSONDecodeError):
         lenient_json_loads("{not json at all")
+
+
+def test_lenient_json_loads_repairs_invalid_backslash_escapes():
+    """Code-generating small models often emit Python source (which allows
+    an escaped single quote, `\\'`) as a JSON string value. `\\'` is not a
+    valid JSON escape sequence and strict/non-strict json.loads both reject
+    it, wasting a full implementation attempt (observed live: the model
+    wrote `payload[\\'transactions\\']` inside a JSON string)."""
+    raw = r'{"content": "payload[\'transactions\']"}'
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw)
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw, strict=False)
+    assert lenient_json_loads(raw) == {"content": "payload['transactions']"}

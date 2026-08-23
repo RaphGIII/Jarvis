@@ -466,6 +466,43 @@ def test_missing_required_files_flags_specification_mandated_files_not_provided(
     assert _missing_required_files(bundle_placeholder_helper, ["aggregator.py"]) == ["aggregator.py"]
 
 
+def test_request_valid_bundle_accumulates_required_files_across_attempts():
+    """A weak local model corrected to add a missing required file (e.g.
+    aggregator.py) can overcorrect and return *only* that file on the retry,
+    silently forgetting a file (main.py) it got right on an earlier attempt.
+    _request_valid_bundle must merge real, non-placeholder files across
+    attempts instead of discarding earlier progress (discovered via live
+    small-model testing on a multi-file capability build)."""
+    from development.software_engineer import AutonomousSoftwareEngineer, DevelopmentResult, DevelopmentState
+
+    class SplitFileBrain:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_structured(self, prompt, schema, *, max_tokens=700, temperature=0.2, top_p=0.9):
+            self.calls += 1
+            if self.calls == 1:
+                return '{"summary":"s","files":[{"path":"main.py","content":"import aggregator\\ndef run(p):\\n    return aggregator.aggregate(p)\\n"}]}'
+            return '{"summary":"s","files":[{"path":"aggregator.py","content":"def aggregate(p):\\n    return {}\\n"}]}'
+
+    engineer = AutonomousSoftwareEngineer(brain=SplitFileBrain(), backend=None, memory=None)
+    result = DevelopmentResult(False, DevelopmentState.UNDERSTAND)
+    bundle = engineer._request_valid_bundle(
+        "prompt",
+        {},
+        result,
+        max_tokens=100,
+        temperature=0.2,
+        state=DevelopmentState.IMPLEMENT,
+        attempts=3,
+        required_files=["main.py", "aggregator.py"],
+    )
+
+    assert bundle is not None
+    paths = {item["path"] for item in bundle["files"]}
+    assert paths == {"main.py", "aggregator.py"}
+
+
 def test_review_from_payload_rejects_contradictory_approved_and_repair_required():
     """A weak local model can emit approved=true with repair_required=true (both
     literally, e.g. echoing schema example placeholders). Trusting `approved` in

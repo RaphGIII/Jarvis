@@ -289,8 +289,11 @@ class AutonomousSoftwareEngineer:
         # requires (e.g. a mandated helper module), not just main.py -- a
         # weak model otherwise inlines everything into main.py and silently
         # violates a multi-file design requirement, which then only surfaces
-        # much later (or not at all) at test/promotion time.
-        required_files = [
+        # much later (or not at all) at test/promotion time. main.py itself
+        # must always be required too: after being told to add a missing
+        # helper module, a weak model can overcorrect and return *only* the
+        # helper file, dropping the entrypoint entirely.
+        required_files = ["main.py"] + [
             path for path in request.specification.proposed_file_structure if path != "main.py"
         ]
         return self._request_valid_bundle(
@@ -336,6 +339,15 @@ class AutonomousSoftwareEngineer:
         required_files: list[str] | None = None,
     ) -> dict[str, Any] | None:
         last_raw = ""
+        last_bundle: dict[str, Any] | None = None
+        # A weak local model asked to add a missing required file can
+        # overcorrect and return *only* that file on the next attempt,
+        # forgetting files it correctly produced earlier (e.g. main.py on
+        # attempt 1, aggregator.py on attempt 2, each individually valid but
+        # never together). Accumulate real, non-placeholder files by path
+        # across attempts so a later attempt's file doesn't erase an earlier
+        # attempt's still-good file.
+        accumulated_files: dict[str, dict[str, Any]] = {}
         for attempt in range(1, max(1, attempts) + 1):
             raw = self._generate_structured(prompt, schema, max_tokens=max_tokens, temperature=temperature)
             last_raw = raw
@@ -343,15 +355,30 @@ class AutonomousSoftwareEngineer:
             self._accumulate_tokens(result)
             bundle = _parse_json_object(raw)
             valid = _valid_bundle(bundle)
-            missing_files = _missing_required_files(bundle, required_files) if valid else []
-            valid = valid and not missing_files
+            if valid:
+                last_bundle = bundle
+                for item in bundle.get("files", []):
+                    if isinstance(item, dict) and item.get("path") and not _is_placeholder_text(str(item.get("content", ""))):
+                        accumulated_files[item["path"]] = item
+            missing_files = _missing_required_files(bundle, required_files) if valid else list(required_files or [])
+            merged_missing = [path for path in (required_files or []) if path not in accumulated_files]
             self._record(
                 result,
                 state,
-                {"raw_response_hash": _stable_hash(raw), "valid": valid, "attempt": attempt, "missing_files": missing_files},
+                {
+                    "raw_response_hash": _stable_hash(raw),
+                    "valid": valid,
+                    "attempt": attempt,
+                    "missing_files": missing_files,
+                    "merged_missing_files": merged_missing,
+                },
             )
-            if valid:
+            if valid and not missing_files:
                 return bundle
+            if valid and not merged_missing and last_bundle is not None:
+                merged = dict(last_bundle)
+                merged["files"] = list(accumulated_files.values())
+                return merged
             prompt = (
                 prompt
                 + "\n\nYour previous response was not valid JSON for the required schema. "
