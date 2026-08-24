@@ -57,6 +57,9 @@ class SpeechConfig:
     #: was also the more accurate of the two on that sample.
     stt_model: str = "base"
     language: str = ""
+    #: Words the recogniser would otherwise mis-hear, fed to whisper as an
+    #: initial prompt. Names and product terms, not general vocabulary.
+    vocabulary: str = "Jarvis, Ollama, Qwen, Stockfish, Repository, Capability, Worktree."
     voice_id: str = ""
     voices_dir: Path = DEFAULT_VOICES
     models_dir: Path = DEFAULT_MODELS
@@ -202,6 +205,7 @@ class SpeechEngine:
                 "model": self.config.stt_model,
                 "download_root": str(self.config.models_dir),
                 "language": language or self.config.language,
+                "vocabulary": self.config.vocabulary,
                 "wav": base64.b64encode(audio.to_wav()).decode("ascii"),
             },
             timeout=self.config.call_timeout,
@@ -220,6 +224,7 @@ class SpeechEngine:
                 "model": self.config.stt_model,
                 "download_root": str(self.config.models_dir),
                 "language": language or self.config.language,
+                "vocabulary": self.config.vocabulary,
                 "path": str(path),
             },
             timeout=self.config.call_timeout,

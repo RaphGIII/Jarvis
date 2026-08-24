@@ -78,6 +78,7 @@ class JarvisCore:
         self._expert_status: dict[str, Any] = {"expert_available": False, "quota_exhausted": False}
         self._expert_checked_at = 0.0
         self._expert_probe_running = threading.Event()
+        self._voice: Any = None
 
     # ------------------------------------------------------------------
     # Lazy subsystems
@@ -90,6 +91,14 @@ class JarvisCore:
 
             self._kernel = JarvisKernel()
         return self._kernel
+
+    @property
+    def voice(self) -> Any:
+        if self._voice is None:
+            from service.voice import VoiceService
+
+            self._voice = VoiceService(self.bus)
+        return self._voice
 
     @property
     def experts(self) -> Any:
@@ -154,11 +163,36 @@ class JarvisCore:
             provider = self.kernel.provider(tier)
             backend = getattr(self.kernel.catalog.get(tier), "model", "") or tier.value
             prompt = self._compose_prompt(text)
-            for chunk in self._generate(provider, prompt):
-                if self._stop_requested.is_set():
-                    break
-                collected.append(chunk)
-                self.emit(EventType.TOKEN, {"text": chunk}, scope=scope)
+            stream = self._generate(provider, prompt)
+
+            def tee():
+                """One pass over the model's output feeds both the screen and the voice.
+
+                Generating twice -- once to display, once to speak -- would
+                double the cost and let the two drift apart, which the user
+                would hear as speech that does not match the text on screen.
+                """
+
+                for chunk in stream:
+                    if self._stop_requested.is_set():
+                        return
+                    collected.append(chunk)
+                    self.emit(EventType.TOKEN, {"text": chunk}, scope=scope)
+                    yield chunk
+
+            # Speak only in voice mode. Merely having constructed the speech
+            # engine is not consent to talk: a user who dictated once should
+            # not find every later typed message read aloud.
+            speak = (
+                self._voice is not None
+                and self._voice.settings.enabled
+                and self._voice.settings.speak_replies
+            )
+            if speak:
+                self.voice.speak_stream(tee(), scope=scope)
+            else:
+                for _ in tee():
+                    pass
         except Exception as exc:
             self.state.set(JarvisState.ERROR, detail=str(exc)[:200])
             self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
@@ -200,10 +234,97 @@ class JarvisCore:
             + f"user: {text}\n{self.persona_name}:"
         )
 
+    # ------------------------------------------------------------------
+    # Warming
+    # ------------------------------------------------------------------
+
+    def warm(self, *, speech: bool = True) -> threading.Thread:
+        """Load the models the first interaction will need, in the background.
+
+        Measured before this existed: the first spoken exchange after startup
+        took 54 seconds, nearly all of it loading a 4B model and a whisper model
+        that were always going to be needed. The user experienced that as Jarvis
+        being broken, then answering.
+
+        Warming is fire-and-forget and every step is individually guarded: a
+        machine with no speech venv, or with Ollama not yet up, must still get a
+        working text Jarvis rather than an exception during startup.
+        """
+
+        def run() -> None:
+            self.emit(EventType.DIAGNOSTIC, {"warming": "started"})
+            try:
+                from brain.tiers import ModelTier
+
+                provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                provider.generate("OK", max_tokens=4, temperature=0.0)
+                self.emit(EventType.DIAGNOSTIC, {"warming": "conversation model ready"})
+            except Exception as exc:
+                self.emit(EventType.DIAGNOSTIC, {"warming": f"conversation model unavailable: {exc}"})
+
+            if speech:
+                try:
+                    # Synthesising one short phrase loads the voice; discarding
+                    # it is the cheapest way to pay that cost early.
+                    self.voice.engine.synthesize("Bereit.")
+                    self.emit(EventType.DIAGNOSTIC, {"warming": "voice ready"})
+                except Exception as exc:
+                    self.emit(EventType.DIAGNOSTIC, {"warming": f"speech unavailable: {exc}"})
+
+                try:
+                    # And the recogniser, which is the larger of the two costs:
+                    # loading whisper-base took ~50 s of the 54 s first
+                    # exchange. Half a second of silence is enough to force it.
+                    from speech.contracts import Audio
+
+                    silence = Audio(samples=bytes(32000), sample_rate=16000)
+                    self.voice.engine.transcribe(silence)
+                    self.emit(EventType.DIAGNOSTIC, {"warming": "recogniser ready"})
+                except Exception as exc:
+                    self.emit(EventType.DIAGNOSTIC, {"warming": f"recogniser unavailable: {exc}"})
+
+            self.emit(EventType.DIAGNOSTIC, {"warming": "done"})
+
+        thread = threading.Thread(target=run, daemon=True, name="jarvis-warm")
+        thread.start()
+        return thread
+
+    # ------------------------------------------------------------------
+    # Voice
+    # ------------------------------------------------------------------
+
+    def voice_settings(self, **changes: Any) -> dict[str, Any]:
+        """Read or update voice settings; returns the full voice status."""
+
+        settings = self.voice.settings
+        for key, value in changes.items():
+            if hasattr(settings, key) and value is not None:
+                setattr(settings, key, value)
+        return self.voice.status()
+
+    def hear(self, wav: bytes, *, language: str = "", answer: bool = True) -> dict[str, Any]:
+        """Transcribe a posted utterance and, unless told otherwise, reply to it."""
+
+        # Speaking to Jarvis is what enters voice mode; it is the least
+        # surprising trigger and needs no separate switch.
+        self.voice.settings.enabled = True
+        transcript = self.voice.transcribe(wav, language=language)
+        if transcript.empty:
+            self.state.set(JarvisState.IDLE, detail="nothing heard")
+            return {"ok": False, "text": "", "reason": "no speech detected"}
+        if answer:
+            self.send_message(transcript.text)
+        return {"ok": True, **transcript.to_dict()}
+
     def stop_current(self) -> dict[str, Any]:
         """Interrupt whatever is running.  Used by barge-in and the stop button."""
 
         self._stop_requested.set()
+        if self._voice is not None:
+            # Barge-in has to reach the speaker, not just the generator: the
+            # audio already synthesised would otherwise keep playing over the
+            # user who interrupted it.
+            self._voice.interrupt()
         self.emit(EventType.NOTIFICATION, {"text": "stopped"})
         self.state.set(JarvisState.IDLE, detail="interrupted")
         return {"ok": True}

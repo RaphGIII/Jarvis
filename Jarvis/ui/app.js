@@ -127,6 +127,8 @@ function handle(type, payload) {
       break;
 
     case "speech":
+      if (payload.stop) { stopSpeech(); break; }
+      if (payload.url) enqueueSpeech(payload);
       if (typeof payload.energy === "number") eye.setEnergy(payload.energy);
       break;
 
@@ -252,49 +254,163 @@ function openPanel(title, text) {
 }
 
 /* ------------------------------------------------------------------ */
-/* microphone (browser-side capture; recognition happens server-side)   */
+/* microphone: capture here, recognise on the server                   */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The browser records and uploads; the core transcribes. That split is
+ * deliberate -- it is the same shape the future HDMI box and phone client will
+ * use, so the browser is the first device client rather than a special case.
+ */
+
 let micStream = null;
-let micAnalyser = null;
+let recorder = null;
 let micRaf = 0;
+let audioCtx = null;
 
 async function toggleMic() {
   const btn = $("btnMic");
-  if (micStream) {
-    micStream.getTracks().forEach((t) => t.stop());
-    micStream = null;
-    cancelAnimationFrame(micRaf);
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();
     btn.classList.remove("recording");
-    eye.setEnergy(0);
-    api("/api/state");
     return;
   }
+
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = micStream || (await navigator.mediaDevices.getUserMedia({ audio: true }));
   } catch (err) {
     addTurn("error", "Error", "microphone unavailable: " + err.message);
     return;
   }
+
+  // Barge-in: speaking into a talking Jarvis stops it.
+  stopSpeech();
+  api("/api/stop", {});
+
+  const chunks = [];
+  recorder = new MediaRecorder(micStream);
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = async () => {
+    cancelAnimationFrame(micRaf);
+    eye.setEnergy(0);
+    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    const wav = await toWav(blob);
+    const result = await fetch("/api/voice/utterance", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", "X-Jarvis-Token": window.JARVIS_TOKEN },
+      body: wav,
+    }).then((r) => r.json()).catch(() => ({ ok: false }));
+    if (!result.ok) addTurn("note", "", result.reason || "nothing was heard");
+  };
+
+  recorder.start();
   btn.classList.add("recording");
+  meterInto(micStream);
+}
 
-  // Local level metering only -- it drives the eye so the user can see they
-  // are being heard. Nothing is uploaded from here; the server owns capture.
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const source = ctx.createMediaStreamSource(micStream);
-  micAnalyser = ctx.createAnalyser();
-  micAnalyser.fftSize = 512;
-  source.connect(micAnalyser);
-  const buffer = new Uint8Array(micAnalyser.frequencyBinCount);
-
-  const meter = () => {
-    micAnalyser.getByteTimeDomainData(buffer);
+function meterInto(stream) {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  audioCtx.createMediaStreamSource(stream).connect(analyser);
+  const buffer = new Uint8Array(analyser.frequencyBinCount);
+  const tick = () => {
+    analyser.getByteTimeDomainData(buffer);
     let peak = 0;
     for (const v of buffer) peak = Math.max(peak, Math.abs(v - 128) / 128);
     eye.setEnergy(Math.min(1, peak * 2.2));
-    micRaf = requestAnimationFrame(meter);
+    micRaf = requestAnimationFrame(tick);
   };
-  meter();
+  tick();
+}
+
+/*
+ * MediaRecorder gives webm/opus; whisper wants PCM. Decoding through
+ * AudioContext and writing a WAV header here avoids putting a transcoder on
+ * the server, and the browser's decoder handles whatever container it chose.
+ */
+async function toWav(blob) {
+  const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+  const rate = 16000;                       // what whisper works in
+  const length = Math.ceil(decoded.duration * rate);
+  const offline = new OfflineAudioContext(1, length, rate);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const rendered = await offline.startRendering();
+  const samples = rendered.getChannelData(0);
+
+  const out = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const ascii = (off, text) => { for (let i = 0; i < text.length; i++) out.setUint8(off + i, text.charCodeAt(i)); };
+  ascii(0, "RIFF"); out.setUint32(4, 36 + samples.length * 2, true); ascii(8, "WAVE");
+  ascii(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+  ascii(36, "data"); out.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    out.setInt16(44 + i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+  }
+  return out.buffer;
+}
+
+/* ------------------------------------------------------------------ */
+/* speech playback                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Phrases arrive as they are synthesised, which is the whole point, but they
+ * must be PLAYED strictly in order or the answer comes out scrambled. So audio
+ * goes into a queue and one element drains it; arrival order is generation
+ * order, and generation order is the order Jarvis meant.
+ */
+const speechQueue = [];
+let speechPlaying = false;
+let currentAudio = null;
+
+function enqueueSpeech(payload) {
+  speechQueue.push(payload);
+  if (!speechPlaying) drainSpeech();
+}
+
+async function drainSpeech() {
+  speechPlaying = true;
+  while (speechQueue.length) {
+    const item = speechQueue.shift();
+    try {
+      await playOne(item.url);
+    } catch {
+      /* a phrase that will not play must not stop the rest of the answer */
+    }
+  }
+  speechPlaying = false;
+  currentAudio = null;
+  eye.setEnergy(0);
+}
+
+function playOne(url) {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio(`${url}?token=${encodeURIComponent(window.JARVIS_TOKEN)}`);
+    currentAudio = audio;
+    audio.onended = resolve;
+    audio.onerror = reject;
+    // A crude level so the eye pulses while speaking; the real envelope would
+    // need an AnalyserNode per clip, which is not worth the allocation churn.
+    audio.onplay = () => eye.setEnergy(0.55);
+    audio.play().catch(reject);
+  });
+}
+
+function stopSpeech() {
+  speechQueue.length = 0;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  speechPlaying = false;
+  eye.setEnergy(0);
 }
 
 /* ------------------------------------------------------------------ */

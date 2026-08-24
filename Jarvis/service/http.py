@@ -114,6 +114,13 @@ class JarvisHTTPServer:
             ),
             "/api/knowledge/node": lambda body: self.core.knowledge_node(str(body.get("id", ""))),
             "/api/diagnostics": lambda _: self.core.diagnostics(),
+            "/api/voice": lambda body: self.core.voice_settings(
+                **{
+                    key: body[key]
+                    for key in ("enabled", "language", "voice_id", "speak_replies")
+                    if key in body
+                }
+            ),
             "/api/stop": lambda _: self.core.stop_current(),
         }
         handler = routes.get(path)
@@ -164,6 +171,12 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                     return
                 self._stream_events(query)
                 return
+            if path.startswith("/api/voice/audio/"):
+                if not app.authorised(self.headers, query):
+                    self._send_json(401, {"error": "unauthorised"})
+                    return
+                self._serve_audio(path.rsplit("/", 1)[-1])
+                return
             if path.startswith("/api/"):
                 if not app.authorised(self.headers, query):
                     self._send_json(401, {"error": "unauthorised"})
@@ -186,6 +199,21 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = 0
             raw = self.rfile.read(length) if length else b"{}"
+
+            if parsed.path == "/api/voice/utterance":
+                # Audio is posted as bytes rather than base64 in JSON: a 30
+                # second utterance is about a megabyte, and encoding it would
+                # cost a third more bandwidth and a copy on both sides.
+                answer = (query.get("answer") or ["1"])[0] not in {"0", "false", "no"}
+                language = (query.get("language") or [""])[0]
+                try:
+                    result = app.core.hear(raw, language=language, answer=answer)
+                except Exception as exc:
+                    self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                self._send_json(200, result)
+                return
+
             try:
                 payload = json.loads(raw.decode("utf-8") or "{}")
             except ValueError:
@@ -196,6 +224,15 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                 return
             status, response = app.handle_api(parsed.path, payload)
             self._send_json(status, response)
+
+        def _serve_audio(self, name: str) -> None:
+            audio = app.core.voice.store.get(name.removesuffix(".wav"))
+            if audio is None:
+                # Expected rather than exceptional: the store is bounded, so a
+                # client that comes back for old audio finds it gone.
+                self._send_json(404, {"error": "audio expired"})
+                return
+            self._send(200, audio.to_wav(), "audio/wav")
 
         # -- static UI --------------------------------------------------
 

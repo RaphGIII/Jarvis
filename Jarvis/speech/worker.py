@@ -83,8 +83,15 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
             handle_, audio_path = tempfile.mkstemp(suffix=".wav")
             Path(audio_path).write_bytes(base64.b64decode(request.get("wav", "")))
         language = request.get("language") or None
+        # Whisper has never seen "Jarvis" and reliably hears it as an ordinary
+        # German word -- "wie geht es mit meinem Jarvis-Projekt" came back as
+        # "Jahresprojekt". initial_prompt biases decoding toward the vocabulary
+        # this system is actually about, which is what it is for.
         segments, info = model.transcribe(
-            audio_path, language=language, beam_size=int(request.get("beam_size", 1))
+            audio_path,
+            language=language,
+            beam_size=int(request.get("beam_size", 1)),
+            initial_prompt=request.get("vocabulary") or None,
         )
         pieces = list(segments)
         text = "".join(segment.text for segment in pieces).strip()

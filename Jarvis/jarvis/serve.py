@@ -30,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", default="", help="shared token; generated when omitted")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     parser.add_argument("--persona", default="Jarvis", help="persona name")
+    parser.add_argument("--no-warm", action="store_true", help="do not preload models at startup")
+    parser.add_argument("--no-speech", action="store_true", help="do not preload the speech stack")
     return parser
 
 
@@ -49,6 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     core = JarvisCore(persona_name=args.persona)
     server = JarvisHTTPServer(core, host=args.host, port=args.port, token=args.token)
     url = server.start()
+
+    # Start loading models immediately. The page is served either way; this
+    # only decides whether the first question takes one second or fifty.
+    if not args.no_warm:
+        core.warm(speech=not args.no_speech)
 
     print(f"\n  Jarvis is running.\n\n    {url}\n")
     print("  Ctrl-C to stop.\n")
