@@ -84,138 +84,127 @@ it; anything not measured says so.
 
 ---
 
-## THE CHESS PROOF -- where it actually got to
+## THE CHESS PROOF -- ACCEPTED
 
-Four requirements, given one at a time to a persistent project on BUILD_LOCAL.
+Four requirements, given one at a time to a persistent project. **328 steps,
+all eight acceptance criteria green, `stop_reason: ACCEPTED`.**
+
+The end-to-end check reads a PNG, derives the FEN, and analyses it with the real
+Stockfish binary:
+
+```
+PIPELINE_OK 6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1 a1a8
+```
+
+`a1a8` is checkmate, verified independently.
 
 | Requirement | Result |
 |---|---|
-| board geometry | **ACCEPTED on BUILD_LOCAL** -- 266 s, 13 steps, real CV, one failure diagnosed and repaired |
-| position -> FEN | **ACCEPTED via escalation** -- failed 3x locally, expert wrote it, Jarvis verified it independently |
-| Stockfish | **FAILED 6x on BUILD_LOCAL** -- see below; on the escalation path |
-| pipeline | not reached |
+| board geometry | **BUILD_LOCAL** -- 266 s, 13 steps, real CV, one failure diagnosed and repaired |
+| position -> FEN | **escalated** -- 3 local failures, expert wrote it, Jarvis verified it |
+| Stockfish | **escalated** -- 8 local failures, expert wrote it, Jarvis verified it |
+| pipeline | **escalated** -- 9 local runs got most of it, expert fixed the last line |
 
-**Requirement 1 is a genuine local pass.** `detect_board` uses greyscale
-thresholding, contour detection and a bounding box, deriving square size as
-width/8. It works on both the 64px fixtures and the 80px ones with margins, so
-nothing is hard-coded. It included a real VERIFY-fail -> DIAGNOSE -> repair ->
-VERIFY-pass cycle.
+### What BUILD_LOCAL did and did not do
 
-**Requirement 2 failed three times locally, and each failure taught something:**
+It passed requirement 1 outright, including a real VERIFY-fail -> DIAGNOSE ->
+repair -> VERIFY-pass cycle. `detect_board` uses greyscale thresholding, contour
+detection and a bounding box, and works on both the 64px fixtures and the 80px
+ones with margins, so nothing is hard-coded.
 
-1. Returned a hard-coded starting FEN. Caught only because there are four
-   fixtures and only one is the starting position.
-2. Read the answers out of `fixtures.json` -- and *passed*, because my acceptance
-   command compared against the same file. **My design's defect**, identical in
-   shape to the capability that returned "Dry run: would play music".
-   Fixed by holding the ground truth out and adding an oracle guard.
-3. Called `image_region(...)` -- a Jarvis tool -- from inside `position.py`. The
-   same error the capability path hit twice with `media_folders`. The project
-   engine had none of the three defences the capability path already had; it
-   does now.
-4. A later attempt produced no file at all while three of four criteria still
-   read green, because a missing file passed both guards vacuously. Fixed.
+It got most of requirement 4: it wrote `pipeline.py`, imported the three real
+modules, and passed the static check. What defeated it was one line -- it called
+`position(path, x, y, square)` where `position(path)` takes a single argument,
+having invented the signature rather than reading the module it was importing.
+It then diagnosed that mismatch correctly and, four runs running, chose to
+change the accepted module rather than the caller.
 
-It was then escalated, which is the architecture working as designed: the
-controller decided from counted evidence, the cost policy confirmed the channel
-was free, the expert worked in the project's own workspace, hit its 900 s budget
-mid-tidy-up, and **Jarvis re-ran the acceptance commands itself** and found all
-three green. The expert's report was not the verdict.
+It never cleared requirements 2 and 3. On requirement 3 the failure is stark:
+`engine.py` came out **byte-identical** after a 40-step run with a working
+repair loop, having used `--usi` (the *Shogi* protocol) and invented UCI
+commands, while the requirement text named `chess.engine` in as many words.
 
-**Requirement 3 failed six times, and this is the honest part.**
+### Escalation
 
-The requirement is reachable: Stockfish 17.1 and python-chess are both installed
-and working here, and a correct `analyse()` is four lines around
-`chess.engine.SimpleEngine.popen_uci`, which the requirement text names
-explicitly. What BUILD_LOCAL produced instead, across three separate attempts:
+Each escalation followed the same path, and no step of it was a shortcut:
 
-* the executable path written as an ordinary quoted string full of backslashes,
-  so `\r` became a carriage return and `\t` a tab and the path could not
-  exist -- while the requirement says in as many words to use forward slashes
-  or a raw string;
-* `--usi`, which is the *Shogi* protocol, driven through raw `subprocess.Popen`
-  instead of the `chess.engine` it was told to use;
-* invented UCI commands (`analyse`), no `uci`/`isready` handshake and no `go`,
-  so no bestmove line was ever going to be printed.
+* the **controller** decided from counted evidence (`local pass rate 0% over N
+  attempts`), not from anyone judging the model to look stuck;
+* the **cost policy** was checked before a provider was chosen -- `paid_api`,
+  `usage_credits`, `runpod` and browser automation all false, `is_free: true`;
+* the **expert's report was never the verdict**. In both later escalations the
+  expert said plainly that its own attempts to execute anything were refused by
+  its permission layer, so Jarvis's independent re-run was the first actual
+  execution;
+* the **lesson** was stored with the failures as well as the working pattern.
 
-Attempts 4-6 were also fighting a frozen repair loop (defect 9 below), so the
-loop deserved one fair attempt after that fix before any conclusion was drawn.
+The performance ledger now says something useful, including about escalation:
 
-**Infrastructure defects found by running this proof -- nine, none chess-specific:**
+```
+general/build_local  17 attempts, 0 passed, 0.0
+general/expert        2 attempts, 2 passed, 1.0
+vision/build_local    6 attempts, 0 passed, 0.0
+vision/expert         3 attempts, 1 passed, 0.33
+```
+
+`vision/expert` at 0.33 is the honest part: escalation is not a magic word
+either.
+
+### Sixteen infrastructure defects, none chess-specific
+
+The point of running this rather than reasoning about it was the defects it
+surfaced. All sixteen are general, and all are fixed with regression tests.
 
 1. An acceptance check whose answer key is reachable is not a check.
 2. The project engine never learned what the capability path already knew about
    tools not being importable from generated source.
 3. A missing file passed both guards vacuously.
-4. The repair budget was counted over project lifetime, so a persistent project
-   became *less* able to fix things as it aged.
-5. `No module named 'engine'` was read as "install a package" when it meant
-   "write the file".
-6. A Windows path mangled by Python's own escaping: right in the source,
-   non-existent on disk.
-7. A check that existed but was wired to a different requirement than the one
-   that needed it.
-8. Progress was measured by `success` (every criterion green) when `productive`
-   (a criterion newly green) was already being recorded and was the right signal.
-9. `attempts` was a run-length budget used as a lifetime counter. Every task
-   eventually reached three attempts, reopening skips exhausted tasks, and the
-   project permanently lost the ability to repair anything -- while reporting it
-   as "no further repair avenue is available", which reads like judgement rather
-   than a frozen counter.
+4. The repair budget was counted over project lifetime.
+5. `No module named 'engine'` read as "install a package" when it meant "write
+   the file".
+6. A Windows path mangled by Python's own escaping.
+7. A check wired to a different requirement than the one that needed it.
+8. Progress measured by `success` when `productive` was already recorded.
+9. `attempts` was a lifetime counter, so a long project lost the ability to
+   repair anything and reported it as considered judgement.
+10. Verification recorded before an expert changed the workspace was still
+    believed, so a whole failure budget went on repairing an already-fixed bug.
+11. DIAGNOSE focused on the failure, making a wrong-file mistake self-reinforcing.
+12. `acceptance[:8]` dropped exactly the criteria being worked on.
+13. Nothing protected modules that a passing check depends on.
+14. The protected-path refusal named what was forbidden, not what to do instead.
+15. `reopenings` was a lifetime counter -- the third of three.
+16. Reopening chose by recency, a proxy for relevance that breaks with length.
 
-Seven of the nine are one mistake wearing different clothes: **a mechanical fact
-left to inference from an ambiguous signal.** The other two are wiring -- a check
-that could not be seen by the loop that needed it, and a signal recorded but
-never read.
+Two patterns account for most of them. Seven are **a mechanical fact left to
+inference from an ambiguous signal**. Five are **a decision made from a proxy
+that was easier to reach than the real signal** -- `success` for `productive`,
+lifetime counts for run-length ones three times over, recency for relevance. A
+proxy is right when a project is small and quietly stops being right as it grows.
 
-**What the seventh attempt showed, once the loop could actually repair.**
+### The rule this proof produced
 
-Attempt 7 was the first run with a working reopen path, and the difference is
-sharp enough to be worth stating as a rule.
+The sharpest measurement of the four days:
 
-* The mangled Stockfish path -- unchanged across attempts 4, 5 and 6 -- was
-  **fixed within 25 steps**. A static check named that defect in machine-readable
-  terms: "this path contains a carriage-return escape".
-* The wrong engine protocol -- `--usi`, which is Shogi -- has **not moved in
-  seven attempts**. The acceptance check can only say that the assertion failed,
-  and what it reports is `chess.InvalidMoveError: invalid uci: 'None'`: a symptom
-  three steps removed from the cause. Stockfish's own complaint never arrives,
-  because the generated code pipes its stderr and then discards it.
+* The mangled Stockfish path, unchanged across three runs, was **fixed inside
+  one run** once a static check named it: *"this path contains a
+  carriage-return escape"*.
+* The wrong engine protocol **never moved in eight runs**, because the
+  acceptance check could only report `chess.InvalidMoveError: invalid uci:
+  'None'` -- a symptom three steps from the cause.
 
-So the loop repairs what a check *names* and flounders on what a check merely
-*fails*. That is not a defect to fix so much as a design constraint to build to:
-the return on writing a check that says what is wrong, rather than that
-something is wrong, is most of the difference between a loop that self-repairs
-and one that spins.
-
-It also settles the retrieval question honestly. The requirement text already
-said, in as many words, to use `chess.engine` and to write the path with forward
-slashes. One of those instructions was followed only once a check restated it
-mechanically; the other has never been followed. Handing the model more text to
-ignore is not the missing piece.
-
-**Attempt 8 removed the last confound.** Attempt 7 stopped on STEP_LIMIT, so
-"exceeds capacity" would have been a conclusion drawn from a truncated run. It
-was given 40 steps instead of 25, with the repair loop working and the task
-reopen budget available.
-
-`engine.py` came out **byte-identical** -- not one character changed in 40 steps
--- and the tasks ended at `reopenings=2`, the deliberate bound, so the repair
-path was exercised to its limit rather than frozen. 195 steps stand on this
-project.
-
-That is the brief's threshold met without ambiguity: a working loop, an adequate
-budget, eight attempts, zero movement. Classification: **model capacity**, not
-retrieval, decomposition, tooling, interface contract or verification. It went
-to the ExpertGateway on the same path `position.py` took.
+**A check that names the defect gets repaired; a check that merely fails does
+not.** That is a design constraint to build to, not a defect to close. It also
+settles the retrieval question honestly: the requirement text already said to
+use `chess.engine` and to write the path with forward slashes. One instruction
+was followed only once a check restated it mechanically; the other never was.
+More prose for the model to ignore was not the missing piece.
 
 ## IN PROGRESS
 
 - **Music capability.** Six live attempts, none passing. The bar has risen each
   time and the system now catches what it previously accepted — see limitations.
-- **Guided chess project.** Two of four requirements accepted; the third has had
-  seven BUILD_LOCAL attempts and is on the escalation path. See the chess proof
-  section above.
+
 
 ## NOT STARTED
 
