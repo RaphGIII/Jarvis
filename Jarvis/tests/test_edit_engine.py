@@ -715,3 +715,54 @@ def test_many_matches_are_summarised_rather_than_dumped(tmp_path):
     with pytest.raises(EditError) as excinfo:
         _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "x = 1", "replace": "x = 2"}]}))
     assert "and 24 more" in excinfo.value.detail
+
+
+def test_a_duplicated_module_constant_is_refused(tmp_path):
+    """An acquired capability declared INPUT_SCHEMA twice and shipped broken.
+
+    The later definition silently won, so the manifest advertised the seeded
+    template's interface rather than the implementation's, and no caller could
+    invoke it. Perfectly valid Python, which is why it needs its own check.
+    """
+
+    original = 'INPUT_SCHEMA = {"a": 1}\n\n\ndef run(payload):\n    return {}\n'
+    path = _write(tmp_path, "main.py", original)
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle(
+                {
+                    "files": [
+                        {
+                            "path": "main.py",
+                            "search": 'INPUT_SCHEMA = {"a": 1}',
+                            "replace": 'INPUT_SCHEMA = {"file_path": "str"}\nINPUT_SCHEMA = {"a": 1}',
+                        }
+                    ]
+                }
+            )
+        )
+
+    assert excinfo.value.kind == "duplicate_definition"
+    assert "INPUT_SCHEMA" in str(excinfo.value)
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_replacing_a_constant_in_place_is_still_allowed(tmp_path):
+    """The guard is about duplication, not about editing constants."""
+
+    _write(tmp_path, "main.py", 'INPUT_SCHEMA = {"a": 1}\n\n\ndef run(payload):\n    return {}\n')
+    _engine(tmp_path).apply(
+        parse_bundle(
+            {"files": [{"path": "main.py", "search": 'INPUT_SCHEMA = {"a": 1}', "replace": 'INPUT_SCHEMA = {"b": 2}'}]}
+        )
+    )
+    text = (tmp_path / "main.py").read_text(encoding="utf-8")
+    assert text.count("INPUT_SCHEMA") == 1
+    assert '"b": 2' in text
+
+
+def test_reassigning_an_ordinary_lowercase_name_is_ordinary_python(tmp_path):
+    _write(tmp_path, "m.py", "value = 1\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "m.py", "search": "value = 1", "replace": "value = 1\nvalue = 2"}]}))
+    assert (tmp_path / "m.py").read_text(encoding="utf-8").count("value =") == 2

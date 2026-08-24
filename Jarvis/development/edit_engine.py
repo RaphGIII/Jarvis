@@ -1104,11 +1104,24 @@ class EditEngine:
                 tree = ast.parse(source)
             except SyntaxError:
                 return []
-            return [
-                node.name
-                for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            ]
+            names: list[str] = []
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names.append(node.name)
+                    continue
+                # Module-level CONSTANTS too. Reassigning a lowercase name is
+                # ordinary Python, but a second ALL_CAPS assignment is almost
+                # always a botched splice, and it fails silently: the later one
+                # wins. An acquired capability declared INPUT_SCHEMA twice this
+                # way, so its manifest advertised the template's interface
+                # instead of its own and no caller could invoke it.
+                if isinstance(node, ast.Assign):
+                    names.extend(
+                        target.id
+                        for target in node.targets
+                        if isinstance(target, ast.Name) and target.id.isupper() and len(target.id) > 2
+                    )
+            return names
 
         after = top_level_names(updated)
         duplicated_after = {name for name in after if after.count(name) > 1}
@@ -1125,8 +1138,8 @@ class EditEngine:
             "duplicate_definition",
             f"the edit would define {', '.join(repr(name) for name in introduced)} twice at the top level of "
             f"{relative}. The later definition would silently win. This usually means the replacement text "
-            "repeats a 'def' or 'class' line that was already in the search anchor -- include it in one or "
-            "the other, not both.",
+            "repeats a 'def', 'class' or CONSTANT = ... line that was already in the search anchor -- "
+            "include it in one or the other, not both.",
             path=relative,
             recoverable=True,
         )
