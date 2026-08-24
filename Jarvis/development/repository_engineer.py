@@ -98,6 +98,11 @@ def _correction_hint(error: EditError) -> str:
             "Emit a search/replace edit instead: put the EXACT existing lines you want to change "
             "in 'search', and the new version of just those lines in 'replace'."
         ),
+        "duplicate_definition": (
+            "Your replacement repeated a 'def' or 'class' line that was already part of the search "
+            "anchor, so the file would contain it twice. Put that line in the search OR the replace, "
+            "not both."
+        ),
         "syntax_error": (
             "Your replacement text broke the file's Python syntax. Look at the indentation: "
             "the 'replace' text must line up with the code around the anchor exactly as it appears "
@@ -1212,7 +1217,7 @@ class RepositoryEngineer:
                 text=True,
                 timeout=self.timeout_seconds,
                 shell=False,
-                env=_safe_command_env(),
+                env=_safe_command_env(worktree),
             )
             output = f"{completed.stdout}\n{completed.stderr}"
             results.append(
@@ -1842,16 +1847,51 @@ def _provider_failure_payload(exc: Exception) -> dict[str, Any]:
     return {}
 
 
-def _safe_command_env() -> dict[str, str]:
+def _safe_command_env(cwd: Path | None = None) -> dict[str, str]:
+    """A scrubbed environment for candidate test runs.
+
+    Scrubbed, not starved.  An earlier version passed through only PATH and a
+    few Windows basics, which meant a Python installed with user-site packages
+    could not find them: ``python -m pytest`` answered "No module named pytest"
+    and every candidate was rejected for a reason that had nothing to do with
+    the candidate.  ``APPDATA`` is where Windows keeps the per-user site
+    directory, so it has to be here.
+
+    Letting user site-packages back in brings its own hazard, and this machine
+    demonstrated it immediately: something installed there ships a top-level
+    package called ``tests``, which shadowed a candidate's own ``tests`` package
+    and made its suite unimportable.  ``PYTHONPATH`` therefore pins the
+    candidate's own directory to the front of ``sys.path``, so a candidate's
+    modules always win over whatever happens to be installed on the host.  When
+    testing a candidate, that is the only defensible precedence.
+
+    What stays out is anything credential-shaped.  A subprocess a model chose to
+    run has no business seeing an API key.
+    """
+
     allowed = {
         "PATH",
         "SYSTEMROOT",
+        "WINDIR",
         "COMSPEC",
         "PATHEXT",
+        "TEMP",
+        "TMP",
+        "HOME",
+        "USERPROFILE",
+        # Needed to resolve the per-user site-packages directory.
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "LANG",
+        "LC_ALL",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
         "JARVIS_BRAIN_PROVIDER",
         "JARVIS_BRAIN_BASE_URL",
         "JARVIS_BRAIN_MODEL",
-        "JARVIS_BRAIN_API_KEY",
         "JARVIS_BRAIN_TIMEOUT",
         "JARVIS_BRAIN_TEMPERATURE",
         "JARVIS_BRAIN_TOP_P",
@@ -1860,6 +1900,9 @@ def _safe_command_env() -> dict[str, str]:
     }
     env = {key: value for key, value in os.environ.items() if key in allowed}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    if cwd is not None:
+        env["PYTHONPATH"] = str(Path(cwd).resolve())
     return env
 
 

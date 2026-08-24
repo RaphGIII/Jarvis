@@ -249,3 +249,72 @@ def test_protected_state_detects_real_content_change(tmp_path):
         )
         == ProtectionState.MODIFIED
     )
+
+
+def test_scrubbed_environment_can_still_run_the_test_suite():
+    """A candidate's tests must actually be runnable in the scrubbed environment.
+
+    An earlier version passed through only PATH and a few Windows basics. On a
+    Python with user-site packages that meant `python -m pytest` answered "No
+    module named pytest", and every candidate was rejected for a reason that had
+    nothing to do with the candidate.
+    """
+
+    import subprocess
+    import sys
+
+    from development.repository_engineer import _safe_command_env
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import pytest; print('PYTEST_IMPORTABLE')"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_safe_command_env(),
+    )
+    assert "PYTEST_IMPORTABLE" in completed.stdout, completed.stderr
+
+
+def test_scrubbed_environment_carries_no_credentials(monkeypatch):
+    """A subprocess a model chose to run has no business seeing an API key."""
+
+    from development.repository_engineer import _safe_command_env
+
+    monkeypatch.setenv("JARVIS_BRAIN_API_KEY", "sk-must-not-propagate")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-must-not-propagate")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-must-not-propagate")
+
+    values = "".join(_safe_command_env().values())
+    assert "sk-must-not-propagate" not in values
+
+
+def test_candidate_modules_win_over_anything_installed_on_the_host(tmp_path):
+    """A candidate's own code must shadow the host's, not the other way round.
+
+    This machine has an unrelated top-level `tests` package in user
+    site-packages. Once the environment was widened enough for pytest to be
+    importable, that package started shadowing candidates' own modules, and
+    suites became unimportable for reasons nothing to do with the candidate.
+    """
+
+    import subprocess
+    import sys
+
+    from development.repository_engineer import _safe_command_env
+
+    workspace = tmp_path / "candidate"
+    (workspace / "mypkg").mkdir(parents=True)
+    (workspace / "mypkg" / "__init__.py").write_text("ORIGIN = 'candidate'\n", encoding="utf-8")
+
+    env = _safe_command_env(workspace)
+    assert env["PYTHONPATH"] == str(workspace.resolve())
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import mypkg; print(mypkg.ORIGIN)"],
+        cwd=str(tmp_path),  # deliberately NOT the workspace: PYTHONPATH must carry it
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert completed.stdout.strip() == "candidate", completed.stderr

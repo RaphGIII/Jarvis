@@ -105,6 +105,12 @@ def _make_medium_repo(root: Path) -> Path:
     (root / "pkg").mkdir()
     (root / "tests").mkdir()
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    # A regular package, not a namespace one. `python -m unittest tests.x`
+    # imports by NAME, and a namespace portion always loses to a regular
+    # package found later on sys.path -- this machine has an unrelated
+    # top-level `tests` package in user site-packages, which silently shadowed
+    # the fixture's own and made the suite unimportable.
+    (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "mathops.py").write_text("def add_numbers(a, b):\n    return a - b\n\ndef stable_value():\n    return 7\n", encoding="utf-8")
     for idx in range(30):
         (root / "pkg" / f"noise_{idx}.py").write_text(("def noise():\n    return 'x'\n\n" * 80), encoding="utf-8")

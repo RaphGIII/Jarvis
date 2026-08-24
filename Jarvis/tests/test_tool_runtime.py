@@ -464,3 +464,49 @@ def test_duckduckgo_html_parsing_unwraps_redirects():
 
 def test_duckduckgo_parsing_degrades_to_empty_on_layout_change():
     assert parse_duckduckgo_html("<html><body>totally different markup</body></html>") == []
+
+
+# ------------------------------------- the two write tools have distinct jobs
+
+def test_apply_edits_requires_an_anchor_and_points_at_write_file(registry, context, workspace):
+    """A local model reaches for "replace the whole file" almost every time.
+
+    Left free to do that through apply_edits, an edit meant to add one import
+    arrived as a file containing only that import. Refusing the shape and
+    naming the right tool works where prompting did not.
+    """
+
+    before = (workspace / "app.py").read_bytes()
+    result = call(registry, context, "apply_edits", files=[{"path": "app.py", "replace": "import shutil\n"}])
+
+    assert not result.ok
+    assert result.error_kind == "empty_search"
+    assert result.retryable
+    assert "write_file" in result.error
+    assert (workspace / "app.py").read_bytes() == before
+
+
+def test_write_file_is_still_allowed_to_set_whole_contents(registry, context, workspace):
+    """The escape hatch apply_edits points at must actually work."""
+
+    body = "\n".join(f"line_{index} = {index}" for index in range(30)) + "\n"
+    assert call(registry, context, "write_file", path="app.py", content=body).ok
+    assert (workspace / "app.py").read_text(encoding="utf-8") == body
+
+
+def test_write_file_cannot_gut_a_real_module(registry, context, workspace):
+    """Observed live: main.py reduced to a single `import shutil`."""
+
+    body = "\n".join(f"line_{index} = {index}" for index in range(30)) + "\n"
+    call(registry, context, "write_file", path="app.py", content=body)
+
+    result = call(registry, context, "write_file", path="app.py", content="import shutil\n")
+
+    assert not result.ok
+    assert result.error_kind == "rewrite_truncates_file"
+    assert (workspace / "app.py").read_text(encoding="utf-8") == body
+
+
+def test_small_files_can_still_be_replaced_wholesale(registry, context, workspace):
+    call(registry, context, "write_file", path="tiny.py", content="a = 1\nb = 2\n")
+    assert call(registry, context, "write_file", path="tiny.py", content="a = 9\n").ok

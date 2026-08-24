@@ -127,13 +127,18 @@ class EditBudget:
     #: Whole-file rewrites of large files are how weak models destroy code.
     #: Above this size a rewrite must be expressed as targeted edits instead.
     max_rewrite_chars: int = 12000
-    #: Files shorter than this are exempt from the shrink guard below --
-    #: gutting a ten-line file is ordinary editing.
-    truncation_floor_lines: int = 25
+    #: Files shorter than this are exempt from the shrink guard -- rewriting a
+    #: five-line file is ordinary editing, not destruction.  Set low because a
+    #: 20-line module is quite destroyable enough: a live run reduced one to a
+    #: single ``import shutil`` while a floor of 25 looked on.
+    truncation_floor_lines: int = 8
     #: Fraction of a file's non-blank lines a rewrite must retain.  Below this
     #: the "rewrite" is almost certainly a fragment the model meant to splice
     #: in, and applying it would delete the rest of the file.
     min_retained_fraction: float = 0.5
+    #: ...but only once enough lines would actually disappear.  Without this,
+    #: trimming a 9-line file to 4 would trip a guard meant for real losses.
+    truncation_min_removed_lines: int = 5
 
     @classmethod
     def from_env(cls, getenv: Callable[[str, str], str]) -> "EditBudget":
@@ -647,6 +652,64 @@ def _locate_by_window(current: str, search: str, relative: str) -> Match:
     return Match(start, end, "fuzzy")
 
 
+def _repair_indentation(relative: str, current: str, updated: str, matched: str, replacement: str, match: Match) -> str:
+    """Re-indent a replacement that was written flush-left into an indented spot.
+
+    By a wide margin the most common way a small model breaks an anchored edit:
+    it anchors on an indented line -- a function body, a branch -- and writes the
+    replacement starting at column zero, because that is how the code looked when
+    it composed it.  Applied verbatim the result cannot parse, and the model
+    almost never works out why, so it repeats the same mistake.  Eighteen
+    consecutive failures of exactly this shape ended one live capability run.
+
+    The repair is deterministic and deliberately timid:
+
+    * only for Python files, and only when the verbatim result does not parse;
+    * only when shifting the replacement right by the anchor's own indentation
+      makes it parse;
+    * otherwise the original error stands.
+
+    So a correct edit is never touched, and a genuinely broken one is still
+    reported as broken -- this only rescues the case where the intent is
+    unambiguous and the indentation is the single thing wrong.
+    """
+
+    if not relative.endswith(".py") or not replacement.strip():
+        return updated
+
+    import ast
+
+    try:
+        ast.parse(updated)
+        return updated
+    except SyntaxError:
+        pass
+
+    anchor_indent = _leading_whitespace(matched)
+    if not anchor_indent:
+        return updated
+    if _leading_whitespace(replacement.splitlines()[0] if replacement.splitlines() else ""):
+        return updated  # the model did indent it; the problem is something else
+
+    shifted = "\n".join(
+        (anchor_indent + line) if line.strip() else line for line in replacement.split("\n")
+    )
+    if match.mode not in {"exact", "exact_occurrence"} and matched.endswith("\n") and not shifted.endswith("\n"):
+        shifted += "\n"
+
+    candidate = current[: match.start] + shifted + current[match.end :]
+    try:
+        ast.parse(candidate)
+    except SyntaxError:
+        return updated
+    return candidate
+
+
+def _leading_whitespace(text: str) -> str:
+    first = next((line for line in text.split("\n") if line.strip()), "")
+    return first[: len(first) - len(first.lstrip())]
+
+
 def _overlaps(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
     return a_start < b_end and b_start < a_end
 
@@ -791,18 +854,14 @@ class EditEngine:
             return
         current = self._load(path, relative, state)
 
-        if operation.anchorless and current.strip():
-            # The model gave a replacement with no anchor for a file that
-            # already has content.  Reading that as "make the file this" would
-            # discard everything else in it, which is never what was meant.
-            raise EditError(
-                "empty_search",
-                f"edit for {relative} has replacement text but an empty search anchor. "
-                f"{relative} already has content, so copy the exact lines you want to change "
-                "into 'search', or send the complete new file as 'content'.",
-                path=relative,
-                recoverable=True,
-            )
+        # An anchorless replacement -- "replace" with no "search" -- gets no
+        # special treatment here.  It was rejected outright for a while, after
+        # one destroyed a 243-line module, but that turned out to be the wrong
+        # place to catch it: the model also uses this shape to send a genuinely
+        # complete new file, and refusing every one of them blocked legitimate
+        # work.  The guards below already tell the two apart, because the
+        # difference between them is measurable -- a fragment shrinks the file,
+        # a real replacement does not, and neither may leave it unparseable.
 
         if len(content) > self.budget.max_rewrite_chars:
             raise EditError(
@@ -841,6 +900,8 @@ class EditEngine:
 
         new_lines = len([line for line in replacement.splitlines() if line.strip()])
         if new_lines >= current_lines * self.budget.min_retained_fraction:
+            return
+        if current_lines - new_lines < self.budget.truncation_min_removed_lines:
             return
 
         raise EditError(
@@ -895,6 +956,8 @@ class EditEngine:
 
         if updated == current:
             raise EditError("no_effective_edit", f"no effective edit for {relative}", path=relative, recoverable=True)
+
+        updated = _repair_indentation(relative, current, updated, matched, operation.replace, match)
 
         state.working[path] = updated
         result.applied.append(
@@ -990,6 +1053,57 @@ class EditEngine:
                     path=relative,
                     recoverable=True,
                 ) from None
+
+            self._guard_against_duplicate_definitions(relative, state.originals.get(path), text)
+
+    @staticmethod
+    def _guard_against_duplicate_definitions(relative: str, original: str | None, updated: str) -> None:
+        """Refuse an edit that newly duplicates a top-level definition.
+
+        Perfectly legal Python, so the parser is happy and the later definition
+        silently wins -- which is why this needs its own check.  It is the
+        signature of a botched anchored edit: the model puts ``def run(...):``
+        in both the search anchor and the replacement, and the file ends up with
+        the function twice, half of the first one stranded above the second.
+        Seen exactly that way in a live capability run.
+
+        Only *newly* introduced duplicates are refused.  A file that already had
+        one stays editable, so the guard cannot make an existing mess unfixable.
+        """
+
+        import ast
+
+        def top_level_names(source: str) -> list[str]:
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                return []
+            return [
+                node.name
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
+
+        after = top_level_names(updated)
+        duplicated_after = {name for name in after if after.count(name) > 1}
+        if not duplicated_after:
+            return
+
+        before = top_level_names(original or "")
+        duplicated_before = {name for name in before if before.count(name) > 1}
+        introduced = sorted(duplicated_after - duplicated_before)
+        if not introduced:
+            return
+
+        raise EditError(
+            "duplicate_definition",
+            f"the edit would define {', '.join(repr(name) for name in introduced)} twice at the top level of "
+            f"{relative}. The later definition would silently win. This usually means the replacement text "
+            "repeats a 'def' or 'class' line that was already in the search anchor -- include it in one or "
+            "the other, not both.",
+            path=relative,
+            recoverable=True,
+        )
 
     def _commit(self, state: "_WorkingState") -> None:
         """Write everything, restoring the original bytes if anything fails."""

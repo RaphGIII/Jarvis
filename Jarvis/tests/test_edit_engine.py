@@ -323,19 +323,17 @@ def test_new_content_is_accepted_as_a_synonym_for_content(tmp_path):
     assert (tmp_path / "a.py").read_text(encoding="utf-8") == "fresh\n"
 
 
-def test_empty_search_with_a_replacement_is_refused_on_a_file_with_content(tmp_path):
-    """An anchorless replacement cannot mean "discard everything else".
+def test_empty_search_with_a_replacement_rewrites_a_small_file(tmp_path):
+    """An anchorless replacement means "make the file this".
 
-    An earlier version of this engine read it as a whole-file rewrite. On a
-    live run that deleted a 243-line module, so the reading is now restricted
-    to files with nothing to lose (see the truncation tests below).
+    Safe here because the file is small enough that the shrink guard does not
+    apply -- and it is the shrink guard, not the shape of the edit, that stops
+    a fragment from destroying a real module. See the truncation tests below.
     """
 
-    _write(tmp_path, "a.py", "old\n")
-    with pytest.raises(EditError) as excinfo:
-        _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "fresh\n"}]}))
-    assert excinfo.value.kind == "empty_search"
-    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "old\n"
+    _write(tmp_path, "a.py", "old = 1\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "", "replace": "fresh = 2\n"}]}))
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == "fresh = 2\n"
 
 
 def test_an_empty_search_rewrite_still_obeys_the_size_budget(tmp_path):
@@ -399,8 +397,8 @@ def test_a_fragment_cannot_replace_a_whole_module(tmp_path):
     assert path.read_text(encoding="utf-8") == original
 
 
-def test_an_anchorless_replacement_never_overwrites_an_existing_file(tmp_path):
-    """The precise shape the local model emitted, with an empty search."""
+def test_an_anchorless_fragment_never_overwrites_an_existing_file(tmp_path):
+    """The precise shape the local model emitted when it destroyed a module."""
 
     original = _big_module()
     path = _write(tmp_path, "cli.py", original)
@@ -410,9 +408,26 @@ def test_an_anchorless_replacement_never_overwrites_an_existing_file(tmp_path):
             parse_bundle({"files": [{"path": "cli.py", "search": "", "replace": "x = 1\n"}]})
         )
 
-    assert excinfo.value.kind == "empty_search"
+    assert excinfo.value.kind == "rewrite_truncates_file"
     assert excinfo.value.recoverable
     assert path.read_text(encoding="utf-8") == original
+
+
+def test_an_anchorless_complete_replacement_is_allowed(tmp_path):
+    """The same shape is also how a model sends a genuinely complete new file.
+
+    Rejecting every anchorless replacement was too blunt: it blocked a local
+    model from replacing a seven-line skeleton with a real implementation. What
+    separates the two cases is measurable -- a fragment shrinks the file, a real
+    replacement does not -- so the shrink guard decides, not the shape.
+    """
+
+    _write(tmp_path, "main.py", "def run(payload):\n    return {'ok': False}\n")
+    replacement = "def run(payload):\n" + "".join(f"    x{i} = {i}\n" for i in range(20)) + "    return {'ok': True}\n"
+
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "main.py", "search": "", "replace": replacement}]}))
+
+    assert "'ok': True" in (tmp_path / "main.py").read_text(encoding="utf-8")
 
 
 def test_an_anchorless_replacement_still_creates_a_missing_file(tmp_path):
@@ -454,10 +469,13 @@ def test_deletion_still_works_and_is_not_confused_with_truncation(tmp_path):
 # --------------------------------------------- syntax as a post-condition
 
 def test_an_edit_that_breaks_python_syntax_is_refused(tmp_path):
-    """The live case: right anchor, right place, wrong indentation.
+    """A break that no re-indentation can rescue must still be refused.
 
-    Without this the broken file reaches the test runner, where the failure
-    looks like a test error rather than the edit mistake it actually is.
+    Without this gate the broken file reaches the test runner, where the failure
+    looks like a test error rather than the edit mistake it actually is. The
+    replacement here has an unbalanced bracket, so it cannot parse at any
+    indentation -- unlike a merely flush-left replacement, which the engine now
+    repairs (see the re-indentation tests).
     """
 
     original = "def main():\n    if flag:\n        print('a')\n        return\n"
@@ -466,13 +484,12 @@ def test_an_edit_that_breaks_python_syntax_is_refused(tmp_path):
     with pytest.raises(EditError) as excinfo:
         _engine(tmp_path).apply(
             parse_bundle(
-                {"files": [{"path": "cli.py", "search": "        print('a')", "replace": "if other:\n        print('b')"}]}
+                {"files": [{"path": "cli.py", "search": "        print('a')", "replace": "        print('b'"}]}
             )
         )
 
     assert excinfo.value.kind == "syntax_error"
     assert excinfo.value.recoverable
-    assert "indentation" in str(excinfo.value).lower()
     assert path.read_text(encoding="utf-8") == original
 
 
@@ -514,3 +531,134 @@ def test_a_newly_created_python_file_is_syntax_checked(tmp_path):
         _engine(tmp_path).apply(parse_bundle({"files": [], "new_files": [{"path": "new.py", "content": "def f(:\n"}]}))
     assert excinfo.value.kind == "syntax_error"
     assert not (tmp_path / "new.py").exists()
+
+
+# ---------------------------------------- a botched anchor that still parses
+
+def test_an_edit_that_defines_a_function_twice_is_refused(tmp_path):
+    """Legal Python, so the parser is happy and the later definition wins.
+
+    The signature of a botched anchored edit: the model puts the `def` line in
+    both the search anchor and the replacement. Seen in a live capability run,
+    where main.py ended up with run() twice and half the first one stranded.
+    """
+
+    original = "import os\n\n\ndef run(payload):\n    return {'ok': False}\n"
+    path = _write(tmp_path, "main.py", original)
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle(
+                {
+                    "files": [
+                        {
+                            "path": "main.py",
+                            "search": "def run(payload):",
+                            "replace": "def run(payload):\n    x = 1\n\n\ndef run(payload):",
+                        }
+                    ]
+                }
+            )
+        )
+
+    assert excinfo.value.kind == "duplicate_definition"
+    assert excinfo.value.recoverable
+    assert "'run'" in str(excinfo.value)
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_a_file_that_already_had_a_duplicate_stays_editable(tmp_path):
+    """The guard must not make an existing mess unfixable."""
+
+    _write(tmp_path, "main.py", "def run():\n    return 1\n\n\ndef run():\n    return 2\n")
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "main.py", "search": "return 1", "replace": "return 9"}]}))
+    assert "return 9" in (tmp_path / "main.py").read_text(encoding="utf-8")
+
+
+def test_a_normal_second_function_is_not_a_duplicate(tmp_path):
+    _write(tmp_path, "main.py", "def run():\n    return 1\n")
+    _engine(tmp_path).apply(
+        parse_bundle({"files": [{"path": "main.py", "op": "insert_after", "search": "    return 1", "replace": "\n\ndef helper():\n    return 2\n"}]})
+    )
+    assert "def helper" in (tmp_path / "main.py").read_text(encoding="utf-8")
+
+
+def test_duplicate_classes_are_caught_too(tmp_path):
+    _write(tmp_path, "m.py", "class Thing:\n    pass\n")
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle({"files": [{"path": "m.py", "search": "class Thing:", "replace": "class Thing:\n    pass\n\n\nclass Thing:"}]})
+        )
+    assert excinfo.value.kind == "duplicate_definition"
+
+
+# ------------------------------------ the most common weak-model edit error
+
+def test_a_flush_left_replacement_is_reindented_into_an_indented_anchor(tmp_path):
+    """The single most frequent way a small model breaks an anchored edit.
+
+    It anchors on an indented line and writes the replacement at column zero,
+    because that is how the code looked when it composed it. Eighteen
+    consecutive failures of exactly this shape ended one live capability run.
+    """
+
+    _write(tmp_path, "main.py", "def run(payload):\n    return {'ok': False}\n")
+
+    _engine(tmp_path).apply(
+        parse_bundle(
+            {
+                "files": [
+                    {
+                        "path": "main.py",
+                        "search": "    return {'ok': False}",
+                        # written flush-left, as the model does
+                        "replace": "value = payload.get('x')\nreturn {'ok': True, 'value': value}",
+                    }
+                ]
+            }
+        )
+    )
+
+    text = (tmp_path / "main.py").read_text(encoding="utf-8")
+    assert text == "def run(payload):\n    value = payload.get('x')\n    return {'ok': True, 'value': value}\n"
+
+
+def test_reindentation_does_not_touch_an_edit_that_already_parses(tmp_path):
+    """A correct edit must come out exactly as written."""
+
+    _write(tmp_path, "main.py", "def run():\n    return 1\n")
+    _engine(tmp_path).apply(
+        parse_bundle({"files": [{"path": "main.py", "search": "    return 1", "replace": "    return 2"}]})
+    )
+    assert (tmp_path / "main.py").read_text(encoding="utf-8") == "def run():\n    return 2\n"
+
+
+def test_reindentation_does_not_rescue_a_genuinely_broken_edit(tmp_path):
+    """Only indentation is repaired; real mistakes are still reported."""
+
+    original = "def run():\n    return 1\n"
+    _write(tmp_path, "main.py", original)
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle({"files": [{"path": "main.py", "search": "    return 1", "replace": "return ("}]})
+        )
+    assert excinfo.value.kind == "syntax_error"
+    assert (tmp_path / "main.py").read_text(encoding="utf-8") == original
+
+
+def test_reindentation_is_not_applied_to_a_top_level_anchor(tmp_path):
+    original = "import os\n\n\ndef run():\n    return 1\n"
+    _write(tmp_path, "main.py", original)
+    with pytest.raises(EditError):
+        _engine(tmp_path).apply(
+            parse_bundle({"files": [{"path": "main.py", "search": "import os", "replace": "    import os"}]})
+        )
+    assert (tmp_path / "main.py").read_text(encoding="utf-8") == original
+
+
+def test_reindentation_leaves_non_python_files_alone(tmp_path):
+    _write(tmp_path, "notes.md", "  indented note\n")
+    _engine(tmp_path).apply(
+        parse_bundle({"files": [{"path": "notes.md", "search": "  indented note", "replace": "flush left"}]})
+    )
+    assert (tmp_path / "notes.md").read_text(encoding="utf-8") == "flush left\n"

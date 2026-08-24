@@ -1,0 +1,171 @@
+{
+  "policy": {
+    "max_concurrent_generations": 1,
+    "context_windows": {
+      "BUILD_LOCAL": 24576,
+      "FAST_LOCAL": 16384
+    },
+    "keep_alive": {
+      "BUILD_LOCAL": "15m",
+      "FAST_LOCAL": "10m"
+    },
+    "reserved_vram_mib": 1638,
+    "host": {
+      "cpu_count": 8,
+      "detected_at": "2026-08-23T20:41:31.224473+00:00",
+      "gpus": [
+        {
+          "free_mib": 1337,
+          "name": "NVIDIA GeForce GTX 1070",
+          "total_mib": 8192,
+          "used_mib": 6724
+        }
+      ],
+      "platform": "Windows 10",
+      "total_ram_mib": 16345
+    },
+    "measurements": {
+      "BUILD_LOCAL": [
+        {
+          "context_window": 4096,
+          "error": "",
+          "generated_tokens": 48,
+          "load_seconds": 45.168,
+          "ok": true,
+          "tokens_per_second": 31.85,
+          "total_seconds": 47.67,
+          "vram_free_mib": 2939,
+          "vram_used_mib": 5122
+        },
+        {
+          "context_window": 8192,
+          "error": "",
+          "generated_tokens": 48,
+          "load_seconds": 46.633,
+          "ok": true,
+          "tokens_per_second": 32.65,
+          "total_seconds": 49.09,
+          "vram_free_mib": 2579,
+          "vram_used_mib": 5482
+        },
+        {
+          "context_window": 12288,
+          "error": "",
+          "generated_tokens": 48,
+          "load_seconds": 46.687,
+          "ok": true,
+          "tokens_per_second": 32.26,
+          "total_seconds": 49.13,
+          "vram_free_mib": 2347,
+          "vram_used_mib": 5714
+        },
+        {
+          "context_window": 16384,
+          "error": "",
+          "generated_tokens": 48,
+          "load_seconds": 46.356,
+          "ok": true,
+          "tokens_per_second": 32.54,
+          "total_seconds": 48.77,
+          "vram_free_mib": 2257,
+          "vram_used_mib": 5804
+        },
+        {
+          "context_window": 24576,
+          "error": "",
+          "generated_tokens": 48,
+          "load_seconds": 46.647,
+          "ok": true,
+          "tokens_per_second": 32.48,
+          "total_seconds": 49.16,
+          "vram_free_mib": 1801,
+          "vram_used_mib": 6260
+        },
+        {
+          "context_window": 32768,
+          "error": "",
+          "generated_tokens": 48,
+          "load_seconds": 46.825,
+          "ok": true,
+          "tokens_per_second": 32.3,
+          "total_seconds": 49.25,
+          "vram_free_mib": 1345,
+          "vram_used_mib": 6716
+        }
+      ],
+      "FAST_LOCAL": [
+        {
+          "context_window": 4096,
+          "error": "",
+          "generated_tokens": 28,
+          "load_seconds": 28.943,
+          "ok": true,
+          "tokens_per_second": 55.89,
+          "total_seconds": 30.13,
+          "vram_free_mib": 4426,
+          "vram_used_mib": 3635
+        },
+        {
+          "context_window": 8192,
+          "error": "",
+          "generated_tokens": 28,
+          "load_seconds": 27.728,
+          "ok": true,
+          "tokens_per_second": 53.13,
+          "total_seconds": 28.76,
+          "vram_free_mib": 3763,
+          "vram_used_mib": 4298
+        },
+        {
+          "context_window": 12288,
+          "error": "",
+          "generated_tokens": 28,
+          "load_seconds": 27.963,
+          "ok": true,
+          "tokens_per_second": 56.8,
+          "total_seconds": 29.02,
+          "vram_free_mib": 3180,
+          "vram_used_mib": 4881
+        },
+        {
+          "context_window": 16384,
+          "error": "",
+          "generated_tokens": 28,
+          "load_seconds": 28.277,
+          "ok": true,
+          "tokens_per_second": 56.34,
+          "total_seconds": 29.28,
+          "vram_free_mib": 2596,
+          "vram_used_mib": 5465
+        },
+        {
+          "context_window": 24576,
+          "error": "",
+          "generated_tokens": 28,
+          "load_seconds": 29.289,
+          "ok": true,
+          "tokens_per_second": 55.67,
+          "total_seconds": 30.3,
+          "vram_free_mib": 1432,
+          "vram_used_mib": 6629
+        },
+        {
+          "context_window": 32768,
+          "error": "",
+          "generated_tokens": 28,
+          "load_seconds": 30.528,
+          "ok": true,
+          "tokens_per_second": 30.94,
+          "total_seconds": 32.16,
+          "vram_free_mib": 1154,
+          "vram_used_mib": 6907
+        }
+      ]
+    },
+    "notes": [
+      "FAST_LOCAL: chose 16384 (56.34 tok/s, 2596 MiB VRAM free); rejected 24576 (only 1432 MiB VRAM free < 1638 reserve)",
+      "BUILD_LOCAL: chose 24576 (32.48 tok/s, 1801 MiB VRAM free); rejected 32768 (only 1345 MiB VRAM free < 1638 reserve)"
+    ],
+    "tuned_at": "2026-08-23T20:41:31.224534+00:00"
+  }
+}

@@ -441,3 +441,52 @@ def test_artifacts_are_recorded_when_files_are_written(store, tools):
     project = engine.create_project("artifact tracking")
     engine.run(project, max_steps=10)
     assert any(item.path == "out.txt" for item in project.artifacts)
+
+
+# --------------------------------------- withdrawing a tool the model misuses
+
+def test_apply_edits_is_withdrawn_after_the_anchor_keeps_missing(store, tools):
+    """Telling a model to switch tools does not work; not offering one does.
+
+    A live run showed the "use write_file instead" advice arriving in the error
+    message and being ignored eight times running, each attempt failing the
+    same way on a twenty-line file.
+    """
+
+    brain = ScriptedBrain(
+        decompose={
+            "tasks": [{"title": "fix the module"}],
+            "acceptance": [{"text": "ok", "check": [sys.executable, "-c", "raise SystemExit(1)"]}],
+        },
+        execute=[
+            {"tool_calls": [{"name": "apply_edits", "arguments": {"files": [{"path": "a.py", "search": "absent anchor", "replace": "x"}]}}]},
+        ],
+    )
+    engine = make_engine(store, tools, brain)
+    project = engine.create_project("fix it", limits=ResourceLimits(max_steps=8, max_consecutive_failures=8))
+    (store.workspace_for(project) / "a.py").write_bytes(b"value = 1\n")
+
+    engine.run(project)
+
+    later = [prompt for prompt in brain.prompts if "apply_edits is not available" in prompt]
+    assert later, "after an anchor miss the model must be told the tool is gone"
+    assert "apply_edits(" not in later[0].split("Available tools:")[1]
+    assert "write_file(" in later[0].split("Available tools:")[1]
+
+
+def test_apply_edits_is_offered_on_a_first_attempt(store, tools):
+    """The withdrawal is a response to failure, not a permanent restriction."""
+
+    brain = ScriptedBrain(
+        decompose={
+            "tasks": [{"title": "edit"}],
+            "acceptance": [{"text": "ok", "check": [sys.executable, "-c", "raise SystemExit(1)"]}],
+        },
+        execute=[_writes("a.py", "value = 1\n")],
+    )
+    engine = make_engine(store, tools, brain)
+    engine.run(engine.create_project("edit", limits=ResourceLimits(max_steps=3)))
+
+    execute_prompts = [prompt for prompt in brain.prompts if "Available tools:" in prompt and "TASK:" in prompt]
+    assert execute_prompts
+    assert "apply_edits(" in execute_prompts[0].split("Available tools:")[1]

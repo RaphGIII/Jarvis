@@ -207,12 +207,42 @@ def find_definition(arguments: dict[str, Any], context: ToolContext) -> dict[str
     return {"symbol": symbol, "count": len(hits), "definitions": hits[:40]}
 
 
+#: Marks a bundle assembled by write_file rather than by the model, so the
+#: anchor requirement below does not apply to it.
+_INTERNAL = "__jarvis_internal__"
+
+
+def _is_internal(arguments: dict[str, Any]) -> bool:
+    return bool(arguments.get(_INTERNAL))
+
+
 def apply_edits(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Write model-authored changes through the deterministic edit engine."""
+    """Write model-authored changes through the deterministic edit engine.
+
+    ``apply_edits`` is for *anchored* changes only: every entry needs a search
+    string. Whole-file content belongs in ``write_file``, and the split is not
+    cosmetic. Left free to do both, a local model reaches for "replace the file,
+    here is everything" almost every time -- and gets it slightly wrong, so an
+    edit meant to add one import arrives as a file containing only that import.
+    Refusing the shape here, with a pointer to the right tool, is far more
+    effective than asking it not to in the prompt.
+    """
+
+    edits = arguments.get("files") or []
+    if isinstance(edits, list):
+        for item in edits:
+            if isinstance(item, dict) and not str(item.get("search", "")).strip() and not _is_internal(arguments):
+                raise ToolError(
+                    f"apply_edits needs a 'search' anchor for {item.get('path', '?')}. "
+                    "Copy the exact lines you want to change into 'search' and the new version into "
+                    "'replace'. To set a file's entire contents instead, use write_file.",
+                    kind="empty_search",
+                    retryable=True,
+                )
 
     bundle = {
         "analysis": str(arguments.get("analysis", "")),
-        "files": arguments.get("files") or [],
+        "files": edits,
         "new_files": arguments.get("new_files") or [],
         "deleted_files": arguments.get("deleted_files") or [],
     }
@@ -225,8 +255,43 @@ def apply_edits(arguments: dict[str, Any], context: ToolContext) -> dict[str, An
     try:
         result = engine.apply(parse_bundle(bundle))
     except EditError as exc:
-        raise ToolError(exc.detail, kind=exc.kind, retryable=exc.recoverable) from None
+        raise ToolError(_with_small_file_hint(exc, context), kind=exc.kind, retryable=exc.recoverable) from None
     return result.to_dict()
+
+
+#: Kinds where the model knows what it wants to change but cannot express it as
+#: an anchor.  On a short file there is a much easier way out.
+_ANCHOR_TROUBLE = frozenset({"no_unique_match", "ambiguous_search", "no_effective_edit", "stale_context"})
+
+#: Above this many lines, sending the whole file back is worse than a bad
+#: anchor: the model will not reproduce it faithfully.
+_SMALL_FILE_LINES = 60
+
+
+def _with_small_file_hint(error: EditError, context: ToolContext) -> str:
+    """Point at ``write_file`` when a short file is fighting the anchor matcher.
+
+    A local model that cannot land an anchor will usually keep failing the same
+    way -- observed as eight consecutive misses on a twenty-line module, each
+    with a perfectly correct diagnosis attached. When the file is short enough
+    to reproduce reliably, saying so converts a dead end into one more attempt
+    that can actually succeed.
+    """
+
+    if error.kind not in _ANCHOR_TROUBLE or not error.path:
+        return error.detail
+    try:
+        path = resolve_readable(context, error.path)
+        lines = len(path.read_text(encoding="utf-8-sig", errors="replace").splitlines())
+    except (ToolError, OSError):
+        return error.detail
+    if lines > _SMALL_FILE_LINES:
+        return error.detail
+    return (
+        f"{error.detail}\n"
+        f"{error.path} is only {lines} lines. Rather than fight the anchor, call write_file with the "
+        f"complete corrected contents of {error.path}."
+    )
 
 
 def write_file(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -253,9 +318,9 @@ def write_file(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any
             return {"applied": [], "total_changed_lines": 0, "unchanged": True, "path": path}
 
     bundle = (
-        {"analysis": "write_file", "files": [{"path": path, "content": content}]}
+        {"analysis": "write_file", "files": [{"path": path, "content": content}], _INTERNAL: True}
         if target.exists()
-        else {"analysis": "write_file", "files": [], "new_files": [{"path": path, "content": content}]}
+        else {"analysis": "write_file", "files": [], "new_files": [{"path": path, "content": content}], _INTERNAL: True}
     )
     return apply_edits(bundle, context)
 
@@ -302,6 +367,11 @@ def safe_environment(context: ToolContext) -> dict[str, str]:
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["PYTHONIOENCODING"] = "utf-8"
     environment.setdefault("PYTHONUNBUFFERED", "1")
+    # The workspace wins over anything installed on the host. Without this, a
+    # stray top-level package in user site-packages shadows the workspace's own
+    # modules -- this machine has a `tests` package installed that did exactly
+    # that, making a candidate's own test suite unimportable.
+    environment["PYTHONPATH"] = str(context.workspace.resolve())
     return environment
 
 
@@ -660,7 +730,11 @@ def builtin_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="apply_edits",
-            purpose="Apply search/replace edits, create files, or delete files. Atomic: all or nothing.",
+            purpose=(
+                "Change PART of a file. Every edit needs a 'search' anchor copied exactly from the "
+                "file plus the new text in 'replace'. Also creates and deletes files. Atomic. "
+                "To set a whole file's contents, use write_file instead."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -678,7 +752,7 @@ def builtin_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="write_file",
-            purpose="Create a new file, or replace a small existing one, with exact content.",
+            purpose="Set a file's ENTIRE contents. Use this when you have the complete file, not a fragment.",
             input_schema={
                 "type": "object",
                 "properties": {"path": {"type": "string"}, "content": {"type": "string"}},

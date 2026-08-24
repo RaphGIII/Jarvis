@@ -300,7 +300,13 @@ class ToolRegistry:
 
     # -- description for prompting ---------------------------------------
 
-    def describe(self, *, tags: Iterable[str] | None = None, max_risk: RiskLevel | None = None) -> list[dict[str, Any]]:
+    def describe(
+        self,
+        *,
+        tags: Iterable[str] | None = None,
+        max_risk: RiskLevel | None = None,
+        exclude: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """List the tools a model should be told about.
 
         Filtered by the same policy that will judge the call, so the model is
@@ -309,9 +315,12 @@ class ToolRegistry:
         """
 
         wanted = set(tags) if tags else None
+        hidden = set(exclude or ())
         ceiling = max_risk if max_risk is not None else self.policy.max_risk
         described = []
         for spec in self.specs():
+            if spec.name in hidden:
+                continue
             if wanted and not wanted.intersection(spec.tags):
                 continue
             if spec.risk > ceiling and self.policy.approve is None:
@@ -323,9 +332,9 @@ class ToolRegistry:
             described.append(spec.describe())
         return described
 
-    def render_for_prompt(self, *, tags: Iterable[str] | None = None) -> str:
+    def render_for_prompt(self, *, tags: Iterable[str] | None = None, exclude: Iterable[str] | None = None) -> str:
         lines = []
-        for item in self.describe(tags=tags):
+        for item in self.describe(tags=tags, exclude=exclude):
             required = item["input_schema"].get("required") or []
             properties = item["input_schema"].get("properties") or {}
             args = ", ".join(

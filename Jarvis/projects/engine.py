@@ -524,9 +524,12 @@ class ProjectEngine:
             # actually printed.  Without it the model rewrites the same stub
             # over and over, because it never sees why the stub is wrong.
             + self._failing_check_evidence(project)
-            + self._workspace_snapshot(context)
+            # The file the task and the last failure are about goes first, and
+            # in full: that is the text an anchor has to be copied from.
+            + self._workspace_snapshot(context, focus=f"{task.title} {task.detail} {task.last_error}")
+            + self._anchor_trouble_notice(task)
             + f"{self._project_brief(project)}\n"
-            f"Available tools:\n{self.tools.render_for_prompt()}\n"
+            f"Available tools:\n{self.tools.render_for_prompt(exclude=self._withdrawn_tools(task))}\n"
         )
         payload = self._ask_json(prompt, schema, max_tokens=1600)
         calls = payload.get("tool_calls") or []
@@ -675,7 +678,7 @@ class ProjectEngine:
             "(a missing credential, a hardware decision) -- never for a failing test.\n\n"
             f"EVIDENCE:\n{evidence[:4000]}\n\n"
             + self._failing_check_evidence(project)
-            + self._workspace_snapshot(context)
+            + self._workspace_snapshot(context, focus=evidence)
             + f"{self._project_brief(project)}\n"
         )
         payload = self._ask_json(prompt, schema, max_tokens=700)
@@ -886,6 +889,35 @@ class ProjectEngine:
             results.append(self.tools.invoke_payload(payload, context))
         return results
 
+    #: Edit failures that mean "I know what to change but cannot express it as
+    #: an anchor".  Repeating them is the single most common way a local model
+    #: burns a step budget.
+    _ANCHOR_TROUBLE = ("no_unique_match", "no safe unique match", "ambiguous_search", "must match exactly once")
+
+    def _anchor_failed_before(self, task: Task) -> bool:
+        return bool(task.last_error) and any(marker in task.last_error for marker in self._ANCHOR_TROUBLE)
+
+    def _withdrawn_tools(self, task: Task) -> set[str]:
+        """Tools to stop offering for this attempt.
+
+        A model that cannot land an anchor keeps trying to land an anchor, and
+        telling it to use ``write_file`` instead does not work -- a live run
+        showed the advice arriving in the error message and being ignored eight
+        times running.  Taking ``apply_edits`` off the menu does work, for the
+        same reason that removing the rewrite verb from the repository schema
+        worked: a model cannot choose what it is not offered.
+        """
+
+        return {"apply_edits"} if self._anchor_failed_before(task) else set()
+
+    def _anchor_trouble_notice(self, task: Task) -> str:
+        if not self._anchor_failed_before(task):
+            return ""
+        return (
+            "NOTE: your last attempt could not match its search anchor. apply_edits is not available "
+            "for this attempt. Use write_file and send the complete corrected contents of the file.\n\n"
+        )
+
     def _failing_check_evidence(self, project: Project) -> str:
         """The output of the acceptance checks that are currently failing.
 
@@ -904,11 +936,18 @@ class ProjectEngine:
         ]
         return "OUTPUT OF THE FAILING ACCEPTANCE CHECK (this is what you must make pass):\n" + "\n".join(blocks) + "\n\n"
 
-    def _workspace_snapshot(self, context: ToolContext, *, max_files: int = 12, max_chars: int = 4000) -> str:
+    def _workspace_snapshot(
+        self, context: ToolContext, *, max_files: int = 12, max_chars: int = 6000, focus: str = ""
+    ) -> str:
         """The files that exist now, with the small ones inlined.
 
         Shown unnumbered and verbatim so a search anchor copied out of it can
         actually match -- the same reasoning as in the repository engineer.
+
+        Files named in ``focus`` come first and get the character budget before
+        anything else.  Alphabetical order put ``main.py`` behind other files
+        and truncated exactly the content the model needed to copy an anchor
+        from, which is a strange way to fail.
         """
 
         try:
@@ -919,6 +958,10 @@ class ProjectEngine:
             return ""
         if not paths:
             return "WORKSPACE IS EMPTY.\n\n"
+
+        if focus:
+            mentioned = focus.lower()
+            paths.sort(key=lambda path: 0 if path.name.lower() in mentioned else 1)
 
         lines = ["CURRENT WORKSPACE FILES:"]
         lines.extend(f"  {relative_to(context.workspace, path)}" for path in paths[:40])
@@ -955,7 +998,11 @@ class ProjectEngine:
             f"WORKSPACE: {project.workspace}",
         ]
         if project.constraints:
-            lines.append("CONSTRAINTS:\n" + "\n".join(f"  - {item}" for item in project.constraints[:6]))
+            # Not truncated. Constraints are short, deliberately chosen, and each
+            # one usually exists because a run failed without it -- silently
+            # dropping the seventh is how carefully-written guidance stops
+            # reaching the model.
+            lines.append("CONSTRAINTS:\n" + "\n".join(f"  - {item}" for item in project.constraints))
         if project.requirements:
             lines.append("REQUIREMENTS:\n" + "\n".join(f"  - {item.text}" for item in project.requirements[-8:]))
         if project.acceptance:
@@ -1024,8 +1071,26 @@ _AUTO_REPAIR = "[auto-repair]"
 
 #: Tools that observe without changing anything, so a step consisting only of
 #: these has not actually advanced the task.
+#:
+#: ``run_tests`` belongs here despite being a subprocess: running the tests is
+#: how you find out whether the work is done, not a way of doing it.  Counting
+#: it as progress let a live run mark "implement run()" as complete four times
+#: over without the function ever being written, because each attempt ran the
+#: tests and that looked like effective work.
 _READ_ONLY_TOOLS = frozenset(
-    {"list_files", "read_file", "search_text", "find_definition", "which", "git", "git_diff", "web_search", "fetch_url", "check_syntax"}
+    {
+        "list_files",
+        "read_file",
+        "search_text",
+        "find_definition",
+        "which",
+        "git",
+        "git_diff",
+        "web_search",
+        "fetch_url",
+        "check_syntax",
+        "run_tests",
+    }
 )
 
 
