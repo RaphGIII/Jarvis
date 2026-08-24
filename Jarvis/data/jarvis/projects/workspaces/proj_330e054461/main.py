@@ -18,7 +18,11 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         try:
             from playsound import playsound
-            playsound('path_to_audio_file.mp3')
-            return {"ok": True, "message": "Audio playback successful"}
+            audio_files = main.find_media()
+            if audio_files:
+                playsound(audio_files[0])
+                return {"ok": True, "message": "Audio playback successful"}
+            else:
+                return {"ok": False, "error": "No local audio files found"}
         except Exception as e:
             return {"ok": False, "error": str(e)}

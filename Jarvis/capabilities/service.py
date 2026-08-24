@@ -181,6 +181,33 @@ def _audio_python() -> str:
     return sys.executable
 
 
+def _importable_packages(limit: int = 24) -> str:
+    """Third-party packages the capability's interpreter can actually import.
+
+    Checked by importlib rather than listed by hand: a hand-written list drifts
+    the moment anything is installed or removed, and a briefing that is wrong
+    about the environment is worse than one that says nothing.
+    """
+
+    import importlib.util
+
+    candidates = (
+        "numpy", "requests", "chess", "cv2", "PIL", "yaml", "bs4", "lxml",
+        "pandas", "scipy", "matplotlib", "pygame", "pydub", "mutagen",
+        "psutil", "pyautogui", "comtypes", "pycaw", "win32api", "torch",
+    )
+    found = []
+    for name in candidates:
+        try:
+            if importlib.util.find_spec(name) is not None:
+                found.append(name)
+        except (ImportError, ValueError):
+            continue
+        if len(found) >= limit:
+            break
+    return ", ".join(found) if found else "none beyond the standard library"
+
+
 def audible_playback_check(python: str | None = None) -> CapabilityCheck:
     """Proof that a playback capability actually produced sound.
 
@@ -492,6 +519,14 @@ class CapabilityService:
                 # useful data -- so the distinction has to be stated, not
                 # assumed. Three consecutive VERIFY failures came from exactly
                 # this, each diagnosed as "media_folders is not defined".
+                # Observed live: the model wrote `from playsound import playsound`
+                # for a package that is not installed. It had no way to know --
+                # nothing told it what this interpreter can import, so it
+                # guessed a plausible name. Listing them is cheap and removes an
+                # entire class of failure.
+                f"Third-party packages you may import: {_importable_packages()}. "
+                "Anything else is NOT installed -- use the standard library instead. "
+                "winsound, subprocess, shutil, pathlib and os are always available on Windows.",
                 "Jarvis TOOLS (media_folders, find_media, running_processes, find_applications, "
                 "find_program, read_file, ...) exist only while you are investigating. They are NOT "
                 "importable and NOT callable from main.py. Anything main.py needs at runtime must come "
