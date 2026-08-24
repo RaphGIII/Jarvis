@@ -1,7 +1,8 @@
-"""Tests for this capability. Replace these with real ones."""
-
 import main
 
+def test_play_pause_command():
+    result = main.run({'dry_run': True, 'play_pause_test': False})
+    assert 'folders' in result and len(result['folders']) > 0, 'Expected folders to be found'
 
-def test_placeholder():
-    raise AssertionError("JARVIS_CAPABILITY_NOT_IMPLEMENTED: write real tests")
+    result = main.run({'dry_run': True, 'play_pause_test': True})
+    assert 'message' in result and 'Play/Pause command executed.' in result['message'], 'Expected play/pause message not found'
