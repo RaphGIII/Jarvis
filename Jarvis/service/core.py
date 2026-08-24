@@ -574,6 +574,33 @@ class JarvisCore:
         self.emit(EventType.KNOWLEDGE, result)
         return result
 
+    def graph_operation(
+        self, request: str, *, selected: str = "", confirm: bool = False
+    ) -> dict[str, Any]:
+        """Do something to the knowledge graph, described in words."""
+
+        request = (request or "").strip()
+        if not request:
+            return {"ok": False, "error": "say what to do"}
+
+        from brain.tiers import ModelTier
+        from knowledge.graph import KnowledgeGraph
+        from knowledge.operations import GraphOperator
+
+        graph_path = self.kernel.state_root / "knowledge" / "graph.db"
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with KnowledgeGraph(graph_path) as graph:
+                operator = GraphOperator(graph, brain=self.kernel.provider(ModelTier.FAST_LOCAL))
+                result = operator.perform(request, selected=selected, confirm=confirm)
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+        payload = result.to_dict()
+        if result.ok:
+            self.emit(EventType.KNOWLEDGE, {"operation": result.operation, "detail": result.detail})
+        return payload
+
     def research(self, question: str, *, max_sources: int = 3) -> dict[str, Any]:
         """Answer a technical question from public documentation, with citations."""
 

@@ -150,6 +150,11 @@ class JarvisHTTPServer:
             "/api/research": lambda body: self.core.research(
                 str(body.get("question", "")), max_sources=int(body.get("max_sources", 3) or 3)
             ),
+            "/api/knowledge/do": lambda body: self.core.graph_operation(
+                str(body.get("request", "")),
+                selected=str(body.get("selected", "")),
+                confirm=bool(body.get("confirm", False)),
+            ),
             "/api/knowledge/ingest": lambda body: self.core.ingest(
                 str(body.get("path", "")),
                 text=str(body.get("text", "")),

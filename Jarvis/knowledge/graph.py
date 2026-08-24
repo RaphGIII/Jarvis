@@ -396,6 +396,18 @@ class KnowledgeGraph:
         self._connection.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         self._connection.commit()
 
+    def delete_edge(self, edge_id: str) -> bool:
+        """Remove one relationship, leaving both nodes intact.
+
+        Distinct from :meth:`delete_node` because "these two are not actually
+        related" is a correction, not a deletion: the notes are still wanted,
+        the claim that they are connected is not.
+        """
+
+        cursor = self._connection.execute("DELETE FROM edges WHERE id = ?", (edge_id,))
+        self._connection.commit()
+        return cursor.rowcount > 0
+
     # -- reading ---------------------------------------------------------
 
     def get(self, node_id: str) -> Node | None:
