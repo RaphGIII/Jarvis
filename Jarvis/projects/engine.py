@@ -32,6 +32,7 @@ so killing the process mid-run loses at most the current step.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -284,6 +285,45 @@ class ProjectEngine:
         )
 
     @staticmethod
+    def _proven_files(project: Project, workspace: str) -> list[str]:
+        """Workspace files that a passing check depends on and no failing one does.
+
+        When a call and a definition disagree, there are two ways to make them
+        agree, and only one of them is safe.  Seen live: `pipeline.py` called
+        `position(path, x, y, square)` while `position(path)` took one argument,
+        and the loop set about editing `position.py` -- the accepted, verified
+        module -- rather than the four-day-old line that called it wrongly.
+        Changing the proven side cannot fix the failing check and can only break
+        a passing one.
+
+        The rule is mechanical rather than a judgement: a file is proven if a
+        *satisfied* criterion's command names it, and it is back in play the
+        moment an *unsatisfied* criterion names it.  So a later requirement that
+        genuinely needs to change an accepted module unprotects it by having a
+        failing check that mentions it, and nothing has to be decided in advance.
+
+        This is enforced rather than advised, because a weak model reads "avoid
+        editing this" as a suggestion and edits it anyway.
+        """
+
+        criteria = project.objective_criteria()
+        if not criteria:
+            return []
+        try:
+            stems = {path.stem: path for path in Path(workspace).glob("*.py")}
+        except OSError:
+            return []
+        if not stems:
+            return []
+
+        proven: set[str] = set()
+        in_play: set[str] = set()
+        for criterion in criteria:
+            words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", " ".join(criterion.check)))
+            (proven if criterion.satisfied else in_play).update(stems.keys() & words)
+        return [str(stems[stem]) for stem in sorted(proven - in_play)]
+
+    @staticmethod
     def _work_in_hand(project: Project) -> str:
         """What the project is currently trying to do, as plain text.
 
@@ -347,7 +387,8 @@ class ProjectEngine:
             workspace=workspace,
             readable_roots=[Path(item) for item in readable],
             timeout_seconds=project.limits.step_timeout_seconds,
-            protected_paths=list(project.metadata.get("protected_paths") or []),
+            protected_paths=list(project.metadata.get("protected_paths") or [])
+            + self._proven_files(project, workspace),
             allowed_paths=list(project.metadata.get("allowed_paths") or []),
         )
 

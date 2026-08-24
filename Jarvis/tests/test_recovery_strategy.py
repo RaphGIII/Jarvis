@@ -21,6 +21,8 @@ request by ruling out what has already been shown not to work.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from projects.engine import ProjectEngine
@@ -688,3 +690,115 @@ def test_the_brief_keeps_the_newest_acceptance_criteria():
 
     assert "criterion 11" in brief
     assert "criterion 0" not in brief
+
+
+# --------------------------------------------------------------------------
+# Files a passing check depends on
+# --------------------------------------------------------------------------
+
+def _chess_project(satisfied_pipeline_static=True):
+    from projects.models import AcceptanceCriterion, Project
+
+    project = Project(goal="chess")
+    project.acceptance.extend([
+        AcceptanceCriterion(
+            text="geometry", check=["python", "-c", "import board; board.detect_board(x)"],
+            satisfied=True,
+        ),
+        AcceptanceCriterion(
+            text="fen", check=["python", "-c", "import position; position.position(x)"],
+            satisfied=True,
+        ),
+        AcceptanceCriterion(
+            text="engine", check=["python", "-c", "import engine; engine.analyse(x)"],
+            satisfied=True,
+        ),
+        AcceptanceCriterion(
+            text="pipeline static", check=["python", "-m", "check", "pipeline"],
+            satisfied=satisfied_pipeline_static,
+        ),
+        AcceptanceCriterion(
+            text="pipeline end to end",
+            check=["python", "-c", "import pipeline; pipeline.analyse_image(x)"],
+            satisfied=False,
+        ),
+    ])
+    return project
+
+
+def _workspace(tmp_path, *names):
+    for name in names:
+        (tmp_path / name).write_text("x = 1\n", encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_a_module_a_passing_check_depends_on_is_protected(tmp_path):
+    """The bug: the loop set about editing the accepted position.py.
+
+    pipeline.py called position(path, x, y, square) while position(path) took
+    one argument. Changing the proven side cannot fix the failing check and can
+    only break a passing one.
+    """
+
+    workspace = _workspace(tmp_path, "board.py", "position.py", "engine.py", "pipeline.py")
+
+    protected = _Engine()._proven_files(_chess_project(), workspace)
+    names = {pathlib.Path(item).name for item in protected}
+
+    assert names == {"board.py", "position.py", "engine.py"}
+
+
+def test_the_file_being_worked_on_is_not_protected(tmp_path):
+    """pipeline.py is named by a failing check, so it stays editable."""
+
+    workspace = _workspace(tmp_path, "board.py", "position.py", "engine.py", "pipeline.py")
+
+    protected = _Engine()._proven_files(_chess_project(), workspace)
+
+    assert not any(pathlib.Path(item).name == "pipeline.py" for item in protected)
+
+
+def test_a_failing_check_unprotects_a_previously_proven_module(tmp_path):
+    """A later requirement that must change an accepted module says so by failing.
+
+    Nothing has to be decided in advance, and no list has to be maintained.
+    """
+
+    from projects.models import AcceptanceCriterion
+
+    workspace = _workspace(tmp_path, "board.py", "position.py")
+    project = _chess_project()
+    project.acceptance.append(
+        AcceptanceCriterion(
+            text="board gains a margin argument",
+            check=["python", "-c", "import board; board.detect_board(x, margin=1)"],
+            satisfied=False,
+        )
+    )
+
+    protected = _Engine()._proven_files(project, workspace)
+
+    assert not any(pathlib.Path(item).name == "board.py" for item in protected)
+
+
+def test_a_project_with_no_criteria_protects_nothing(tmp_path):
+    from projects.models import Project
+
+    workspace = _workspace(tmp_path, "board.py")
+
+    assert _Engine()._proven_files(Project(goal="x"), workspace) == []
+
+
+def test_a_missing_workspace_protects_nothing():
+    assert _Engine()._proven_files(_chess_project(), "D:/nope/does/not/exist") == []
+
+
+def test_protection_only_covers_files_that_exist(tmp_path):
+    """A check naming a module that was never written protects nothing."""
+
+    workspace = _workspace(tmp_path, "board.py")
+
+    protected = _Engine()._proven_files(_chess_project(), workspace)
+    names = {pathlib.Path(item).name for item in protected}
+
+    assert names == {"board.py"}
