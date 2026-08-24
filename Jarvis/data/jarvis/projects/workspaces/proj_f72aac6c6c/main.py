@@ -35,3 +35,23 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "error": "No audio files found"
             }
+        local_audio_files = find_media(paths=[r'C:\Users\rapha\Music', r'C:\Users\rapha\Downloads'], limit=1)
+        if local_audio_files['audio_files'] > 0:
+            import os
+            return {
+                "message": "Playing audio with media player"
+            }
+        else:
+            return {
+                "error": "No audio files found"
+            }
+        local_audio_files = find_media(paths=[r'C:\Users\rapha\Music', r'C:\Users\rapha\Downloads'], limit=1)
+        if local_audio_files['audio_files'] > 0:
+            import os
+            return {
+                "message": "Playing audio with media player"
+            }
+        else:
+            return {
+                "error": "No audio files found"
+            }

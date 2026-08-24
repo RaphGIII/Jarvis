@@ -1,7 +1,4 @@
-"""Tests for this capability. Replace these with real ones."""
-
-import main
-
+# Tests for this capability. Replace these with real ones.
 
 import main
 
