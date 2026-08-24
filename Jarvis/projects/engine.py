@@ -320,7 +320,7 @@ class ProjectEngine:
                 continue
             words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", " ".join(criterion.check)))
             found.update(stems.keys() & words)
-        return [str(stems[stem]) for stem in sorted(found)]
+        return [stems[stem].name for stem in sorted(found)]
 
     @staticmethod
     def _proven_files(project: Project, workspace: str) -> list[str]:
@@ -359,7 +359,12 @@ class ProjectEngine:
         for criterion in criteria:
             words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", " ".join(criterion.check)))
             (proven if criterion.satisfied else in_play).update(stems.keys() & words)
-        return [str(stems[stem]) for stem in sorted(proven - in_play)]
+        # Workspace-relative, because PathPolicy matches repo-relative strings:
+        # an absolute path never equals "position.py" and the protection is
+        # silently inert. That is exactly how this shipped once -- the unit test
+        # asserted Path(item).name, which passes either way, so it checked the
+        # shape of the answer instead of whether anything was protected.
+        return [stems[stem].name for stem in sorted(proven - in_play)]
 
     @staticmethod
     def _work_in_hand(project: Project) -> str:

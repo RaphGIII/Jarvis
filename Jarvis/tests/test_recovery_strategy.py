@@ -880,3 +880,52 @@ def test_a_policy_with_no_reason_is_unchanged(tmp_path):
         policy.resolve("secret.py")
 
     assert str(caught.value).endswith("secret.py")
+
+
+def test_the_protected_list_actually_refuses_a_write(tmp_path):
+    """Behaviour, not shape.
+
+    This shipped inert once. _proven_files returned absolute paths while
+    PathPolicy matches repo-relative strings, so nothing was ever protected --
+    and the unit test above passed anyway, because it asserted
+    Path(item).name, which is the same either way. Asserting the shape of the
+    answer tested the function against itself; only running the policy tests
+    whether anything is actually protected.
+    """
+
+    import pytest as _pytest
+
+    from development.edit_engine import EditError, PathPolicy
+
+    workspace = _workspace(tmp_path, "board.py", "position.py", "engine.py", "pipeline.py")
+    protected = _Engine()._proven_files(_chess_project(), workspace)
+
+    policy = PathPolicy(workspace, protected_paths=protected)
+
+    with _pytest.raises(EditError) as caught:
+        policy.resolve("position.py")
+    assert caught.value.kind == "protected_path"
+
+    # And the file being worked on stays writable.
+    assert policy.resolve("pipeline.py").name == "pipeline.py"
+
+
+def test_the_engine_context_protects_for_real(tmp_path):
+    """The same check one layer up, through the context the loop actually uses."""
+
+    import pytest as _pytest
+
+    from development.edit_engine import EditError, PathPolicy
+
+    workspace = _workspace(tmp_path, "board.py", "position.py", "pipeline.py")
+    project = _chess_project()
+    policy = PathPolicy(
+        workspace,
+        protected_paths=_Engine()._proven_files(project, workspace),
+        protected_reason=_Engine()._protected_reason(project, workspace),
+    )
+
+    with _pytest.raises(EditError) as caught:
+        policy.resolve("board.py")
+
+    assert "pipeline.py" in str(caught.value)
