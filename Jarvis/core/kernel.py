@@ -56,6 +56,11 @@ class KernelConfig:
     max_tool_risk: RiskLevel = RiskLevel.MODERATE
     #: Off by default: an autonomous run must not silently reach the network.
     enable_research_tools: bool = True
+    #: Tools that touch the host: launch programs, media keys, clipboard,
+    #: screenshots. On by default because a personal assistant that cannot
+    #: operate the computer is not one, but every individual tool still carries
+    #: its own risk level and is gated by ToolPolicy.
+    enable_desktop_tools: bool = True
     default_limits: ResourceLimits = field(default_factory=ResourceLimits)
 
     @classmethod
@@ -103,6 +108,13 @@ class JarvisKernel:
         registry.register_many(builtin_tools())
         if self.config.enable_research_tools:
             registry.register_many(make_web_tools())
+        if self.config.enable_desktop_tools:
+            # These reach outside the workspace. They are registered, not
+            # necessarily reachable: ToolPolicy.max_risk still decides whether
+            # an unattended run may call the HIGH-risk ones.
+            from tools.desktop import desktop_tools
+
+            registry.register_many(desktop_tools())
         return registry
 
     def provider(self, tier: ModelTier):
