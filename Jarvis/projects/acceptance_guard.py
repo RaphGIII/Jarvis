@@ -173,9 +173,15 @@ def static_check_command(python: str, repo_root: str | Path, *modules: str) -> l
         "from capabilities.static_check import check_file; "
         f"paths = [{names}]; "
         "import pathlib; "
+        # A file that does not exist must FAIL, not pass silently. A vacuous
+        # pass is indistinguishable from a real one in the acceptance report,
+        # and the chess project showed three of four criteria green while the
+        # module they were checking had never been written.
+        "missing = [p for p in paths if not pathlib.Path(p).is_file()]; "
+        "[print(f'{p}: does not exist') for p in missing]; "
         "reports = [(p, check_file(p)) for p in paths if pathlib.Path(p).is_file()]; "
-        "bad = [(p, r.describe()) for p, r in reports if not r.ok]; "
-        "[print(f'{p}: {d}') for p, d in bad]; "
+        "bad = missing + [p for p, r in reports if not r.ok]; "
+        "[print(f'{p}: {r.describe()}') for p, r in reports if not r.ok]; "
         "print('STATIC_OK') if not bad else None; "
         "raise SystemExit(1 if bad else 0)",
     ]
