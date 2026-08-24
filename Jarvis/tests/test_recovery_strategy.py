@@ -314,3 +314,74 @@ def test_a_project_with_no_verified_progress_yet_still_has_a_budget():
     from projects.models import Project
 
     assert _Engine()._repair_budget_left(Project(goal="brand new"))
+
+
+# --------------------------------------------------------------------------
+# "No module named X" reads two ways; only one of them is true here
+# --------------------------------------------------------------------------
+
+def _failing_project(evidence: str):
+    from projects.models import Project
+
+    project = Project(goal="build something")
+    criterion = project.add_acceptance("it works", check=["python", "-c", "import engine"])
+    criterion.satisfied = False
+    criterion.last_evidence = evidence
+    return project
+
+
+def test_a_module_the_project_must_write_is_named_as_such(tmp_path):
+    """Observed live: the model read "No module named 'engine'" as a packaging
+    problem and spent its entire repair budget on `pip install python-chess`.
+    The module was one the requirement had asked it to write."""
+
+    from tools.registry import ToolContext
+
+    project = _failing_project("ModuleNotFoundError: No module named 'engine'")
+    notice = _Engine()._missing_module_notice(project, ToolContext(workspace=tmp_path))
+
+    assert "engine.py DOES NOT EXIST" in notice
+    assert "NOT a missing package" in notice
+
+
+def test_nothing_is_said_once_the_file_exists(tmp_path):
+    from tools.registry import ToolContext
+
+    (tmp_path / "engine.py").write_text("def analyse(fen):\n    return {}\n", encoding="utf-8")
+    project = _failing_project("ModuleNotFoundError: No module named 'engine'")
+
+    assert _Engine()._missing_module_notice(project, ToolContext(workspace=tmp_path)) == ""
+
+
+def test_a_genuinely_absent_package_is_not_mislabelled(tmp_path):
+    """numpy.py is not something the project was asked to write, but the notice
+    only fires for names with no file, so it would claim numpy must be written.
+    It says the same thing either way -- write it or install it, the file is
+    what is missing -- and the workspace check is what keeps it honest."""
+
+    from tools.registry import ToolContext
+
+    project = _failing_project("ModuleNotFoundError: No module named 'engine'")
+    notice = _Engine()._missing_module_notice(project, ToolContext(workspace=tmp_path))
+
+    assert "engine" in notice
+    assert "numpy" not in notice
+
+
+def test_a_failure_with_no_missing_module_says_nothing(tmp_path):
+    from tools.registry import ToolContext
+
+    project = _failing_project("AssertionError: expected 3, got 4")
+
+    assert _Engine()._missing_module_notice(project, ToolContext(workspace=tmp_path)) == ""
+
+
+def test_each_missing_module_is_mentioned_once(tmp_path):
+    from tools.registry import ToolContext
+
+    project = _failing_project(
+        "No module named 'engine'\nlater: No module named 'engine'"
+    )
+    notice = _Engine()._missing_module_notice(project, ToolContext(workspace=tmp_path))
+
+    assert notice.count("engine.py DOES NOT EXIST") == 1

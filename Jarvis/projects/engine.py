@@ -558,6 +558,7 @@ class ProjectEngine:
             # actually printed.  Without it the model rewrites the same stub
             # over and over, because it never sees why the stub is wrong.
             + self._failing_check_evidence(project)
+            + self._missing_module_notice(project, context)
             # The file the task and the last failure are about goes first, and
             # in full: that is the text an anchor has to be copied from.
             + self._workspace_snapshot(context, focus=f"{task.title} {task.detail} {task.last_error}")
@@ -725,6 +726,7 @@ class ProjectEngine:
             + exhausted
             + f"EVIDENCE:\n{evidence[:4000]}\n\n"
             + self._failing_check_evidence(project)
+            + self._missing_module_notice(project, context)
             + self._workspace_snapshot(context, focus=evidence)
             + f"{self._project_brief(project)}\n"
         )
@@ -1086,6 +1088,50 @@ class ProjectEngine:
             "Look at a different part of the evidence this time. If the tests keep failing the same way, "
             "suspect the code under test rather than the test.\n\n"
         )
+
+    def _missing_module_notice(self, project: Project, context: ToolContext) -> str:
+        """Say plainly when a failing check needs a file the project has not written.
+
+        Observed live: `import engine` failed, the model read "No module named
+        'engine'" as a packaging problem, and spent its whole repair budget on a
+        task to pip-install python-chess. The module was one the requirement had
+        asked it to WRITE.
+
+        The distinction is mechanical -- either engine.py is in the workspace or
+        it is not -- so it should not be left to inference from an error message
+        that genuinely reads both ways.
+        """
+
+        import re as _re
+        from pathlib import Path as _Path
+
+        failing = [
+            item for item in project.objective_criteria()
+            if not item.satisfied and item.last_evidence
+        ]
+        if not failing:
+            return ""
+
+        workspace = _Path(context.workspace)
+        notices: list[str] = []
+        seen: set[str] = set()
+        for item in failing:
+            for name in _re.findall(r"No module named '([A-Za-z_][A-Za-z0-9_]*)'", item.last_evidence):
+                if name in seen:
+                    continue
+                seen.add(name)
+                if (workspace / f"{name}.py").is_file():
+                    continue
+                notices.append(
+                    f"{name}.py DOES NOT EXIST in the workspace. "
+                    f"\"No module named '{name}'\" here means the file has not been written yet -- "
+                    "it is NOT a missing package and installing anything will not help. "
+                    f"Write {name}.py."
+                )
+        if not notices:
+            return ""
+        body = "\n".join(f"  {line}" for line in notices)
+        return f"WHAT THE FAILURE ACTUALLY MEANS:\n{body}\n\n"
 
     def _failing_check_evidence(self, project: Project) -> str:
         """The output of the acceptance checks that are currently failing.
