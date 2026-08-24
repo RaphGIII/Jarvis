@@ -72,6 +72,75 @@ class StaticReport:
         return "\n".join(f"line {item.line}: {item.message}" for item in self.issues)
 
 
+#: Characters that can only be in a string because a backslash was eaten.
+#: A Windows path in a non-raw literal turns a tab escape into a real tab and a
+#: return escape into a real carriage return, and the path stops existing.
+_ACCIDENTAL_ESCAPES = {
+    chr(9): "a tab escape",
+    chr(13): "a carriage-return escape",
+    chr(10): "a newline escape",
+    chr(8): "a backspace escape",
+    chr(12): "a form-feed escape",
+    chr(11): "a vertical-tab escape",
+    chr(7): "a bell escape",
+}
+
+_BACKSLASH = chr(92)
+
+
+def _looks_like_a_path(value: str) -> bool:
+    """Whether a string was probably meant to be a filesystem path."""
+
+    lowered = value.lower()
+    return (
+        ":" in value[:3]                       # a drive letter
+        or lowered.endswith((".exe", ".dll", ".json", ".txt", ".py", ".png", ".onnx"))
+        or _BACKSLASH in value
+        or value.count("/") >= 2
+    )
+
+
+def check_windows_paths(source: str, *, filename: str = "main.py") -> StaticReport:
+    """Find Windows paths mangled by Python's own string escaping.
+
+    Written because a generated engine.py assigned a Stockfish path as an
+    ordinary quoted string full of backslashes. Python read the escapes, the
+    path acquired a carriage return and a tab, and the process died with
+    FileNotFoundError pointing at something that looked perfectly correct in
+    the source.
+
+    That is the interesting part: the bug is invisible when reading the code
+    and obvious when reading the VALUE, which is exactly what a static pass can
+    do and a person skimming a diff cannot.
+    """
+
+    report = StaticReport()
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return report
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        value = node.value
+        if not _looks_like_a_path(value):
+            continue
+        found = [name for char, name in _ACCIDENTAL_ESCAPES.items() if char in value]
+        if found:
+            report.add(
+                StaticIssue(
+                    "path_escape",
+                    "",
+                    getattr(node, "lineno", 0),
+                    f"this path contains {', '.join(found)}: a backslash was interpreted as an "
+                    "escape, so the path is not what it looks like. Use a raw string, forward "
+                    "slashes, or pathlib.",
+                )
+            )
+    return report
+
+
 def check_source(source: str, *, filename: str = "main.py") -> StaticReport:
     """Find names used but never defined, imported, or built in."""
 
@@ -83,6 +152,9 @@ def check_source(source: str, *, filename: str = "main.py") -> StaticReport:
             StaticIssue("syntax", "", exc.lineno or 0, f"{filename} does not parse: {exc.msg}")
         )
         return report
+
+    for issue in check_windows_paths(source, filename=filename).issues:
+        report.add(issue)
 
     module_names = _bound_names(tree)
     annotations = _annotation_nodes(tree)

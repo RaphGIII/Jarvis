@@ -269,3 +269,63 @@ def test_the_acceptance_command_passes_on_a_good_capability(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert "STATIC_OK" in completed.stdout
+
+
+# --------------------------------------------------------------------------
+# Windows paths eaten by Python's own escaping
+# --------------------------------------------------------------------------
+
+BACKSLASH = chr(92)
+QUOTE = chr(39)
+NL = chr(10)
+
+
+def _module_with_path(path_value: str) -> str:
+    return "def analyse(fen):" + NL + "    p = " + QUOTE + path_value + QUOTE + NL + "    return p" + NL
+
+
+def test_a_mangled_windows_path_is_caught():
+    """The bug that killed chess requirement 3.
+
+    A Stockfish path written as an ordinary quoted string: Python read the
+    backslash escapes, the path acquired a carriage return and a tab, and the
+    process died with FileNotFoundError pointing at something that looked
+    perfectly correct in the source.
+    """
+
+    bad = "D:" + BACKSLASH + "Jarvis" + BACKSLASH + "repo" + BACKSLASH + "tools" + BACKSLASH + "sf.exe"
+
+    report = check_source(_module_with_path(bad))
+
+    assert not report.ok
+    assert "backslash was interpreted as an escape" in report.describe()
+
+
+def test_forward_slashes_are_fine():
+    assert check_source(_module_with_path("D:/Jarvis/repo/tools/sf.exe")).ok
+
+
+def test_a_raw_string_is_fine():
+    source = (
+        "def analyse(fen):" + NL
+        + "    p = r" + QUOTE + "D:" + BACKSLASH + BACKSLASH + "Jarvis" + BACKSLASH + BACKSLASH + "sf.exe" + QUOTE + NL
+        + "    return p" + NL
+    )
+
+    assert check_source(source).ok
+
+
+def test_ordinary_prose_is_not_mistaken_for_a_path():
+    """A docstring with a tab in it is not a broken path."""
+
+    source = "def analyse(fen):" + NL + '    return "some' + chr(9) + 'text"' + NL
+
+    assert check_source(source).ok
+
+
+def test_the_line_number_points_at_the_literal():
+    bad = "C:" + BACKSLASH + "temp" + BACKSLASH + "run.exe"
+
+    report = check_source(_module_with_path(bad))
+
+    assert report.issues[0].line == 2
