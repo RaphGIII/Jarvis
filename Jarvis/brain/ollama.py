@@ -30,7 +30,7 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Iterator
 
 from brain.providers import ProviderError, _safe_error_message
 from brain.tiers import ModelSpec
@@ -120,6 +120,73 @@ class OllamaBrainProvider:
             prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, schema=schema
         )
 
+    def generate_stream(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+    ) -> Iterator[str]:
+        """Yield content as the model produces it.
+
+        This is what makes Jarvis able to start speaking before it has finished
+        thinking.  With ``stream: false`` the socket stays silent until the
+        whole answer exists, so the first spoken word waits on the last
+        generated token -- several seconds of silence on this hardware for any
+        answer worth listening to.
+
+        Ollama streams newline-delimited JSON objects, so this reads line by
+        line rather than buffering the response.
+        """
+
+        body = self._body(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        body["stream"] = True
+
+        url = self.spec.base_url.rstrip("/") + "/api/chat"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "User-Agent": "Jarvis/1.0"},
+        )
+
+        started = time.perf_counter()
+        first_token_at: float | None = None
+        produced = 0
+        final: dict[str, Any] = {}
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.spec.timeout_seconds) as response:
+                for raw in response:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except ValueError:
+                        continue
+                    piece = ((chunk.get("message") or {}).get("content")) or ""
+                    if piece:
+                        if first_token_at is None:
+                            first_token_at = time.perf_counter()
+                        produced += 1
+                        yield piece
+                    if chunk.get("done"):
+                        final = chunk
+                        break
+        except (urllib.error.URLError, OSError) as exc:
+            raise ProviderError(_safe_error_message(f"{self.model_name}: {exc}")) from exc
+
+        self.last_metadata = {
+            "latency_seconds": time.perf_counter() - started,
+            "time_to_first_token": (first_token_at - started) if first_token_at else None,
+            "streamed_chunks": produced,
+            "generated_tokens": final.get("eval_count"),
+            "prompt_tokens": final.get("prompt_eval_count"),
+            "finish_reason": final.get("done_reason"),
+        }
+
     # Older call sites in this repository use the JarvisBrain vocabulary.
     def think(self, user_prompt: str, max_tokens: int = 512) -> str:
         return self.generate(user_prompt, max_tokens=max_tokens)
@@ -138,15 +205,23 @@ class OllamaBrainProvider:
 
     # -- transport -------------------------------------------------------
 
-    def _chat(
+    def _body(
         self,
         prompt: str,
         *,
-        max_tokens: int | None,
-        temperature: float | None,
-        top_p: float | None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
         schema: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
+        """The /api/chat request, shared by the streaming and blocking paths.
+
+        Shared deliberately: when these were built separately, a streamed reply
+        and a blocking one could silently disagree about num_ctx or keep_alive,
+        which is exactly the kind of difference that shows up as "it behaves
+        differently in the UI" and takes an afternoon to find.
+        """
+
         messages: list[dict[str, str]] = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
@@ -171,6 +246,21 @@ class OllamaBrainProvider:
         }
         if schema is not None:
             body["format"] = schema
+        return body
+
+    def _chat(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int | None,
+        temperature: float | None,
+        top_p: float | None,
+        schema: dict[str, Any] | None = None,
+    ) -> str:
+        body = self._body(
+            prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, schema=schema
+        )
+        options = body["options"]
 
         started = time.perf_counter()
         payload = self._post("/api/chat", body, timeout=self.spec.timeout_seconds)

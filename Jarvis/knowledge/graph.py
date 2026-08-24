@@ -533,6 +533,74 @@ class KnowledgeGraph:
         ranked = sorted(merged.values(), key=lambda item: item.score, reverse=True)
         return ranked[:limit]
 
+    def export(self, *, query: str = "", limit: int = 300, depth: int = 1) -> dict[str, Any]:
+        """The graph as nodes and edges, ready for a visualisation to render.
+
+        A query narrows the export to a neighbourhood rather than filtering the
+        whole graph down to matching nodes.  Showing only the hits would draw a
+        constellation with no lines in it: the interesting part of "everything
+        about project X" is what X is *connected* to, not X by itself.
+
+        Only edges whose endpoints are both in the exported set are returned, so
+        a client never has to render a link into nothing.
+        """
+
+        if query.strip():
+            seeds = [hit.node for hit in self.search(query, limit=max(1, limit // 10))]
+            collected: dict[str, Node] = {node.id: node for node in seeds}
+            for seed in seeds:
+                for neighbour in self.neighbours(seed.id, depth=depth, limit=limit):
+                    collected.setdefault(neighbour.id, neighbour)
+                    if len(collected) >= limit:
+                        break
+                if len(collected) >= limit:
+                    break
+            nodes = list(collected.values())[:limit]
+        else:
+            nodes = self.nodes(limit=limit)
+
+        present = {node.id for node in nodes}
+        edges: list[Edge] = []
+        seen_edges: set[str] = set()
+        for node in nodes:
+            for edge in self.edges_from(node.id) + self.edges_to(node.id):
+                if edge.id in seen_edges:
+                    continue
+                if edge.source in present and edge.target in present:
+                    seen_edges.add(edge.id)
+                    edges.append(edge)
+
+        return {
+            "nodes": [node.to_dict() for node in nodes],
+            "edges": [edge.to_dict() for edge in edges],
+            "query": query,
+            "truncated": len(nodes) >= limit,
+        }
+
+    def node_detail(self, node_id: str) -> dict[str, Any]:
+        """One node with everything attached to it, for the inspector panel."""
+
+        node = self.get(node_id)
+        if node is None:
+            return {"error": f"no node {node_id!r}"}
+
+        outgoing = self.edges_from(node_id)
+        incoming = self.edges_to(node_id)
+
+        def describe(edge: Edge, other_id: str) -> dict[str, Any]:
+            other = self.get(other_id)
+            return {
+                "edge": edge.to_dict(),
+                "node": other.to_dict() if other else {"id": other_id, "title": "(missing)"},
+            }
+
+        return {
+            "node": node.to_dict(),
+            "outgoing": [describe(edge, edge.target) for edge in outgoing],
+            "incoming": [describe(edge, edge.source) for edge in incoming],
+            "degree": len(outgoing) + len(incoming),
+        }
+
     def context_for(self, query: str, *, limit: int = 6, depth: int = 1) -> list[Node]:
         """What Jarvis should be reminded of when working on ``query``.
 
