@@ -170,10 +170,11 @@ never read.
 
 ## IN PROGRESS
 
-- **Music capability.** Five live attempts. The bar has risen each time and the
-  system now catches what it previously accepted — see limitations.
-- **Guided chess project.** Fixtures, ground truth and Stockfish are in place;
-  the project itself has not been run yet.
+- **Music capability.** Six live attempts, none passing. The bar has risen each
+  time and the system now catches what it previously accepted — see limitations.
+- **Guided chess project.** Two of four requirements accepted; the third has had
+  seven BUILD_LOCAL attempts and is on the escalation path. See the chess proof
+  section above.
 
 ## NOT STARTED
 
@@ -193,7 +194,7 @@ Nothing is blocked on the user.
 - **The music capability is not finished.** Attempt 2 was reported "acquired"
   and the code was a fake — every branch returned a "Dry run:" message and
   nothing played. That is what motivated the static check and the audio meter,
-  and both now catch it. Attempts 3–5 fail *correctly* rather than passing
+  and both now catch it. Attempts 3–6 fail *correctly* rather than passing
   falsely. The bar is right; the 7B model has not yet cleared it.
 - **Scenario A is 1/5 lifetime.** One pass after the navigation fix is evidence
   the fix helps, not evidence of reliability.
