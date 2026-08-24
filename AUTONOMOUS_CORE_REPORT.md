@@ -223,12 +223,12 @@ python -m pytest tests/test_acceptance.py -q -m "not live"  →  28 passed
 
 | # | Requirement | Result | Evidence |
 |---|---|---|---|
-| **A** | Local self-patch | **pass** (deterministic) + live, see below | `test_A_self_patch_produces_a_verified_candidate`; `A_self_patch_live.json` |
+| **A** | Local self-patch | **pass** deterministically; **live: see §7a** | `test_A_self_patch_produces_a_verified_candidate`; `A_self_patch_live.json` |
 | **B** | Bad patch recovery | **pass** | `test_B_an_invalid_first_patch_does_not_end_the_mission`, `test_B_recovery_covers_every_way_a_local_model_gets_an_edit_wrong` |
 | **C** | Test failure recovery | **pass** | `test_C_valid_but_wrong_code_is_diagnosed_from_evidence_and_repaired`, `test_C_the_diagnosis_sees_the_real_test_output` |
 | **D** | Multi-file development | **pass** | `test_D_a_goal_spanning_two_source_files_succeeds`, `test_D_a_multi_file_edit_is_all_or_nothing` |
-| **E** | New project | **pass** (deterministic **and** live) | `test_E_a_new_application_is_built_in_an_isolated_workspace`; `E_new_project_live.json` |
-| **F** | Capability acquisition | **pass** (deterministic); live: see below | `test_F_a_missing_capability_is_acquired_verified_registered_and_reusable` |
+| **E** | New project | **pass** deterministically; live **2/3** (§7a) | `test_E_a_new_application_is_built_in_an_isolated_workspace`; `E_new_project_live.json` |
+| **F** | Capability acquisition | **pass** deterministically; live **1/3** (§7a) | `test_F_a_missing_capability_is_acquired_verified_registered_and_reusable` |
 | **G** | Complex project | **pass** | `test_G_a_multi_component_pipeline_is_built_and_verified`, `test_G_requirements_accumulate_across_interactions` |
 | **H** | Protected path | **pass** | `test_H_a_protected_file_is_refused_and_stays_byte_identical`, `test_H_the_repository_engineer_rejects_a_protected_edit` |
 | **I** | Atomicity | **pass** | `test_I_a_failed_multi_edit_leaves_no_partial_mutation`, `test_I_atomicity_holds_for_every_rejection_kind` |
@@ -236,7 +236,7 @@ python -m pytest tests/test_acceptance.py -q -m "not live"  →  28 passed
 | **K** | Rollback | **pass** | `test_K_a_failing_health_check_rolls_back_automatically`, `test_K_a_rollback_that_itself_fails_is_escalated` |
 | **L** | Persistence | **pass** | `test_L_projects_memory_and_capabilities_all_survive_a_restart`, `test_L_a_paused_project_can_be_picked_up_later` |
 | **M** | No cloud | **pass** | `test_M_*` ×3; no paid LLM or search credential exists in this environment at all (`Research_live.json`) |
-| **N** | Real hardware | **pass**, with caveats below | `N_build_local_probe.json`, `A_self_patch_live.json`, `E_new_project_live.json`, `F_capability_live.json` |
+| **N** | Real hardware | **pass** — every scenario ran against the real Ollama model; outcomes in §7a | `N_build_local_probe.json`, `*_live.json`, `*.history.jsonl` |
 | **O** | Responsiveness | **pass** | `test_O_*` ×3, asserted against the measurements in `config/resources.json` |
 
 ---
@@ -261,6 +261,44 @@ python -m pytest tests/test_acceptance.py -q -m "not live"  →  28 passed
 
 Self-modification additionally runs in an isolated git worktree; the live tree is
 never the working surface.
+
+---
+
+## 7a. Live results on real hardware, stated honestly
+
+The model is stochastic, so a single run proves little. Every attempt is
+appended to `<scenario>.history.jsonl`; these are the recorded rates on the
+GTX 1070 with `qwen2.5-coder:7b-instruct-q4_K_M`.
+
+| Scenario | Passed | Median | What the failures look like |
+|---|---|---|---|
+| **E** — build a new application from a natural-language goal | **2 / 3** | 123 s | The failing run wrote a correct implementation but left the test file empty |
+| **F** — acquire a practical capability (play audio on Windows) | **1 / 3** | 519 s | The passing run acquired, verified, registered and re-used `local.play.audio.file_windows` after restart; the failures could not get their own tests to pass |
+| **A** — self-patch this repository | **0 / 4** | 692 s | See below |
+
+**Scenario A deserves a plain account.** It *did* pass earlier in this work: on
+the previous 243-line `jarvis/cli.py`, asked to add `/bye`, it reached
+`SELF_DEVELOPMENT_CANDIDATE_READY` with the minimal correct one-line diff, after
+recovering from one `ambiguous_search` and three `syntax_error` corrections. It
+has not passed since, and the reason is instructive rather than mysterious:
+
+- Rewriting the CLI in this same session took it from 243 to 430 lines and added
+  a help string listing `/quit /exit /bye leave`. That line matches the goal
+  more densely than the code implementing it.
+- Four attempts in a row the model edited the **help text** instead of the
+  exit-word set. Three separate fixes addressed real defects behind that — the
+  focus window now scales with the measured context so the whole file is shown,
+  ambiguous anchors now name the lines they matched, and the acceptance check
+  now says outright that a docstring does not count — and each fix changed the
+  failure mode without producing a pass. The final attempt made no change at
+  all rather than the wrong one.
+
+The conclusion is that a 7B model can reliably make a targeted edit to a
+243-line file and cannot reliably find the right line in a 430-line one with a
+plausible decoy in it. That is a model-capability limit, not an architectural
+one: the same loop, the same edit engine and the same guards pass scenario A
+deterministically and passed it live on the smaller file. It is the clearest
+single argument for the first item in §12.
 
 ---
 
@@ -363,11 +401,12 @@ so tools can later run near the files while inference happens elsewhere.
 
 These are real and stated plainly.
 
-1. **The 7B model is the binding constraint, not the architecture.** It
-   succeeds reliably on focused tasks (a one-line self-patch, a two-file
-   utility) and is marginal on tasks needing several interacting components in
-   one run. The loop recovers from its mistakes; it cannot supply competence the
-   model does not have. A larger model is a configuration change.
+1. **The 7B model is the binding constraint, not the architecture.** Measured
+   pass rates on this machine: building a new application 2/3, acquiring a
+   practical capability 1/3, self-patching a 430-line file 0/4 (it passed on a
+   243-line one). The loop recovers from its mistakes reliably; it cannot supply
+   competence the model does not have, and it cannot stop it choosing the wrong
+   line. A larger model is a configuration change -- see §7a.
 
 2. **Semantic retrieval is lexical by default.** It bridges inflection
    (`play`/`plays`) but not vocabulary (`music`/`audio`). Capabilities therefore
