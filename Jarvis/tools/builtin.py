@@ -216,6 +216,21 @@ def _is_internal(arguments: dict[str, Any]) -> bool:
     return bool(arguments.get(_INTERNAL))
 
 
+def _has_content(context: ToolContext, relative: str) -> bool:
+    """Whether a path exists and holds anything worth protecting."""
+
+    if not relative:
+        return False
+    try:
+        path = resolve_readable(context, relative)
+    except ToolError:
+        return True  # unresolvable: be conservative and demand an anchor
+    try:
+        return path.is_file() and bool(path.read_text(encoding="utf-8-sig", errors="replace").strip())
+    except OSError:
+        return True
+
+
 def apply_edits(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Write model-authored changes through the deterministic edit engine.
 
@@ -229,9 +244,15 @@ def apply_edits(arguments: dict[str, Any], context: ToolContext) -> dict[str, An
     """
 
     edits = arguments.get("files") or []
-    if isinstance(edits, list):
+    if isinstance(edits, list) and not _is_internal(arguments):
         for item in edits:
-            if isinstance(item, dict) and not str(item.get("search", "")).strip() and not _is_internal(arguments):
+            if not isinstance(item, dict) or str(item.get("search", "")).strip():
+                continue
+            # An anchor is only required where there is something to lose.
+            # Filling a file that is empty or absent destroys nothing, and
+            # refusing it cost a live run three cycles: the model had created
+            # an empty test file and simply wanted to put the tests in it.
+            if _has_content(context, str(item.get("path", ""))):
                 raise ToolError(
                     f"apply_edits needs a 'search' anchor for {item.get('path', '?')}. "
                     "Copy the exact lines you want to change into 'search' and the new version into "
@@ -650,8 +671,16 @@ def _record_requirements(workspace: Path, packages: list[str]) -> None:
     path.write_text("\n".join(merged) + "\n", encoding="utf-8")
 
 
-def which(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Report whether a program exists on this machine, and where."""
+def find_program(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Report whether a program exists on this machine, and where.
+
+    Deliberately NOT called ``which``. It was, and a local model writing a
+    capability confused this tool with ``shutil.which``: it called the stdlib
+    function and then subscripted the result as ``player["found"]``, because
+    that is the shape *this* tool returns. A tool name that shadows a
+    well-known standard-library function with different semantics is a trap,
+    and the fix belongs in the name rather than in a warning nobody reads.
+    """
 
     name = str(arguments["name"])
     location = shutil.which(name)
@@ -866,12 +895,15 @@ def builtin_tools() -> list[ToolSpec]:
             example='{"name": "install_packages", "arguments": {"packages": ["pillow"]}}',
         ),
         ToolSpec(
-            name="which",
-            purpose="Check whether a program is installed on this machine and where it lives.",
+            name="find_program",
+            purpose=(
+                "Check whether a program is installed on this machine and where it lives. "
+                "Returns {found: bool, path: str}. This is a Jarvis tool, not Python's shutil.which()."
+            ),
             input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
-            adapter=which,
+            adapter=find_program,
             risk=RiskLevel.SAFE,
             tags=("environment", "investigate"),
-            example='{"name": "which", "arguments": {"name": "stockfish"}}',
+            example='{"name": "find_program", "arguments": {"name": "stockfish"}}',
         ),
     ]

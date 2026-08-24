@@ -1,0 +1,100 @@
+{
+  "scenario": "A_self_patch_live",
+  "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+  "context_window": 24576,
+  "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED",
+  "success": false,
+  "cycles": 4,
+  "changed_files": [],
+  "targeted_tests_passed": null,
+  "protection_state": "NOT_EVALUATED",
+  "elapsed_seconds": 237.0,
+  "recovery_events": [
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 1
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 2
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 3
+    },
+    {
+      "cycle": 1,
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "reason": "PATCH_NOT_APPLIED"
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 1
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 2
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 3
+    },
+    {
+      "cycle": 2,
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "reason": "PATCH_NOT_APPLIED"
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 1
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 2
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 3
+    },
+    {
+      "cycle": 3,
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "reason": "PATCH_NOT_APPLIED"
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 1
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 2
+    },
+    {
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "patch_correction": 3
+    },
+    {
+      "cycle": 4,
+      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
+      "kind": "stale_context",
+      "reason": "PATCH_NOT_APPLIED"
+    }
+  ],
+  "diff": "",
+  "recorded_at": "2026-08-24T00:53:00.750992+00:00"
+}

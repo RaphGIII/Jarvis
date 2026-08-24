@@ -101,11 +101,10 @@ class ExecutionOutcome:
 #: verified. A scaffold must never be able to certify itself.
 NOT_IMPLEMENTED = "JARVIS_CAPABILITY_NOT_IMPLEMENTED"
 
-#: Written into every capability workspace.  Giving the model a working
-#: skeleton to edit is far more reliable than asking it to produce the shape
-#: from a description -- and it pins the run()/dry_run contract in code rather
-#: than in prose the model may skim.
 #: The seeded skeleton, deliberately tiny.
+#:
+#: Giving the model a working skeleton to edit is far more reliable than asking
+#: it to produce the shape from a description.
 #:
 #: An earlier version carried the full contract in its docstring, which made it
 #: 32 lines. Replacing it with a 15-line implementation then looked like
@@ -262,8 +261,10 @@ class CapabilityService:
                 "PATH search: shutil.which handles the .exe/.cmd extensions Windows needs.",
                 "Prefer the Python standard library over an external program whenever it can do the job. "
                 "A capability with no external dependency is more reliable and needs no installation.",
-                "Use the 'which' tool to check what is actually installed on this machine before choosing "
-                "an approach. Do not assume a program exists.",
+                "Use the 'find_program' tool to check what is actually installed on this machine before "
+                "choosing an approach. Do not assume a program exists. Note that find_program is a Jarvis "
+                "tool returning {found, path}, while shutil.which() returns a path string or None -- in "
+                "your code use shutil.which() and treat its result as a string.",
                 "Keep the module-level INPUT_SCHEMA in main.py accurate: it must list every payload key "
                 "run() reads. It is the only way a caller can know what to pass, so a key that is not "
                 "declared there is a key nobody will ever send.",

@@ -17,7 +17,7 @@ from tools.registry import RiskLevel, ToolPolicy, ToolRegistry
 class ScriptedBrain:
     """Plays a fixed sequence of tool calls, so acquisition is deterministic."""
 
-    def __init__(self, *, implementation: str, tests: str, investigate_tool: str = "which"):
+    def __init__(self, *, implementation: str, tests: str, investigate_tool: str = "find_program"):
         self.implementation = implementation
         self.tests = tests
         self.investigate_tool = investigate_tool

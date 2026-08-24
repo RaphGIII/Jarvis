@@ -892,7 +892,16 @@ class ProjectEngine:
     #: Edit failures that mean "I know what to change but cannot express it as
     #: an anchor".  Repeating them is the single most common way a local model
     #: burns a step budget.
-    _ANCHOR_TROUBLE = ("no_unique_match", "no safe unique match", "ambiguous_search", "must match exactly once")
+    _ANCHOR_TROUBLE = (
+        "no_unique_match",
+        "no safe unique match",
+        "ambiguous_search",
+        "must match exactly once",
+        # Repeatedly sending an anchorless edit is the same predicament wearing
+        # a different error: the model knows the content it wants and cannot
+        # express it as an anchor.
+        "needs a 'search' anchor",
+    )
 
     def _anchor_failed_before(self, task: Task) -> bool:
         return bool(task.last_error) and any(marker in task.last_error for marker in self._ANCHOR_TROUBLE)
@@ -1083,7 +1092,7 @@ _READ_ONLY_TOOLS = frozenset(
         "read_file",
         "search_text",
         "find_definition",
-        "which",
+        "find_program",
         "git",
         "git_diff",
         "web_search",

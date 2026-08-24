@@ -364,9 +364,9 @@ def test_install_packages_requires_a_list(registry, context):
 
 
 def test_which_reports_a_definitely_present_program(registry, context):
-    output = call(registry, context, "which", name=Path(sys.executable).stem).output
+    output = call(registry, context, "find_program", name=Path(sys.executable).stem).output
     assert output["found"] in {True, False}  # environment dependent
-    assert not call(registry, context, "which", name="definitely-not-installed-xyz").output["found"]
+    assert not call(registry, context, "find_program", name="definitely-not-installed-xyz").output["found"]
 
 
 # ------------------------------------------------------------------ research
@@ -510,3 +510,30 @@ def test_write_file_cannot_gut_a_real_module(registry, context, workspace):
 def test_small_files_can_still_be_replaced_wholesale(registry, context, workspace):
     call(registry, context, "write_file", path="tiny.py", content="a = 1\nb = 2\n")
     assert call(registry, context, "write_file", path="tiny.py", content="a = 9\n").ok
+
+
+def test_an_anchorless_edit_may_fill_an_empty_file(registry, context, workspace):
+    """An anchor is only required where there is something to lose.
+
+    A live run created an empty test file and then spent three cycles being
+    refused permission to put the tests in it.
+    """
+
+    (workspace / "empty.py").write_bytes(b"")
+    result = call(
+        registry, context, "apply_edits", files=[{"path": "empty.py", "replace": "def test_x():\n    assert True\n"}]
+    )
+    assert result.ok, result.error
+    assert "assert True" in (workspace / "empty.py").read_text(encoding="utf-8")
+
+
+def test_an_anchorless_edit_may_create_a_missing_file(registry, context, workspace):
+    assert call(registry, context, "apply_edits", files=[{"path": "brand_new.py", "replace": "x = 1\n"}]).ok
+    assert (workspace / "brand_new.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_an_anchorless_edit_is_still_refused_on_a_file_with_content(registry, context, workspace):
+    before = (workspace / "app.py").read_bytes()
+    result = call(registry, context, "apply_edits", files=[{"path": "app.py", "replace": "import shutil\n"}])
+    assert not result.ok and result.error_kind == "empty_search"
+    assert (workspace / "app.py").read_bytes() == before

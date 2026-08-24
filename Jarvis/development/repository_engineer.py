@@ -336,9 +336,22 @@ class RepositoryContextManager:
                 seen.add(path)
         self.tree = self.tree[:240]
 
-    def add_file(self, path: str, content: str) -> None:
+    def add_file(self, path: str, content: str, *, complete: bool = True) -> None:
+        """Record a file the model has seen.
+
+        The hash is the staleness baseline, so it may only be recorded when the
+        *whole* file was read.  Hashing a truncated read is a silent trap: the
+        stored digest can never equal the digest of the real file, so every
+        subsequent edit to that file is rejected as stale and the run cannot
+        make progress.  Observed exactly that way once a source file grew past
+        the 8000-character read limit.
+        """
+
         self.inspected_files[path] = content[:8000]
-        self.file_hashes[path] = _stable_hash(content)
+        if complete:
+            self.file_hashes[path] = _stable_hash(content)
+        else:
+            self.file_hashes.pop(path, None)
         self._enforce_budget()
 
     def add_search(self, observation: dict[str, Any]) -> None:
@@ -696,9 +709,21 @@ class RepositoryEngineer:
         return files
 
     def read_file(self, repository_path: str | Path, relative_path: str, *, max_chars: int = 8000) -> str:
+        return self.read_file_complete(repository_path, relative_path, max_chars=max_chars)[0]
+
+    def read_file_complete(
+        self, repository_path: str | Path, relative_path: str, *, max_chars: int = 8000
+    ) -> tuple[str, bool]:
+        """Read a file, and say whether the caller got all of it.
+
+        Callers that record a staleness hash need to know: a digest taken over
+        a truncated read can never match the real file again.
+        """
+
         root = Path(repository_path).resolve()
         path = self._safe_read_path(root, relative_path)
-        return path.read_text(encoding="utf-8", errors="replace")[:max_chars]
+        text = path.read_text(encoding="utf-8", errors="replace")
+        return text[:max_chars], len(text) <= max_chars
 
     def read_file_range(self, repository_path: str | Path, relative_path: str, start: int, end: int) -> str:
         root = Path(repository_path).resolve()
@@ -789,7 +814,11 @@ class RepositoryEngineer:
             observations = [self._run_repository_tool(worktree, request, goal) for request in requests[:8]]
             for observation in observations:
                 if observation.get("tool") == "read_file":
-                    manager.add_file(observation["path"], observation.get("content", ""))
+                    manager.add_file(
+                        observation["path"],
+                        observation.get("content", ""),
+                        complete=bool(observation.get("complete", True)),
+                    )
                 elif observation.get("tool") == "tree":
                     manager.add_tree(observation.get("results", []))
                 elif observation.get("tool") in {"search_text", "find_symbol_import"}:
@@ -807,8 +836,8 @@ class RepositoryEngineer:
         if not context["inspected_files"]:
             for path in self._likely_files(context, goal)[:3]:
                 try:
-                    content = self.read_file(worktree, path)
-                    manager.add_file(path, content)
+                    content, complete = self.read_file_complete(worktree, path)
+                    manager.add_file(path, content, complete=complete)
                 except Exception:
                     continue
             context = manager.to_dict()
@@ -866,7 +895,8 @@ class RepositoryEngineer:
                 return {"tool": tool, "query": query, "path": path, "results": self.search_text(worktree, query, path=path or None)}
             if tool == "read_file":
                 path = str(request.get("path", ""))
-                return {"tool": tool, "path": path, "content": self.read_file(worktree, path)}
+                content, complete = self.read_file_complete(worktree, path)
+                return {"tool": tool, "path": path, "content": content, "complete": complete}
             if tool == "read_file_range":
                 path = str(request.get("path", ""))
                 return {"tool": tool, "path": path, "content": self.read_file_range(worktree, path, int(request.get("start", 1)), int(request.get("end", 120)))}

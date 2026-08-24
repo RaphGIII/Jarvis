@@ -205,3 +205,68 @@ def test_changed_line_budget_blocks_file_wipe(tmp_path, monkeypatch):
         )
 
     assert path.read_text(encoding="utf-8") == text
+
+
+def test_a_truncated_read_does_not_poison_the_staleness_baseline(tmp_path):
+    """A digest over a partial read can never match the real file again.
+
+    Recorded from a live self-patch run: once jarvis/cli.py grew past the
+    8000-character read limit, investigation stored a hash of the truncated
+    text, every subsequent edit was rejected as `stale_context`, and four
+    development cycles produced no change at all.
+    """
+
+    from development.repository_engineer import RepositoryContextManager
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    big = "\n".join(f"line_{index} = {index}" for index in range(2000)) + "\n"
+    (root / "big.py").write_text(big, encoding="utf-8")
+    (root / "small.py").write_text("value = 1\n", encoding="utf-8")
+
+    engineer = make_engineer(tmp_path)
+    manager = RepositoryContextManager()
+
+    content, complete = engineer.read_file_complete(root, "big.py")
+    assert not complete, "the fixture must actually exceed the read limit"
+    manager.add_file("big.py", content, complete=complete)
+
+    content, complete = engineer.read_file_complete(root, "small.py")
+    assert complete
+    manager.add_file("small.py", content, complete=complete)
+
+    assert "big.py" not in manager.file_hashes, "no baseline is better than a wrong one"
+    assert "small.py" in manager.file_hashes
+
+
+def test_a_large_file_can_still_be_edited(tmp_path):
+    """The end the previous test protects: the edit actually lands."""
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    body = "\n".join(f"line_{index} = {index}" for index in range(2000))
+    (root / "cli.py").write_text(f"{body}\n\nMARKER = 'before'\n", encoding="utf-8")
+
+    engineer = make_engineer(tmp_path)
+    content, complete = engineer.read_file_complete(root, "cli.py")
+    context = {"inspected_files": {}, "file_hashes": {}}
+    from development.repository_engineer import RepositoryContextManager
+
+    manager = RepositoryContextManager()
+    manager.add_file("cli.py", content, complete=complete)
+    context["file_hashes"] = dict(manager.file_hashes)
+
+    engineer._apply_proposal(
+        root,
+        root,
+        SelfImprovementGoal(objective="change the marker", allowed_paths=["cli.py"]),
+        {
+            "analysis": "update the marker",
+            "files": [{"path": "cli.py", "search": "MARKER = 'before'", "replace": "MARKER = 'after'"}],
+            "new_files": [],
+            "deleted_files": [],
+        },
+        context,
+    )
+
+    assert "MARKER = 'after'" in (root / "cli.py").read_text(encoding="utf-8")

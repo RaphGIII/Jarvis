@@ -234,7 +234,7 @@ def scenario_f(run_root: Path) -> dict:
         "Discover which player is actually available on the machine and use it."
     )
     started = time.perf_counter()
-    outcome = service.ensure(goal, max_steps=30, keywords=["music", "song", "sound", "playback"])
+    outcome = service.ensure(goal, max_steps=60, keywords=["music", "song", "sound", "playback"])
     elapsed = time.perf_counter() - started
 
     payload = {
