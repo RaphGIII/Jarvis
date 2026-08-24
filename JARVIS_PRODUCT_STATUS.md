@@ -194,6 +194,21 @@ slashes. One of those instructions was followed only once a check restated it
 mechanically; the other has never been followed. Handing the model more text to
 ignore is not the missing piece.
 
+**Attempt 8 removed the last confound.** Attempt 7 stopped on STEP_LIMIT, so
+"exceeds capacity" would have been a conclusion drawn from a truncated run. It
+was given 40 steps instead of 25, with the repair loop working and the task
+reopen budget available.
+
+`engine.py` came out **byte-identical** -- not one character changed in 40 steps
+-- and the tasks ended at `reopenings=2`, the deliberate bound, so the repair
+path was exercised to its limit rather than frozen. 195 steps stand on this
+project.
+
+That is the brief's threshold met without ambiguity: a working loop, an adequate
+budget, eight attempts, zero movement. Classification: **model capacity**, not
+retrieval, decomposition, tooling, interface contract or verification. It went
+to the ExpertGateway on the same path `position.py` took.
+
 ## IN PROGRESS
 
 - **Music capability.** Six live attempts, none passing. The bar has risen each

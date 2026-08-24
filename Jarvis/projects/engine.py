@@ -34,6 +34,8 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from brain.json_utils import lenient_json_loads
@@ -194,6 +196,29 @@ class ProjectEngine:
         message = ""
 
         try:
+            # A resumed project may have been changed underneath its recorded
+            # verification: by an expert working in the same workspace after an
+            # escalation, by a person, or by another run.  Planning from stale
+            # evidence is not a small error -- seen live, an entire failure
+            # budget went on diagnosing a defect that had already been fixed,
+            # because every DIAGNOSE read the last recorded failure and nothing
+            # had re-run the checks since.
+            #
+            # So a resumed project re-establishes what is actually true before
+            # it plans anything, which is what a careful engineer does on
+            # sitting back down: run the tests first, then decide what is broken.
+            if steps < budget and self._evidence_predates_the_workspace(project, context):
+                step = self._run_phase(Phase.VERIFY, project, context)
+                steps += 1
+                project.record_step(step)
+                project.seconds_spent += step.duration_seconds
+                self.store.save(project)
+                if self.hooks.on_step:
+                    self.hooks.on_step(project, step)
+                if project.state is ProjectState.COMPLETED:
+                    stop, message = StopReason.ACCEPTED, "all objective acceptance criteria pass"
+                    budget = 0  # nothing left to do; fall past the loop
+
             while steps < budget:
                 if self.hooks.should_cancel and self.hooks.should_cancel():
                     stop, message = StopReason.CANCELLED, "stopped by the user"
@@ -235,7 +260,11 @@ class ProjectEngine:
                     stop, message = StopReason.BLOCKED, "; ".join(item.text for item in project.user_blockers())
                     break
             else:
-                message = f"step budget of {budget} exhausted"
+                # `while...else` also runs when the opening verification
+                # accepted the project and zeroed the budget, and calling that
+                # "budget exhausted" would misreport a pass as a stall.
+                if stop is StopReason.STEP_LIMIT:
+                    message = f"step budget of {budget} exhausted"
         except Exception as exc:  # a loop crash must still leave a saved, resumable project
             stop = StopReason.ERROR
             message = f"{type(exc).__name__}: {exc}"
@@ -254,6 +283,43 @@ class ProjectEngine:
             project=project, stop_reason=stop, steps=steps, seconds=seconds, accepted=accepted, message=message
         )
 
+    def _evidence_predates_the_workspace(self, project: Project, context: ToolContext) -> bool:
+        """Whether the workspace changed after the acceptance checks last ran.
+
+        Recorded verification is a claim about a set of files at a moment.  If
+        anything wrote to those files afterwards -- an expert after an
+        escalation, a person, another run -- the claim is about a workspace
+        that no longer exists, and the loop must not plan from it.
+
+        Only a criterion that has actually been checked counts: a project whose
+        checks have never run has nothing stale to re-establish, and verifying
+        on that path would just spend a step confirming the obvious.
+        """
+
+        checked = [item.last_checked_at for item in project.objective_criteria() if item.last_checked_at]
+        if not checked:
+            return False
+
+        try:
+            newest = max(
+                (path.stat().st_mtime for path in Path(context.workspace).rglob("*.py")),
+                default=0.0,
+            )
+        except OSError:
+            return False
+        if not newest:
+            return False
+
+        try:
+            oldest_check = min(datetime.fromisoformat(item) for item in checked)
+        except ValueError:
+            # An unparseable timestamp is not evidence that anything is current.
+            return True
+        if oldest_check.tzinfo is None:
+            oldest_check = oldest_check.replace(tzinfo=timezone.utc)
+
+        return datetime.fromtimestamp(newest, tz=timezone.utc) > oldest_check
+
     def tool_context(self, project: Project) -> ToolContext:
         workspace = self.store.workspace_for(project)
         readable = [workspace]
@@ -261,7 +327,7 @@ class ProjectEngine:
             readable.append(project.repository)
         return ToolContext(
             workspace=workspace,
-            readable_roots=[__import__("pathlib").Path(item) for item in readable],
+            readable_roots=[Path(item) for item in readable],
             timeout_seconds=project.limits.step_timeout_seconds,
             protected_paths=list(project.metadata.get("protected_paths") or []),
             allowed_paths=list(project.metadata.get("allowed_paths") or []),

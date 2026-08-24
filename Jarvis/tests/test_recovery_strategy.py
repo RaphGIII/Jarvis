@@ -529,3 +529,97 @@ def test_an_open_task_is_never_reopened():
     _executed(project, task)
 
     assert engine._reopen_failed_task(project, "fix") is None
+
+
+# --------------------------------------------------------------------------
+# Evidence that predates the workspace
+# --------------------------------------------------------------------------
+
+def _context(workspace):
+    from tools.registry import ToolContext
+
+    return ToolContext(workspace=str(workspace), readable_roots=[workspace])
+
+
+def _project_checked_at(when, *, text="analyse() works"):
+    from projects.models import AcceptanceCriterion, Project
+
+    project = Project(goal="chess")
+    project.acceptance.append(
+        AcceptanceCriterion(text=text, check=["python", "-c", "pass"], last_checked_at=when)
+    )
+    return project
+
+
+def test_a_file_written_after_the_check_makes_the_evidence_stale(tmp_path):
+    """The bug that burned a whole failure budget.
+
+    An expert fixed engine.py during an escalation. Nothing wrote that back
+    into the project, so on resume every DIAGNOSE addressed a defect that had
+    already been repaired, and the run died on FAILURE_LIMIT without ever
+    verifying.
+    """
+
+    engine = _Engine()
+    project = _project_checked_at("2020-01-01T00:00:00+00:00")
+    (tmp_path / "engine.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert engine._evidence_predates_the_workspace(project, _context(tmp_path))
+
+
+def test_an_untouched_workspace_leaves_the_evidence_current(tmp_path):
+    import os
+    import time
+
+    engine = _Engine()
+    target = tmp_path / "engine.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    os.utime(target, (time.time() - 3600, time.time() - 3600))
+    project = _project_checked_at("2999-01-01T00:00:00+00:00")
+
+    assert not engine._evidence_predates_the_workspace(project, _context(tmp_path))
+
+
+def test_a_project_that_has_never_been_checked_has_nothing_to_re_establish(tmp_path):
+    """Otherwise every fresh project spends a step confirming the obvious."""
+
+    engine = _Engine()
+    (tmp_path / "engine.py").write_text("x = 1\n", encoding="utf-8")
+    project = _project_checked_at("")
+
+    assert not engine._evidence_predates_the_workspace(project, _context(tmp_path))
+
+
+def test_an_empty_workspace_is_not_stale(tmp_path):
+    engine = _Engine()
+    project = _project_checked_at("2020-01-01T00:00:00+00:00")
+
+    assert not engine._evidence_predates_the_workspace(project, _context(tmp_path))
+
+
+def test_an_unreadable_timestamp_counts_as_stale(tmp_path):
+    """A timestamp that cannot be parsed is not evidence that anything is current."""
+
+    engine = _Engine()
+    (tmp_path / "engine.py").write_text("x = 1\n", encoding="utf-8")
+    project = _project_checked_at("not a date")
+
+    assert engine._evidence_predates_the_workspace(project, _context(tmp_path))
+
+
+def test_the_oldest_check_decides(tmp_path):
+    """One current criterion must not vouch for a stale one."""
+
+    from projects.models import AcceptanceCriterion
+
+    engine = _Engine()
+    project = _project_checked_at("2999-01-01T00:00:00+00:00", text="fresh")
+    project.acceptance.append(
+        AcceptanceCriterion(
+            text="stale", check=["python", "-c", "pass"],
+            last_checked_at="2020-01-01T00:00:00+00:00",
+        )
+    )
+    (tmp_path / "engine.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert engine._evidence_predates_the_workspace(project, _context(tmp_path))
