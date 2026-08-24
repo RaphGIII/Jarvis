@@ -385,3 +385,50 @@ def test_each_missing_module_is_mentioned_once(tmp_path):
     notice = _Engine()._missing_module_notice(project, ToolContext(workspace=tmp_path))
 
     assert notice.count("engine.py DOES NOT EXIST") == 1
+
+
+def test_partial_progress_also_restores_the_repair_budget():
+    """Four criteria passing to five is progress, even though VERIFY reports
+    failure because the fifth is still red.
+
+    The chess project hit this: every VERIFY read "4 passed, 2 failed", so no
+    step was ever `success`, so the budget never reset and the requirement was
+    refused every repair -- while genuinely making progress.
+    """
+
+    from projects.engine import _AUTO_REPAIR
+    from projects.models import Phase, Project, StepRecord, Task
+
+    engine = _Engine()
+    project = Project(goal="partially working")
+    for index in range(3):
+        task = Task(title=f"repair {index}", detail=f"{_AUTO_REPAIR} earlier")
+        task.created_at = "2020-01-01T00:00:00+00:00"
+        project.tasks.append(task)
+
+    assert not engine._repair_budget_left(project)
+
+    project.steps.append(
+        StepRecord(phase=Phase.VERIFY, summary="4 passed, 2 failed", success=False,
+                   productive=True, at="2020-06-01T00:00:00+00:00")
+    )
+
+    assert engine._repair_budget_left(project)
+
+
+def test_an_unproductive_verify_does_not_restore_it():
+    from projects.engine import _AUTO_REPAIR
+    from projects.models import Phase, Project, StepRecord, Task
+
+    engine = _Engine()
+    project = Project(goal="stuck")
+    for index in range(3):
+        task = Task(title=f"repair {index}", detail=f"{_AUTO_REPAIR} going nowhere")
+        task.created_at = "2020-06-01T00:00:00+00:00"
+        project.tasks.append(task)
+    project.steps.append(
+        StepRecord(phase=Phase.VERIFY, summary="4 passed, 2 failed", success=False,
+                   productive=False, at="2020-01-01T00:00:00+00:00")
+    )
+
+    assert not engine._repair_budget_left(project)

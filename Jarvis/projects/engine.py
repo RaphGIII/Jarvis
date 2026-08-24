@@ -897,7 +897,14 @@ class ProjectEngine:
         """
 
         for step in reversed(project.steps):
-            if step.phase is Phase.VERIFY and step.success:
+            if step.phase is not Phase.VERIFY:
+                continue
+            # `success` means EVERY criterion passed, which is too strict a
+            # definition of progress: going from four passing to five is
+            # plainly progress, and the loop that achieved it should not then
+            # be told it has no repair budget left. VERIFY already records
+            # `productive` for exactly that case.
+            if step.success or step.productive:
                 return getattr(step, "at", "") or ""
         return ""
 
