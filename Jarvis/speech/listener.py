@@ -49,7 +49,10 @@ SAMPLE_RATE = 16000
 class ListenerConfig:
     url: str = "http://127.0.0.1:8420"
     token: str = ""
-    wake_model: str = "hey_jarvis"
+    #: Filled from the product identity when not given explicitly. Note this
+    #: is the MODEL, which may differ from the word the user is told to say --
+    #: a detector is trained weights, not a string.
+    wake_model: str = ""
     #: Detection threshold.  0.5 is openWakeWord's own default; measured scores
     #: on this machine were 0.995 for a real utterance and 0.000 for unrelated
     #: speech, so the gap is wide and the exact value is not delicate.
@@ -131,6 +134,16 @@ class Endpointer:
 class WakeListener:
     def __init__(self, config: ListenerConfig) -> None:
         self.config = config
+        self._identity_note = ""
+        if not config.wake_model:
+            try:
+                from core.identity import current
+
+                identity = current()
+                config.wake_model = identity.resolved_wake_model
+                self._identity_note = identity.wake_word_note()
+            except Exception:
+                config.wake_model = "hey_jarvis"
         self._model: Any = None
 
     # -- lifecycle -------------------------------------------------------
@@ -164,6 +177,8 @@ class WakeListener:
 
         model = self._load()
         self._say(f"listening for '{self.config.wake_model.replace('_', ' ')}' - Ctrl-C to stop")
+        if self._identity_note:
+            self._say(f"  note: {self._identity_note}")
 
         frame_seconds = FRAME_SAMPLES / SAMPLE_RATE
         endpointer = Endpointer(self.config, frame_seconds=frame_seconds)
@@ -260,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--url", default="http://127.0.0.1:8420", help="Jarvis Core URL")
     parser.add_argument("--token", default="", help="the token printed by jarvis.serve")
-    parser.add_argument("--wake-model", default="hey_jarvis")
+    parser.add_argument("--wake-model", default="", help="defaults to the product identity's model")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--silence", type=float, default=0.9, help="seconds of silence that end an utterance")
     parser.add_argument("--device", type=int, default=None, help="input device index")

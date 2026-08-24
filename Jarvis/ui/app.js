@@ -164,7 +164,7 @@ function addTurn(kind, who, text) {
 
 function appendToken(text) {
   if (!streaming) {
-    streaming = addTurn("jarvis", "Jarvis", "​");
+    streaming = addTurn("jarvis", window.ASSISTANT_NAME || "Jarvis", "​");
     if (streaming) streaming.textContent = "";
     const cursor = document.createElement("span");
     cursor.className = "cursor";
@@ -184,7 +184,7 @@ function finishStreaming(finalText) {
     streaming.textContent = finalText;
     streaming = null;
   } else if (finalText) {
-    addTurn("jarvis", "Jarvis", finalText);
+    addTurn("jarvis", window.ASSISTANT_NAME || "Jarvis", finalText);
   }
   ui.app.classList.add("conversing");
   scrollDown();

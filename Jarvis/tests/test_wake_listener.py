@@ -154,8 +154,17 @@ def test_the_defaults_are_sensible():
     assert config.cooldown_seconds > 0, "one wake word could trigger twice"
 
 
-def test_the_wake_model_defaults_to_jarvis():
-    assert ListenerConfig().wake_model == "hey_jarvis"
+def test_the_wake_model_comes_from_the_product_identity():
+    """The config no longer hard-codes a model: a detector is trained weights,
+    and which one to listen for is part of the product's identity."""
+
+    from core.identity import current
+    from speech.listener import WakeListener
+
+    assert ListenerConfig().wake_model == ""
+
+    listener = WakeListener(ListenerConfig(token="x"))
+    assert listener.config.wake_model == current().resolved_wake_model
 
 
 def test_a_token_is_required():

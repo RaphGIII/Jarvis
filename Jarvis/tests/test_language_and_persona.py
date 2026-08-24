@@ -132,7 +132,9 @@ def core(tmp_path):
 def test_the_prompt_comes_from_the_persona_store(core):
     prompt = core._compose_prompt("hallo")
 
-    assert "You are Jarvis" in prompt
+    from core.identity import current
+
+    assert f"You are {current().assistant_name}" in prompt
     # The invariant rules live in the store and must reach the prompt.
     assert "Never claim" in prompt or "never claim" in prompt
 
@@ -140,8 +142,10 @@ def test_the_prompt_comes_from_the_persona_store(core):
 def test_the_invariant_rules_are_appended_after_the_persona(core):
     """A verbose character must not be able to crowd them out."""
 
+    from core.identity import current
+
     prompt = core._compose_prompt("hallo")
-    persona_text = prompt.index("You are Jarvis")
+    persona_text = prompt.index(f"You are {current().assistant_name}")
 
     assert prompt.index("Prefer saying you do not know") > persona_text
 
@@ -150,9 +154,11 @@ def test_a_broken_persona_file_does_not_silence_jarvis(tmp_path):
     (tmp_path / "personas.json").write_text("{not json", encoding="utf-8")
     instance = JarvisCore(kernel=StubKernel(tmp_path))
 
+    from core.identity import current
+
     prompt = instance._compose_prompt("hallo")
 
-    assert "You are Jarvis" in prompt
+    assert f"You are {current().assistant_name}" in prompt
 
 
 def test_the_detected_language_reaches_the_prompt(core):

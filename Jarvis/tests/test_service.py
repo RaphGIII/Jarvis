@@ -328,7 +328,11 @@ def test_the_prompt_states_the_identity_rather_than_a_costume():
 
     prompt = core._compose_prompt("who are you?")
 
-    assert "You are Jarvis" in prompt
+    from core.identity import current
+
+    # Asserted against the configured name rather than a literal, so this
+    # survives the next rename as well as this one.
+    assert f"You are {current().assistant_name}" in prompt
     assert "do not describe yourself as a language model" in prompt
 
 
@@ -384,7 +388,9 @@ def test_status_is_served_with_the_token(server):
     status, payload = fetch(server, "/api/status")
 
     assert status == 200
-    assert payload["persona"] == "Jarvis"
+    from core.identity import current
+
+    assert payload["persona"] == current().assistant_name
 
 
 def test_the_ui_is_served(server):

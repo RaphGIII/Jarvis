@@ -57,7 +57,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_warm:
         core.warm(speech=not args.no_speech)
 
-    print(f"\n  Jarvis is running.\n\n    {url}\n")
+    identity = core.identity
+    print(f"\n  {identity.product_name} is running.\n\n    {url}\n")
+    note = identity.wake_word_note()
+    if note:
+        # Said at startup rather than discovered at the microphone: the spoken
+        # wake word and the trained model can differ, and finding that out by
+        # talking to something that is not listening is the worst way to learn it.
+        print(f"  {note}\n")
     print("  Ctrl-C to stop.\n")
 
     if not args.no_browser:

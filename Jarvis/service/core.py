@@ -59,11 +59,18 @@ class JarvisCore:
         *,
         kernel: Any = None,
         bus: EventBus | None = None,
-        persona_name: str = "Jarvis",
+        persona_name: str = "",
+        identity: Any = None,
     ) -> None:
+        from core.identity import current as current_identity
+
         self.bus = bus or EventBus()
         self.state = StateMachine(on_change=self._publish_state)
-        self.persona_name = persona_name
+        # The product name is a setting, not a spelling. Internal names stay as
+        # they are -- this class is still JarvisCore -- because none of that is
+        # user-facing and churning it would be risk spent on nothing.
+        self.identity = identity or current_identity()
+        self.persona_name = persona_name or self.identity.assistant_name
         self._kernel = kernel
         self._expert_gateway: Any = None
         self._lock = threading.Lock()
@@ -255,10 +262,7 @@ class JarvisCore:
         persona's own words, where a verbose character cannot crowd them out.
         """
 
-        base = (
-            f"You are {self.persona_name}, this user's personal AI system. You are not a chat "
-            "assistant demo and you do not describe yourself as a language model."
-        )
+        base = self.identity.persona_preamble()
         try:
             system = self.personas.system_prompt(base=base)
         except Exception:
@@ -675,6 +679,7 @@ class JarvisCore:
 
         return {
             "persona": self.persona_name,
+            "product": self.identity.product_name,
             "state": snapshot.to_dict(),
             "connection": connection,
             "language": self.language or "auto",
@@ -743,7 +748,10 @@ class JarvisCore:
     def diagnostics(self) -> dict[str, Any]:
         """The truth about the machinery, for when the user asks for it."""
 
-        payload: dict[str, Any] = {"persona": self.persona_name}
+        payload: dict[str, Any] = {
+            "persona": self.persona_name,
+            "identity": self.identity.to_dict(),
+        }
         try:
             payload["kernel"] = self.kernel.status()
         except Exception as exc:

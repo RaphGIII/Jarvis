@@ -306,6 +306,19 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                 # second round trip and keeps the token out of any file.
                 supplied = (query.get("token") or [""])[0]
                 body = body.replace(b"__JARVIS_TOKEN__", supplied.encode("utf-8"))
+                # The product name is substituted here rather than baked into
+                # the file, so renaming is configuration and the page stays a
+                # single document with no build step.
+                identity = getattr(app.core, "identity", None)
+                if identity is not None:
+                    body = body.replace(b"__PRODUCT_NAME__", identity.product_name.encode("utf-8"))
+                    body = body.replace(b"__ASSISTANT_NAME__", identity.assistant_name.encode("utf-8"))
+                    injected = (
+                        'window.ASSISTANT_NAME = "'
+                        + identity.assistant_name.replace('"', "")
+                        + '";\n  window.JARVIS_TOKEN ='
+                    )
+                    body = body.replace(b"window.JARVIS_TOKEN =", injected.encode("utf-8"))
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             if content_type.startswith("text/") or content_type == "application/javascript":
                 content_type = f"{content_type}; charset=utf-8"
