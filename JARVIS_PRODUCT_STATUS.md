@@ -29,8 +29,9 @@ it; anything not measured says so.
 | Startup warm-up | 15.7 s, in the background |
 | UI page load / status | **61 ms** |
 | Expert job, end to end | 244 s, independently verified |
-| Capability acquisition (music) | **736 s, acquired** — see caveat below |
-| Non-live test suite | **~950 passing** |
+| Capability acquisition (music) | 1 acquired / 3 attempts — see caveat below |
+| Wake word → question sent | deterministic; endpointing tested without a mic |
+| Non-live test suite | **1024 passing** |
 
 ---
 

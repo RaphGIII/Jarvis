@@ -118,22 +118,30 @@ def test_interrupting_stops_playback_promptly():
     """A voice assistant that cannot be told to stop is unusable."""
 
     sink = NullSink(realtime=True)
-    speaker = StreamingSpeaker(fake_synthesize, sink=sink)
+    speaker: StreamingSpeaker
+
+    # Interrupt from the audio callback rather than from a timer. A timer
+    # thread makes the test measure the scheduler as much as the pipeline, and
+    # under a loaded machine a 0.25s sleep overruns and the assertion fails for
+    # reasons that have nothing to do with barge-in. Firing the moment the
+    # first phrase is ready is both deterministic and a more faithful model of
+    # what actually happens: the user speaks over the reply.
+    def on_audio(audio, phrase):
+        if phrase.first:
+            speaker.interrupt()
+
+    speaker = StreamingSpeaker(fake_synthesize, sink=sink, on_audio=on_audio)
 
     # 4000 samples at 1000 Hz = 4 seconds of "audio" per phrase.
     text = "Ein sehr langer Satz der lange dauert und viele Zeichen hat damit er lange spielt. " * 3
 
-    def interrupt_soon():
-        time.sleep(0.25)
-        speaker.interrupt()
-
-    threading.Thread(target=interrupt_soon, daemon=True).start()
     started = time.perf_counter()
     speaker.speak_stream([text])
     elapsed = time.perf_counter() - started
 
     assert speaker.interrupted
     assert elapsed < 3.0, f"took {elapsed:.1f}s to stop; playback was not interruptible"
+    assert sink.played == [], "nothing should have reached the speaker after the interrupt"
 
 
 def test_interruption_abandons_phrases_that_have_not_been_spoken():
