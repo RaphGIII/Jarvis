@@ -116,6 +116,7 @@ _TEMPLATE_MAIN = '''"""Capability implementation. Replace the body of run()."""
 
 from __future__ import annotations
 
+import shutil
 from typing import Any
 
 # Every payload key run() accepts. A caller cannot pass what is not declared.
@@ -123,6 +124,11 @@ INPUT_SCHEMA = {"type": "object", "properties": {"dry_run": {"type": "boolean"}}
 
 
 def run(payload: dict[str, Any]) -> dict[str, Any]:
+    # Discover the environment with the STANDARD LIBRARY, like this. Jarvis
+    # tools are not importable here -- only stdlib and declared dependencies.
+    player = shutil.which("some-program")
+    if payload.get("dry_run"):
+        return {"ok": bool(player), "would_use": player}
     return {"ok": False, "error": "JARVIS_CAPABILITY_NOT_IMPLEMENTED"}
 '''
 
@@ -163,6 +169,18 @@ class CapabilityCheck:
     command: tuple[str, ...]
 
 
+def _audio_python() -> str:
+    """The interpreter that can read the audio meter, or the current one."""
+
+    for candidate in (
+        _REPO_ROOT / ".venv-speech" / "Scripts" / "python.exe",
+        _REPO_ROOT / ".venv-speech" / "bin" / "python",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+
 def audible_playback_check(python: str | None = None) -> CapabilityCheck:
     """Proof that a playback capability actually produced sound.
 
@@ -177,7 +195,11 @@ def audible_playback_check(python: str | None = None) -> CapabilityCheck:
     purpose is an external effect can be held to it.
     """
 
-    executable = python or sys.executable
+    # The audio meter lives in the extras virtualenv (pycaw/comtypes are
+    # Windows COM bindings that do not belong in the interpreter running the
+    # project engine). The capability itself only needs the standard library,
+    # so running it under that interpreter costs nothing.
+    executable = python or _audio_python()
     return CapabilityCheck(
         name="audible",
         text=(
@@ -187,10 +209,17 @@ def audible_playback_check(python: str | None = None) -> CapabilityCheck:
         command=(
             executable,
             "-c",
+            # Import the capability FIRST, then put Jarvis on the path.
+            # Inserting the repository at sys.path[0] shadowed the workspace:
+            # Jarvis has its own top-level main.py, so `import main` resolved to
+            # that instead of the capability under test, and the check failed
+            # with ModuleNotFoundError: transformers -- an error from a file the
+            # capability had never heard of.
             "import sys; "
-            f"sys.path.insert(0, {str(_REPO_ROOT)!r}); "
-            "from tools.audio_probe import observe_around; "
+            "sys.path.insert(0, '.'); "
             "import main; "
+            f"sys.path.append({str(_REPO_ROOT)!r}); "
+            "from tools.audio_probe import observe_around; "
             "e = observe_around(lambda: main.run({}), seconds=2.5); "
             "print(e.detail); "
             "raise SystemExit(0 if e.audible else 1)",

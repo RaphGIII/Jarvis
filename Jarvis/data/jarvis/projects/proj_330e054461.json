@@ -1,0 +1,463 @@
+{
+  "acceptance": [
+    {
+      "check": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "pytest",
+        "-q",
+        "test_capability.py"
+      ],
+      "id": "ac_eec25d4197",
+      "last_checked_at": "",
+      "last_evidence": "",
+      "satisfied": false,
+      "text": "the capability's own tests pass"
+    },
+    {
+      "check": [
+        "C:\\Python314\\python.exe",
+        "-c",
+        "import main\nassert callable(getattr(main, 'run', None)), 'main.run is missing'\ntry:\n    r = main.run({'dry_run': True})\nexcept NameError as exc:\n    raise SystemExit(\n        f'{exc}. That name is a JARVIS TOOL, not something main.py can call. '\n        'Tools exist only while investigating. Use the standard library (shutil.which, pathlib, subprocess, os) instead, or hard-code what the tool told you.'\n    )\nassert isinstance(r, dict), f'run() returned {type(r)}'\nprint('CONTRACT_OK')\n"
+      ],
+      "id": "ac_581df3cb4c",
+      "last_checked_at": "",
+      "last_evidence": "",
+      "satisfied": false,
+      "text": "main.run is implemented, importable, and returns a dict"
+    },
+    {
+      "check": [
+        "C:\\Python314\\python.exe",
+        "-c",
+        "import pathlib; main_src = pathlib.Path('main.py').read_text(encoding='utf-8'); test_src = pathlib.Path('test_capability.py').read_text(encoding='utf-8'); assert 'JARVIS_CAPABILITY_NOT_IMPLEMENTED' not in main_src, 'main.py still contains the placeholder marker: run() has not been implemented'; assert 'JARVIS_CAPABILITY_NOT_IMPLEMENTED' not in test_src, 'test_capability.py still contains the placeholder marker: replace the seeded test with real ones'; assert 'main.run' in test_src, 'the tests never call main.run, so they prove nothing'; assert test_src.count('assert') >= 2, 'the tests make fewer than two assertions; write at least two that check behaviour'; print('SUBSTANCE_OK')"
+      ],
+      "id": "ac_258b216925",
+      "last_checked_at": "",
+      "last_evidence": "",
+      "satisfied": false,
+      "text": "the placeholder marker is gone from BOTH main.py and test_capability.py, and the tests really exercise run()"
+    },
+    {
+      "check": [
+        "C:\\Python314\\python.exe",
+        "-c",
+        "import sys; sys.path.insert(0, 'D:\\\\Jarvis_recovery_20260823\\\\repo\\\\Jarvis'); from capabilities.static_check import main; raise SystemExit(main(['main.py']))"
+      ],
+      "id": "ac_84b7480994",
+      "last_checked_at": "",
+      "last_evidence": "",
+      "satisfied": false,
+      "text": "every name main.py uses is defined, imported, or a builtin -- including in branches the tests never reach"
+    },
+    {
+      "check": [
+        "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\.venv-speech\\Scripts\\python.exe",
+        "-c",
+        "import sys; sys.path.insert(0, '.'); import main; sys.path.append('D:\\\\Jarvis_recovery_20260823\\\\repo\\\\Jarvis'); from tools.audio_probe import observe_around; e = observe_around(lambda: main.run({}), seconds=2.5); print(e.detail); raise SystemExit(0 if e.audible else 1)"
+      ],
+      "id": "ac_e4c047cd9b",
+      "last_checked_at": "",
+      "last_evidence": "",
+      "satisfied": false,
+      "text": "calling run() with dry_run false actually produces sound, measured by the system audio meter"
+    }
+  ],
+  "artifacts": [],
+  "blockers": [],
+  "constraints": [
+    "Implement everything in main.py, exposing exactly one function: run(payload: dict) -> dict.",
+    "run() must always return a dict and must never raise for an expected failure.",
+    "Read every value out of payload with .get(), never with [] -- a missing key must be a clean error, not a KeyError.",
+    "If the capability affects anything outside this process, honour payload.get('dry_run') by performing every check and reporting what it would do, without doing it.",
+    "To find a program, use shutil.which() from the standard library. Do not write your own PATH search: shutil.which handles the .exe/.cmd extensions Windows needs.",
+    "Prefer the Python standard library over an external program whenever it can do the job. A capability with no external dependency is more reliable and needs no installation.",
+    "Use the 'find_program' tool to check what is actually installed on this machine before choosing an approach. Do not assume a program exists. Note that find_program is a Jarvis tool returning {found, path}, while shutil.which() returns a path string or None -- in your code use shutil.which() and treat its result as a string.",
+    "Jarvis TOOLS (media_folders, find_media, running_processes, find_applications, find_program, read_file, ...) exist only while you are investigating. They are NOT importable and NOT callable from main.py. Anything main.py needs at runtime must come from the Python standard library or a declared dependency. If a tool told you something useful -- a folder path, a program location -- put the ANSWER in your code, or rediscover it there with shutil.which(), pathlib and os.",
+    "Keep the module-level INPUT_SCHEMA in main.py accurate: it must list every payload key run() reads. It is the only way a caller can know what to pass, so a key that is not declared there is a key nobody will ever send.",
+    "Write real tests in test_capability.py that prove behaviour, not just key presence.",
+    "Tests must NOT assert that any particular external program is installed. Assert on behaviour instead: that a dry run reports whichever mechanism it chose, that a missing input fails cleanly, that the returned dict has the documented shape."
+  ],
+  "created_at": "2026-08-24T15:24:01.770847+00:00",
+  "decisions": [],
+  "experiments": [
+    {
+      "added_at": "2026-08-24T15:25:57.539287+00:00",
+      "hypothesis": "Investigate installed media players",
+      "id": "exp_64ede6cfa9",
+      "lesson": "",
+      "method": "find_program, find_program",
+      "outcome": "tools applied successfully",
+      "succeeded": true,
+      "task_id": "task_7bb5a4bae3"
+    },
+    {
+      "added_at": "2026-08-24T15:26:12.361253+00:00",
+      "hypothesis": "Check for local audio files",
+      "id": "exp_d34c97cc3e",
+      "lesson": "",
+      "method": "media_folders",
+      "outcome": "tools applied successfully",
+      "succeeded": true,
+      "task_id": "task_32ea7d1825"
+    }
+  ],
+  "findings": [
+    {
+      "added_at": "2026-08-24T15:24:15.484744+00:00",
+      "confidence": 0.95,
+      "id": "find_7846a4a3bd",
+      "reference": "find_program",
+      "source": "observation",
+      "text": "find_program({\"name\": \"vlc\"}) -> {\"name\": \"vlc\", \"found\": false, \"path\": \"\"}"
+    },
+    {
+      "added_at": "2026-08-24T15:24:15.484788+00:00",
+      "confidence": 0.95,
+      "id": "find_3aa4f235a4",
+      "reference": "find_program",
+      "source": "observation",
+      "text": "find_program({\"name\": \"spotify\"}) -> {\"name\": \"spotify\", \"found\": true, \"path\": \"C:\\\\Users\\\\rapha\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\spotify.EXE\"}"
+    },
+    {
+      "added_at": "2026-08-24T15:24:15.484822+00:00",
+      "confidence": 0.95,
+      "id": "find_73c68ac4ed",
+      "reference": "find_program",
+      "source": "observation",
+      "text": "find_program({\"name\": \"wmplayer\"}) -> {\"name\": \"wmplayer\", \"found\": false, \"path\": \"\"}"
+    },
+    {
+      "added_at": "2026-08-24T15:24:15.484847+00:00",
+      "confidence": 0.95,
+      "id": "find_fa9b39d324",
+      "reference": "media_folders",
+      "source": "observation",
+      "text": "media_folders({}) -> {\"ok\": true, \"folders\": [{\"path\": \"C:\\\\Users\\\\rapha\\\\Music\", \"audio_files\": 0}, {\"path\": \"C:\\\\Users\\\\rapha\\\\Downloads\", \"audio_files\": 0}]}"
+    }
+  ],
+  "goal": "Build a reusable capability that can: play audible music or sound on this Windows computer. Investigate what is really available here: which media players are installed, whether the user has any local audio files, and what the Python standard library can play on its own. run(payload) must ACTUALLY START AUDIO when called with no dry_run: it will be checked with the system audio meter, so returning a message describing what it would do will fail. Prefer a mechanism that needs no external file if none exists.",
+  "id": "proj_330e054461",
+  "kind": "capability",
+  "last_stop_reason": "",
+  "limits": {
+    "max_consecutive_failures": 8,
+    "max_seconds": 1500,
+    "max_steps": 45,
+    "max_task_attempts": 3,
+    "step_timeout_seconds": 600.0
+  },
+  "metadata": {
+    "capability_id": "local.play.audible.music_sound"
+  },
+  "references": [],
+  "repository": "",
+  "requirements": [
+    {
+      "added_at": "2026-08-24T15:24:01.770888+00:00",
+      "id": "req_01c0bb49f1",
+      "satisfied": false,
+      "source": "user",
+      "text": "Build a reusable capability that can: play audible music or sound on this Windows computer. Investigate what is really available here: which media players are installed, whether the user has any local audio files, and what the Python standard library can play on its own. run(payload) must ACTUALLY START AUDIO when called with no dry_run: it will be checked with the system audio meter, so returning a message describing what it would do will fail. Prefer a mechanism that needs no external file if none exists."
+    }
+  ],
+  "seconds_spent": 130.5607949999976,
+  "state": "EXECUTING",
+  "steps": [
+    {
+      "at": "2026-08-24T15:24:15.484928+00:00",
+      "detail": {},
+      "duration_seconds": 13.704985200005467,
+      "id": "step_5198d6fc18",
+      "index": 1,
+      "phase": "INVESTIGATE",
+      "productive": true,
+      "success": true,
+      "summary": "investigated with 4 tool call(s); 4 findings",
+      "task_id": "",
+      "tool_calls": [
+        {
+          "arguments": {
+            "name": "vlc"
+          },
+          "call_id": "40cd6fad91f4",
+          "duration_seconds": 0.10347139999794308,
+          "error": "",
+          "error_kind": "",
+          "name": "find_program",
+          "ok": true,
+          "output": {
+            "found": false,
+            "name": "vlc",
+            "path": ""
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:24:14.922989+00:00",
+          "truncated": false
+        },
+        {
+          "arguments": {
+            "name": "spotify"
+          },
+          "call_id": "797833336f21",
+          "duration_seconds": 0.07811620000575203,
+          "error": "",
+          "error_kind": "",
+          "name": "find_program",
+          "ok": true,
+          "output": {
+            "found": true,
+            "name": "spotify",
+            "path": "C:\\Users\\rapha\\AppData\\Local\\Microsoft\\WindowsApps\\spotify.EXE"
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:24:15.048965+00:00",
+          "truncated": false
+        },
+        {
+          "arguments": {
+            "name": "wmplayer"
+          },
+          "call_id": "810bd20067a7",
+          "duration_seconds": 0.09296749999339227,
+          "error": "",
+          "error_kind": "",
+          "name": "find_program",
+          "ok": true,
+          "output": {
+            "found": false,
+            "name": "wmplayer",
+            "path": ""
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:24:15.333218+00:00",
+          "truncated": false
+        },
+        {
+          "arguments": {},
+          "call_id": "65b88b3b7822",
+          "duration_seconds": 0.019553100006305613,
+          "error": "",
+          "error_kind": "",
+          "name": "media_folders",
+          "ok": true,
+          "output": {
+            "folders": [
+              {
+                "audio_files": 0,
+                "path": "C:\\Users\\rapha\\Music"
+              },
+              {
+                "audio_files": 0,
+                "path": "C:\\Users\\rapha\\Downloads"
+              }
+            ],
+            "ok": true
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:24:15.445855+00:00",
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "at": "2026-08-24T15:25:40.540264+00:00",
+      "detail": {
+        "acceptance": 0,
+        "tasks": 6
+      },
+      "duration_seconds": 85.04876249999506,
+      "id": "step_8ff7e6cfb0",
+      "index": 2,
+      "phase": "DECOMPOSE",
+      "productive": true,
+      "success": true,
+      "summary": "added 6 task(s) and 0 acceptance criterion(a)",
+      "task_id": "",
+      "tool_calls": []
+    },
+    {
+      "at": "2026-08-24T15:25:57.539372+00:00",
+      "detail": {},
+      "duration_seconds": 16.99301330000162,
+      "id": "step_8eaaf3d27c",
+      "index": 3,
+      "phase": "EXECUTE",
+      "productive": true,
+      "success": true,
+      "summary": "completed task: Investigate installed media players",
+      "task_id": "task_7bb5a4bae3",
+      "tool_calls": [
+        {
+          "arguments": {
+            "name": "vlc"
+          },
+          "call_id": "793e6de63ee0",
+          "duration_seconds": 0.09435989998746663,
+          "error": "",
+          "error_kind": "",
+          "name": "find_program",
+          "ok": true,
+          "output": {
+            "found": false,
+            "name": "vlc",
+            "path": ""
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:25:57.348000+00:00",
+          "truncated": false
+        },
+        {
+          "arguments": {
+            "name": "spotify"
+          },
+          "call_id": "59db892ecb2c",
+          "duration_seconds": 0.07745519999298267,
+          "error": "",
+          "error_kind": "",
+          "name": "find_program",
+          "ok": true,
+          "output": {
+            "found": true,
+            "name": "spotify",
+            "path": "C:\\Users\\rapha\\AppData\\Local\\Microsoft\\WindowsApps\\spotify.EXE"
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:25:57.443017+00:00",
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "at": "2026-08-24T15:26:12.361309+00:00",
+      "detail": {},
+      "duration_seconds": 14.814033999995445,
+      "id": "step_ad85f7cf4b",
+      "index": 4,
+      "phase": "EXECUTE",
+      "productive": true,
+      "success": true,
+      "summary": "completed task: Check for local audio files",
+      "task_id": "task_32ea7d1825",
+      "tool_calls": [
+        {
+          "arguments": {},
+          "call_id": "f30f0d2e42aa",
+          "duration_seconds": 0.0049703999975463375,
+          "error": "",
+          "error_kind": "",
+          "name": "media_folders",
+          "ok": true,
+          "output": {
+            "folders": [
+              {
+                "audio_files": 0,
+                "path": "C:\\Users\\rapha\\Music"
+              },
+              {
+                "audio_files": 0,
+                "path": "C:\\Users\\rapha\\Downloads"
+              }
+            ],
+            "ok": true
+          },
+          "retryable": true,
+          "started_at": "2026-08-24T15:26:12.325933+00:00",
+          "truncated": false
+        }
+      ]
+    }
+  ],
+  "steps_spent": 4,
+  "tasks": [
+    {
+      "attempts": 1,
+      "completed_at": "2026-08-24T15:25:57.539231+00:00",
+      "created_at": "2026-08-24T15:25:40.540113+00:00",
+      "depends_on": [],
+      "detail": "Use find_program to check for VLC and Spotify installation paths. If found, store these paths in variables for later use. If not found, continue with Python's standard library capabilities if available. If no external player is found, return a message indicating that audio playback cannot be performed without an external program or local audio files. This task should be completed before proceeding to the next step. The result of this investigation will be used in subsequent tasks to determine which method to use for playing audio. The acceptance criteria for this task are: [1] find_program is called with VLC and Spotify names, [2] the results are stored or a message is returned indicating no external player found, [3] the script does not raise an exception if VLC or Spotify is not installed.",
+      "evidence": [],
+      "id": "task_7bb5a4bae3",
+      "kind": "capability",
+      "last_error": "",
+      "max_attempts": 3,
+      "status": "DONE",
+      "title": "Investigate installed media players"
+    },
+    {
+      "attempts": 1,
+      "completed_at": "2026-08-24T15:26:12.361187+00:00",
+      "created_at": "2026-08-24T15:25:40.540144+00:00",
+      "depends_on": [],
+      "detail": "Use media_folders to find all music folders and count the number of audio files in each. Store this information for later use. If no audio files are found, continue with Python's standard library capabilities if available. The acceptance criteria for this task are: [1] media_folders is called without any arguments, [2] the results are stored or a message is returned indicating no local audio files found, [3] the script does not raise an exception if no audio files are found.",
+      "evidence": [
+        "media_folders: {\"ok\": true, \"folders\": [{\"path\": \"C:\\\\Users\\\\rapha\\\\Music\", \"audio_files\": 0}, {\"path\": \"C:\\\\Users\\\\rapha\\\\Downloads\", \"audio_files\": 0}]}"
+      ],
+      "id": "task_32ea7d1825",
+      "kind": "capability",
+      "last_error": "",
+      "max_attempts": 3,
+      "status": "DONE",
+      "title": "Check for local audio files"
+    },
+    {
+      "attempts": 0,
+      "completed_at": "",
+      "created_at": "2026-08-24T15:25:40.540160+00:00",
+      "depends_on": [],
+      "detail": "Create a new file named main.py in the workspace root. Define a function called run that takes one parameter: payload (a dictionary). The function should read every value out of payload with .get(), never with []. If dry_run is True, perform all checks and report what would be done without actually doing it. If dry_run is False, start audio playback using the method determined in previous tasks. Return a dictionary indicating whether audio playback was successful or not. The acceptance criteria for this task are: [1] main.py contains a function named run that takes one parameter (payload), [2] the function reads every value out of payload with .get(), never with [], [3] if dry_run is True, the function performs all checks and reports what would be done without actually doing it, [4] if dry_run is False, the function starts audio playback using the method determined in previous tasks, [5] the function returns a dictionary indicating whether audio playback was successful or not.",
+      "evidence": [],
+      "id": "task_03cb0d7e99",
+      "kind": "capability",
+      "last_error": "",
+      "max_attempts": 3,
+      "status": "PENDING",
+      "title": "Implement run() function in main.py"
+    },
+    {
+      "attempts": 0,
+      "completed_at": "",
+      "created_at": "2026-08-24T15:25:40.540171+00:00",
+      "depends_on": [],
+      "detail": "Create a new file named test_capability.py in the workspace root. Write tests that prove behaviour of the run() function. The tests should not assert that any particular external program is installed. Instead, they should assert on behaviour: that a dry run reports whichever mechanism it chose, that a missing input fails cleanly, and that the returned dictionary has the documented shape. The acceptance criteria for this task are: [1] test_capability.py contains tests that prove behaviour of the run() function, [2] the tests do not assert that any particular external program is installed, [3] the tests assert on behaviour instead of key presence.",
+      "evidence": [],
+      "id": "task_9ea7c189b1",
+      "kind": "capability",
+      "last_error": "",
+      "max_attempts": 3,
+      "status": "PENDING",
+      "title": "Write tests for run() function"
+    },
+    {
+      "attempts": 0,
+      "completed_at": "",
+      "created_at": "2026-08-24T15:25:40.540182+00:00",
+      "depends_on": [],
+      "detail": "Review the code in main.py and ensure that every name used is either defined within the function or imported from a module. If a name is used but not defined or imported, add an import statement or define the missing name. The acceptance criteria for this task are: [1] all names used in main.py are defined or imported.",
+      "evidence": [],
+      "id": "task_eaeb6fbef1",
+      "kind": "capability",
+      "last_error": "",
+      "max_attempts": 3,
+      "status": "PENDING",
+      "title": "Ensure all names used in main.py are defined or imported"
+    },
+    {
+      "attempts": 0,
+      "completed_at": "",
+      "created_at": "2026-08-24T15:25:40.540193+00:00",
+      "depends_on": [],
+      "detail": "Use run_tests to execute the tests written in test_capability.py. Ensure that all tests pass without any failures. The acceptance criteria for this task are: [1] all tests in test_capability.py pass without any failures.",
+      "evidence": [],
+      "id": "task_395d3c119b",
+      "kind": "capability",
+      "last_error": "",
+      "max_attempts": 3,
+      "status": "PENDING",
+      "title": "Run tests to ensure capability works as expected"
+    }
+  ],
+  "title": "local.play.audible.music_sound",
+  "updated_at": "2026-08-24T15:26:12.361340+00:00",
+  "workspace": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\projects\\workspaces\\proj_330e054461"
+}
