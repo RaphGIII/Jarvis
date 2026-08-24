@@ -922,13 +922,27 @@ class ProjectEngine:
 
         for task_id in recent_ids:
             task = by_id.get(task_id)
-            if task is None or task.exhausted or task.open:
+            if task is None or task.open:
                 continue
-            if task.status in {TaskStatus.DONE, TaskStatus.FAILED}:
-                task.status = TaskStatus.PENDING
-                if fix:
-                    task.detail = f"{task.detail}\n\nRepair: {fix}".strip()
-                return task
+            if task.status not in {TaskStatus.DONE, TaskStatus.FAILED}:
+                continue
+            if task.exhausted:
+                # Out of attempts -- unless the task was marked DONE and the
+                # behaviour it claimed is still failing.  A task is DONE
+                # because the executor said so, not because the acceptance
+                # criterion it targets went green, so "DONE with a red
+                # criterion" is a task that was never finished.  Give it a
+                # fresh run-length budget rather than treating a stale
+                # lifetime count as a verdict.
+                if task.status is not TaskStatus.DONE or not task.reopenable:
+                    continue
+                task.reopenings += 1
+                task.attempts = 0
+                task.last_error = ""
+            task.status = TaskStatus.PENDING
+            if fix:
+                task.detail = f"{task.detail}\n\nRepair: {fix}".strip()
+            return task
         return None
 
     def _recent_failure_evidence(self, project: Project) -> str:

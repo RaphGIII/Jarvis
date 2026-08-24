@@ -432,3 +432,100 @@ def test_an_unproductive_verify_does_not_restore_it():
     )
 
     assert not engine._repair_budget_left(project)
+
+
+# --------------------------------------------------------------------------
+# A finished task whose criterion is still red
+# --------------------------------------------------------------------------
+
+def _executed(project, task):
+    """Record that this task was the most recently executed one."""
+
+    from projects.models import Phase, StepRecord
+
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, summary="ran", task_id=task.id))
+
+
+def test_a_done_task_out_of_attempts_can_still_be_reopened():
+    """The bug that froze chess requirement 3.
+
+    Every task reached three attempts, reopening skips exhausted tasks, and the
+    project permanently lost the ability to repair anything -- while reporting
+    "no further repair avenue is available".
+    """
+
+    from projects.models import Project, Task, TaskStatus
+
+    engine = _Engine()
+    project = Project(goal="engine.py")
+    task = Task(title="implement analyse()", status=TaskStatus.DONE, attempts=3)
+    project.tasks.append(task)
+    _executed(project, task)
+
+    reopened = engine._reopen_failed_task(project, "the Stockfish path is mangled")
+
+    assert reopened is task
+    assert task.status is TaskStatus.PENDING
+    assert task.attempts == 0, "a completion breaks the run of failures"
+    assert "Stockfish path" in task.detail
+
+
+def test_reopening_is_bounded():
+    """Otherwise a task oscillates between DONE and reopened forever."""
+
+    from projects.models import Project, Task, TaskStatus
+
+    engine = _Engine()
+    project = Project(goal="engine.py")
+    task = Task(title="implement analyse()", status=TaskStatus.DONE, attempts=3)
+    project.tasks.append(task)
+    _executed(project, task)
+
+    for _ in range(task.max_reopenings):
+        assert engine._reopen_failed_task(project, "still wrong") is task
+        task.status = TaskStatus.DONE
+        task.attempts = 3
+
+    assert engine._reopen_failed_task(project, "still wrong") is None
+
+
+def test_a_failed_task_out_of_attempts_is_still_finished():
+    """Nothing claimed it worked, so three failures in a row really is three."""
+
+    from projects.models import Project, Task, TaskStatus
+
+    engine = _Engine()
+    project = Project(goal="engine.py")
+    task = Task(title="implement analyse()", status=TaskStatus.FAILED, attempts=3)
+    project.tasks.append(task)
+    _executed(project, task)
+
+    assert engine._reopen_failed_task(project, "try again") is None
+
+
+def test_a_done_task_with_attempts_left_keeps_its_count():
+    """Reopening is not a free reset -- only exhaustion buys a fresh budget."""
+
+    from projects.models import Project, Task, TaskStatus
+
+    engine = _Engine()
+    project = Project(goal="engine.py")
+    task = Task(title="implement analyse()", status=TaskStatus.DONE, attempts=1)
+    project.tasks.append(task)
+    _executed(project, task)
+
+    assert engine._reopen_failed_task(project, "fix") is task
+    assert task.attempts == 1
+    assert task.reopenings == 0
+
+
+def test_an_open_task_is_never_reopened():
+    from projects.models import Project, Task, TaskStatus
+
+    engine = _Engine()
+    project = Project(goal="engine.py")
+    task = Task(title="in flight", status=TaskStatus.IN_PROGRESS, attempts=3)
+    project.tasks.append(task)
+    _executed(project, task)
+
+    assert engine._reopen_failed_task(project, "fix") is None

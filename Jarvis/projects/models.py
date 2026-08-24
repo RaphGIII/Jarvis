@@ -130,6 +130,11 @@ class Task:
     depends_on: list[str] = field(default_factory=list)
     attempts: int = 0
     max_attempts: int = 3
+    #: How many times this task was completed and then reopened because the
+    #: behaviour it claimed to deliver was still failing.  Bounded so a task
+    #: cannot oscillate between DONE and reopened for the whole step budget.
+    reopenings: int = 0
+    max_reopenings: int = 2
     created_at: str = field(default_factory=_now)
     completed_at: str = ""
     last_error: str = ""
@@ -143,6 +148,25 @@ class Task:
     @property
     def exhausted(self) -> bool:
         return self.attempts >= self.max_attempts
+
+    @property
+    def reopenable(self) -> bool:
+        """Whether a finished task may be given a fresh attempt budget.
+
+        ``attempts`` is a *run-length* budget: three failures in a row means
+        stop trying this way.  A completion in between breaks that run, so a
+        task marked DONE whose behaviour later proves still broken is not out
+        of budget -- it was never done, and the attempts were spent under a
+        false belief.
+
+        Found live: on a long persistent project every task eventually reached
+        three attempts, and because reopening skips exhausted tasks, the
+        project permanently lost the ability to repair anything.  The loop
+        reported "no further repair avenue is available" while the real reason
+        was a lifetime counter answering a question about right now.
+        """
+
+        return self.reopenings < self.max_reopenings
 
 
 @dataclass

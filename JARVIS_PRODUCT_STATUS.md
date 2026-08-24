@@ -84,47 +84,89 @@ it; anything not measured says so.
 
 ---
 
-## THE CHESS PROOF — where it actually got to
+## THE CHESS PROOF -- where it actually got to
 
 Four requirements, given one at a time to a persistent project on BUILD_LOCAL.
 
 | Requirement | Result |
 |---|---|
-| board geometry | **ACCEPTED** — 266 s, 13 steps, real CV, one failure diagnosed and repaired |
-| position → FEN | **FAILED** three times, each time honestly |
-| Stockfish | not reached |
+| board geometry | **ACCEPTED on BUILD_LOCAL** -- 266 s, 13 steps, real CV, one failure diagnosed and repaired |
+| position -> FEN | **ACCEPTED via escalation** -- failed 3x locally, expert wrote it, Jarvis verified it independently |
+| Stockfish | **FAILED 6x on BUILD_LOCAL** -- see below; on the escalation path |
 | pipeline | not reached |
 
-**Requirement 1 is a genuine pass.** `detect_board` uses greyscale thresholding,
-contour detection and a bounding box, deriving square size as width/8. It works
-on both the 64px fixtures and the 80px ones with margins, so nothing is
-hard-coded. It included a real VERIFY-fail → DIAGNOSE → repair → VERIFY-pass
-cycle.
+**Requirement 1 is a genuine local pass.** `detect_board` uses greyscale
+thresholding, contour detection and a bounding box, deriving square size as
+width/8. It works on both the 64px fixtures and the 80px ones with margins, so
+nothing is hard-coded. It included a real VERIFY-fail -> DIAGNOSE -> repair ->
+VERIFY-pass cycle.
 
-**Requirement 2 failed three times, and each failure taught something:**
+**Requirement 2 failed three times locally, and each failure taught something:**
 
 1. Returned a hard-coded starting FEN. Caught only because there are four
    fixtures and only one is the starting position.
-2. Read the answers out of `fixtures.json` — and *passed*, because my acceptance
+2. Read the answers out of `fixtures.json` -- and *passed*, because my acceptance
    command compared against the same file. **My design's defect**, identical in
    shape to the capability that returned "Dry run: would play music".
    Fixed by holding the ground truth out and adding an oracle guard.
-3. Called `image_region(...)` — a Jarvis tool — from inside `position.py`. The
+3. Called `image_region(...)` -- a Jarvis tool -- from inside `position.py`. The
    same error the capability path hit twice with `media_folders`. The project
    engine had none of the three defences the capability path already had; it
    does now.
-4. The last attempt produced no file at all, and three of four criteria still
+4. A later attempt produced no file at all while three of four criteria still
    read green, because a missing file passed both guards vacuously. Fixed.
 
-**Classification:** the first three are infrastructure defects, now closed. What
-remains is the model being asked to write pixel-classification code for glyphs
-it cannot see. `tools/vision.py` addresses that directly — verified to report 32
-occupied squares on the Italian Game, b8 correctly empty, and ink means of
-~[52,49,44] on rank 8 against ~[237,229,222] on rank 1 — but the 7B model has
-not yet turned those measurements into a working classifier.
+It was then escalated, which is the architecture working as designed: the
+controller decided from counted evidence, the cost policy confirmed the channel
+was free, the expert worked in the project's own workspace, hit its 900 s budget
+mid-tidy-up, and **Jarvis re-ran the acceptance commands itself** and found all
+three green. The expert's report was not the verdict.
 
-Per the brief, this is now on the **escalation path** rather than being forced
-further.
+**Requirement 3 failed six times, and this is the honest part.**
+
+The requirement is reachable: Stockfish 17.1 and python-chess are both installed
+and working here, and a correct `analyse()` is four lines around
+`chess.engine.SimpleEngine.popen_uci`, which the requirement text names
+explicitly. What BUILD_LOCAL produced instead, across three separate attempts:
+
+* the executable path written as an ordinary quoted string full of backslashes,
+  so `\r` became a carriage return and `\t` a tab and the path could not
+  exist -- while the requirement says in as many words to use forward slashes
+  or a raw string;
+* `--usi`, which is the *Shogi* protocol, driven through raw `subprocess.Popen`
+  instead of the `chess.engine` it was told to use;
+* invented UCI commands (`analyse`), no `uci`/`isready` handshake and no `go`,
+  so no bestmove line was ever going to be printed.
+
+Attempts 4-6 were also fighting a frozen repair loop (defect 9 below), so the
+loop deserved one fair attempt after that fix before any conclusion was drawn.
+
+**Infrastructure defects found by running this proof -- nine, none chess-specific:**
+
+1. An acceptance check whose answer key is reachable is not a check.
+2. The project engine never learned what the capability path already knew about
+   tools not being importable from generated source.
+3. A missing file passed both guards vacuously.
+4. The repair budget was counted over project lifetime, so a persistent project
+   became *less* able to fix things as it aged.
+5. `No module named 'engine'` was read as "install a package" when it meant
+   "write the file".
+6. A Windows path mangled by Python's own escaping: right in the source,
+   non-existent on disk.
+7. A check that existed but was wired to a different requirement than the one
+   that needed it.
+8. Progress was measured by `success` (every criterion green) when `productive`
+   (a criterion newly green) was already being recorded and was the right signal.
+9. `attempts` was a run-length budget used as a lifetime counter. Every task
+   eventually reached three attempts, reopening skips exhausted tasks, and the
+   project permanently lost the ability to repair anything -- while reporting it
+   as "no further repair avenue is available", which reads like judgement rather
+   than a frozen counter.
+
+Seven of the nine are one mistake wearing different clothes: **a mechanical fact
+left to inference from an ambiguous signal.** The other two are wiring -- a check
+that could not be seen by the loop that needed it, and a signal recorded but
+never read.
 
 ## IN PROGRESS
 
