@@ -48,6 +48,8 @@ from projects.models import (
     TaskStatus,
 )
 from projects.store import ProjectStore
+from runtime.deadline import CallTimeout, Deadline, DeadlineExceeded, call_with_timeout
+from runtime.heartbeat import Heartbeat
 from tools.registry import ToolCall, ToolContext, ToolRegistry, ToolResult
 
 
@@ -97,12 +99,23 @@ class ProjectEngine:
         verifier: Callable[[Project, ToolContext], list[tuple[str, bool, str]]] | None = None,
         max_tool_calls_per_step: int = 4,
         verify_interval: int = 3,
+        heartbeat: Heartbeat | None = None,
     ) -> None:
         self.brain = brain
         self.store = store
         self.tools = tools
         self.hooks = hooks or EngineHooks()
         self.max_tool_calls_per_step = max_tool_calls_per_step
+        #: Replaced per run with the project's own budget.  Unbounded until then
+        #: so a caller driving phases directly behaves as it always did.
+        self.deadline = Deadline.none()
+        #: Ceiling for a single model call, before the mission budget clamps it.
+        self.step_timeout_seconds = 600.0
+        #: Why the last generation produced nothing, surfaced to DIAGNOSE.
+        self.last_model_error = ""
+        #: Proves the process is breathing even mid-call.  A no-op without a
+        #: path, so nothing here depends on a heartbeat existing.
+        self.heartbeat = heartbeat or Heartbeat(None)
         #: How many EXECUTE steps may pass before checking in with a real
         #: verification run.  See :meth:`_next_phase` for why this is not 1.
         self.verify_interval = max(1, verify_interval)
@@ -165,6 +178,15 @@ class ProjectEngine:
         consecutive_failures = 0
         steps = 0
 
+        # The budget is now carried *into* the work rather than checked around
+        # it.  Checked only here at the top, a single step that blocked forever
+        # would never reach the check again, and the loop would sit at
+        # "elapsed < max_seconds" indefinitely.
+        self.deadline = Deadline.of(limits.max_seconds, name=f"project {project.id}")
+        self.step_timeout_seconds = float(limits.step_timeout_seconds)
+        self.heartbeat.set_budget(limits.max_seconds)
+        self.heartbeat.beat("starting", project.title, progress=True)
+
         if project.state is ProjectState.DRAFT:
             project.state = ProjectState.INVESTIGATING
 
@@ -176,8 +198,7 @@ class ProjectEngine:
                 if self.hooks.should_cancel and self.hooks.should_cancel():
                     stop, message = StopReason.CANCELLED, "stopped by the user"
                     break
-                elapsed = time.perf_counter() - started
-                if elapsed >= limits.max_seconds:
+                if self.deadline.expired:
                     stop, message = StopReason.TIME_LIMIT, f"time budget of {limits.max_seconds:.0f}s exhausted"
                     break
                 if consecutive_failures >= limits.max_consecutive_failures:
@@ -194,10 +215,12 @@ class ProjectEngine:
                 if self.hooks.on_phase:
                     self.hooks.on_phase(project, phase)
 
+                self.heartbeat.beat(phase.value, project.title)
                 step = self._run_phase(phase, project, context)
                 steps += 1
                 project.record_step(step)
                 project.seconds_spent += step.duration_seconds
+                self.heartbeat.beat(phase.value, step.summary, progress=True, last_step_ok=step.success)
                 # Productivity, not success: see StepRecord.productive.
                 consecutive_failures = 0 if step.productive else consecutive_failures + 1
 
@@ -531,13 +554,24 @@ class ProjectEngine:
             + f"{self._project_brief(project)}\n"
             f"Available tools:\n{self.tools.render_for_prompt(exclude=self._withdrawn_tools(task))}\n"
         )
+        self.last_model_error = ""
         payload = self._ask_json(prompt, schema, max_tokens=1600)
         calls = payload.get("tool_calls") or []
         if not calls:
-            task.last_error = "the model proposed no tool calls"
+            # Say *why* nothing came back. "The model proposed no tool calls"
+            # and "the model never answered" call for completely different
+            # responses, and DIAGNOSE can only tell them apart if the step says
+            # which one happened.
+            task.last_error = self.last_model_error or "the model proposed no tool calls"
             task.status = TaskStatus.PENDING
             self._maybe_abandon(project, task)
-            return StepRecord(phase=Phase.EXECUTE, summary=task.last_error, success=False, task_id=task.id)
+            return StepRecord(
+                phase=Phase.EXECUTE,
+                summary=task.last_error,
+                success=False,
+                task_id=task.id,
+                detail={"model_error": self.last_model_error} if self.last_model_error else {},
+            )
 
         results = self._invoke_all(calls, context)
         effective = [result for result in results if result.ok and result.name not in _READ_ONLY_TOOLS]
@@ -1062,22 +1096,61 @@ class ProjectEngine:
                 data = lenient_json_loads(_extract_json(raw))
                 if isinstance(data, dict):
                     return data
+            except CallTimeout as exc:
+                # A model that does not answer is a failed step, not a reason to
+                # wait. Recorded so DIAGNOSE sees why the step produced nothing.
+                self.last_model_error = str(exc)
+                return {}
+            except DeadlineExceeded as exc:
+                self.last_model_error = str(exc)
+                return {}
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
-            except Exception:
+            except Exception as exc:
+                self.last_model_error = f"{type(exc).__name__}: {exc}"
                 return {}
             current = prompt + "\n\nYour previous reply was not valid JSON. Reply with JSON only, matching the schema."
         return {}
 
+    def model_call_timeout(self) -> float:
+        """How long one generation may take, never longer than the mission has.
+
+        A 900-second provider timeout is sensible on its own and absurd when the
+        mission has forty seconds left. Clamping here is what stops one call
+        from spending a budget everything else respected.
+        """
+
+        return self.deadline.clamp(self.step_timeout_seconds)
+
     def _generate(self, prompt: str, schema: dict[str, Any], *, max_tokens: int) -> str:
-        if hasattr(self.brain, "generate_structured"):
-            try:
-                return self.brain.generate_structured(prompt, schema, max_tokens=max_tokens, temperature=0.1)
-            except NotImplementedError:
-                pass
-        if hasattr(self.brain, "generate_coding"):
-            return self.brain.generate_coding(prompt, max_tokens=max_tokens, temperature=0.1)
-        return self.brain.generate(prompt, max_tokens=max_tokens, temperature=0.1)
+        """Call the model under a hard time bound.
+
+        The bound is enforced here rather than left to the HTTP layer, whose
+        timeouts are per-read. With ``stream: false`` a local model sends
+        nothing until it has finished, so from the socket's point of view a slow
+        generation and a wedged server are indistinguishable -- and only one of
+        them should be waited out.
+        """
+
+        self.deadline.require()
+        timeout = self.model_call_timeout()
+
+        def invoke() -> str:
+            if hasattr(self.brain, "generate_structured"):
+                try:
+                    return self.brain.generate_structured(prompt, schema, max_tokens=max_tokens, temperature=0.1)
+                except NotImplementedError:
+                    pass
+            if hasattr(self.brain, "generate_coding"):
+                return self.brain.generate_coding(prompt, max_tokens=max_tokens, temperature=0.1)
+            return self.brain.generate(prompt, max_tokens=max_tokens, temperature=0.1)
+
+        return call_with_timeout(
+            invoke,
+            timeout,
+            what="model call",
+            on_abandon=lambda: self.heartbeat.beat("model_timeout", f"abandoned a call after {timeout:.0f}s"),
+        )
 
 
 #: Marker in a task's detail identifying it as invented by a diagnosis rather

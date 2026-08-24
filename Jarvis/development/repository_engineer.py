@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from brain.json_utils import lenient_json_loads
+from runtime.deadline import CallTimeout, Deadline, DeadlineExceeded, call_with_timeout
+from runtime.heartbeat import Heartbeat
 from development.edit_engine import (
     EditBudget,
     EditEngine,
@@ -432,6 +434,9 @@ class RepositoryEngineer:
         context_budget: ModelRequestBudget | None = None,
         checkpoint: SelfDeveloperCheckpoint | None = None,
         resume_command: str = "",
+        max_seconds: float | None = None,
+        model_call_timeout_seconds: float = 600.0,
+        heartbeat: Heartbeat | None = None,
     ) -> None:
         self.brain = brain
         self.run_id = uuid.uuid4().hex[:12]
@@ -445,6 +450,12 @@ class RepositoryEngineer:
         self.context_budget = context_budget or ModelRequestBudget.from_env()
         self.checkpoint = checkpoint
         self.resume_command = resume_command
+        #: Wall-clock bound for the whole run.  There was none, so a single
+        #: wedged generation could hold a self-development run open forever.
+        self.max_seconds = max_seconds
+        self.deadline = Deadline.of(max_seconds, name="self-development")
+        self.model_call_timeout_seconds = float(model_call_timeout_seconds)
+        self.heartbeat = heartbeat or Heartbeat(None)
         #: The trajectory of the run currently in progress.  Helper methods deep
         #: in the patch path need somewhere to record what they observed without
         #: threading the dict through every signature.
@@ -490,6 +501,12 @@ class RepositoryEngineer:
         source = Path(repository_path).resolve()
         if not source.exists() or not source.is_dir():
             raise ValueError(f"Repository path does not exist: {source}")
+
+        # Fresh clock per run: an engineer reused across runs must not have the
+        # first run's elapsed time counted against the second.
+        self.deadline = Deadline.of(self.max_seconds, name="self-development")
+        self.heartbeat.set_budget(self.max_seconds)
+        self.heartbeat.beat("preflight", goal.objective[:120], progress=True)
 
         worktree_state = self.checkpoint.state.get(RepositoryStage.WORKTREE_CREATED, {}) if self.checkpoint else {}
         saved_worktree = worktree_state.get("worktree")
@@ -553,6 +570,24 @@ class RepositoryEngineer:
             review = RepositoryReview(False, ["not reviewed"])
             max_dev_cycles = max_cycles or self.max_cycles
             for cycle in range(1, max_dev_cycles + 1):
+                if self.deadline.expired:
+                    # Out of time is a distinct outcome from out of ideas, and
+                    # it is resumable: the checkpoint and the worktree are on
+                    # disk, so a later run picks up where this one stopped.
+                    self._record(trajectory, RepositoryStage.EVALUATE, {"cycle": cycle, "reason": "TIME_LIMIT"})
+                    result = self._rejected(
+                        worktree, trajectory, last_failures, before_benchmarks, last_targeted, last_full, review, cycle - 1
+                    )
+                    result.status = RepositoryStage.PAUSED
+                    result.failure_kind = "time_limit"
+                    result.error = (
+                        f"time budget of {self.max_seconds:.0f}s exhausted after {self.deadline.elapsed:.0f}s"
+                    )
+                    result.resume_command = self.resume_command
+                    self.heartbeat.finish("time_limit")
+                    return result
+
+                self.heartbeat.beat(f"cycle_{cycle}", goal.objective[:120])
                 try:
                     proposal = (
                         self._request_patch(goal, context, plan, prior, trajectory)
@@ -560,6 +595,18 @@ class RepositoryEngineer:
                         else self._request_repair(goal, context, plan, last_failures, review, trajectory)
                     )
                     self._apply_proposal(worktree, source, goal, proposal, context)
+                except (CallTimeout, DeadlineExceeded) as exc:
+                    # The model did not answer in time. That is evidence, not a
+                    # reason to stop -- the next cycle re-plans with it recorded.
+                    last_failures = [
+                        RepositoryCommandResult(["model"], False, stderr=str(exc), return_code=1)
+                    ]
+                    self._record(
+                        trajectory,
+                        RepositoryStage.DIAGNOSE,
+                        {"cycle": cycle, "reason": "MODEL_TIMEOUT", "detail": str(exc)},
+                    )
+                    continue
                 except EditError as exc:
                     # A patch that could not be applied is an ordinary event in
                     # autonomous development, not the end of the mission: the
@@ -681,14 +728,32 @@ class RepositoryEngineer:
             return result
         except Exception as exc:
             provider_failure = _provider_failure_payload(exc)
-            status = RepositoryStage.PAUSED if provider_failure else RepositoryStage.REJECTED
+            # Running out of time, and a model that stopped answering, are both
+            # PAUSED rather than REJECTED: the worktree and checkpoint are on
+            # disk and a later run can carry on. Rejecting them would throw away
+            # recoverable work and misreport why it stopped.
+            if isinstance(exc, (DeadlineExceeded, CallTimeout)) and self.deadline.expired:
+                # Both can be true at once -- the calls timed out *and* the
+                # budget ran out. The budget is the outer constraint, so it is
+                # the more useful thing to report: "give it longer", not "the
+                # model is slow".
+                status, failure_kind = RepositoryStage.PAUSED, "time_limit"
+            elif isinstance(exc, DeadlineExceeded):
+                status, failure_kind = RepositoryStage.PAUSED, "time_limit"
+            elif isinstance(exc, CallTimeout):
+                status, failure_kind = RepositoryStage.PAUSED, "model_timeout"
+            elif provider_failure:
+                status, failure_kind = RepositoryStage.PAUSED, provider_failure.get("kind", "")
+            else:
+                status, failure_kind = RepositoryStage.REJECTED, ""
+            self.heartbeat.finish(failure_kind or "rejected")
             result = RepositoryCandidateResult(
                 status=status,
                 worktree=str(worktree or ""),
                 protected_pristine=True if worktree is not None else False,
                 protection_state=ProtectionState.NOT_EVALUATED,
                 error=str(exc),
-                failure_kind=provider_failure.get("kind", "") if provider_failure else "",
+                failure_kind=failure_kind,
                 resume_command=self.resume_command,
             )
             if worktree is not None:
@@ -1066,9 +1131,21 @@ class RepositoryEngineer:
 
     def _generate_json(self, prompt: str, schema: dict[str, Any], *, stage: str, desired_output_tokens: int, temperature: float) -> dict[str, Any]:
         last_raw = ""
+        timeouts = 0
         for attempt in range(1, self.structured_regeneration_attempts + 2):
             budgeted_prompt, max_tokens, budget_record = self.context_budget.prepare(stage, prompt, desired_output_tokens)
-            raw = self._generate_structured(budgeted_prompt, schema, max_tokens=max_tokens, temperature=temperature)
+            try:
+                raw = self._generate_structured(budgeted_prompt, schema, max_tokens=max_tokens, temperature=temperature)
+            except CallTimeout as exc:
+                # A call that never answers is a failed attempt, exactly like a
+                # malformed one, and belongs to this retry loop. Left to escape,
+                # a single slow generation during investigation ended the whole
+                # run, while a malformed one at the same stage was merely
+                # retried -- an indefensible difference.
+                timeouts += 1
+                last_raw = str(exc)
+                self.heartbeat.beat(stage, f"model call timed out ({timeouts})")
+                continue
             last_raw = raw
             try:
                 data = lenient_json_loads(_extract_json(raw))
@@ -1078,17 +1155,42 @@ class RepositoryEngineer:
             except json.JSONDecodeError:
                 pass
             prompt = prompt + "\n\nPrevious response was malformed. Regenerate JSON only for the schema."
+        if timeouts:
+            # Distinguish "the model said something unusable" from "the model
+            # said nothing at all"; only the second is a stall.
+            raise CallTimeout(f"{stage} generation", self.model_call_timeout_seconds)
         raise ValueError(f"structured repository generation failed: {_stable_hash(last_raw)}")
 
     def _generate_structured(self, prompt: str, schema: dict[str, Any], *, max_tokens: int, temperature: float) -> str:
-        if hasattr(self.brain, "generate_structured"):
-            try:
-                return self.brain.generate_structured(prompt, schema, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
-            except (AttributeError, NotImplementedError, StructuredGenerationUnsupported):
-                pass
-        if hasattr(self.brain, "generate_coding"):
-            return self.brain.generate_coding(prompt, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
-        return self.brain.generate(prompt, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
+        """Call the model under a hard time bound.
+
+        Self-development had no wall-clock bound of any kind: a single wedged
+        generation could hold the whole run indefinitely, and no checkpoint
+        would ever be written to show it. The bound is enforced here rather than
+        left to the HTTP layer, whose timeouts are per-read -- with a
+        non-streaming local model, "still thinking" and "never coming back" look
+        the same on the socket.
+        """
+
+        self.deadline.require()
+        timeout = self.deadline.clamp(self.model_call_timeout_seconds)
+
+        def invoke() -> str:
+            if hasattr(self.brain, "generate_structured"):
+                try:
+                    return self.brain.generate_structured(prompt, schema, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
+                except (AttributeError, NotImplementedError, StructuredGenerationUnsupported):
+                    pass
+            if hasattr(self.brain, "generate_coding"):
+                return self.brain.generate_coding(prompt, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
+            return self.brain.generate(prompt, max_tokens=max_tokens, temperature=temperature, top_p=0.9)
+
+        return call_with_timeout(
+            invoke,
+            timeout,
+            what="model call",
+            on_abandon=lambda: self.heartbeat.beat("model_timeout", f"abandoned a call after {timeout:.0f}s"),
+        )
 
     def _ensure_plan_files_read(self, worktree: Path, context: dict[str, Any], plan: dict[str, Any]) -> None:
         for relative in [str(item) for item in plan.get("files_to_change", []) if item]:

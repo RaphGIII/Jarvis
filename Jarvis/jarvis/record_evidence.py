@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from brain.tiers import ModelCatalog, ModelProbe, ModelTier
+from runtime.deadline import Deadline, DeadlineExceeded
+from runtime.heartbeat import Heartbeat, check_liveness
 from core.kernel import JarvisKernel, KernelConfig
 from development.repository_engineer import RepositoryEngineer, SelfImprovementGoal
 from projects.models import ResourceLimits
@@ -62,7 +64,7 @@ def _require_online() -> None:
 # A. Self-patch against this repository
 # --------------------------------------------------------------------------
 
-def scenario_a(run_root: Path) -> dict:
+def scenario_a(run_root: Path, budget: Deadline) -> dict:
     """Jarvis modifies its own repository, in an isolated candidate worktree."""
 
     from brain.providers import provider_for_spec
@@ -108,6 +110,9 @@ def scenario_a(run_root: Path) -> dict:
         max_cycles=4,
         context_budget=ModelRequestBudget.from_env(spec.context_window),
         checkpoint=SelfDeveloperCheckpoint(benchmark_root),
+        max_seconds=budget.remaining,
+        model_call_timeout_seconds=300.0,
+        heartbeat=Heartbeat(benchmark_root / "heartbeat.json", run="scenario_a").start(),
     )
 
     started = time.perf_counter()
@@ -155,7 +160,7 @@ def _events(result) -> list[dict]:
 # E. A brand-new project outside the repository
 # --------------------------------------------------------------------------
 
-def scenario_e(run_root: Path) -> dict:
+def scenario_e(run_root: Path, budget: Deadline) -> dict:
     """A real application built from a natural-language goal, in isolation."""
 
     from projects.engine import EngineHooks
@@ -170,7 +175,12 @@ def scenario_e(run_root: Path) -> dict:
         "count_words(text) in wordfreq.py that returns a dict mapping each lowercase word to how "
         "many times it appears, ignoring punctuation. Also write tests for it in test_wordfreq.py "
         "using pytest.",
-        limits=ResourceLimits(max_steps=30, max_seconds=2400, max_consecutive_failures=6, step_timeout_seconds=300),
+        limits=ResourceLimits(
+            max_steps=30,
+            max_seconds=min(2400.0, budget.remaining),
+            max_consecutive_failures=6,
+            step_timeout_seconds=300,
+        ),
         acceptance=[("the tests pass", [sys.executable, "-m", "pytest", "-q"])],
     )
 
@@ -213,7 +223,7 @@ def scenario_e(run_root: Path) -> dict:
 # F. A practical capability
 # --------------------------------------------------------------------------
 
-def scenario_f(run_root: Path) -> dict:
+def scenario_f(run_root: Path, budget: Deadline) -> dict:
     """Acquire a capability the machine does not have, then use it."""
 
     from capabilities.registry import CapabilityRegistry
@@ -245,7 +255,12 @@ def scenario_f(run_root: Path) -> dict:
         "Discover which player is actually available on the machine and use it."
     )
     started = time.perf_counter()
-    outcome = service.ensure(goal, max_steps=60, keywords=["music", "song", "sound", "playback"])
+    outcome = service.ensure(
+        goal,
+        max_steps=60,
+        keywords=["music", "song", "sound", "playback"],
+        max_seconds=budget.remaining,
+    )
     elapsed = time.perf_counter() - started
 
     payload = {
@@ -318,27 +333,74 @@ def _write_wav(path: Path) -> None:
 SCENARIOS = {"A": scenario_a, "E": scenario_e, "F": scenario_f}
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """Separate from main() so the defaults can be asserted in a test.
+
+    A wall-clock limit that only exists in a shell wrapper is not a limit; a
+    test that reads the parser is how it stays one.
+    """
+
     parser = argparse.ArgumentParser(description="Run the live acceptance scenarios and record the evidence.")
     parser.add_argument("--only", action="append", choices=sorted(SCENARIOS), default=[])
     parser.add_argument("--run-root", default=None)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--scenario-seconds",
+        type=float,
+        default=1800.0,
+        help="hard wall-clock limit per scenario (default 1800)",
+    )
+    parser.add_argument(
+        "--total-seconds",
+        type=float,
+        default=7200.0,
+        help="hard wall-clock limit for the whole run (default 7200)",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     _require_online()
     run_root = Path(args.run_root) if args.run_root else Path(tempfile.gettempdir()) / "jarvis_evidence"
     run_root.mkdir(parents=True, exist_ok=True)
 
     selected = args.only or sorted(SCENARIOS)
-    for letter in selected:
-        print(f"=== scenario {letter} ===", flush=True)
-        started = time.perf_counter()
-        try:
-            payload = SCENARIOS[letter](run_root)
-        except Exception as exc:  # a failed scenario is still evidence
-            payload = {"scenario": letter, "error": f"{type(exc).__name__}: {exc}", "model": _build_local().model}
-        path = _record(payload.get("scenario", letter), payload)
-        verdict = payload.get("success") or payload.get("accepted") or payload.get("acquired")
-        print(f"    -> {'PASS' if verdict else 'did not pass'} in {time.perf_counter() - started:.0f}s; recorded to {path}\n", flush=True)
+
+    # Hard wall-clock limits, and a heartbeat, because this command is what gets
+    # left running unattended. Previously the only bound was a shell `timeout`
+    # wrapper, which is not part of the program and disappears the moment
+    # someone runs it a different way.
+    overall = Deadline.of(args.total_seconds, name="evidence run")
+    heartbeat = Heartbeat(run_root / "heartbeat.json", run="record_evidence", interval=5.0).start()
+    heartbeat.set_budget(args.total_seconds)
+    print(f"Heartbeat: {run_root / 'heartbeat.json'}  (python -m jarvis.doctor --run {run_root})\n", flush=True)
+
+    try:
+        for letter in selected:
+            if overall.expired:
+                print(f"=== scenario {letter} SKIPPED: the {args.total_seconds:.0f}s total budget is gone ===\n", flush=True)
+                _record(f"{letter}_skipped", {"scenario": letter, "skipped": "total time budget exhausted"})
+                continue
+
+            print(f"=== scenario {letter} ===", flush=True)
+            heartbeat.beat(f"scenario_{letter}", "starting", progress=True)
+            started = time.perf_counter()
+            budget = overall.child(args.scenario_seconds, name=f"scenario {letter}")
+            try:
+                payload = SCENARIOS[letter](run_root, budget)
+            except DeadlineExceeded as exc:
+                payload = {"scenario": letter, "error": str(exc), "timed_out": True, "model": _build_local().model}
+            except Exception as exc:  # a failed scenario is still evidence
+                payload = {"scenario": letter, "error": f"{type(exc).__name__}: {exc}", "model": _build_local().model}
+            payload.setdefault("budget_seconds", round(budget.budget, 1))
+            path = _record(payload.get("scenario", letter), payload)
+            verdict = payload.get("success") or payload.get("accepted") or payload.get("acquired")
+            elapsed = time.perf_counter() - started
+            heartbeat.beat(f"scenario_{letter}", "PASS" if verdict else "did not pass", progress=True)
+            print(f"    -> {'PASS' if verdict else 'did not pass'} in {elapsed:.0f}s; recorded to {path}\n", flush=True)
+    finally:
+        heartbeat.finish("complete")
 
 
 if __name__ == "__main__":

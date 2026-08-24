@@ -189,7 +189,14 @@ class CapabilityService:
     # Acquiring
     # ------------------------------------------------------------------
 
-    def ensure(self, goal: str, *, max_steps: int = 40, keywords: list[str] | None = None) -> CapabilityOutcome:
+    def ensure(
+        self,
+        goal: str,
+        *,
+        max_steps: int = 40,
+        keywords: list[str] | None = None,
+        max_seconds: float | None = None,
+    ) -> CapabilityOutcome:
         """Return a capability for ``goal``, acquiring one if none exists."""
 
         existing = self.resolve(goal)
@@ -201,13 +208,20 @@ class CapabilityService:
                 manifest=existing,
                 reason="an installed capability already covers this",
             )
-        return self.acquire(goal, max_steps=max_steps, keywords=keywords)
+        return self.acquire(goal, max_steps=max_steps, keywords=keywords, max_seconds=max_seconds)
 
-    def acquire(self, goal: str, *, max_steps: int = 40, keywords: list[str] | None = None) -> CapabilityOutcome:
+    def acquire(
+        self,
+        goal: str,
+        *,
+        max_steps: int = 40,
+        keywords: list[str] | None = None,
+        max_seconds: float | None = None,
+    ) -> CapabilityOutcome:
         """Build, verify and register a new capability."""
 
         capability_id = self.suggest_id(goal)
-        project = self._start_project(goal, capability_id, max_steps=max_steps)
+        project = self._start_project(goal, capability_id, max_steps=max_steps, max_seconds=max_seconds)
         session = self.engine.run(project, max_steps=max_steps)
 
         workspace = Path(project.workspace)
@@ -241,12 +255,19 @@ class CapabilityService:
             reason="implemented, verified by its own tests, and registered",
         )
 
-    def _start_project(self, goal: str, capability_id: str, *, max_steps: int) -> Project:
+    def _start_project(
+        self, goal: str, capability_id: str, *, max_steps: int, max_seconds: float | None = None
+    ) -> Project:
         project = self.engine.create_project(
             f"Build a reusable capability that can: {goal}",
             kind="capability",
             title=capability_id,
-            limits=ResourceLimits(max_steps=max_steps, max_seconds=3600, max_consecutive_failures=8),
+            limits=ResourceLimits(
+                max_steps=max_steps,
+                # Acquisition is a long job, but never an unbounded one.
+                max_seconds=min(3600.0, max_seconds) if max_seconds else 3600.0,
+                max_consecutive_failures=8,
+            ),
             constraints=[
                 "Implement everything in main.py, exposing exactly one function: run(payload: dict) -> dict.",
                 "run() must always return a dict and must never raise for an expected failure.",
