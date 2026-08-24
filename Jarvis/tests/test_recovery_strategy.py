@@ -623,3 +623,68 @@ def test_the_oldest_check_decides(tmp_path):
     (tmp_path / "engine.py").write_text("x = 1\n", encoding="utf-8")
 
     assert engine._evidence_predates_the_workspace(project, _context(tmp_path))
+
+
+# --------------------------------------------------------------------------
+# What the prompt looks at
+# --------------------------------------------------------------------------
+
+def test_the_work_in_hand_names_the_current_requirement():
+    from projects.models import Project, Requirement
+
+    project = Project(goal="chess")
+    project.requirements.append(Requirement(text="Write board.py with detect_board"))
+    project.requirements.append(Requirement(text="Write pipeline.py with analyse_image"))
+
+    assert "pipeline.py" in _Engine()._work_in_hand(project)
+
+
+def test_the_work_in_hand_names_open_tasks():
+    from projects.models import Project, Task, TaskStatus
+
+    project = Project(goal="chess")
+    project.tasks.append(Task(title="create pipeline.py", status=TaskStatus.PENDING))
+    project.tasks.append(Task(title="create board.py", status=TaskStatus.DONE))
+
+    work = _Engine()._work_in_hand(project)
+
+    assert "pipeline.py" in work
+    assert "board.py" not in work
+
+
+def test_the_work_in_hand_names_failing_criteria_not_passing_ones():
+    from projects.models import AcceptanceCriterion, Project
+
+    project = Project(goal="chess")
+    project.acceptance.append(
+        AcceptanceCriterion(text="board.py geometry", check=["x"], satisfied=True)
+    )
+    project.acceptance.append(
+        AcceptanceCriterion(text="pipeline.py end to end", check=["x"], satisfied=False)
+    )
+
+    work = _Engine()._work_in_hand(project)
+
+    assert "pipeline.py" in work
+    assert "board.py" not in work
+
+
+def test_the_brief_keeps_the_newest_acceptance_criteria():
+    """Taking the head drops exactly the criteria currently being worked on.
+
+    A project that accumulates requirements is the case this engine exists for,
+    so the window has to follow the work rather than the project's history.
+    """
+
+    from projects.models import AcceptanceCriterion, Project
+
+    project = Project(goal="chess")
+    for index in range(12):
+        project.acceptance.append(
+            AcceptanceCriterion(text=f"criterion {index}", check=["python", "-c", "pass"])
+        )
+
+    brief = _Engine()._project_brief(project)
+
+    assert "criterion 11" in brief
+    assert "criterion 0" not in brief

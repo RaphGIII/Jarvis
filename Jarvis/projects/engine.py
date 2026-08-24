@@ -283,6 +283,24 @@ class ProjectEngine:
             project=project, stop_reason=stop, steps=steps, seconds=seconds, accepted=accepted, message=message
         )
 
+    @staticmethod
+    def _work_in_hand(project: Project) -> str:
+        """What the project is currently trying to do, as plain text.
+
+        Used to steer which files a prompt looks at.  The newest requirement and
+        the open tasks say what matters now; the last error only says where the
+        model happened to slip.
+        """
+
+        parts: list[str] = []
+        if project.requirements:
+            parts.append(project.requirements[-1].text)
+        parts.extend(task.title for task in project.tasks if task.open)
+        for item in project.objective_criteria():
+            if not item.satisfied:
+                parts.append(item.text)
+        return " ".join(parts)
+
     def _evidence_predates_the_workspace(self, project: Project, context: ToolContext) -> bool:
         """Whether the workspace changed after the acceptance checks last ran.
 
@@ -793,7 +811,14 @@ class ProjectEngine:
             + f"EVIDENCE:\n{evidence[:4000]}\n\n"
             + self._failing_check_evidence(project)
             + self._missing_module_notice(project, context)
-            + self._workspace_snapshot(context, focus=evidence)
+            # Lead the focus with the work in hand, not the last error. Focusing
+            # on the failure alone is self-reinforcing: a model that wrongly
+            # edited board.py produces an error naming board.py, which sorts
+            # board.py to the front of the snapshot and spends the character
+            # budget on it, which makes the next wrong edit likelier. Seen live,
+            # five attempts running, while the actual task was to create a file
+            # that did not exist yet and therefore appeared nowhere in the error.
+            + self._workspace_snapshot(context, focus=f"{self._work_in_hand(project)} {evidence}")
             + f"{self._project_brief(project)}\n"
         )
         payload = self._ask_json(prompt, schema, max_tokens=700)
@@ -1313,7 +1338,12 @@ class ProjectEngine:
                 + "\n".join(
                     f"  - [{'x' if item.satisfied else ' '}] {item.text}"
                     + (f"  (check: {' '.join(item.check)})" if item.check else "  (NO RUNNABLE CHECK)")
-                    for item in project.acceptance[:8]
+                    # The NEWEST eight. Every other list here takes the tail, and
+                    # taking the head instead means that on a project which
+                    # accumulates requirements -- the case this engine exists for
+                    # -- the criteria the model is currently trying to satisfy are
+                    # the first ones dropped.
+                    for item in project.acceptance[-8:]
                 )
             )
         if project.tasks:
