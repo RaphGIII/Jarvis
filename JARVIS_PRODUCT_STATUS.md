@@ -168,6 +168,32 @@ left to inference from an ambiguous signal.** The other two are wiring -- a chec
 that could not be seen by the loop that needed it, and a signal recorded but
 never read.
 
+**What the seventh attempt showed, once the loop could actually repair.**
+
+Attempt 7 was the first run with a working reopen path, and the difference is
+sharp enough to be worth stating as a rule.
+
+* The mangled Stockfish path -- unchanged across attempts 4, 5 and 6 -- was
+  **fixed within 25 steps**. A static check named that defect in machine-readable
+  terms: "this path contains a carriage-return escape".
+* The wrong engine protocol -- `--usi`, which is Shogi -- has **not moved in
+  seven attempts**. The acceptance check can only say that the assertion failed,
+  and what it reports is `chess.InvalidMoveError: invalid uci: 'None'`: a symptom
+  three steps removed from the cause. Stockfish's own complaint never arrives,
+  because the generated code pipes its stderr and then discards it.
+
+So the loop repairs what a check *names* and flounders on what a check merely
+*fails*. That is not a defect to fix so much as a design constraint to build to:
+the return on writing a check that says what is wrong, rather than that
+something is wrong, is most of the difference between a loop that self-repairs
+and one that spins.
+
+It also settles the retrieval question honestly. The requirement text already
+said, in as many words, to use `chess.engine` and to write the path with forward
+slashes. One of those instructions was followed only once a check restated it
+mechanically; the other has never been followed. Handing the model more text to
+ignore is not the missing piece.
+
 ## IN PROGRESS
 
 - **Music capability.** Six live attempts, none passing. The bar has risen each
