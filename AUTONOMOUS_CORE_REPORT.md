@@ -264,6 +264,44 @@ never the working surface.
 
 ---
 
+## 8a. Liveness: bounded waits and stall detection
+
+An evidence run went quiet and could not be distinguished, from the outside,
+from a wedged one. It had in fact finished cleanly hours earlier — but
+establishing that took manual rummaging through process tables and file
+timestamps, and the investigation found three ways the system genuinely could
+have hung forever.
+
+| Gap | Fix |
+|---|---|
+| The project loop compared elapsed time against its budget only *between* steps, so a step that blocked forever never reached the check again | `runtime/deadline.py` — the budget is carried *into* the work; every phase can ask what is left |
+| A 900 s provider timeout could be granted when the mission had 40 s left | `Deadline.clamp()` shortens each call to what remains |
+| `urlopen(timeout=…)` bounds each *read*, not the request; with a non-streaming local model, "still thinking" and "never coming back" are identical on the socket | `call_with_timeout()` bounds the call itself, abandoning a wedged one to a daemon thread |
+| `RepositoryEngineer` had no wall-clock bound of any kind | `max_seconds`, checked each cycle; returns `PAUSED` + `failure_kind="time_limit"` + a resume command |
+| A timed-out generation propagated as an exception and ended the run | Now a failed EXECUTE step naming the timeout (so DIAGNOSE can act), and a retryable attempt inside the engineer's existing retry loop |
+| Evidence runs were bounded only by a shell `timeout` wrapper — not part of the program | `--scenario-seconds` / `--total-seconds`, enforced in code |
+
+**Telling slow from stuck.** `runtime/heartbeat.py` separates two questions that
+were conflated. `progress_at` advances only on real progress, so staleness means
+no progress. `updated_at` is advanced by a background ticker every few seconds,
+so staleness means the process is gone. Without the ticker, a four-minute model
+call and a wedged process look identical.
+
+```
+python -m jarvis.doctor --run <dir>     # alive / stalled / dead / finished
+python -m jarvis.doctor --watch         # keep looking
+```
+
+Exit codes: 0 alive or finished, 1 stalled, 2 dead, 3 nothing found. During the
+reruns it correctly reported `ALIVE` with liveness ticking every 1–3 s while
+progress legitimately went eight minutes stale, then `STALLED` when a scenario
+exceeded fifteen minutes without advancing, then `ALIVE` again when it resumed.
+
+Covered by `tests/test_stall_recovery.py` (34 tests), every one of which uses a
+model that genuinely blocks rather than a description of one.
+
+---
+
 ## 9. Recovery procedure
 
 **A promotion went wrong.** Rollback is automatic on a failed verify, restart or

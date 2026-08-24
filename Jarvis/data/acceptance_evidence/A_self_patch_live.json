@@ -10,7 +10,7 @@
   ],
   "targeted_tests_passed": false,
   "protection_state": "NOT_EVALUATED",
-  "elapsed_seconds": 367.3,
+  "elapsed_seconds": 215.6,
   "recovery_events": [
     {
       "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
@@ -18,40 +18,15 @@
       "patch_correction": 1
     },
     {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 2
-    },
-    {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 3
-    },
-    {
-      "cycle": 1,
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
+      "cycle": 2,
+      "detail": "edit bundle contained no operations",
+      "kind": "empty_plan",
       "reason": "PATCH_NOT_APPLIED"
     },
     {
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
-      "patch_correction": 1
-    },
-    {
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
-      "patch_correction": 2
-    },
-    {
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
-      "patch_correction": 3
-    },
-    {
       "cycle": 3,
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
+      "detail": "edit bundle contained no operations",
+      "kind": "empty_plan",
       "reason": "PATCH_NOT_APPLIED"
     },
     {
@@ -61,7 +36,7 @@
       "reason": "PATCH_NOT_APPLIED"
     }
   ],
-  "diff": "diff --git a/jarvis/cli.py b/jarvis/cli.py\nindex 12be0bc..96da4c7 100644\n--- a/jarvis/cli.py\n+++ b/jarvis/cli.py\n@@ -62,7 +62,7 @@ Commands\n   /persona [name]       show or switch persona\n   /tune                 benchmark this machine and store a resource policy\n   /help                 this list\n-  /quit  /exit  /bye    leave\n+  /quit  /exit  /bye  /goodbye    leave\n \"\"\"\n \n \n",
-  "budget_seconds": 1200.0,
-  "recorded_at": "2026-08-24T09:10:42.360408+00:00"
+  "diff": "diff --git a/jarvis/cli.py b/jarvis/cli.py\nindex 12be0bc..64cd946 100644\n--- a/jarvis/cli.py\n+++ b/jarvis/cli.py\n@@ -62,7 +62,9 @@ Commands\n   /persona [name]       show or switch persona\n   /tune                 benchmark this machine and store a resource policy\n   /help                 this list\n-  /quit  /exit  /bye    leave\n+/quit\n+        /goodbye\n+        /exit  /bye    leave\n \"\"\"\n \n \n",
+  "budget_seconds": 900.0,
+  "recorded_at": "2026-08-24T09:55:41.928250+00:00"
 }

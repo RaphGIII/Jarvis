@@ -127,11 +127,24 @@ def scenario_a(run_root: Path, budget: Deadline) -> dict:
                 "-c",
                 # Passes only if "/goodbye" ends up in the SAME set literal as
                 # "/quit" -- i.e. it really is treated as an exit word.
+                #
+                # It also SAYS what is wrong. A check that merely exits
+                # non-zero is unactionable: the model edited the help text
+                # instead of the code and was told only "exit=1", so it had
+                # no way to learn that its change landed in a docstring.
                 "import ast, pathlib; "
-                "tree = ast.parse(pathlib.Path('jarvis/cli.py').read_text(encoding='utf-8')); "
-                "ok = any(isinstance(n, ast.Set) and "
-                "{getattr(e, 'value', None) for e in n.elts} >= {'/quit', '/goodbye'} "
-                "for n in ast.walk(tree)); "
+                "src = pathlib.Path('jarvis/cli.py').read_text(encoding='utf-8'); "
+                "tree = ast.parse(src); "
+                "sets = [n for n in ast.walk(tree) if isinstance(n, ast.Set)]; "
+                "quit_sets = [s for s in sets if '/quit' in {getattr(e, 'value', None) for e in s.elts}]; "
+                "ok = any('/goodbye' in {getattr(e, 'value', None) for e in s.elts} for s in quit_sets); "
+                "print('CHECK: /goodbye appears in the file:', '/goodbye' in src); "
+                "print('CHECK: set literals containing \"/quit\" are at lines:', [s.lineno for s in quit_sets]); "
+                "print('') if ok else print("
+                "    'FAILED: /goodbye is not in the same set literal as \"/quit\". '\n"
+                "    'Adding it to the help text or a docstring does NOT count -- it must go inside '\n"
+                "    'the set of words that the exit branch compares against, at the line printed above.'\n"
+                "); "
                 "raise SystemExit(0 if ok else 1)",
             ]
         ],
