@@ -71,6 +71,8 @@ it; anything not measured says so.
 - **Static capability checking** — catches undefined names in branches the tests
   never reach.
 - **Stall/timeout hardening** — deadlines, heartbeats, `jarvis.doctor`.
+- **TV / kiosk mode** — `?tv=1` on the same page, not a second frontend.
+- **Projects view** — goals, state, acceptance criteria, recent activity, resume.
 
 ## IN PROGRESS
 
@@ -83,7 +85,6 @@ it; anything not measured says so.
 
 - Device gateway proper (identity, pairing, per-device revocation)
 - WebSocket audio transport for a remote device
-- TV / kiosk mode
 - Browser / research agent
 - Complex guided project proof (chess pipeline)
 - UI self-modification through the development pipeline
