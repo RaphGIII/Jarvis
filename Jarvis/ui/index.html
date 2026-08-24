@@ -335,6 +335,28 @@
   .node-links button:hover { color: var(--text); border-color: #24354b; }
   .node-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+  /* ---- TV / kiosk ---------------------------------------------------
+     Not a second UI: the same page with the pointer affordances removed and
+     everything scaled for a screen read from across a room. A separate TV
+     frontend would have to be kept in step with this one forever, and the
+     first divergence would be a bug nobody notices until it is on the wall. */
+
+  body.tv { font-size: 22px; }
+  body.tv #app { max-width: 1600px; padding: 0 5vw; }
+  body.tv header { padding: 2vh 0; font-size: 16px; }
+  body.tv .brand { font-size: 18px; letter-spacing: .4em; }
+  body.tv button.ghost, body.tv .composer, body.tv .hint { display: none; }
+  body.tv #eye { width: 30vh; height: 30vh; }
+  body.tv #app.conversing #eye { width: 18vh; height: 18vh; }
+  body.tv #stateLabel { font-size: 15px; letter-spacing: .45em; }
+  body.tv #detail { font-size: 18px; }
+  body.tv .turn .who { flex-basis: 90px; font-size: 13px; }
+  body.tv .turn { margin-bottom: 26px; }
+  body.tv #log { padding-bottom: 4vh; }
+  /* A TV has no cursor to hide, and a stray one parked over the picture is
+     the most common way a kiosk looks broken. */
+  body.tv, body.tv * { cursor: none; }
+
   @media (max-width: 620px) {
     #app { padding: 0 12px; }
     #eye { width: 150px; height: 150px; }

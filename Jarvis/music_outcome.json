@@ -1,79 +1,17 @@
 {
   "goal": "play music on this Windows computer. Investigate what is actually available: which media applications are installed, whether there are local audio files, and whether the system media keys work. Then implement run(payload) so that it starts music playing, using whatever mechanism this machine really supports.",
-  "capability_id": "local.play.music.windows_computer",
-  "status": "acquired",
-  "acquired": true,
-  "manifest": {
-    "capability_id": "local.play.music.windows_computer",
-    "description": "play music on this Windows computer. Investigate what is actually available: which media applications are installed, whether there are local audio files, and whether the system media keys work. Then implement run(payload) so that it starts music playing, using whatever mechanism this machine really supports.",
-    "version": "1.0.0",
-    "status": "active",
-    "entrypoint": "main.py",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "dry_run": {
-          "type": "boolean"
-        }
-      },
-      "required": []
-    },
-    "output_schema": {
-      "type": "object",
-      "properties": {
-        "ok": {
-          "type": "boolean"
-        }
-      }
-    },
-    "permissions_required": [],
-    "dependencies": [],
-    "source_location": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\capabilities\\installed\\local_play_music_windows_computer\\1.0.0",
-    "tests_location": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\capabilities\\installed\\local_play_music_windows_computer\\1.0.0\\test_capability.py",
-    "creation_metadata": {
-      "created_at": "2026-08-24T14:17:04.348000+00:00",
-      "source": "capability_service",
-      "goal": "play music on this Windows computer. Investigate what is actually available: which media applications are installed, whether there are local audio files, and whether the system media keys work. Then implement run(payload) so that it starts music playing, using whatever mechanism this machine really supports.",
-      "keywords": [
-        "actually",
-        "available",
-        "computer",
-        "investigate",
-        "music",
-        "play",
-        "what",
-        "windows"
-      ]
-    },
-    "validation_status": {
-      "verified": true,
-      "checks": [
-        {
-          "name": "tests",
-          "ok": true,
-          "detail": "exit=0\n..                                                                       [100%]\n2 passed in 0.31s\n\n"
-        },
-        {
-          "name": "contract",
-          "ok": true,
-          "detail": "exit=0\nCONTRACT_OK\n\n"
-        },
-        {
-          "name": "implemented",
-          "ok": true,
-          "detail": "exit=0\nSUBSTANCE_OK\n\n"
-        }
-      ]
-    }
-  },
-  "project_id": "proj_47ac0e0b19",
+  "capability_id": "",
+  "status": "failed",
+  "acquired": false,
+  "manifest": null,
+  "project_id": "proj_45c03bb600",
   "verification": {
-    "ok": true,
+    "ok": false,
     "checks": [
       {
         "name": "tests",
         "ok": true,
-        "detail": "exit=0\n..                                                                       [100%]\n2 passed in 0.31s\n\n"
+        "detail": "exit=0\n..                                                                       [100%]\n2 passed in 0.05s\n\n"
       },
       {
         "name": "contract",
@@ -82,12 +20,17 @@
       },
       {
         "name": "implemented",
-        "ok": true,
-        "detail": "exit=0\nSUBSTANCE_OK\n\n"
+        "ok": false,
+        "detail": "exit=1\n\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import pathlib; main_src = pathlib.Path('main.py').read_text(encoding='utf-8'); test_src = pathlib.Path('test_capability.py').read_text(encoding='utf-8'); assert 'JARVIS_CAPABILITY_NOT_IMPLEMENTED' not in main_src, 'main.py still contains the placeholder marker: run() has not been implemented'; assert 'JARVIS_CAPABILITY_NOT_IMPLEMENTED' not in test_src, 'test_capability.py still contains the placeholder marker: replace the seeded test with real ones'; assert 'main.run' in test_src, 'the tests never call main.run, so they prove nothing'; assert test_src.count('assert') >= 2, 'the tests make fewer than two assertions; write at least two that check behaviour'; print('SUBSTANCE_OK')\n                                                                                                                                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: main.py still contains the placeholder marker: run() has not been implemented\n"
+      },
+      {
+        "name": "static",
+        "ok": false,
+        "detail": "exit=1\n\nmain.py:\nline 5: 'Any' is used but never defined or imported\n"
       }
     ],
-    "detail": "tests=ok; contract=ok; implemented=ok"
+    "detail": "tests=ok; contract=ok; implemented=FAILED; static=FAILED"
   },
-  "reason": "implemented, verified by its own tests, and registered",
-  "usable": true
+  "reason": "acquisition did not verify (FAILURE_LIMIT): 8 consecutive steps without progress",
+  "usable": false
 }

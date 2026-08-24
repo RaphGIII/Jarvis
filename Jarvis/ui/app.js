@@ -34,6 +34,13 @@ function startJarvis() {
   ui.panelBody = $("panelBody");
   ui.panelTitle = $("panelTitle");
 
+  // TV/kiosk mode is a URL flag rather than a build: the same page, scaled up
+  // with the pointer affordances removed. ?tv=1 on the Jarvis URL.
+  if (new URLSearchParams(location.search).has("tv")) {
+    document.body.classList.add("tv");
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  }
+
   eye = new JarvisEye($("eye"));
   eye.start();
 

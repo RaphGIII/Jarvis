@@ -467,3 +467,15 @@ def test_a_posted_message_reaches_the_core(server):
 
 def test_the_url_carries_the_token(server):
     assert "token=test-token" in server.url
+
+
+def test_tv_mode_is_the_same_page_not_a_second_one(server):
+    """A separate TV frontend would drift out of step with this one, and the
+    first divergence would be a bug nobody notices until it is on the wall."""
+
+    url = f"http://{server.host}:{server.port}/?token=test-token&tv=1"
+    with urllib.request.urlopen(url, timeout=10) as response:
+        body = response.read().decode()
+
+    assert "body.tv" in body, "the kiosk styles live in the same document"
+    assert 'id="eye"' in body, "and so does everything else"
