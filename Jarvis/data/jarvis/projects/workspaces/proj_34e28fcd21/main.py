@@ -3,7 +3,30 @@ from __future__ import annotations
 from typing import Any
 
 # Every payload key run() accepts. A caller cannot pass what is not declared.
-INPUT_SCHEMA = {"type": "object", "properties": {"dry_run": {"type": "boolean"}, "play_pause_test": {"type": "boolean"}}, "required": ["dry_run", "play_pause_test"]}
+INPUT_SCHEMA = {"type": "object", "properties": {"dry_run": {"type": "boolean"}, "play_pause_test": {"type": "boolean"}, "media_folders_test": {"type": "boolean"}}, "required": ["dry_run"]}
+
+# Define the media_folders function
+def media_folders():
+    folders = media_folders()['folders']
+    audio_files_count = sum(folder['audio_files'] for folder in folders)
+    return {
+        'folders': folders,
+        'audio_files_count': audio_files_count
+    }
+
+# Check if system media keys work
+def check_media_keys(dry_run: bool) -> dict:
+    try:
+        result = media_control(action='playpause', dry_run=dry_run)
+        return {
+            "ok": True,
+            "message": "Media keys test successful."
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
+        }
 
 
 def run(payload: dict[str, Any]) -> dict[str, Any]:

@@ -483,6 +483,42 @@ class JarvisCore:
         except Exception as exc:
             return {"nodes": [], "edges": [], "error": str(exc)}
 
+    def ingest(self, path: str = "", *, text: str = "", title: str = "", recursive: bool = True, max_files: int = 500) -> dict[str, Any]:
+        """Read a file, a folder, or a piece of text into the knowledge graph."""
+
+        try:
+            from knowledge.graph import KnowledgeGraph
+            from knowledge.ingest import Ingester
+        except ImportError as exc:  # pragma: no cover - defensive
+            return {"ok": False, "error": str(exc)}
+
+        target = (path or "").strip()
+        body = (text or "").strip()
+        if not target and not body:
+            return {"ok": False, "error": "give a path or some text"}
+
+        graph_path = self.kernel.state_root / "knowledge" / "graph.db"
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with KnowledgeGraph(graph_path) as graph:
+                ingester = Ingester(graph)
+                if body:
+                    node = ingester.ingest_text(title or body[:60], body)
+                    result = {"ok": True, "node_id": node.id, "title": node.title}
+                else:
+                    source = Path(target).expanduser()
+                    report = (
+                        ingester.ingest_folder(source, recursive=recursive, max_files=max_files)
+                        if source.is_dir()
+                        else ingester.ingest_file(source)
+                    )
+                    result = {"ok": report.files_ingested > 0, **report.to_dict()}
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+        self.emit(EventType.KNOWLEDGE, result)
+        return result
+
     def knowledge_node(self, node_id: str) -> dict[str, Any]:
         try:
             from knowledge.graph import KnowledgeGraph

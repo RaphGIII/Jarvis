@@ -113,6 +113,13 @@ class JarvisHTTPServer:
                 query=str(body.get("query", "")), limit=int(body.get("limit", 300) or 300)
             ),
             "/api/knowledge/node": lambda body: self.core.knowledge_node(str(body.get("id", ""))),
+            "/api/knowledge/ingest": lambda body: self.core.ingest(
+                str(body.get("path", "")),
+                text=str(body.get("text", "")),
+                title=str(body.get("title", "")),
+                recursive=bool(body.get("recursive", True)),
+                max_files=int(body.get("max_files", 500) or 500),
+            ),
             "/api/diagnostics": lambda _: self.core.diagnostics(),
             "/api/voice": lambda body: self.core.voice_settings(
                 **{
