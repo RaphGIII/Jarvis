@@ -94,8 +94,24 @@ class JarvisHTTPServer:
     # -- routing ---------------------------------------------------------
 
     def authorised(self, headers: Any, query: dict[str, list[str]]) -> bool:
+        """The core token, or a paired device's own credential.
+
+        Two ways in rather than one, because a device must be revocable without
+        changing the secret every other client is using -- which is the whole
+        reason per-device tokens exist.
+        """
+
         supplied = headers.get("X-Jarvis-Token") or (query.get("token") or [""])[0]
-        return secrets.compare_digest(str(supplied), self.token)
+        if supplied and secrets.compare_digest(str(supplied), self.token):
+            return True
+
+        device_id = headers.get("X-Jarvis-Device") or (query.get("device") or [""])[0]
+        if device_id and supplied:
+            try:
+                return self.core.gateway.authenticate(str(device_id), str(supplied)) is not None
+            except Exception:
+                return False
+        return False
 
     def handle_api(self, path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """Dispatch a JSON API call to the core."""
@@ -113,6 +129,24 @@ class JarvisHTTPServer:
                 query=str(body.get("query", "")), limit=int(body.get("limit", 300) or 300)
             ),
             "/api/knowledge/node": lambda body: self.core.knowledge_node(str(body.get("id", ""))),
+            # Pairing is the only device endpoint reachable without a device
+            # credential, because a device that has none is exactly what it is
+            # for. It still requires the core token, so only something already
+            # trusted enough to reach the API may ask.
+            "/api/device/pair": lambda body: self.core.device_pair_request(
+                str(body.get("name", "")),
+                str(body.get("kind", "generic")),
+                list(body.get("capabilities") or []),
+            ),
+            "/api/device/collect": lambda body: self.core.device_pair_collect(str(body.get("code", ""))),
+            "/api/device/approve": lambda body: self.core.device_approve(str(body.get("code", ""))),
+            "/api/device/deny": lambda body: self.core.device_deny(str(body.get("code", ""))),
+            "/api/device/list": lambda _: self.core.device_list(),
+            "/api/device/revoke": lambda body: self.core.device_revoke(str(body.get("device_id", ""))),
+            "/api/device/heartbeat": lambda body: self.core.device_heartbeat(str(body.get("device_id", ""))),
+            "/api/device/display": lambda body: self.core.device_display(
+                str(body.get("device_id", "")), str(body.get("command", "")), dict(body.get("payload") or {})
+            ),
             "/api/research": lambda body: self.core.research(
                 str(body.get("question", "")), max_sources=int(body.get("max_sources", 3) or 3)
             ),

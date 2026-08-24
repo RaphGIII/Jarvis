@@ -80,6 +80,7 @@ class JarvisCore:
         self._expert_probe_running = threading.Event()
         self._voice: Any = None
         self._personas: Any = None
+        self._gateway: Any = None
         #: The language the conversation is currently in.  Sticky: it changes
         #: only on a confident detection, because flipping mid-conversation
         #: changes the recogniser hint and the voice, which sounds worse than
@@ -113,6 +114,14 @@ class JarvisCore:
 
             self._voice = VoiceService(self.bus)
         return self._voice
+
+    @property
+    def gateway(self) -> Any:
+        if self._gateway is None:
+            from devices.gateway import DeviceGateway
+
+            self._gateway = DeviceGateway(self.kernel.state_root / "devices.json")
+        return self._gateway
 
     @property
     def experts(self) -> Any:
@@ -396,6 +405,52 @@ class JarvisCore:
         if self._voice is not None:
             self._voice.settings.language = self.language
         return {"ok": True, "language": self.language or "auto"}
+
+    # ------------------------------------------------------------------
+    # Devices
+    # ------------------------------------------------------------------
+
+    def device_pair_request(self, name: str, kind: str = "generic", capabilities: list[str] | None = None) -> dict[str, Any]:
+        request = self.gateway.request_pairing(name, kind=kind, capabilities=capabilities)
+        # Surfaced as a notification so the code appears wherever the user is
+        # already looking, rather than only in a panel they must think to open.
+        self.emit(
+            EventType.NOTIFICATION,
+            {"text": f"{request.name} wants to pair. Code: {request.code}"},
+        )
+        return {"ok": True, "code": request.code, "expires_in": 300}
+
+    def device_pair_collect(self, code: str) -> dict[str, Any]:
+        return self.gateway.collect(str(code))
+
+    def device_approve(self, code: str) -> dict[str, Any]:
+        device = self.gateway.approve(str(code))
+        if device is None:
+            return {"ok": False, "error": "no such pairing request, or it expired"}
+        self.emit(EventType.NOTIFICATION, {"text": f"paired: {device.name}"})
+        return {"ok": True, "device": device.to_dict()}
+
+    def device_deny(self, code: str) -> dict[str, Any]:
+        return {"ok": self.gateway.deny(str(code))}
+
+    def device_list(self) -> dict[str, Any]:
+        return self.gateway.status()
+
+    def device_revoke(self, device_id: str) -> dict[str, Any]:
+        return {"ok": self.gateway.revoke(str(device_id))}
+
+    def device_heartbeat(self, device_id: str) -> dict[str, Any]:
+        device = self.gateway.touch(device_id)
+        if device is None:
+            return {"ok": False, "error": "unknown device"}
+        return {
+            "ok": True,
+            "state": self.state.snapshot.to_dict(),
+            "commands": self.gateway.drain(device_id),
+        }
+
+    def device_display(self, device_id: str, command: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"ok": self.gateway.send(str(device_id), command, payload)}
 
     def stop_current(self) -> dict[str, Any]:
         """Interrupt whatever is running.  Used by barge-in and the stop button."""

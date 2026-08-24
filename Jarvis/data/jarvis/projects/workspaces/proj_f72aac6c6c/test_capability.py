@@ -3,5 +3,14 @@
 import main
 
 
-def test_placeholder():
-    raise AssertionError("JARVIS_CAPABILITY_NOT_IMPLEMENTED: write real tests")
+import main
+
+
+def test_no_audio_files_found():
+    result = main.run({'dry_run': False})
+    assert 'error' in result and result['error'] == 'No audio files found'
+
+
+def test_dry_run_reported_correctly():
+    result = main.run({'dry_run': True})
+    assert 'message' in result and result['message'] == 'Would play audio with media player'
