@@ -995,3 +995,98 @@ def test_an_unproductive_verify_leaves_the_reopen_budget_alone():
 
     assert stuck.reopenings == 2
     assert not stuck.reopenable
+
+
+# --------------------------------------------------------------------------
+# Reopening by relevance, not recency
+# --------------------------------------------------------------------------
+
+class _StubStore:
+    def __init__(self, workspace):
+        self._workspace = str(workspace)
+
+    def workspace_for(self, project):
+        return self._workspace
+
+
+def _engine_with_workspace(workspace):
+    engine = _Engine()
+    engine.store = _StubStore(workspace)
+    return engine
+
+
+def test_the_task_named_by_the_failing_check_wins_over_the_recent_one(tmp_path):
+    """The bug at 300 steps.
+
+    The failing criterion named pipeline.py while the loop reopened "install
+    the python-chess package" over and over, because that happened to be the
+    last thing executed -- completing it as a no-op every time.
+    """
+
+    from projects.models import Phase, Project, StepRecord, Task, TaskStatus
+
+    workspace = _workspace(tmp_path, "pipeline.py", "board.py")
+    project = _chess_project()
+    relevant = Task(title="Create the pipeline.py file", status=TaskStatus.DONE)
+    recent = Task(title="Install the python-chess package", status=TaskStatus.DONE)
+    project.tasks.extend([relevant, recent])
+    # `recent` executed last, so recency alone would choose it.
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=relevant.id))
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=recent.id))
+
+    reopened = _engine_with_workspace(workspace)._reopen_failed_task(project, "fix the call")
+
+    assert reopened is relevant
+
+
+def test_recency_still_decides_between_equally_relevant_tasks(tmp_path):
+    from projects.models import Phase, Project, StepRecord, Task, TaskStatus
+
+    workspace = _workspace(tmp_path, "pipeline.py")
+    project = _chess_project()
+    older = Task(title="Create pipeline.py", status=TaskStatus.DONE)
+    newer = Task(title="Fix pipeline.py imports", status=TaskStatus.DONE)
+    project.tasks.extend([older, newer])
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=older.id))
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=newer.id))
+
+    reopened = _engine_with_workspace(workspace)._reopen_failed_task(project, "fix")
+
+    assert reopened is newer
+
+
+def test_recency_still_decides_when_nothing_is_relevant(tmp_path):
+    """No task names a failing file, so the old behaviour stands."""
+
+    from projects.models import Phase, Project, StepRecord, Task, TaskStatus
+
+    workspace = _workspace(tmp_path, "pipeline.py")
+    project = _chess_project()
+    older = Task(title="set up the virtualenv", status=TaskStatus.DONE)
+    newer = Task(title="install dependencies", status=TaskStatus.DONE)
+    project.tasks.extend([older, newer])
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=older.id))
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=newer.id))
+
+    reopened = _engine_with_workspace(workspace)._reopen_failed_task(project, "fix")
+
+    assert reopened is newer
+
+
+def test_a_task_is_considered_once_however_often_it_ran(tmp_path):
+    """The same task executed five times must not crowd out every other candidate."""
+
+    from projects.models import Phase, Project, StepRecord, Task, TaskStatus
+
+    workspace = _workspace(tmp_path, "pipeline.py")
+    project = _chess_project()
+    relevant = Task(title="Create the pipeline.py file", status=TaskStatus.DONE)
+    noisy = Task(title="install dependencies", status=TaskStatus.DONE)
+    project.tasks.extend([relevant, noisy])
+    project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=relevant.id))
+    for _ in range(5):
+        project.steps.append(StepRecord(phase=Phase.EXECUTE, task_id=noisy.id))
+
+    reopened = _engine_with_workspace(workspace)._reopen_failed_task(project, "fix")
+
+    assert reopened is relevant

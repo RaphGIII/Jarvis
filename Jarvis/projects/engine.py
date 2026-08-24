@@ -284,6 +284,24 @@ class ProjectEngine:
             project=project, stop_reason=stop, steps=steps, seconds=seconds, accepted=accepted, message=message
         )
 
+    def _stems_in_play(self, project: Project) -> set[str]:
+        """Module names a currently-failing check depends on, lowercased.
+
+        Returns nothing rather than raising when there is no workspace to look
+        at: choosing which task to reopen is a decision the loop must still be
+        able to make when the store is unavailable, and falling back to recency
+        is the behaviour that was there before.
+        """
+
+        store = getattr(self, "store", None)
+        if store is None:
+            return set()
+        try:
+            workspace = store.workspace_for(project)
+        except (AttributeError, OSError):
+            return set()
+        return {Path(name).stem.lower() for name in self._files_named_by(project, workspace, satisfied=False)}
+
     @classmethod
     def _protected_reason(cls, project: Project, workspace: str) -> str:
         """Why a proven file is closed, and which file to change instead.
@@ -1097,14 +1115,35 @@ class ProjectEngine:
     def _reopen_failed_task(self, project: Project, fix: str) -> Task | None:
         """Reopen the task most likely to be responsible for the failure.
 
-        "Most likely" means the one most recently executed, taken from the step
-        trajectory rather than from list order.  An earlier version used
-        ``tasks[-1]``, which on a live run kept reopening "create a project
+        "Most likely" is decided by what the *failing check* names, and only
+        then by recency.  Recency alone is a proxy for relevance, and the proxy
+        breaks as soon as a project is long: seen live at 300 steps, the failing
+        criterion named ``pipeline.py`` while the loop reopened "install the
+        python-chess package" over and over because that happened to be the last
+        thing executed, completing it as a no-op each time.  A task named after a
+        file that a failing check depends on is preferred, whenever one exists.
+
+        Recency is still the tie-break, and still beats list order -- an earlier
+        version used ``tasks[-1]``, which kept reopening "create a project
         directory" while the actual defect sat in the implementation task.
         """
 
-        recent_ids = [step.task_id for step in reversed(project.steps) if step.phase is Phase.EXECUTE and step.task_id]
+        recent_ids: list[str] = []
+        for step in reversed(project.steps):
+            if step.phase is Phase.EXECUTE and step.task_id and step.task_id not in recent_ids:
+                recent_ids.append(step.task_id)
         by_id = {task.id: task for task in project.tasks}
+
+        in_play = self._stems_in_play(project)
+        if in_play:
+            def names_a_failing_file(task_id: str) -> int:
+                task = by_id.get(task_id)
+                if task is None:
+                    return 1
+                text = f"{task.title} {task.detail}".lower()
+                return 0 if any(stem in text for stem in in_play) else 1
+
+            recent_ids.sort(key=names_a_failing_file)  # stable: recency survives within each group
 
         for task_id in recent_ids:
             task = by_id.get(task_id)
