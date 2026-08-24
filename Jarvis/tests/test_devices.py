@@ -363,7 +363,9 @@ def test_a_device_credential_authenticates_the_api(server):
         server, "/api/status", {}, token=collected["token"], device=collected["device_id"]
     )
 
-    assert status["persona"] == "Jarvis"
+    from core.identity import current
+
+    assert status["persona"] == current().assistant_name
 
 
 def test_a_revoked_device_loses_access(server):
