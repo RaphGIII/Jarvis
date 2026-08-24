@@ -153,10 +153,15 @@ def test_trivial_tests_do_not_count_as_verification(service):
     outcome = instance.ensure("play an audio file", max_steps=25)
 
     assert not outcome.acquired
+    # Substantiveness used to be a separate check that only the verifier ran.
+    # It now lives in `implemented`, which the LOOP is graded on too, so a
+    # trivial test file is something the loop can see itself failing rather
+    # than a hidden rubric it discovers only at the end.
     substantive = next(
-        item for item in outcome.verification["checks"] if item["name"] == "tests_are_substantive"
+        item for item in outcome.verification["checks"] if item["name"] == "implemented"
     )
     assert not substantive["ok"]
+    assert "prove nothing" in substantive["detail"] or "assertions" in substantive["detail"]
 
 
 def test_acquisition_briefs_the_model_on_the_traps_that_actually_bit(service):
@@ -437,6 +442,11 @@ def test_the_skeleton_marker_reaches_both_gates(service):
     instance.ensure("play an audio file", max_steps=8)
     project = instance.engine.store.list_projects()[0]
 
-    contract = next(item for item in project.acceptance if "implemented" in item.text)
-    assert NOT_IMPLEMENTED in " ".join(contract.check)
-    assert not contract.satisfied
+    # Select by the criterion that owns the marker, not by a substring that
+    # also matches "main.run is implemented, importable, and returns a dict".
+    from capabilities.service import capability_checks
+
+    wanted = next(check for check in capability_checks() if check.name == "implemented")
+    criterion = next(item for item in project.acceptance if item.text == wanted.text)
+    assert NOT_IMPLEMENTED in " ".join(criterion.check)
+    assert not criterion.satisfied

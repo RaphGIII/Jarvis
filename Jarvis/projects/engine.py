@@ -704,13 +704,15 @@ class ProjectEngine:
             },
             "required": ["diagnosis", "fix"],
         }
+        exhausted = self._exhausted_diagnoses(project)
         prompt = (
             "Return JSON only. Something failed. Work out WHY from the evidence, then say what to change.\n"
             "Base the diagnosis on the evidence text, not on what you expected to happen.\n"
             "Quote the specific error from the evidence in your diagnosis.\n"
             "Set blocked_on_user only for something no amount of code can fix "
             "(a missing credential, a hardware decision) -- never for a failing test.\n\n"
-            f"EVIDENCE:\n{evidence[:4000]}\n\n"
+            + exhausted
+            + f"EVIDENCE:\n{evidence[:4000]}\n\n"
             + self._failing_check_evidence(project)
             + self._workspace_snapshot(context, focus=evidence)
             + f"{self._project_brief(project)}\n"
@@ -719,6 +721,17 @@ class ProjectEngine:
 
         diagnosis = str(payload.get("diagnosis", "")).strip()
         fix = str(payload.get("fix", "")).strip()
+        repeated = self._remember_diagnosis(project, diagnosis)
+        if repeated:
+            # The same wrong answer arriving again is itself evidence: it says
+            # the visible symptom has been explained to exhaustion and the cause
+            # lies somewhere the current evidence does not show.
+            project.add_finding(
+                f"diagnosis {diagnosis[:120]!r} has now been produced {repeated} times without fixing "
+                "anything, so it is not the cause; look at the implementation rather than the symptom",
+                source="engine",
+                confidence=1.0,
+            )
         if diagnosis:
             project.add_finding(f"diagnosis: {diagnosis}", source="diagnosis", confidence=0.6)
 
@@ -969,6 +982,71 @@ class ProjectEngine:
         return (
             "NOTE: your last attempt could not match its search anchor. apply_edits is not available "
             "for this attempt. Use write_file and send the complete corrected contents of the file.\n\n"
+        )
+
+    #: How many distinct past diagnoses to quote back to the model.  Enough to
+    #: rule out a wrong answer, few enough to leave room for the evidence.
+    _DIAGNOSIS_MEMORY = 6
+
+    @staticmethod
+    def _diagnosis_fingerprint(text: str) -> str:
+        """Collapse a diagnosis to what makes it the same answer twice.
+
+        Not an exact match: a model re-stating the same wrong cause rarely
+        reproduces its own wording byte-for-byte, and a comparison that strict
+        would never fire.
+        """
+
+        import re as _re
+
+        words = _re.findall(r"[a-z0-9_]+", text.lower())
+        return " ".join(words[:24])
+
+    def _remember_diagnosis(self, project: Project, diagnosis: str) -> int:
+        """Record a diagnosis; return how many times this one has now been made."""
+
+        if not diagnosis.strip():
+            return 0
+        fingerprint = self._diagnosis_fingerprint(diagnosis)
+        if not fingerprint:
+            return 0
+        history = project.metadata.setdefault("diagnosis_history", [])
+        seen = sum(1 for item in history if item.get("fingerprint") == fingerprint)
+        history.append({"fingerprint": fingerprint, "text": diagnosis[:400]})
+        del history[: max(0, len(history) - 2 * self._DIAGNOSIS_MEMORY)]
+        return seen + 1 if seen else 0
+
+    def _exhausted_diagnoses(self, project: Project) -> str:
+        """Quote back the explanations that have already been tried and failed.
+
+        This is what makes a retry a genuinely different request rather than the
+        identical prompt sent again.  A small model asked the same question
+        gives the same answer -- six times, in the run that motivated this -- so
+        the prompt has to change, and the honest change is to rule out the
+        answers already known to be useless.
+        """
+
+        history = project.metadata.get("diagnosis_history") or []
+        if not history:
+            return ""
+        seen: list[str] = []
+        for item in reversed(history):
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            if text not in seen:
+                seen.append(text)
+            if len(seen) >= self._DIAGNOSIS_MEMORY:
+                break
+        if not seen:
+            return ""
+        lines = "\n".join(f"  {index}. {text[:220]}" for index, text in enumerate(seen, start=1))
+        return (
+            "DIAGNOSES ALREADY MADE THAT DID NOT FIX ANYTHING -- do not repeat these, "
+            "the cause is something else:\n"
+            f"{lines}\n"
+            "Look at a different part of the evidence this time. If the tests keep failing the same way, "
+            "suspect the code under test rather than the test.\n\n"
         )
 
     def _failing_check_evidence(self, project: Project) -> str:

@@ -2,3 +2,4 @@
 {"recorded_at": "2026-08-24T09:55:41.928250+00:00", "passed": false, "elapsed_seconds": 215.6, "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED", "checks": {}}
 {"recorded_at": "2026-08-24T10:22:25.279058+00:00", "passed": false, "elapsed_seconds": 692.4, "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED", "checks": {}}
 {"recorded_at": "2026-08-24T10:22:44.529096+00:00", "passed": false, "elapsed_seconds": 778.8, "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED", "checks": {}}
+{"recorded_at": "2026-08-24T12:02:38.092709+00:00", "passed": true, "elapsed_seconds": 171.8, "status": "SELF_DEVELOPMENT_CANDIDATE_READY", "checks": {}}

@@ -136,6 +136,78 @@ def test_placeholder():
 '''
 
 
+@dataclass(frozen=True)
+class CapabilityCheck:
+    """One objective check, phrased for the loop and runnable by anything.
+
+    The same object is used twice on purpose: the project loop takes ``text``
+    and ``command`` as an acceptance criterion it can watch fail, and
+    :meth:`CapabilityService._verify` re-runs ``command`` from a clean process
+    once the loop has stopped.
+
+    That keeps the two properties that matter and were previously in tension.
+    The bar is *identical*, so the loop cannot be marked against a rubric it was
+    never shown -- the failure mode that ended both live capability runs with
+    ``contract=ok`` and ``implemented=FAILED``.  And verification stays
+    *independent*, because it executes the checks itself rather than believing
+    the loop's report of them.
+    """
+
+    name: str
+    text: str
+    command: tuple[str, ...]
+
+
+def capability_checks(python: str | None = None) -> list[CapabilityCheck]:
+    """The complete, single definition of what makes a capability real."""
+
+    executable = python or sys.executable
+    return [
+        CapabilityCheck(
+            name="tests",
+            text="the capability's own tests pass",
+            command=(executable, "-m", "pytest", "-q", "test_capability.py"),
+        ),
+        CapabilityCheck(
+            name="contract",
+            text="main.run is implemented, importable, and returns a dict",
+            command=(
+                executable,
+                "-c",
+                "import main; "
+                "assert callable(getattr(main, 'run', None)), 'main.run is missing'; "
+                "r = main.run({'dry_run': True}); "
+                "assert isinstance(r, dict), f'run() returned {type(r)}'; "
+                "print('CONTRACT_OK')",
+            ),
+        ),
+        CapabilityCheck(
+            name="implemented",
+            text=(
+                "the placeholder marker is gone from BOTH main.py and test_capability.py, "
+                "and the tests really exercise run()"
+            ),
+            command=(
+                executable,
+                "-c",
+                "import pathlib; "
+                "main_src = pathlib.Path('main.py').read_text(encoding='utf-8'); "
+                "test_src = pathlib.Path('test_capability.py').read_text(encoding='utf-8'); "
+                f"assert '{NOT_IMPLEMENTED}' not in main_src, "
+                "'main.py still contains the placeholder marker: run() has not been implemented'; "
+                f"assert '{NOT_IMPLEMENTED}' not in test_src, "
+                "'test_capability.py still contains the placeholder marker: "
+                "replace the seeded test with real ones'; "
+                "assert 'main.run' in test_src, "
+                "'the tests never call main.run, so they prove nothing'; "
+                "assert test_src.count('assert') >= 2, "
+                "'the tests make fewer than two assertions; write at least two that check behaviour'; "
+                "print('SUBSTANCE_OK')",
+            ),
+        ),
+    ]
+
+
 class CapabilityService:
     """Resolves, acquires, registers and executes capabilities."""
 
@@ -296,24 +368,14 @@ class CapabilityService:
                 "behaviour instead: that a dry run reports whichever mechanism it chose, that a missing "
                 "input fails cleanly, that the returned dict has the documented shape.",
             ],
-            acceptance=[
-                (
-                    "the capability's own tests pass",
-                    [sys.executable, "-m", "pytest", "-q", "test_capability.py"],
-                ),
-                (
-                    "main.run is implemented, importable, and returns a dict",
-                    [
-                        sys.executable,
-                        "-c",
-                        "import main; r = main.run({'dry_run': True}); "
-                        "assert isinstance(r, dict), type(r); "
-                        f"assert '{NOT_IMPLEMENTED}' not in open('main.py', encoding='utf-8').read(), "
-                        "'the skeleton has not been replaced with a real implementation'; "
-                        "print('CONTRACT_OK')",
-                    ],
-                ),
-            ],
+            # The loop is graded by exactly the checks that decide acceptance.
+            # Keeping two lists in step by hand is what failed before: a
+            # criterion that can veto acceptance but never appears in the
+            # loop's evidence is a hidden rubric, and the loop converges on
+            # failing it.  Both live F failures ended contract=ok and
+            # implemented=FAILED, because `implemented` also inspected the test
+            # file and the loop's contract check did not.
+            acceptance=[(check.text, list(check.command)) for check in capability_checks()],
         )
         project.metadata["capability_id"] = capability_id
 
@@ -343,48 +405,18 @@ class CapabilityService:
 
         checks: list[dict[str, Any]] = []
 
-        # First and most important: is there an implementation at all?  The
-        # seeded skeleton returns a dict and satisfies its own placeholder test,
-        # so without this a capability that does nothing registers as verified.
-        source = main.read_text(encoding="utf-8", errors="replace")
-        test_source = ""
-        test_file = workspace / "test_capability.py"
-        if test_file.exists():
-            test_source = test_file.read_text(encoding="utf-8", errors="replace")
-        checks.append(
-            {
-                "name": "implemented",
-                "ok": NOT_IMPLEMENTED not in source and NOT_IMPLEMENTED not in test_source,
-                "detail": f"{NOT_IMPLEMENTED} is still present: the skeleton was never replaced",
-            }
-        )
-
-        contract = self._run(
-            [
-                sys.executable,
-                "-c",
-                "import main; "
-                "assert callable(getattr(main, 'run', None)), 'main.run is missing'; "
-                "r = main.run({'dry_run': True}); "
-                "assert isinstance(r, dict), f'run() returned {type(r)}'; "
-                "print('CONTRACT_OK')",
-            ],
-            workspace,
-        )
-        checks.append({"name": "contract", "ok": contract["ok"], "detail": contract["detail"][-800:]})
-
-        tests = self._run([sys.executable, "-m", "pytest", "-q", "test_capability.py"], workspace)
-        checks.append({"name": "tests", "ok": tests["ok"], "detail": tests["detail"][-1500:]})
-
-        # A test file with no assertions passes trivially and proves nothing.
-        substantive = test_source.count("assert") >= 2 and "main.run" in test_source
-        checks.append(
-            {
-                "name": "tests_are_substantive",
-                "ok": substantive,
-                "detail": "the test file must call main.run and make at least two assertions",
-            }
-        )
+        # Re-run the very checks the loop was graded on, from a clean process.
+        # Same bar, independently executed: the loop cannot be marked against a
+        # rubric it never saw, and cannot certify itself either.
+        for check in capability_checks():
+            outcome = self._run(list(check.command), workspace)
+            checks.append(
+                {
+                    "name": check.name,
+                    "ok": outcome["ok"],
+                    "detail": outcome["detail"][-1500:],
+                }
+            )
 
         return {"ok": all(item["ok"] for item in checks), "checks": checks, "detail": "; ".join(
             f"{item['name']}={'ok' if item['ok'] else 'FAILED'}" for item in checks

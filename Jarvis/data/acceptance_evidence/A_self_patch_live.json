@@ -2,100 +2,17 @@
   "scenario": "A_self_patch_live",
   "model": "qwen2.5-coder:7b-instruct-q4_K_M",
   "context_window": 24576,
-  "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED",
-  "success": false,
-  "cycles": 4,
-  "changed_files": [],
-  "targeted_tests_passed": null,
-  "protection_state": "NOT_EVALUATED",
-  "elapsed_seconds": 778.8,
-  "recovery_events": [
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 1
-    },
-    {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.57 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 2
-    },
-    {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.57 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 3
-    },
-    {
-      "cycle": 1,
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.57 < 0.88)",
-      "kind": "no_unique_match",
-      "reason": "PATCH_NOT_APPLIED"
-    },
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 1
-    },
-    {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 2
-    },
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 51: /status               honest health of every model tier and the machine\n  occurrence 2: line 402: if lowered == \"/status\":\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 3
-    },
-    {
-      "cycle": 2,
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 51: /status               honest health of every model tier and the machine\n  occurrence 2: line 402: if lowered == \"/status\":\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "reason": "PATCH_NOT_APPLIED"
-    },
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 1
-    },
-    {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 2
-    },
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 51: /status               honest health of every model tier and the machine\n  occurrence 2: line 402: if lowered == \"/status\":\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 3
-    },
-    {
-      "cycle": 3,
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 51: /status               honest health of every model tier and the machine\n  occurrence 2: line 402: if lowered == \"/status\":\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "reason": "PATCH_NOT_APPLIED"
-    },
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 1
-    },
-    {
-      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
-      "kind": "no_unique_match",
-      "patch_correction": 2
-    },
-    {
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 51: /status               honest health of every model tier and the machine\n  occurrence 2: line 402: if lowered == \"/status\":\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "patch_correction": 3
-    },
-    {
-      "cycle": 4,
-      "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 51: /status               honest health of every model tier and the machine\n  occurrence 2: line 402: if lowered == \"/status\":\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
-      "kind": "ambiguous_search",
-      "reason": "PATCH_NOT_APPLIED"
-    }
+  "status": "SELF_DEVELOPMENT_CANDIDATE_READY",
+  "success": true,
+  "cycles": 1,
+  "changed_files": [
+    "jarvis/cli.py"
   ],
-  "diff": "",
-  "budget_seconds": 900.0,
-  "recorded_at": "2026-08-24T10:22:44.529096+00:00"
+  "targeted_tests_passed": true,
+  "protection_state": "PRISTINE",
+  "elapsed_seconds": 171.8,
+  "recovery_events": [],
+  "diff": "diff --git a/jarvis/cli.py b/jarvis/cli.py\nindex 12be0bc..06a893a 100644\n--- a/jarvis/cli.py\n+++ b/jarvis/cli.py\n@@ -394,7 +394,7 @@ class JarvisConsole:\n             return True\n \n         lowered = command.lower()\n-        if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n+        if lowered in {\"/quit\", \"/goodbye\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n             return False\n         if lowered in {\"/help\", \"help\", \"?\"}:\n             print(HELP)\n",
+  "budget_seconds": 1200.0,
+  "recorded_at": "2026-08-24T12:02:38.092709+00:00"
 }
