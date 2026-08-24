@@ -79,6 +79,12 @@ class JarvisCore:
         self._expert_checked_at = 0.0
         self._expert_probe_running = threading.Event()
         self._voice: Any = None
+        self._personas: Any = None
+        #: The language the conversation is currently in.  Sticky: it changes
+        #: only on a confident detection, because flipping mid-conversation
+        #: changes the recogniser hint and the voice, which sounds worse than
+        #: occasionally answering in the wrong language.
+        self.language = ""
 
     # ------------------------------------------------------------------
     # Lazy subsystems
@@ -91,6 +97,14 @@ class JarvisCore:
 
             self._kernel = JarvisKernel()
         return self._kernel
+
+    @property
+    def personas(self) -> Any:
+        if self._personas is None:
+            from persona.profiles import PersonaStore
+
+            self._personas = PersonaStore(self.kernel.state_root / "personas.json")
+        return self._personas
 
     @property
     def voice(self) -> Any:
@@ -134,6 +148,10 @@ class JarvisCore:
         text = (text or "").strip()
         if not text:
             return {"ok": False, "error": "empty message"}
+
+        from persona.language import stable_language
+
+        self.language = stable_language(text, current=self.language)
 
         turn = ConversationTurn(role="user", text=text, at=_now())
         with self._lock:
@@ -220,16 +238,36 @@ class JarvisCore:
         The persona is stated as identity rather than as a costume instruction
         ("you are roleplaying as..."), because the latter invites a model to
         break character and explain what it really is the moment it is asked.
+
+        The text comes from the persona store rather than being written here, so
+        that "add another persistent personality" is a stored record instead of
+        an edit to this method -- and so the invariant rules (never claim an
+        unverified success, prefer admitting ignorance) are appended after the
+        persona's own words, where a verbose character cannot crowd them out.
         """
+
+        base = (
+            f"You are {self.persona_name}, this user's personal AI system. You are not a chat "
+            "assistant demo and you do not describe yourself as a language model."
+        )
+        try:
+            system = self.personas.system_prompt(base=base)
+        except Exception:
+            # A missing or unreadable persona file must not silence Jarvis.
+            system = base
+
+        if self.language:
+            from persona.language import language_name
+
+            system += (
+                f"\nThe user is speaking {language_name(self.language)}; reply in that language."
+            )
 
         recent = self.history[-8:]
         transcript = "\n".join(f"{turn.role}: {turn.text}" for turn in recent[:-1])
         return (
-            f"You are {self.persona_name}, this user's personal AI system. You are not a chat "
-            "assistant demo and you do not describe yourself as a language model. You are "
-            "concise, competent and task-oriented. You answer in the language the user writes in.\n"
-            "If you genuinely cannot do something, say what is missing rather than refusing "
-            "vaguely. Never claim an action succeeded unless it did.\n\n"
+            system
+            + "\n\n"
             + (f"Recent conversation:\n{transcript}\n\n" if transcript else "")
             + f"user: {text}\n{self.persona_name}:"
         )
@@ -308,13 +346,56 @@ class JarvisCore:
         # Speaking to Jarvis is what enters voice mode; it is the least
         # surprising trigger and needs no separate switch.
         self.voice.settings.enabled = True
-        transcript = self.voice.transcribe(wav, language=language)
+        # Hint the recogniser with the language the conversation is already in.
+        # Whisper decodes measurably better when told, and the alternative --
+        # letting it decide per utterance -- makes it flip on short phrases.
+        transcript = self.voice.transcribe(
+            wav, language=language or self.voice.settings.language or self.language
+        )
         if transcript.empty:
             self.state.set(JarvisState.IDLE, detail="nothing heard")
             return {"ok": False, "text": "", "reason": "no speech detected"}
+        if transcript.language:
+            from persona.language import stable_language
+
+            # Trust the recogniser's own verdict as evidence, but require the
+            # same confidence threshold as text: a mis-heard word should not
+            # switch the voice.
+            self.language = stable_language(transcript.text, current=self.language)
         if answer:
             self.send_message(transcript.text)
         return {"ok": True, **transcript.to_dict()}
+
+    # ------------------------------------------------------------------
+    # Persona
+    # ------------------------------------------------------------------
+
+    def list_personas(self) -> dict[str, Any]:
+        try:
+            store = self.personas
+            return {
+                "active": store.active().to_dict(),
+                "personas": [store.get(name).to_dict() for name in store.names()],
+                "language": self.language,
+            }
+        except Exception as exc:
+            return {"error": str(exc), "personas": []}
+
+    def set_persona(self, name: str) -> dict[str, Any]:
+        try:
+            persona = self.personas.activate(name)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        self.emit(EventType.NOTIFICATION, {"text": f"persona: {persona.name}"})
+        return {"ok": True, "active": persona.to_dict()}
+
+    def set_language(self, language: str) -> dict[str, Any]:
+        """Pin the conversation language, or pass "" to go back to detecting it."""
+
+        self.language = (language or "").strip().lower()
+        if self._voice is not None:
+            self._voice.settings.language = self.language
+        return {"ok": True, "language": self.language or "auto"}
 
     def stop_current(self) -> dict[str, Any]:
         """Interrupt whatever is running.  Used by barge-in and the stop button."""
@@ -449,6 +530,7 @@ class JarvisCore:
             "persona": self.persona_name,
             "state": snapshot.to_dict(),
             "connection": connection,
+            "language": self.language or "auto",
             "health_checked": self._health_checked_at > 0,
             "uptime_seconds": round(time.time() - self._started_at, 1),
         }

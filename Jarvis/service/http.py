@@ -121,6 +121,9 @@ class JarvisHTTPServer:
                     if key in body
                 }
             ),
+            "/api/personas": lambda _: self.core.list_personas(),
+            "/api/persona": lambda body: self.core.set_persona(str(body.get("name", ""))),
+            "/api/language": lambda body: self.core.set_language(str(body.get("language", ""))),
             "/api/stop": lambda _: self.core.stop_current(),
         }
         handler = routes.get(path)
