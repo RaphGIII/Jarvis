@@ -1,8 +1,9 @@
+# Capability implementation. Replace the body of run().
+
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import main
+from unittest.mock import patch
 
 
 def test_run_dry_run_true():
@@ -19,6 +20,10 @@ def test_run_dry_run_false_no_player_found():
 
 
 def test_run_dry_run_false_player_found():
+    with patch('shutil.which', return_value='C:\Program Files\VideoLAN\VLC\vlc.exe'):
+        result = main.run({'dry_run': False})
+        assert 'message' in result, 'The response should contain a message key when running with dry_run=False'
+
     with patch('shutil.which', return_value='C:\Program Files\VideoLAN\VLC\vlc.exe'):
         result = main.run({'dry_run': False})
         assert 'message' in result, 'The response should contain a message key'

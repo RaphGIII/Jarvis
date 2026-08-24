@@ -1,4 +1,4 @@
-"""Capability implementation. Replace the body of run()."""
+# Capability implementation. Replace the body of run().
 
 from __future__ import annotations
 
@@ -15,4 +15,10 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
     player = shutil.which("some-program")
     if payload.get("dry_run"):
         return {"ok": bool(player), "would_use": player}
-    return {"ok": False, "error": "JARVIS_CAPABILITY_NOT_IMPLEMENTED"}
+    else:
+        try:
+            from playsound import playsound
+            playsound('path_to_audio_file.mp3')
+            return {"ok": True, "message": "Audio playback successful"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}

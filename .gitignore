@@ -34,3 +34,6 @@ Jarvis/data/models/
 Jarvis/data/voices/*.onnx
 Jarvis/data/voices/*.onnx.json
 Jarvis/data/voices/*.wav
+
+# Stockfish: a 65MB engine binary, downloaded per machine like the models.
+Jarvis/data/tools/
