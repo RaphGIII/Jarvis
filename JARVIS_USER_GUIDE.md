@@ -39,6 +39,21 @@ Bound to loopback by default. The token is required on every request.
 **Type** in the box at the bottom. Enter sends, Shift+Enter makes a new line,
 **Esc interrupts** whatever Jarvis is doing.
 
+**Hands-free**, in a second terminal:
+
+```bash
+.venv-speech\Scripts\python -m speech.listener --token <the token from the URL>
+```
+
+Say **"Hey Jarvis"**, then your question. It records until you stop talking and
+sends the audio to the core. Say the name the English way — "JAR-vis" scores
+0.995 with the detector, the German "YAR-vis" scores 0.04.
+
+Nothing leaves your machine until the wake word fires: the listener decides
+locally that Jarvis is being addressed, and only then is any audio sent. Add
+`--list-devices` to pick a microphone, `--threshold` to make it more or less
+eager.
+
 **Speak** by clicking the microphone. Click again to stop recording; Jarvis
 transcribes, answers, and speaks the reply. Speaking is what enters voice mode —
 typing alone never makes Jarvis talk back.
@@ -151,7 +166,7 @@ Speech (optional; ~1 GB, gitignored deliberately):
 
 ```bash
 python -m venv .venv-speech
-.venv-speech\Scripts\python -m pip install faster-whisper piper-tts sounddevice pypdf
+.venv-speech\Scripts\python -m pip install faster-whisper piper-tts sounddevice pypdf openwakeword
 # a Piper voice into Jarvis/data/voices/ (.onnx and .onnx.json together)
 ```
 

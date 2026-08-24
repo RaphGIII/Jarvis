@@ -1,113 +1,94 @@
 # Jarvis Product Status
 
-Living document. Updated as subsystems land. Every "validated" claim below names
-the measurement or the test that supports it; anything not measured says so.
+Living document. Every "validated" claim names the measurement or test behind
+it; anything not measured says so.
 
-**Hardware this is measured on:** Windows 10, GTX 1070 8 GB, older i7, 
-Ollama pinned to a Pascal-compatible build.
-**Local models:** `qwen3:4b-instruct` (FAST_LOCAL), `qwen2.5-coder:7b-instruct-q4_K_M` (BUILD_LOCAL),
-`whisper-base` int8 CPU (STT), `piper de_DE-thorsten-medium` (TTS).
+**Hardware:** Windows 10, GTX 1070 8 GB, older i7, Ollama pinned Pascal-compatible.
+**Models:** `qwen3:4b-instruct` (FAST_LOCAL), `qwen2.5-coder:7b-instruct-q4_K_M`
+(BUILD_LOCAL), `whisper-base` int8 CPU (STT), `piper de_DE-thorsten-medium`
+(TTS), `openwakeword hey_jarvis` (wake).
 
 **Start it:** `python -m jarvis.serve` → prints a tokenised loopback URL.
+**Hands-free:** `.venv-speech\Scripts\python -m speech.listener --token <token>`
 
 ---
 
 ## Measured on this machine
 
-| What | Measurement | Where |
-|---|---|---|
-| Conversation, first token | **0.35–0.55 s** warm | `brain/ollama.py` `generate_stream` |
-| Conversation throughput | **77 tok/s** (qwen3:4b) | same |
-| Voice: first token | **0.47 s** | `speech/pipeline.py` metrics |
-| Voice: first phrase ready | **0.97 s** | same |
-| **Voice: first audio out** | **1.49 s** (answer was 15.7 s long) | same |
-| TTS realtime factor | **0.087** (11× faster than playback) | Piper, CPU |
-| STT realtime factor | **0.26** (whisper-base), 0.79 (small) | measured comparison |
-| UI page load / status | **61 ms** | `service/core.py` background probes |
-| Expert job, end to end | 244 s, independently verified | `experts/` real run |
-| **Spoken question -> first audio** | **3.16 s** warm (54.07 s cold) | full HTTP chain |
-| Transcription of a 2.5 s utterance | **1.90 s** warm (9.44 s cold) | same |
-| Startup warm-up | 15.7 s, in the background | `JarvisCore.warm()` |
-| Non-live test suite | **822 passing** | `pytest tests/` |
+| What | Measurement |
+|---|---|
+| Conversation, first token | **0.35–0.55 s** warm |
+| Conversation throughput | **77 tok/s** (qwen3:4b) |
+| Text → first spoken audio | **1.49 s** (against a 15.7 s answer) |
+| **Spoken question → first audio** | **3.16 s** warm (54.07 s cold) |
+| Transcription, 2.5 s utterance | **1.90 s** warm (9.44 s cold) |
+| TTS realtime factor | **0.087** (11× faster than playback) |
+| STT realtime factor | **0.26** base / 0.79 small — base also *more* accurate |
+| Wake word, correct pronunciation | **0.995**; unrelated speech **0.000** |
+| Wake word CPU | 3–5 ms per 80 ms frame (~5% of one core) |
+| Startup warm-up | 15.7 s, in the background |
+| UI page load / status | **61 ms** |
+| Expert job, end to end | 244 s, independently verified |
+| Capability acquisition (music) | **736 s, acquired** — see caveat below |
+| Non-live test suite | **~950 passing** |
 
 ---
 
 ## DONE and VALIDATED ON REAL HARDWARE
 
-- **Cost policy.** Channel-based (`local` / `subscription_cli` / `paid_api` /
-  `usage_credits` / `runpod` / `browser_ai_automation`). Every metered channel
-  off by default; `require()` raises rather than returning false. A credential in
-  the environment is never treated as consent. Quota exhaustion cannot reach a
-  metered channel — `fallbacks_for()` cannot name one even under a permissive
-  policy. 33 tests, adversarial.
-- **Expert gateway.** Policy checked before a provider is consulted; acceptance
-  commands re-run by Jarvis afterwards; `verified` consults that evidence and
-  never the provider's own report. Claude Code adapter built against the
-  installed CLI (2.1.241), never passes `--bare` (it forces API-key auth), and
-  scrubs `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/Bedrock/
-  Vertex/`OPENAI_API_KEY` from the child environment.
-  *Proved on a real job*: the expert was refused permission to run pytest itself,
-  said so, and Jarvis' independent re-run (`exit=0`) established the result.
-- **Core as a service.** `JarvisCore` owns state and events and imports no UI.
-  HTTP + SSE over stdlib only (no dependencies added). Token-authenticated,
-  loopback by default, warns when bound wider.
-- **Event bus.** Publishing never blocks; a subscriber that stops draining loses
-  its oldest events rather than applying backpressure — a paused browser tab
-  cannot freeze an autonomous build. Replay buffer means a page opened
-  mid-mission renders the truth.
-- **The eye.** Canvas, no assets, no dependencies. Continuous parameters eased
-  toward per-state targets, so transitions are one entity changing behaviour
-  rather than clips cutting. All 11 required states.
-- **Streaming generation.** `generate_stream` on the Ollama provider; request
-  body shared with the blocking path so the two cannot disagree about `num_ctx`.
-- **Local speech.** Whisper + Piper in an isolated venv behind a JSON-over-stdio
-  worker. Phrase chunker with abbreviation/decimal/list-marker handling and an
-  asymmetric first-phrase rule. Barge-in stops audio within 100 ms slices.
-- **Deterministic repository navigation.** AST role classification
-  (`DOCUMENTATION < CONSTANT_TEXT < MODULE_CODE < FUNCTION_CODE < FUNCTION_DATA
-  < CONTROL_FLOW`) so real code outranks help text mentioning the same words.
-  20 adversarial fixtures where plain search picks wrong by construction.
-- **Stall/timeout hardening.** Deadlines, heartbeats, `python -m jarvis.doctor`,
-  hard wall-clock limits. A timed-out call becomes evidence for DIAGNOSE.
-
-- **Voice over the service boundary.** The client captures and plays; the core
-  transcribes, thinks and synthesises. Audio is posted as raw bytes and returned
-  by reference (a bounded store) rather than base64 inside the event stream.
-  Speaking to Jarvis enters voice mode; typing alone never makes it talk back.
-  One generation feeds both the screen and the speaker, so they cannot drift.
-  *Measured end to end over HTTP*: spoken question in, first audio out in 3.16 s.
-
-## DONE, not yet validated end to end on hardware
-
-- **Diagnosis-repetition escalation.** Fingerprinted diagnoses quoted back to the
-  model so a retry is a genuinely different request. Unit-tested; the live
-  capability run that motivated it has not been repeated since.
-- **Unified capability acceptance.** `capability_checks()` is now the single
-  definition the loop is graded on and the verifier re-runs independently.
-  Unit-tested; needs a live F run to confirm the pass rate moves.
-- **Knowledge graph export/inspect** (`export()`, `node_detail()`) — tested, but
-  no UI consumes it yet.
+- **Cost policy** — channel-based, every metered channel off by default, a
+  credential is never consent, and `fallbacks_for()` structurally cannot name a
+  metered channel even under a permissive policy. 33 adversarial tests.
+- **Expert gateway** — policy checked before a provider is consulted; Jarvis
+  re-runs acceptance itself; `verified` never consults the provider's report.
+  Claude Code adapter never passes `--bare` and scrubs six billing-related
+  variables from the child environment. *Proved live*: the expert was refused
+  permission to run pytest, said so, and Jarvis' own re-run decided the outcome.
+- **Core as a service** — no UI imports, HTTP+SSE on stdlib only, token-authed,
+  loopback by default.
+- **Event bus** — publishing never blocks; a stalled subscriber loses its oldest
+  events rather than applying backpressure; replay catches up a late client.
+- **The eye** — canvas, no assets, continuous parameters eased toward per-state
+  targets. All 11 states.
+- **Local speech, end to end** — whisper + Piper in an isolated venv behind a
+  JSON-over-stdio worker; asymmetric phrase chunker; barge-in within 100 ms.
+- **Voice over the service boundary** — client captures and plays, core
+  transcribes/thinks/synthesises, audio returned by reference.
+- **Hands-free** — openWakeWord + energy endpointing in a separate process:
+  the reference device client, arriving early because wake needed it.
+- **Deterministic repository navigation** — AST role classification so real code
+  outranks help text. 20 adversarial fixtures.
+- **Escalation from evidence** — counted failures, *distinct* diagnoses, and a
+  measured per-task-class history. No "difficulty" field for a model to fill in.
+- **Desktop tools** — discovery (SAFE) separated from action (HIGH); every side
+  effect supports `dry_run`; `.msi/.ps1/.vbs` never launched, `file://` refused.
+- **Knowledge ingestion + starfield** — documents split at their own headings,
+  the author's `[[wikilinks]]` preserved as edges, re-scanning updates rather
+  than duplicates.
+- **Persona and language** — one identity across backends; language detected
+  without a model and sticky against short utterances.
+- **Static capability checking** — catches undefined names in branches the tests
+  never reach.
+- **Stall/timeout hardening** — deadlines, heartbeats, `jarvis.doctor`.
 
 ## IN PROGRESS
 
-- **Autonomous reliability.** Scenario A passed live in 172 s after the
-  navigation fix — the first pass in five attempts. Needs the three consecutive
-  passes the brief requires. E and F need re-measuring against the new code.
+- **Autonomous self-development (A).** Passed live in 172 s after the navigation
+  fix — the first pass in five attempts. Needs three consecutive passes.
+- **Capability acquisition (F).** One clean acquisition; the static check that
+  the near-miss motivated has not yet been through a full live run.
 
 ## NOT STARTED
 
-- Wake word, VAD, continuous conversation mode, push-to-talk, mic privacy toggle
-- Escalation controller (complexity signals, historical performance)
-- Expert experience memory (problem class → successful architecture → reuse)
-- Knowledge graph UI (starfield), file/note/PDF ingestion
-- Projects view in the UI
-- Desktop/file/media tool pack; music capability
-- Browser/research agent
-- Persona system as a first-class configurable object (currently one prompt)
-- Multilingual switching and persistence (the model answers in-language already)
-- Device gateway, reference client, TV mode
-- Notifications, configuration layer, boot/persistence, permission tiers
-- Complex guided project proof; UI self-modification
+- Device gateway proper (identity, pairing, per-device revocation)
+- WebSocket audio transport for a remote device
+- TV / kiosk mode
+- Browser / research agent
+- Complex guided project proof (chess pipeline)
+- UI self-modification through the development pipeline
+- Notifications and proactive behaviour
+- Unified configuration layer; boot-at-login
+- Permission tiers as a first-class object
 
 ## BLOCKED
 
@@ -117,18 +98,22 @@ Nothing is blocked on the user.
 
 ## Honest limitations
 
-- **Scenario A is 1/5 lifetime**, and the one pass came after the navigation
-  fix. One pass is evidence the fix helps, not evidence of reliability.
-- **STT accuracy on synthetic speech is imperfect.** A Piper→Whisper round trip
-  of "mein Jarvis-Projekt" came back as "meinen Jarvisprojekts" — the words are
-  right, the grammar is not. Feeding whisper an `initial_prompt` of domain
-  vocabulary fixed the worse failure ("Jahresprojekt"). Real microphone input is
-  the case that matters and has still not been measured.
-- **Status is eventually-consistent.** Health is probed in the background
-  because an honest check costs a real generation (~80 s cold); the badge shows
-  `STARTING` until the first probe lands.
-- **No wake word yet**, so voice is press-to-record rather than hands-free.
-- **Cold start is 15.7 s.** Warming runs in the background at startup, so the
-  cost is only visible if the first question arrives within that window.
-- The speech venv, whisper models and Piper voices total ~1 GB and are
-  gitignored — a fresh machine needs the setup step.
+- **Scenario A is 1/5 lifetime.** One pass after the fix is evidence the fix
+  helps, not evidence of reliability.
+- **The acquired music capability passed every check and was still weak.**
+  Reading the generated code found a `media_control(...)` call — an undefined
+  name — sitting in a branch the dry run never enters, and every branch returned
+  a "Dry run:" message even when `dry_run` was false. The runtime checks were
+  satisfied without music playing. `capabilities/static_check.py` now catches the
+  undefined name; **"the dry run proves the real path works" is still not
+  something this system can claim**, and that is the honest limit of
+  dry-run-based verification for side-effecting capabilities.
+- **STT on synthetic speech is imperfect** — "mein Jarvis-Projekt" came back as
+  "meinen Jarvisprojekts". Vocabulary biasing fixed the worse failure
+  ("Jahresprojekt"). Real microphone accuracy has still not been measured.
+- **Wake word is English-pronunciation only.** "YAR-vis" scores 0.04.
+- **Status is eventually consistent** — an honest health check costs a real
+  generation, so the badge reads `STARTING` until the first probe lands.
+- **One shared token, loopback only.** Correct for this machine, insufficient
+  the moment a second device is involved.
+- **Speech assets are ~1 GB** and gitignored; a fresh machine needs setup.
