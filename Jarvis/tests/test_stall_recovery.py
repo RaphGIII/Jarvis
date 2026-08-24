@@ -513,3 +513,38 @@ def test_capability_acquisition_accepts_a_time_budget(tmp_path, tools):
 
     assert not outcome.acquired
     assert elapsed < 60.0, f"acquisition ran {elapsed:.0f}s against a 6s budget"
+
+
+# ================================================== honest evidence over attempts
+
+
+def test_every_attempt_is_recorded_not_just_the_last(tmp_path, monkeypatch):
+    """The same scenario passed one run and failed the next.
+
+    Overwriting kept only the latest attempt, so a single lucky or unlucky run
+    masqueraded as the whole truth.
+    """
+
+    import jarvis.record_evidence as rec
+
+    monkeypatch.setattr(rec, "EVIDENCE", tmp_path)
+
+    rec._record("X_live", {"scenario": "X_live", "acquired": True, "elapsed_seconds": 10})
+    rec._record("X_live", {"scenario": "X_live", "acquired": False, "elapsed_seconds": 20})
+    rec._record("X_live", {"scenario": "X_live", "acquired": True, "elapsed_seconds": 30})
+
+    rate = rec.pass_rate("X_live")
+    assert rate["attempts"] == 3
+    assert rate["passed"] == 2
+    assert rate["rate"] == 0.67
+
+    # The latest result still stands alone, for the live tests that read it.
+    assert json.loads((tmp_path / "X_live.json").read_text(encoding="utf-8"))["acquired"] is True
+
+
+def test_pass_rate_of_an_unrun_scenario_is_honest(tmp_path, monkeypatch):
+    import jarvis.record_evidence as rec
+
+    monkeypatch.setattr(rec, "EVIDENCE", tmp_path)
+    assert rec.pass_rate("never_run")["attempts"] == 0
+    assert rec.pass_rate("never_run")["rate"] is None

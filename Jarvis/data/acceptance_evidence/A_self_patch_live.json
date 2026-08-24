@@ -10,7 +10,7 @@
   ],
   "targeted_tests_passed": false,
   "protection_state": "NOT_EVALUATED",
-  "elapsed_seconds": 361.7,
+  "elapsed_seconds": 367.3,
   "recovery_events": [
     {
       "detail": "search matched 2 places in jarvis/cli.py:\n  occurrence 1: line 65: /quit  /exit  /bye    leave\n  occurrence 2: line 397: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\nEither extend the search text with neighbouring lines until only one place matches, or keep this search and add \"occurrence\": N to pick the Nth.",
@@ -63,5 +63,5 @@
   ],
   "diff": "diff --git a/jarvis/cli.py b/jarvis/cli.py\nindex 12be0bc..96da4c7 100644\n--- a/jarvis/cli.py\n+++ b/jarvis/cli.py\n@@ -62,7 +62,7 @@ Commands\n   /persona [name]       show or switch persona\n   /tune                 benchmark this machine and store a resource policy\n   /help                 this list\n-  /quit  /exit  /bye    leave\n+  /quit  /exit  /bye  /goodbye    leave\n \"\"\"\n \n \n",
   "budget_seconds": 1200.0,
-  "recorded_at": "2026-08-24T08:33:04.440482+00:00"
+  "recorded_at": "2026-08-24T09:10:42.360408+00:00"
 }

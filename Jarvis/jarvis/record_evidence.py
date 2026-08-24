@@ -36,11 +36,49 @@ EVIDENCE = REPO / "data" / "acceptance_evidence"
 
 
 def _record(name: str, payload: dict) -> Path:
+    """Write the latest result, and append it to an attempt history.
+
+    The history matters because the model is stochastic: the same scenario
+    passed one run and failed the next. Overwriting kept only the most recent
+    attempt, so a single lucky or unlucky run masqueraded as the whole truth.
+    :func:`pass_rate` reports what actually happened across attempts.
+    """
+
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     payload = {**payload, "recorded_at": datetime.now(timezone.utc).isoformat()}
     path = EVIDENCE / f"{name}.json"
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+    verdict = bool(payload.get("success") or payload.get("accepted") or payload.get("acquired"))
+    attempt = {
+        "recorded_at": payload["recorded_at"],
+        "passed": verdict,
+        "elapsed_seconds": payload.get("elapsed_seconds"),
+        "status": payload.get("status") or payload.get("stop_reason", ""),
+        "checks": {item["name"]: item["ok"] for item in (payload.get("verification") or {}).get("checks", [])},
+    }
+    with (EVIDENCE / f"{name}.history.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(attempt, default=str) + "\n")
     return path
+
+
+def pass_rate(name: str) -> dict:
+    """How often a scenario has actually passed, across every recorded attempt."""
+
+    path = EVIDENCE / f"{name}.history.jsonl"
+    if not path.exists():
+        return {"attempts": 0, "passed": 0, "rate": None, "median_seconds": None}
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not rows:
+        return {"attempts": 0, "passed": 0, "rate": None, "median_seconds": None}
+    passed = sum(1 for row in rows if row.get("passed"))
+    durations = sorted(row.get("elapsed_seconds") or 0 for row in rows)
+    return {
+        "attempts": len(rows),
+        "passed": passed,
+        "rate": round(passed / len(rows), 2),
+        "median_seconds": durations[len(durations) // 2],
+    }
 
 
 def _build_local():
@@ -398,7 +436,12 @@ def main() -> None:
             verdict = payload.get("success") or payload.get("accepted") or payload.get("acquired")
             elapsed = time.perf_counter() - started
             heartbeat.beat(f"scenario_{letter}", "PASS" if verdict else "did not pass", progress=True)
-            print(f"    -> {'PASS' if verdict else 'did not pass'} in {elapsed:.0f}s; recorded to {path}\n", flush=True)
+            rate = pass_rate(payload.get("scenario", letter))
+            print(
+                f"    -> {'PASS' if verdict else 'did not pass'} in {elapsed:.0f}s; recorded to {path}\n"
+                f"       history: {rate['passed']}/{rate['attempts']} attempts passed",
+                flush=True,
+            )
     finally:
         heartbeat.finish("complete")
 
