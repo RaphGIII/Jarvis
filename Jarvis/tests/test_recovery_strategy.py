@@ -249,3 +249,68 @@ def test_a_real_implementation_passes_the_implemented_check(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert "SUBSTANCE_OK" in completed.stdout
+
+
+# --------------------------------------------------------------------------
+# A long-lived project must not run out of repairs
+# --------------------------------------------------------------------------
+
+def test_the_repair_budget_resets_on_verified_progress():
+    """Persistence is the point; a lifetime budget defeats it.
+
+    The chess project accumulated requirements across four sessions. By the
+    third, every diagnosis was refused with "no further repair avenue is
+    available" -- the budget counted auto-repair tasks over the whole project
+    life, so requirements one and two had spent what requirement three needed.
+
+    A satisfied acceptance check is proof the loop is productive, so it resets
+    the count. Spinning still exhausts it, because spinning produces no
+    passing checks.
+    """
+
+    from projects.engine import _AUTO_REPAIR
+    from projects.models import Phase, Project, StepRecord, Task
+
+    engine = _Engine()
+    project = Project(goal="a long project")
+
+    # Three repairs spent on an earlier requirement...
+    for index in range(3):
+        project.tasks.append(Task(title=f"repair {index}", detail=f"{_AUTO_REPAIR} earlier work"))
+        project.tasks[-1].created_at = "2020-01-01T00:00:00+00:00"
+
+    assert not engine._repair_budget_left(project), "the budget is spent before progress"
+
+    # ...then something actually passed.
+    project.steps.append(
+        StepRecord(phase=Phase.VERIFY, summary="all checks pass", success=True,
+                   at="2020-06-01T00:00:00+00:00")
+    )
+
+    assert engine._repair_budget_left(project), "verified progress must restore the budget"
+
+
+def test_spinning_still_exhausts_the_budget():
+    """The property the lifetime count was protecting, kept."""
+
+    from projects.engine import _AUTO_REPAIR
+    from projects.models import Phase, Project, StepRecord, Task
+
+    engine = _Engine()
+    project = Project(goal="a stuck project")
+    project.steps.append(
+        StepRecord(phase=Phase.VERIFY, summary="passed once", success=True,
+                   at="2020-01-01T00:00:00+00:00")
+    )
+    for index in range(4):
+        task = Task(title=f"repair {index}", detail=f"{_AUTO_REPAIR} going nowhere")
+        task.created_at = "2020-06-01T00:00:00+00:00"   # after the last pass
+        project.tasks.append(task)
+
+    assert not engine._repair_budget_left(project)
+
+
+def test_a_project_with_no_verified_progress_yet_still_has_a_budget():
+    from projects.models import Project
+
+    assert _Engine()._repair_budget_left(Project(goal="brand new"))

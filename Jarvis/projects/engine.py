@@ -869,8 +869,35 @@ class ProjectEngine:
         while proving nothing.  Observed directly while building this loop.
         """
 
-        auto_created = sum(1 for task in project.tasks if _AUTO_REPAIR in task.detail)
+        # Counted since the last VERIFIED PROGRESS, not over the project's whole
+        # life. A long-lived project accumulates requirements across sessions --
+        # which is the point of persistence -- and a lifetime count means the
+        # third requirement starts with a budget the first one already spent.
+        # Observed on the chess project: 4 of 5 criteria passing, and the
+        # remaining one refused every repair with "no further repair avenue".
+        #
+        # A satisfied acceptance check is proof the loop is productive, so it is
+        # the right thing to reset against: spinning still exhausts the budget
+        # because spinning produces no passing checks.
+        since = self._last_progress_at(project)
+        auto_created = sum(
+            1 for task in project.tasks
+            if _AUTO_REPAIR in task.detail and (not since or task.created_at > since)
+        )
         return auto_created < max(2, project.limits.max_task_attempts)
+
+    @staticmethod
+    def _last_progress_at(project: Project) -> str:
+        """When the loop last demonstrably achieved something.
+
+        The most recent successful VERIFY, which is the only unambiguous
+        evidence of progress the project keeps.
+        """
+
+        for step in reversed(project.steps):
+            if step.phase is Phase.VERIFY and step.success:
+                return getattr(step, "at", "") or ""
+        return ""
 
     def _reopen_failed_task(self, project: Project, fix: str) -> Task | None:
         """Reopen the task most likely to be responsible for the failure.
