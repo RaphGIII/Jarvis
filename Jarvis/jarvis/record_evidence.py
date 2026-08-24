@@ -70,27 +70,33 @@ def scenario_a(run_root: Path) -> dict:
 
     spec = _build_local()
     brain = provider_for_spec(spec)
+    # The goal must be something the CLI does not already do, and the check
+    # must prove behaviour rather than the presence of a substring. An earlier
+    # version asked for /bye, which a later CLI rewrite had already added -- so
+    # the scenario passed its own check before the model did anything.
     goal = SelfImprovementGoal(
         objective=(
-            "Add a /bye command to the interactive CLI so that typing /bye exits Jarvis "
-            "exactly like /quit does. Change only jarvis/cli.py."
+            "Add /goodbye to the interactive console as another way to exit, alongside the words "
+            "that already quit. Change only jarvis/cli.py."
         ),
         allowed_paths=["jarvis/cli.py"],
-        protected_paths=["tests", "development", "brain"],
+        protected_paths=["tests", "development", "brain", "projects", "capabilities", "tools"],
         tests=[
             [
                 sys.executable,
                 "-c",
-                "import ast, pathlib; src = pathlib.Path('jarvis/cli.py').read_text(encoding='utf-8'); "
-                "ast.parse(src); raise SystemExit(0 if '/bye' in src else 1)",
+                # Passes only if "/goodbye" ends up in the SAME set literal as
+                # "/quit" -- i.e. it really is treated as an exit word.
+                "import ast, pathlib; "
+                "tree = ast.parse(pathlib.Path('jarvis/cli.py').read_text(encoding='utf-8')); "
+                "ok = any(isinstance(n, ast.Set) and "
+                "{getattr(e, 'value', None) for e in n.elts} >= {'/quit', '/goodbye'} "
+                "for n in ast.walk(tree)); "
+                "raise SystemExit(0 if ok else 1)",
             ]
         ],
     )
 
-    # A fresh directory every time. RepositoryEngineer resumes from a
-    # checkpoint if it finds one, which is right for a real run and wrong for
-    # recording evidence: a second recording would silently continue the first
-    # and report its worktree as a new result.
     benchmark_root = run_root / "self_patch"
     shutil.rmtree(benchmark_root, ignore_errors=True)
     benchmark_root.mkdir(parents=True, exist_ok=True)

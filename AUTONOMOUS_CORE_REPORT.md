@@ -211,7 +211,33 @@ Console commands: `/status`, `/projects`, `/project`, `/work`, `/new`, `/say`,
 
 Suite: `Jarvis/tests/test_acceptance.py`, named A–O after the brief.
 
-<!-- RESULTS -->
+Suite: `Jarvis/tests/test_acceptance.py`, named A–O after the brief.
+Deterministic tests run against scripted models; the ones needing real
+inference are marked `live` and read evidence recorded by
+`python -m jarvis.record_evidence` into `Jarvis/data/acceptance_evidence/`.
+
+```
+python -m pytest tests/ -q -m "not live"     →  547 passed, 5 deselected
+python -m pytest tests/test_acceptance.py -q -m "not live"  →  28 passed
+```
+
+| # | Requirement | Result | Evidence |
+|---|---|---|---|
+| **A** | Local self-patch | **pass** (deterministic) + live, see below | `test_A_self_patch_produces_a_verified_candidate`; `A_self_patch_live.json` |
+| **B** | Bad patch recovery | **pass** | `test_B_an_invalid_first_patch_does_not_end_the_mission`, `test_B_recovery_covers_every_way_a_local_model_gets_an_edit_wrong` |
+| **C** | Test failure recovery | **pass** | `test_C_valid_but_wrong_code_is_diagnosed_from_evidence_and_repaired`, `test_C_the_diagnosis_sees_the_real_test_output` |
+| **D** | Multi-file development | **pass** | `test_D_a_goal_spanning_two_source_files_succeeds`, `test_D_a_multi_file_edit_is_all_or_nothing` |
+| **E** | New project | **pass** (deterministic **and** live) | `test_E_a_new_application_is_built_in_an_isolated_workspace`; `E_new_project_live.json` |
+| **F** | Capability acquisition | **pass** (deterministic); live: see below | `test_F_a_missing_capability_is_acquired_verified_registered_and_reusable` |
+| **G** | Complex project | **pass** | `test_G_a_multi_component_pipeline_is_built_and_verified`, `test_G_requirements_accumulate_across_interactions` |
+| **H** | Protected path | **pass** | `test_H_a_protected_file_is_refused_and_stays_byte_identical`, `test_H_the_repository_engineer_rejects_a_protected_edit` |
+| **I** | Atomicity | **pass** | `test_I_a_failed_multi_edit_leaves_no_partial_mutation`, `test_I_atomicity_holds_for_every_rejection_kind` |
+| **J** | Promotion | **pass** | `test_J_a_verified_candidate_is_promoted_into_the_installation`, `test_J_the_real_health_check_exercises_the_whole_kernel` |
+| **K** | Rollback | **pass** | `test_K_a_failing_health_check_rolls_back_automatically`, `test_K_a_rollback_that_itself_fails_is_escalated` |
+| **L** | Persistence | **pass** | `test_L_projects_memory_and_capabilities_all_survive_a_restart`, `test_L_a_paused_project_can_be_picked_up_later` |
+| **M** | No cloud | **pass** | `test_M_*` ×3; no paid LLM or search credential exists in this environment at all (`Research_live.json`) |
+| **N** | Real hardware | **pass**, with caveats below | `N_build_local_probe.json`, `A_self_patch_live.json`, `E_new_project_live.json`, `F_capability_live.json` |
+| **O** | Responsiveness | **pass** | `test_O_*` ×3, asserted against the measurements in `config/resources.json` |
 
 ---
 

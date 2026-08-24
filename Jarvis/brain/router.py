@@ -124,9 +124,15 @@ class BrainRouter:
         probe: ModelProbe | None = None,
         fast_brain: Any | None = None,
         build_brain: Any | None = None,
+        provider_factory: Any | None = None,
     ) -> None:
         self.catalog = catalog or ModelCatalog()
         self.probe = probe or ModelProbe(self.catalog)
+        #: How to obtain a provider for a tier.  A caller that already holds
+        #: providers -- the kernel does -- should pass its own, so both share one
+        #: instance per tier.  Two independent caches would mean two resident
+        #: copies of the same weights competing for VRAM on a single GPU.
+        self._provider_factory = provider_factory
         self._overrides: dict[BrainTier, Any] = {}
         if fast_brain is not None:
             self._overrides[BrainTier.FAST_LOCAL] = fast_brain
@@ -169,6 +175,9 @@ class BrainRouter:
             )
         if not spec.configured:
             raise BrainUnavailable(f"{tier.value} has no model configured.")
+
+        if self._provider_factory is not None:
+            return self._provider_factory(tier.to_model_tier())
 
         if tier not in self._providers:
             from brain.providers import provider_for_spec

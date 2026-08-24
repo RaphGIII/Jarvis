@@ -71,7 +71,12 @@ class JarvisConsole:
 
     def __init__(self, kernel: JarvisKernel | None = None) -> None:
         self.kernel = kernel or JarvisKernel()
-        self.router = BrainRouter(catalog=self.kernel.catalog, probe=self.kernel.probe)
+        # Share the kernel's providers rather than building a second set: two
+        # caches would mean two resident copies of the same weights competing
+        # for VRAM on a single GPU.
+        self.router = BrainRouter(
+            catalog=self.kernel.catalog, probe=self.kernel.probe, provider_factory=self.kernel.provider
+        )
         self.personas = PersonaStore(self.kernel.state_root / "personas.json")
         self.graph = KnowledgeGraph(self.kernel.state_root / "knowledge" / "palace.sqlite")
         self.memory = ExperienceMemory(self.graph)
