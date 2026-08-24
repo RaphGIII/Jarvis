@@ -104,7 +104,9 @@ def test_non_unique_search_is_rejected(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="exactly once"):
+    # The message now names where it matched, so the model can disambiguate
+    # rather than only being told the count.
+    with pytest.raises(ValueError, match="matched 2 places"):
         engineer(tmp_path)._apply_proposal(
             root,
             root,

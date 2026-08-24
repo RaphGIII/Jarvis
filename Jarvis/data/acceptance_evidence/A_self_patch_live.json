@@ -5,12 +5,10 @@
   "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED",
   "success": false,
   "cycles": 4,
-  "changed_files": [
-    "jarvis/cli.py"
-  ],
-  "targeted_tests_passed": false,
+  "changed_files": [],
+  "targeted_tests_passed": null,
   "protection_state": "NOT_EVALUATED",
-  "elapsed_seconds": 198.1,
+  "elapsed_seconds": 345.5,
   "recovery_events": [
     {
       "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
@@ -34,34 +32,70 @@
       "reason": "PATCH_NOT_APPLIED"
     },
     {
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
+      "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
+      "kind": "ambiguous_search",
       "patch_correction": 1
     },
     {
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 2
     },
     {
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
+      "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
+      "kind": "ambiguous_search",
+      "patch_correction": 3
+    },
+    {
+      "cycle": 2,
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
+      "kind": "no_unique_match",
+      "reason": "PATCH_NOT_APPLIED"
+    },
+    {
+      "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
+      "kind": "ambiguous_search",
+      "patch_correction": 1
+    },
+    {
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
+      "kind": "no_unique_match",
+      "patch_correction": 2
+    },
+    {
+      "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
+      "kind": "ambiguous_search",
       "patch_correction": 3
     },
     {
       "cycle": 3,
-      "detail": "no effective edit for jarvis/cli.py",
-      "kind": "no_effective_edit",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
+      "kind": "no_unique_match",
       "reason": "PATCH_NOT_APPLIED"
     },
     {
+      "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
+      "kind": "ambiguous_search",
+      "patch_correction": 1
+    },
+    {
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
+      "kind": "no_unique_match",
+      "patch_correction": 2
+    },
+    {
+      "detail": "search must match exactly once in jarvis/cli.py; matched 2. Extend the search text with surrounding lines until it is unique.",
+      "kind": "ambiguous_search",
+      "patch_correction": 3
+    },
+    {
       "cycle": 4,
-      "detail": "edit bundle contained no operations",
-      "kind": "empty_plan",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.52 < 0.88)",
+      "kind": "no_unique_match",
       "reason": "PATCH_NOT_APPLIED"
     }
   ],
-  "diff": "diff --git a/jarvis/cli.py b/jarvis/cli.py\nindex 12be0bc..96da4c7 100644\n--- a/jarvis/cli.py\n+++ b/jarvis/cli.py\n@@ -62,7 +62,7 @@ Commands\n   /persona [name]       show or switch persona\n   /tune                 benchmark this machine and store a resource policy\n   /help                 this list\n-  /quit  /exit  /bye    leave\n+  /quit  /exit  /bye  /goodbye    leave\n \"\"\"\n \n \n",
+  "diff": "",
   "budget_seconds": 1500.0,
-  "recorded_at": "2026-08-24T07:42:54.101360+00:00"
+  "recorded_at": "2026-08-24T08:05:26.521223+00:00"
 }

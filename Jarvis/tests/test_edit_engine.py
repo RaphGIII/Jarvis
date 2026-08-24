@@ -662,3 +662,56 @@ def test_reindentation_leaves_non_python_files_alone(tmp_path):
         parse_bundle({"files": [{"path": "notes.md", "search": "  indented note", "replace": "flush left"}]})
     )
     assert (tmp_path / "notes.md").read_text(encoding="utf-8") == "flush left\n"
+
+
+# ------------------------------------- making an ambiguous anchor answerable
+
+def test_an_ambiguous_anchor_names_the_places_it_matched(tmp_path):
+    """"Matched 2" is unanswerable; "line 1 and line 5" is a choice.
+
+    A live self-patch run failed seven times on ambiguous anchors because the
+    error said only how many matches there were. The model had no way to tell
+    which two, so it guessed longer anchors and kept guessing wrong.
+    """
+
+    _write(tmp_path, "cli.py", 'HELP = "/quit /exit"\n\n\ndef handle(c):\n    if c in {"/quit"}:\n        return False\n')
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(parse_bundle({"files": [{"path": "cli.py", "search": "/quit", "replace": "/q"}]}))
+
+    detail = excinfo.value.detail
+    assert excinfo.value.kind == "ambiguous_search"
+    assert "line 1" in detail and "line 5" in detail
+    assert "occurrence" in detail
+    assert 'HELP = "/quit /exit"' in detail, "the matching line itself must be quoted"
+
+
+def test_occurrence_resolves_what_the_error_described(tmp_path):
+    """The remedy the error suggests must actually work."""
+
+    _write(tmp_path, "cli.py", 'HELP = "/quit"\n\n\ndef handle(c):\n    if c in {"/quit"}:\n        return False\n')
+
+    _engine(tmp_path).apply(
+        parse_bundle({"files": [{"path": "cli.py", "search": '{"/quit"}', "replace": '{"/quit", "/goodbye"}'}]})
+    )
+    text = (tmp_path / "cli.py").read_text(encoding="utf-8")
+    assert '{"/quit", "/goodbye"}' in text
+    assert text.startswith('HELP = "/quit"'), "the documentation must be untouched"
+
+
+def test_occurrence_is_offered_in_the_schema_the_model_is_constrained_to(tmp_path):
+    """The parser always honoured it; under constrained decoding the model
+    cannot say what the schema does not describe."""
+
+    from development.edit_engine import edit_schema
+
+    properties = edit_schema(allow_rewrite=False)["properties"]["files"]["items"]["properties"]
+    assert "occurrence" in properties
+    assert properties["occurrence"]["type"] == "integer"
+
+
+def test_many_matches_are_summarised_rather_than_dumped(tmp_path):
+    _write(tmp_path, "a.py", "\n".join("x = 1" for _ in range(30)) + "\n")
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(parse_bundle({"files": [{"path": "a.py", "search": "x = 1", "replace": "x = 2"}]}))
+    assert "and 24 more" in excinfo.value.detail

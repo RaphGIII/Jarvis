@@ -533,10 +533,16 @@ def locate(current: str, search: str, relative: str, *, occurrence: int | None =
         if occurrence is not None and 1 <= occurrence <= len(exact_spans):
             start = exact_spans[occurrence - 1]
             return Match(start, start + len(search), "exact_occurrence")
+        # Say *where* it matched. "Matched 2" is a dead end for a small model:
+        # it has no way to tell which two, so it guesses a longer anchor and
+        # usually guesses wrong. The line numbers plus the surrounding line turn
+        # an unanswerable complaint into a choice it can actually make.
         raise EditError(
             "ambiguous_search",
-            f"search must match exactly once in {relative}; matched {len(exact_spans)}. "
-            "Extend the search text with surrounding lines until it is unique.",
+            f"search matched {len(exact_spans)} places in {relative}:\n"
+            + _describe_matches(current, exact_spans)
+            + "\nEither extend the search text with neighbouring lines until only one place matches, "
+            'or keep this search and add "occurrence": N to pick the Nth.',
             path=relative,
             recoverable=True,
         )
@@ -555,6 +561,26 @@ def locate(current: str, search: str, relative: str, *, occurrence: int | None =
 
     # 3./4. Whitespace-canonical, then similarity, over line windows.
     return _locate_by_window(current, search, relative)
+
+
+def _describe_matches(current: str, spans: list[int], *, limit: int = 6) -> str:
+    """Render each match as "line N: <the line it sits on>".
+
+    "Matched 2" is a dead end for a small model: it has no way to tell which
+    two, so it guesses a longer anchor and usually guesses wrong. Naming the
+    lines turns an unanswerable complaint into a choice it can make.
+    """
+
+    rows = []
+    for index, start in enumerate(spans[:limit], start=1):
+        line_number = current.count("\n", 0, start) + 1
+        line_start = current.rfind("\n", 0, start) + 1
+        line_end = current.find("\n", start)
+        line = current[line_start : line_end if line_end != -1 else len(current)]
+        rows.append(f"  occurrence {index}: line {line_number}: {line.strip()[:110]}")
+    if len(spans) > limit:
+        rows.append(f"  ...and {len(spans) - limit} more")
+    return "\n".join(rows)
 
 
 def _all_spans(haystack: str, needle: str) -> list[int]:
@@ -1188,6 +1214,10 @@ def edit_schema(*, max_edits: int = 8, max_new_files: int = 4, allow_rewrite: bo
         },
         "search": {"type": "string"},
         "replace": {"type": "string"},
+        # Exposed so an ambiguous anchor is answerable. The parser has always
+        # honoured it; the schema did not offer it, so under constrained
+        # decoding the model could not say it.
+        "occurrence": {"type": "integer"},
     }
     if allow_rewrite:
         edit_properties["content"] = {"type": "string"}
