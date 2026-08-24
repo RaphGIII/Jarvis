@@ -1,0 +1,6 @@
+{"arguments": {"name": "vlc"}, "call_id": "52efed3d79c9", "duration_seconds": 0.0947, "error": "", "error_kind": "", "ok": true, "timestamp": "2026-08-24T13:47:08.352903+00:00", "tool": "find_program", "truncated": false}
+{"arguments": {"name": "spotify"}, "call_id": "9d9da26505c5", "duration_seconds": 0.0703, "error": "", "error_kind": "", "ok": true, "timestamp": "2026-08-24T13:47:08.448217+00:00", "tool": "find_program", "truncated": false}
+{"arguments": {}, "call_id": "1cf0a33c5867", "duration_seconds": 0.0039, "error": "", "error_kind": "", "ok": true, "timestamp": "2026-08-24T13:47:08.520551+00:00", "tool": "media_folders", "truncated": false}
+{"arguments": {"limit": 10, "path": "."}, "call_id": "cba75ab6a5e3", "duration_seconds": 0.0013, "error": "", "error_kind": "", "ok": true, "timestamp": "2026-08-24T13:47:08.526618+00:00", "tool": "list_files", "truncated": false}
+{"arguments": {"name": "vlc"}, "call_id": "66e9e31d0fa1", "duration_seconds": 0.1344, "error": "", "error_kind": "", "ok": true, "timestamp": "2026-08-24T13:47:51.712110+00:00", "tool": "find_program", "truncated": false}
+{"arguments": {"name": "spotify"}, "call_id": "3cb18782f313", "duration_seconds": 0.092, "error": "", "error_kind": "", "ok": true, "timestamp": "2026-08-24T13:47:51.849985+00:00", "tool": "find_program", "truncated": false}

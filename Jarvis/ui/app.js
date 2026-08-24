@@ -245,6 +245,88 @@ function wireInput() {
   };
 
   $("btnClose").onclick = () => ui.panel.classList.remove("open");
+
+  $("btnGraph").onclick = () => openGraph();
+  $("btnGraphClose").onclick = () => closeGraph();
+  $("graphSearch").addEventListener("input", (e) => graph?.setFilter(e.target.value));
+}
+
+/* ------------------------------------------------------------------ */
+/* knowledge graph                                                     */
+/* ------------------------------------------------------------------ */
+
+let graph = null;
+let graphNode = null;
+
+async function openGraph() {
+  const view = $("graphView");
+  view.classList.add("open");
+
+  if (!graph) {
+    graph = new KnowledgeStarfield($("graphCanvas"), { onSelect: showNode });
+    window.addEventListener("resize", () => graph.resize());
+    wireNodeCard();
+  }
+  graph.resize();
+  graph.start();
+
+  const data = await api("/api/knowledge/graph", { limit: 400 });
+  graph.load(data);
+  $("graphCount").textContent =
+    `${(data.nodes || []).length} nodes · ${(data.edges || []).length} links` +
+    (data.truncated ? " (truncated)" : "");
+}
+
+function closeGraph() {
+  $("graphView").classList.remove("open");
+  // Stop the layout when it is not visible: it is the only thing in the UI
+  // that burns CPU continuously, and a hidden animation is pure waste on a
+  // machine that is also running a local model.
+  graph?.stop();
+}
+
+async function showNode(node) {
+  const card = $("nodeCard");
+  if (!node) { card.hidden = true; graphNode = null; return; }
+
+  graphNode = node;
+  card.hidden = false;
+  $("nodeType").textContent = node.type;
+  $("nodeTitle").textContent = node.title;
+  $("nodeBody").textContent = node.body ? node.body.slice(0, 600) : "(no content)";
+  $("nodeLinks").innerHTML = "";
+
+  const detail = await api("/api/knowledge/node", { id: node.id });
+  const related = [...(detail.outgoing || []), ...(detail.incoming || [])];
+  for (const item of related.slice(0, 12)) {
+    const button = document.createElement("button");
+    button.textContent = `${item.edge.type} → ${item.node.title}`.slice(0, 42);
+    button.onclick = () => {
+      graph.focusOn(item.node.id);
+      const target = graph.byId.get(item.node.id);
+      if (target) showNode(target);
+    };
+    $("nodeLinks").appendChild(button);
+  }
+}
+
+function wireNodeCard() {
+  $("btnAskAbout").onclick = () => {
+    if (!graphNode) return;
+    closeGraph();
+    api("/api/message", { text: `Tell me about "${graphNode.title}" from my knowledge graph.` });
+  };
+  $("btnReadAloud").onclick = () => {
+    if (!graphNode) return;
+    api("/api/voice", { enabled: true, speak_replies: true });
+    api("/api/message", { text: `Read this note aloud: "${graphNode.title}". ${graphNode.body || ""}`.slice(0, 1500) });
+  };
+  $("btnExpand").onclick = async () => {
+    if (!graphNode) return;
+    const data = await api("/api/knowledge/graph", { query: graphNode.title, limit: 400 });
+    graph.load(data);
+    graph.focusOn(graphNode.id);
+  };
 }
 
 function openPanel(title, text) {
