@@ -8,93 +8,93 @@
   "changed_files": [],
   "targeted_tests_passed": null,
   "protection_state": "NOT_EVALUATED",
-  "elapsed_seconds": 237.0,
+  "elapsed_seconds": 285.2,
   "recovery_events": [
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.71 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 1
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.71 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 2
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.71 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 3
     },
     {
       "cycle": 1,
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.71 < 0.88)",
+      "kind": "no_unique_match",
       "reason": "PATCH_NOT_APPLIED"
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "the edit would leave jarvis/cli.py unparseable: unindent does not match any outer indentation level at line 395. Check the indentation of your replacement text.\n  392:         lowered = command.lower()\n  393: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n  394:             return False\n  395:         if lowered in {\"/help\", \"help\", \"?\"}:\n  396:             print(HELP)\n  397:             return True",
+      "kind": "syntax_error",
       "patch_correction": 1
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 2
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 3
     },
     {
       "cycle": 2,
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "reason": "PATCH_NOT_APPLIED"
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "the edit would leave jarvis/cli.py unparseable: unindent does not match any outer indentation level at line 395. Check the indentation of your replacement text.\n  392:         lowered = command.lower()\n  393: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n  394:             return False\n  395:         if lowered in {\"/help\", \"help\", \"?\"}:\n  396:             print(HELP)\n  397:             return True",
+      "kind": "syntax_error",
       "patch_correction": 1
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 2
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 3
     },
     {
       "cycle": 3,
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "reason": "PATCH_NOT_APPLIED"
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "the edit would leave jarvis/cli.py unparseable: unindent does not match any outer indentation level at line 395. Check the indentation of your replacement text.\n  392:         lowered = command.lower()\n  393: if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n  394:             return False\n  395:         if lowered in {\"/help\", \"help\", \"?\"}:\n  396:             print(HELP)\n  397:             return True",
+      "kind": "syntax_error",
       "patch_correction": 1
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 2
     },
     {
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "patch_correction": 3
     },
     {
       "cycle": 4,
-      "detail": "stale file context for jarvis/cli.py; re-read the file before editing it",
-      "kind": "stale_context",
+      "detail": "no safe unique match for jarvis/cli.py (best similarity 0.80 < 0.88)",
+      "kind": "no_unique_match",
       "reason": "PATCH_NOT_APPLIED"
     }
   ],
   "diff": "",
-  "recorded_at": "2026-08-24T00:53:00.750992+00:00"
+  "recorded_at": "2026-08-24T01:10:14.557586+00:00"
 }

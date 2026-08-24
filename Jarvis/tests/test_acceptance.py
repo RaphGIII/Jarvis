@@ -38,7 +38,7 @@ from projects.engine import ProjectEngine
 from projects.models import ResourceLimits, StopReason
 from projects.store import ProjectStore
 from tools.builtin import builtin_tools
-from tools.registry import RiskLevel, ToolPolicy, ToolRegistry
+from tools.registry import RiskLevel, ToolCall, ToolContext, ToolPolicy, ToolRegistry
 
 REPO = Path(__file__).resolve().parent.parent
 EVIDENCE = REPO / "data" / "acceptance_evidence"
@@ -1008,3 +1008,56 @@ def test_O_a_throughput_collapse_is_never_accepted():
         assert row["tokens_per_second"] >= best * 0.85, (
             f"{tier} was set to {chosen} at {row['tokens_per_second']} tok/s against a best of {best}"
         )
+
+
+# ==========================================================================
+# Dependency isolation (brief section 14)
+# ==========================================================================
+
+
+def test_dependencies_never_touch_the_system_python(tmp_path, tools):
+    """An install must be refused unless it can go somewhere isolated."""
+
+    context = ToolContext(workspace=tmp_path, timeout_seconds=60)
+    result = tools.invoke(ToolCall(name="install_packages", arguments={"packages": ["requests; rm -rf /"]}), context)
+    assert not result.ok and not result.retryable
+
+    result = tools.invoke(ToolCall(name="install_packages", arguments={"packages": []}), context)
+    assert not result.ok
+
+
+@live
+def test_a_package_installs_into_the_project_venv_and_nowhere_else(tmp_path, tools):
+    """The isolation guarantee, exercised for real.
+
+    Marked live because it reaches PyPI; skipped when that is not available
+    rather than reported as a pass.
+    """
+
+    from tools.web import network_available
+
+    if not network_available():
+        pytest.skip("no network")
+
+    workspace = tmp_path / "proj"
+    workspace.mkdir()
+    context = ToolContext(workspace=workspace, timeout_seconds=900)
+
+    created = tools.invoke(ToolCall(name="create_virtualenv", arguments={}), context)
+    assert created.ok, created.error
+
+    installed = tools.invoke(ToolCall(name="install_packages", arguments={"packages": ["tomli==2.0.1"]}), context)
+    assert installed.ok and installed.output["returncode"] == 0, installed.error
+
+    # Recorded, so the environment is reproducible.
+    assert "tomli==2.0.1" in (workspace / "requirements.txt").read_text(encoding="utf-8")
+
+    # Importable inside the project...
+    used = tools.invoke(ToolCall(name="run_python", arguments={"code": "import tomli; print('IMPORTED')"}), context)
+    assert used.ok and "IMPORTED" in used.output["stdout"]
+
+    # ...and absent from the interpreter running Jarvis.
+    host = subprocess.run([sys.executable, "-c", "import tomli"], capture_output=True, text=True, timeout=60)
+    assert host.returncode != 0, "installing into a project must not change the host interpreter"
+
+

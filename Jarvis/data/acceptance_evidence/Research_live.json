@@ -1,0 +1,42 @@
+{
+  "scenario": "Research_live",
+  "network_available": true,
+  "backend": "duckduckgo_html (keyless)",
+  "paid_search_or_llm_credentials_in_environment": [],
+  "query": "python mss screen capture library",
+  "results": [
+    {
+      "title": "mss \u00b7 PyPI",
+      "url": "https://pypi.org/project/mss/",
+      "snippet": "Python MSS [!TIP] Become my boss to help me work on this awesome software, and make the world better: from mss import MSS # The simplest use, save a screenshot of the 1st monitor with MSS() as sct: sct.shot() An ultra-fast cross-platform multiple screenshots module in pure python using ctypes. Python 3.9+, PEP8 compliant, no dependency, thread-safe; very basic, it will grab one screenshot by ..."
+    },
+    {
+      "title": "GitHub - BoboTiG/python-mss: An ultra fast cross-platform multiple ...",
+      "url": "https://github.com/BoboTiG/python-mss",
+      "snippet": "Python MSS Tip Become my boss to help me work on this awesome software, and make the world better: ... An ultra-fast cross-platform multiple screenshots module in pure python using ctypes. Python 3.10+, PEP8 compliant, no dependency, thread-safe; very basic, it will grab one screenshot by monitor or a screenshot of all monitors and save it to a ..."
+    },
+    {
+      "title": "Python MSS latest documentation",
+      "url": "https://python-mss.readthedocs.io/",
+      "snippet": "Python 3.9+, PEP 8 compliant, no dependency, thread-safe; very basic, it will grab one screenshot by monitor or a screenshot of all monitors and save it to a PNG file;"
+    },
+    {
+      "title": "Examples - Python MSS latest documentation",
+      "url": "https://python-mss.readthedocs.io/stable/examples.html",
+      "snippet": "These are complete, working programs that use MSS for screen capture as a key part of their functionality. They show not only how to invoke MSS, but also some of the techniques for using the captured frames efficiently, in real-world scenarios. These include: MP4 video capture with encoding using PyAV (FFmpeg bindings)"
+    },
+    {
+      "title": "How to Take Screenshots with Python MSS",
+      "url": "https://screenshotone.com/blog/mss-python-screen-capture/",
+      "snippet": "How to Take Screenshots with Python MSS Complete guide to the MSS Python screen capture library. Learn installation, capturing monitors, regions, performance optimization, and common errors like xgetimage () failed."
+    }
+  ],
+  "fetch": {
+    "url": "https://docs.python.org/3/library/json.html",
+    "ok": true,
+    "status": 200,
+    "chars": 2000,
+    "fetched_at": "2026-08-24T01:07:05.086965+00:00"
+  },
+  "recorded_at": "2026-08-24T01:07:05.087008+00:00"
+}

@@ -270,3 +270,42 @@ def test_a_large_file_can_still_be_edited(tmp_path):
     )
 
     assert "MARKER = 'after'" in (root / "cli.py").read_text(encoding="utf-8")
+
+
+def test_the_focus_window_scales_with_the_measured_context():
+    """Prompting as though the machine had not been measured is the worst of both.
+
+    A live self-patch run missed its anchor thirteen times because the model was
+    shown a 5000-character keyhole view of a 430-line file, while its context
+    window -- measured by the tuner -- was 24576 tokens.
+    """
+
+    from development.repository_engineer import ModelRequestBudget
+
+    class Brain:
+        pass
+
+    small = RepositoryEngineer(brain=Brain(), context_budget=ModelRequestBudget(context_window=8192))
+    large = RepositoryEngineer(brain=Brain(), context_budget=ModelRequestBudget(context_window=24576))
+
+    assert large._focus_budget() > small._focus_budget()
+    assert small._focus_budget() >= 5000, "never smaller than the old fixed window"
+    assert large._focus_budget() <= 48000, "and bounded, so the prompt still leaves room to answer"
+
+
+def test_a_large_file_is_shown_in_full_when_the_context_allows(tmp_path):
+    """The point of the budget: an anchor can only be copied from what is shown."""
+
+    from development.repository_engineer import ModelRequestBudget, _focused_edit_context
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    body = "\n".join(f"def handler_{index}():\n    return {index}\n" for index in range(120))
+    (root / "cli.py").write_text(f"{body}\nMARKER_TO_FIND = 'here'\n", encoding="utf-8")
+
+    goal = SelfImprovementGoal(objective="change MARKER_TO_FIND", allowed_paths=["cli.py"])
+    engineer = RepositoryEngineer(brain=object(), context_budget=ModelRequestBudget(context_window=24576))
+
+    shown = _focused_edit_context(root, goal, {}, max_chars=engineer._focus_budget())
+    assert "MARKER_TO_FIND = 'here'" in shown, "the line to edit must actually appear"
+    assert "00001:" not in shown, "and unnumbered, so the anchor can be copied verbatim"

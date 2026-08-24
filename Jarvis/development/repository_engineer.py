@@ -937,7 +937,7 @@ class RepositoryEngineer:
 
     def _request_patch(self, goal: SelfImprovementGoal, context: dict[str, Any], plan: dict[str, Any], prior: list[dict[str, Any]], trajectory: dict[str, Any]) -> dict[str, Any]:
         worktree = Path(trajectory["worktree"])
-        focused = _focused_edit_context(worktree, goal, context, max_chars=5000)
+        focused = _focused_edit_context(worktree, goal, context, max_chars=self._focus_budget())
 
         plan_text = json.dumps(plan, indent=2, sort_keys=True)
         if len(plan_text) > 2200:
@@ -975,7 +975,7 @@ class RepositoryEngineer:
     ) -> dict[str, Any]:
         worktree = Path(trajectory["worktree"])
         diff = self._current_diff(worktree)
-        focused = _focused_edit_context(worktree, goal, context, max_chars=5000)
+        focused = _focused_edit_context(worktree, goal, context, max_chars=self._focus_budget())
 
         failure_text = json.dumps(
             [item.to_dict() for item in failures],
@@ -1099,6 +1099,24 @@ class RepositoryEngineer:
             context.setdefault("inspected_files", {})[relative] = content[:8000]
             context.setdefault("file_hashes", {})[relative] = _stable_hash(content)
 
+    def _focus_budget(self) -> int:
+        """How much source to show the model when it composes an edit.
+
+        Scaled to the context the model actually has. The 5000-character window
+        this replaces was sized for an 8192-token context and stayed put after
+        the tuner measured 24576 usable on this machine -- so the model was
+        asked to copy an exact anchor out of a keyhole view of a 430-line file
+        and missed thirteen times running. Measuring the machine and then
+        prompting as though it had not been measured is the worst of both.
+
+        Roughly 40% of the window: the rest is goal, plan, failures and the
+        model's own output.
+        """
+
+        window = max(4096, int(self.context_budget.context_window))
+        chars = int(window * self.context_budget.chars_per_token * 0.4)
+        return max(5000, min(chars, 48000))
+
     def _edit_engine(
         self,
         worktree: Path,
@@ -1192,7 +1210,7 @@ class RepositoryEngineer:
         bundle: dict[str, Any],
         error: EditError,
     ) -> dict[str, Any]:
-        focused = _focused_edit_context(worktree, goal, context, max_chars=5500)
+        focused = _focused_edit_context(worktree, goal, context, max_chars=self._focus_budget())
         previous = json.dumps(bundle, indent=2, sort_keys=True)
         if len(previous) > 3000:
             previous = previous[:3000] + "\n...[truncated]"

@@ -490,3 +490,37 @@ def test_apply_edits_is_offered_on_a_first_attempt(store, tools):
     execute_prompts = [prompt for prompt in brain.prompts if "Available tools:" in prompt and "TASK:" in prompt]
     assert execute_prompts
     assert "apply_edits(" in execute_prompts[0].split("Available tools:")[1]
+
+
+def test_apply_edits_is_withdrawn_after_repeated_unparseable_edits(store, tools):
+    """An edit that lands but does not parse is the same predicament.
+
+    Six consecutive "unparseable" failures on a twenty-line module ended a live
+    capability run: the model described the fix correctly every time and could
+    not splice it in.
+    """
+
+    brain = ScriptedBrain(
+        decompose={
+            "tasks": [{"title": "fix run()"}],
+            "acceptance": [{"text": "ok", "check": [sys.executable, "-c", "raise SystemExit(1)"]}],
+        },
+        execute=[
+            {
+                "tool_calls": [
+                    {
+                        "name": "apply_edits",
+                        "arguments": {"files": [{"path": "m.py", "search": "    return 1", "replace": "    return ("}]},
+                    }
+                ]
+            }
+        ],
+    )
+    engine = make_engine(store, tools, brain)
+    project = engine.create_project("fix it", limits=ResourceLimits(max_steps=8, max_consecutive_failures=8))
+    (store.workspace_for(project) / "m.py").write_bytes(b"def run():\n    return 1\n")
+
+    engine.run(project)
+
+    withdrawn = [prompt for prompt in brain.prompts if "apply_edits is not available" in prompt]
+    assert withdrawn, "repeated syntax breakage must push the model onto write_file"

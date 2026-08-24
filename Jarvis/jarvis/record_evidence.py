@@ -87,11 +87,16 @@ def scenario_a(run_root: Path) -> dict:
         ],
     )
 
+    # A fresh directory every time. RepositoryEngineer resumes from a
+    # checkpoint if it finds one, which is right for a real run and wrong for
+    # recording evidence: a second recording would silently continue the first
+    # and report its worktree as a new result.
     benchmark_root = run_root / "self_patch"
+    shutil.rmtree(benchmark_root, ignore_errors=True)
     benchmark_root.mkdir(parents=True, exist_ok=True)
     engineer = RepositoryEngineer(
         brain=brain,
-        worktree_root=run_root / "worktrees",
+        worktree_root=run_root / "worktrees" / datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
         memory=SelfImprovementMemory(benchmark_root / "trajectories.jsonl"),
         timeout_seconds=180.0,
         max_cycles=4,

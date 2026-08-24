@@ -901,6 +901,12 @@ class ProjectEngine:
         # a different error: the model knows the content it wants and cannot
         # express it as an anchor.
         "needs a 'search' anchor",
+        # And so is an edit that lands but does not parse. Six consecutive
+        # "unparseable" failures on a twenty-line module ended one live
+        # capability run; the model could describe the fix perfectly each time
+        # and could not splice it in. Sending the whole small file is the way
+        # out, and it will still meet the shrink guard if it sends a fragment.
+        "unparseable",
     )
 
     def _anchor_failed_before(self, task: Task) -> bool:
