@@ -540,7 +540,18 @@ class ProjectEngine:
             "Emit the tool calls that actually perform the work -- writing files, running tests.\n"
             "Read a file before editing it. Copy search anchors character-for-character.\n"
             "Put source files directly in the workspace root unless the task says otherwise; "
-            "do NOT create a nested directory named after the project.\n\n"
+            "do NOT create a nested directory named after the project.\n"
+            # Observed live, in two different subsystems: the model investigates
+            # with a tool, then writes that tool's name into the source file it
+            # is producing. Tools and library functions look identical in a
+            # transcript -- both are names that were called and returned useful
+            # data -- so the distinction has to be stated rather than assumed.
+            # The chess project spent its entire failure budget on
+            # `image_region(path, x, y, w, h)` called from inside position.py.
+            "The tools below exist ONLY while you are working. They are NOT importable and NOT "
+            "callable from the source files you write. Anything your code needs at runtime must "
+            "come from the Python standard library or an installed package. If a tool told you "
+            "something useful, put the ANSWER in your code or compute it there.\n\n"
             f"TASK: {task.title}\n{task.detail}\n\n"
             + (f"THIS TASK'S PREVIOUS ATTEMPT FAILED WITH:\n{task.last_error[:1500]}\n\n" if task.last_error else "")
             # The single most important context: what the acceptance check

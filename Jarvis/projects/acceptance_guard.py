@@ -151,6 +151,36 @@ def _is_docstring(node: ast.AST) -> bool:
     )
 
 
+def static_check_command(python: str, repo_root: str | Path, *modules: str) -> list[str]:
+    """An acceptance command that fails on a name the code never defines.
+
+    The capability path has had this since a generated module called a Jarvis
+    tool from a branch its tests never reached. Projects had no equivalent, and
+    the chess project then failed exactly the same way -- `image_region(...)`
+    called from inside position.py, a tool name in solution code.
+
+    Offered as an acceptance criterion rather than run after the fact so the
+    loop sees it fail and repairs, which is the difference between a guard and
+    a post-mortem.
+    """
+
+    names = ", ".join(repr(f"{name}.py") for name in modules) or "'main.py'"
+    return [
+        python,
+        "-c",
+        "import sys; "
+        f"sys.path.insert(0, {str(repo_root)!r}); "
+        "from capabilities.static_check import check_file; "
+        f"paths = [{names}]; "
+        "import pathlib; "
+        "reports = [(p, check_file(p)) for p in paths if pathlib.Path(p).is_file()]; "
+        "bad = [(p, r.describe()) for p, r in reports if not r.ok]; "
+        "[print(f'{p}: {d}') for p, d in bad]; "
+        "print('STATIC_OK') if not bad else None; "
+        "raise SystemExit(1 if bad else 0)",
+    ]
+
+
 def guard_command(
     python: str,
     repo_root: str | Path,
