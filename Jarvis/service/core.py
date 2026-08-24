@@ -519,6 +519,35 @@ class JarvisCore:
         self.emit(EventType.KNOWLEDGE, result)
         return result
 
+    def research(self, question: str, *, max_sources: int = 3) -> dict[str, Any]:
+        """Answer a technical question from public documentation, with citations."""
+
+        question = (question or "").strip()
+        if not question:
+            return {"ok": False, "error": "question is required"}
+
+        from brain.tiers import ModelTier
+        from knowledge.graph import KnowledgeGraph
+        from research.agent import ResearchAgent
+
+        self.state.set(JarvisState.RESEARCHING, detail=question[:120])
+        graph_path = self.kernel.state_root / "knowledge" / "graph.db"
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with KnowledgeGraph(graph_path) as graph:
+                agent = ResearchAgent(
+                    brain=self.kernel.provider(ModelTier.FAST_LOCAL), graph=graph
+                )
+                report = agent.research(question, max_sources=max_sources)
+        except Exception as exc:
+            self.state.set(JarvisState.IDLE)
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+        self.state.set(JarvisState.IDLE)
+        payload = report.to_dict()
+        self.emit(EventType.KNOWLEDGE, {"research": question, "sources": len(report.sources)})
+        return {"ok": report.grounded, **payload}
+
     def knowledge_node(self, node_id: str) -> dict[str, Any]:
         try:
             from knowledge.graph import KnowledgeGraph

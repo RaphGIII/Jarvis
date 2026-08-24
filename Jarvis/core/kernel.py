@@ -74,6 +74,22 @@ class KernelConfig:
         )
 
 
+class _LazyProvider:
+    """Defers building a provider until something actually generates.
+
+    Tool registration happens while the kernel is being constructed, and
+    constructing a provider there would make building a kernel depend on a
+    model being reachable.
+    """
+
+    def __init__(self, kernel: "JarvisKernel", tier: "ModelTier") -> None:
+        self._kernel = kernel
+        self._tier = tier
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._kernel.provider(self._tier), name)
+
+
 class JarvisKernel:
     """A configured, ready-to-use Jarvis."""
 
@@ -108,6 +124,15 @@ class JarvisKernel:
         registry.register_many(builtin_tools())
         if self.config.enable_research_tools:
             registry.register_many(make_web_tools())
+            # The research tool needs a brain to turn documents into cited
+            # findings. FAST_LOCAL rather than BUILD_LOCAL: extracting a quote
+            # is reading comprehension, not code generation, and the 4B model
+            # does it at a third of the cost.
+            from research.tools import make_research_tools
+
+            registry.register_many(
+                make_research_tools(brain=_LazyProvider(self, ModelTier.FAST_LOCAL))
+            )
         if self.config.enable_desktop_tools:
             # These reach outside the workspace. They are registered, not
             # necessarily reachable: ToolPolicy.max_risk still decides whether

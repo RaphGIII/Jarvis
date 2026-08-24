@@ -113,6 +113,9 @@ class JarvisHTTPServer:
                 query=str(body.get("query", "")), limit=int(body.get("limit", 300) or 300)
             ),
             "/api/knowledge/node": lambda body: self.core.knowledge_node(str(body.get("id", ""))),
+            "/api/research": lambda body: self.core.research(
+                str(body.get("question", "")), max_sources=int(body.get("max_sources", 3) or 3)
+            ),
             "/api/knowledge/ingest": lambda body: self.core.ingest(
                 str(body.get("path", "")),
                 text=str(body.get("text", "")),

@@ -2,17 +2,17 @@
   "scenario": "A_self_patch_live",
   "model": "qwen2.5-coder:7b-instruct-q4_K_M",
   "context_window": 24576,
-  "status": "SELF_DEVELOPMENT_CANDIDATE_READY",
-  "success": true,
+  "status": "SELF_DEVELOPMENT_CANDIDATE_REJECTED",
+  "success": false,
   "cycles": 1,
   "changed_files": [
     "jarvis/cli.py"
   ],
   "targeted_tests_passed": true,
-  "protection_state": "PRISTINE",
-  "elapsed_seconds": 171.8,
+  "protection_state": "MODIFIED",
+  "elapsed_seconds": 380.2,
   "recovery_events": [],
   "diff": "diff --git a/jarvis/cli.py b/jarvis/cli.py\nindex 12be0bc..06a893a 100644\n--- a/jarvis/cli.py\n+++ b/jarvis/cli.py\n@@ -394,7 +394,7 @@ class JarvisConsole:\n             return True\n \n         lowered = command.lower()\n-        if lowered in {\"/quit\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n+        if lowered in {\"/quit\", \"/goodbye\", \"/exit\", \"/bye\", \"quit\", \"exit\", \"bye\"}:\n             return False\n         if lowered in {\"/help\", \"help\", \"?\"}:\n             print(HELP)\n",
   "budget_seconds": 1200.0,
-  "recorded_at": "2026-08-24T12:02:38.092709+00:00"
+  "recorded_at": "2026-08-24T15:01:57.086106+00:00"
 }

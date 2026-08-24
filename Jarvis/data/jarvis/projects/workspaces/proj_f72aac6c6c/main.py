@@ -1,3 +1,9 @@
+"""Capability implementation. Replace the body of run()."""
+
+from __future__ import annotations
+
+from typing import Any
+
 # Every payload key run() accepts. A caller cannot pass what is not declared.
 INPUT_SCHEMA = {"type": "object", "properties": {"dry_run": {"type": "boolean"}}, "required": []}
 

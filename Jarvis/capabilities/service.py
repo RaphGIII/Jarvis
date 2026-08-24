@@ -163,6 +163,41 @@ class CapabilityCheck:
     command: tuple[str, ...]
 
 
+def audible_playback_check(python: str | None = None) -> CapabilityCheck:
+    """Proof that a playback capability actually produced sound.
+
+    Every other check is a proxy. run() returning a dict, the tests passing and
+    no name being undefined do not distinguish a capability that plays music
+    from one that describes playing music -- and a live acquisition produced
+    exactly that, passing all four while every branch returned
+    {"message": "Dry run: ..."}.
+
+    This calls run() for real, with the audio meter watching. It belongs to the
+    caller rather than to the standard bar because only a capability whose
+    purpose is an external effect can be held to it.
+    """
+
+    executable = python or sys.executable
+    return CapabilityCheck(
+        name="audible",
+        text=(
+            "calling run() with dry_run false actually produces sound, measured by the "
+            "system audio meter"
+        ),
+        command=(
+            executable,
+            "-c",
+            "import sys; "
+            f"sys.path.insert(0, {str(_REPO_ROOT)!r}); "
+            "from tools.audio_probe import observe_around; "
+            "import main; "
+            "e = observe_around(lambda: main.run({}), seconds=2.5); "
+            "print(e.detail); "
+            "raise SystemExit(0 if e.audible else 1)",
+        ),
+    )
+
+
 def capability_checks(python: str | None = None) -> list[CapabilityCheck]:
     """The complete, single definition of what makes a capability real."""
 
@@ -307,6 +342,7 @@ class CapabilityService:
         max_steps: int = 40,
         keywords: list[str] | None = None,
         max_seconds: float | None = None,
+        extra_checks: list[CapabilityCheck] | None = None,
     ) -> CapabilityOutcome:
         """Return a capability for ``goal``, acquiring one if none exists."""
 
@@ -319,7 +355,13 @@ class CapabilityService:
                 manifest=existing,
                 reason="an installed capability already covers this",
             )
-        return self.acquire(goal, max_steps=max_steps, keywords=keywords, max_seconds=max_seconds)
+        return self.acquire(
+            goal,
+            max_steps=max_steps,
+            keywords=keywords,
+            max_seconds=max_seconds,
+            extra_checks=extra_checks,
+        )
 
     def acquire(
         self,
@@ -328,15 +370,26 @@ class CapabilityService:
         max_steps: int = 40,
         keywords: list[str] | None = None,
         max_seconds: float | None = None,
+        extra_checks: list[CapabilityCheck] | None = None,
     ) -> CapabilityOutcome:
-        """Build, verify and register a new capability."""
+        """Build, verify and register a new capability.
+
+        ``extra_checks`` are goal-specific criteria the standard bar cannot
+        carry -- proof that a playback capability made a sound, say. They are
+        given to the loop as acceptance criteria and re-run by verification,
+        exactly like the standard ones, so a capability cannot be accepted
+        without satisfying them and cannot self-certify them either.
+        """
 
         capability_id = self.suggest_id(goal)
-        project = self._start_project(goal, capability_id, max_steps=max_steps, max_seconds=max_seconds)
+        project = self._start_project(
+            goal, capability_id, max_steps=max_steps, max_seconds=max_seconds,
+            extra_checks=extra_checks,
+        )
         session = self.engine.run(project, max_steps=max_steps)
 
         workspace = Path(project.workspace)
-        verification = self._verify(workspace)
+        verification = self._verify(workspace, extra_checks=extra_checks)
 
         if not (session.accepted and verification["ok"]):
             reason = (
@@ -367,7 +420,13 @@ class CapabilityService:
         )
 
     def _start_project(
-        self, goal: str, capability_id: str, *, max_steps: int, max_seconds: float | None = None
+        self,
+        goal: str,
+        capability_id: str,
+        *,
+        max_steps: int,
+        max_seconds: float | None = None,
+        extra_checks: list[CapabilityCheck] | None = None,
     ) -> Project:
         project = self.engine.create_project(
             f"Build a reusable capability that can: {goal}",
@@ -427,7 +486,10 @@ class CapabilityService:
             # failing it.  Both live F failures ended contract=ok and
             # implemented=FAILED, because `implemented` also inspected the test
             # file and the loop's contract check did not.
-            acceptance=[(check.text, list(check.command)) for check in capability_checks()],
+            acceptance=[
+                (check.text, list(check.command))
+                for check in capability_checks() + list(extra_checks or [])
+            ],
         )
         project.metadata["capability_id"] = capability_id
 
@@ -443,7 +505,9 @@ class CapabilityService:
     # Verification and installation
     # ------------------------------------------------------------------
 
-    def _verify(self, workspace: Path) -> dict[str, Any]:
+    def _verify(
+        self, workspace: Path, *, extra_checks: list[CapabilityCheck] | None = None
+    ) -> dict[str, Any]:
         """Prove the capability works, independently of the project's own claim.
 
         Run separately from the loop's acceptance check on purpose: the loop
@@ -460,7 +524,7 @@ class CapabilityService:
         # Re-run the very checks the loop was graded on, from a clean process.
         # Same bar, independently executed: the loop cannot be marked against a
         # rubric it never saw, and cannot certify itself either.
-        for check in capability_checks():
+        for check in capability_checks() + list(extra_checks or []):
             outcome = self._run(list(check.command), workspace)
             checks.append(
                 {
