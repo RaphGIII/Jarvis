@@ -81,6 +81,9 @@ class ToolContext:
     readable_roots: list[Path] = field(default_factory=list)
     allowed_paths: list[str] = field(default_factory=list)
     protected_paths: list[str] = field(default_factory=list)
+    #: Appended to a protected-path refusal, so the message says what to do
+    #: instead of only what is forbidden.
+    protected_reason: str = ""
     timeout_seconds: float = 120.0
     max_output_chars: int = 20000
     environment: dict[str, str] = field(default_factory=dict)
@@ -93,6 +96,7 @@ class ToolContext:
             readable_roots=list(self.readable_roots),
             allowed_paths=list(self.allowed_paths),
             protected_paths=list(self.protected_paths),
+            protected_reason=self.protected_reason,
             timeout_seconds=self.timeout_seconds,
             max_output_chars=self.max_output_chars,
             environment=dict(self.environment),

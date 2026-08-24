@@ -220,10 +220,15 @@ class PathPolicy:
         allowed_paths: Iterable[str] | None = None,
         protected_paths: Iterable[str] | None = None,
         live_root: str | Path | None = None,
+        protected_reason: str = "",
     ) -> None:
         self.root = Path(root).resolve()
         self.allowed_paths = [str(item) for item in (allowed_paths or [])]
         self.protected_paths = [str(item) for item in (protected_paths or [])]
+        #: Appended to a protected-path refusal.  Naming what to do instead is
+        #: most of the difference between a refusal a model recovers from and
+        #: one it retries until its budget runs out.
+        self.protected_reason = protected_reason
         self.live_root = Path(live_root).resolve() if live_root is not None else None
 
     def resolve(self, relative_path: str) -> Path:
@@ -235,7 +240,11 @@ class PathPolicy:
         if raw.is_absolute() or ".." in raw.parts:
             raise EditError("unsafe_path", f"unsafe repository path: {relative_path}", path=normalized)
         if path_matches(normalized, self.protected_paths):
-            raise EditError("protected_path", f"protected repository path: {relative_path}", path=normalized)
+            raise EditError(
+                "protected_path",
+                f"protected repository path: {relative_path}{self.protected_reason}",
+                path=normalized,
+            )
         if self.allowed_paths and not path_matches(normalized, self.allowed_paths):
             raise EditError("path_not_allowed", f"path not allowed for this goal: {relative_path}", path=normalized)
 

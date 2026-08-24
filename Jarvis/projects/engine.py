@@ -284,6 +284,44 @@ class ProjectEngine:
             project=project, stop_reason=stop, steps=steps, seconds=seconds, accepted=accepted, message=message
         )
 
+    @classmethod
+    def _protected_reason(cls, project: Project, workspace: str) -> str:
+        """Why a proven file is closed, and which file to change instead.
+
+        A refusal that names only what is forbidden leaves the model to guess
+        the alternative, and it guesses the same wrong thing repeatedly: three
+        runs were spent trying to edit an accepted module in different ways.
+        Naming the file that *is* in play turns the refusal into a direction.
+        """
+
+        in_play = sorted(
+            Path(item).name
+            for item in cls._files_named_by(project, workspace, satisfied=False)
+        )
+        base = (
+            " -- this file is covered by an acceptance check that currently PASSES, so changing "
+            "it cannot fix a failing check and may break a passing one"
+        )
+        if not in_play:
+            return base + "."
+        return f"{base}. Change the code that calls it instead: {', '.join(in_play)}."
+
+    @classmethod
+    def _files_named_by(cls, project: Project, workspace: str, *, satisfied: bool) -> list[str]:
+        """Workspace files named by the command of a satisfied/unsatisfied criterion."""
+
+        try:
+            stems = {path.stem: path for path in Path(workspace).glob("*.py")}
+        except OSError:
+            return []
+        found: set[str] = set()
+        for criterion in project.objective_criteria():
+            if criterion.satisfied is not satisfied:
+                continue
+            words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", " ".join(criterion.check)))
+            found.update(stems.keys() & words)
+        return [str(stems[stem]) for stem in sorted(found)]
+
     @staticmethod
     def _proven_files(project: Project, workspace: str) -> list[str]:
         """Workspace files that a passing check depends on and no failing one does.
@@ -389,6 +427,7 @@ class ProjectEngine:
             timeout_seconds=project.limits.step_timeout_seconds,
             protected_paths=list(project.metadata.get("protected_paths") or [])
             + self._proven_files(project, workspace),
+            protected_reason=self._protected_reason(project, workspace),
             allowed_paths=list(project.metadata.get("allowed_paths") or []),
         )
 

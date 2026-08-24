@@ -271,6 +271,7 @@ def apply_edits(arguments: dict[str, Any], context: ToolContext) -> dict[str, An
         context.workspace,
         allowed_paths=context.allowed_paths,
         protected_paths=context.protected_paths,
+        protected_reason=context.protected_reason,
     )
     engine = EditEngine(policy)
     try:

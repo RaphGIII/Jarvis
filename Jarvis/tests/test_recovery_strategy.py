@@ -802,3 +802,81 @@ def test_protection_only_covers_files_that_exist(tmp_path):
     names = {pathlib.Path(item).name for item in protected}
 
     assert names == {"board.py"}
+
+
+# --------------------------------------------------------------------------
+# A refusal that says what to do instead
+# --------------------------------------------------------------------------
+
+def test_the_refusal_names_the_file_that_is_in_play(tmp_path):
+    """A refusal naming only what is forbidden leaves the model to guess.
+
+    It guessed the same wrong thing three runs running: edit the accepted
+    module. Naming the file that IS in play turns a refusal into a direction.
+    """
+
+    workspace = _workspace(tmp_path, "board.py", "position.py", "engine.py", "pipeline.py")
+
+    reason = _Engine()._protected_reason(_chess_project(), workspace)
+
+    assert "pipeline.py" in reason
+    assert "PASSES" in reason
+
+
+def test_the_refusal_explains_why_changing_it_cannot_help(tmp_path):
+    workspace = _workspace(tmp_path, "board.py", "pipeline.py")
+
+    reason = _Engine()._protected_reason(_chess_project(), workspace)
+
+    assert "cannot fix a failing check" in reason
+
+
+def test_the_refusal_survives_having_nothing_to_suggest(tmp_path):
+    """Every criterion passing means there is no caller to point at."""
+
+    from projects.models import AcceptanceCriterion, Project
+
+    project = Project(goal="done")
+    project.acceptance.append(
+        AcceptanceCriterion(text="all good", check=["python", "-c", "import board"], satisfied=True)
+    )
+    workspace = _workspace(tmp_path, "board.py")
+
+    reason = _Engine()._protected_reason(project, workspace)
+
+    assert reason.endswith(".")
+    assert "Change the code that calls it" not in reason
+
+
+def test_the_edit_engine_appends_the_reason_to_its_refusal(tmp_path):
+    """The message has to survive the trip through PathPolicy to reach the model."""
+
+    import pytest as _pytest
+
+    from development.edit_engine import EditError, PathPolicy
+
+    policy = PathPolicy(
+        tmp_path,
+        protected_paths=["position.py"],
+        protected_reason=" -- change pipeline.py instead.",
+    )
+
+    with _pytest.raises(EditError) as caught:
+        policy.resolve("position.py")
+
+    assert "change pipeline.py instead" in str(caught.value)
+
+
+def test_a_policy_with_no_reason_is_unchanged(tmp_path):
+    """The default must stay exactly what every existing caller expects."""
+
+    import pytest as _pytest
+
+    from development.edit_engine import EditError, PathPolicy
+
+    policy = PathPolicy(tmp_path, protected_paths=["secret.py"])
+
+    with _pytest.raises(EditError) as caught:
+        policy.resolve("secret.py")
+
+    assert str(caught.value).endswith("secret.py")
