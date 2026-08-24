@@ -25,3 +25,12 @@ pytest-v03-final/
 # Tuned on each machine; not portable between hosts.
 Jarvis/config/resources.json
 Jarvis/.pytest_basetemp/
+
+# Speech stack: large binaries, installed per machine rather than committed.
+# The virtualenv keeps ctranslate2/onnxruntime out of the system Python, and
+# models are downloaded on setup (see JARVIS_USER_GUIDE.md).
+Jarvis/.venv-speech/
+Jarvis/data/models/
+Jarvis/data/voices/*.onnx
+Jarvis/data/voices/*.onnx.json
+Jarvis/data/voices/*.wav

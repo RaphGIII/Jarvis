@@ -1,0 +1,15 @@
+{
+  "voices": [
+    {
+      "id": "de_DE-thorsten-medium",
+      "name": "de DE-thorsten-medium",
+      "language": "de-DE",
+      "gender": "",
+      "engine": "piper",
+      "model_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\voices\\de_DE-thorsten-medium.onnx",
+      "licence": "",
+      "source": "",
+      "notes": ""
+    }
+  ]
+}
