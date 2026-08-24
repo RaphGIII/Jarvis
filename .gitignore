@@ -37,3 +37,8 @@ Jarvis/data/voices/*.wav
 
 # Stockfish: a 65MB engine binary, downloaded per machine like the models.
 Jarvis/data/tools/
+
+# Live runtime state: projects, capabilities, audit logs, the knowledge graph.
+# Evidence worth keeping is copied into evidence/ deliberately rather than
+# tracked here, where it would churn on every run.
+Jarvis/data/jarvis/

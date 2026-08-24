@@ -133,6 +133,12 @@ class JarvisKernel:
             registry.register_many(
                 make_research_tools(brain=_LazyProvider(self, ModelTier.FAST_LOCAL))
             )
+        # Reading tools for images. A text model asked to write pixel
+        # recognition code has never seen a pixel; without these its only move
+        # is to guess, which is exactly what it did on the chess fixtures.
+        from tools.vision import vision_tools
+
+        registry.register_many(vision_tools())
         if self.config.enable_desktop_tools:
             # These reach outside the workspace. They are registered, not
             # necessarily reachable: ToolPolicy.max_risk still decides whether
