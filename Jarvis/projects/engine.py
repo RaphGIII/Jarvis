@@ -856,6 +856,16 @@ class ProjectEngine:
                 detail={"passed": passed},
             )
 
+        if newly_satisfied:
+            # Verified progress restores the reopen budget, for the same reason
+            # it restores the repair budget: the bound exists to stop thrashing
+            # that goes nowhere, and a criterion turning green is the evidence
+            # that this is not that. Kept as a lifetime count it becomes a third
+            # counter that quietly ends a long project's ability to fix itself --
+            # after `attempts` and the repair budget, both fixed the same way.
+            for item in project.tasks:
+                item.reopenings = 0
+
         return StepRecord(
             phase=Phase.VERIFY,
             summary=f"{len(passed)} passed, {len(failed)} failed",

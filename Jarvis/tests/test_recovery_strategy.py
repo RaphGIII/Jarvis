@@ -929,3 +929,69 @@ def test_the_engine_context_protects_for_real(tmp_path):
         policy.resolve("board.py")
 
     assert "pipeline.py" in str(caught.value)
+
+
+# --------------------------------------------------------------------------
+# The third counter
+# --------------------------------------------------------------------------
+
+class _StubVerifier:
+    """Returns fixed outcomes, so VERIFY can be exercised without a workspace."""
+
+    def __init__(self, outcomes):
+        self.outcomes = outcomes
+
+    def __call__(self, project, context):
+        return self.outcomes
+
+
+def _verifying_engine(outcomes):
+    engine = _Engine()
+    engine._verify = _StubVerifier(outcomes)
+    return engine
+
+
+def test_verified_progress_restores_the_reopen_budget():
+    """A criterion turning green is evidence the approach is working.
+
+    Kept as a lifetime count, reopenings becomes a third counter that quietly
+    ends a long project's ability to fix itself -- after `attempts` and the
+    repair budget, both of which failed exactly this way.
+    """
+
+    from projects.models import AcceptanceCriterion, Project, Task
+
+    project = Project(goal="chess")
+    project.acceptance.append(
+        AcceptanceCriterion(text="pipeline static", check=["x"], satisfied=False)
+    )
+    project.acceptance.append(
+        AcceptanceCriterion(text="pipeline end to end", check=["y"], satisfied=False)
+    )
+    exhausted = Task(title="write pipeline.py", reopenings=2)
+    project.tasks.append(exhausted)
+
+    engine = _verifying_engine([("pipeline static", True, ""), ("pipeline end to end", False, "boom")])
+    engine._phase_verify(project, None)
+
+    assert exhausted.reopenings == 0
+    assert exhausted.reopenable
+
+
+def test_an_unproductive_verify_leaves_the_reopen_budget_alone():
+    """Otherwise the bound never binds and a task thrashes for the whole budget."""
+
+    from projects.models import AcceptanceCriterion, Project, Task
+
+    project = Project(goal="chess")
+    project.acceptance.append(
+        AcceptanceCriterion(text="still failing", check=["x"], satisfied=False)
+    )
+    stuck = Task(title="write pipeline.py", reopenings=2)
+    project.tasks.append(stuck)
+
+    engine = _verifying_engine([("still failing", False, "boom")])
+    engine._phase_verify(project, None)
+
+    assert stuck.reopenings == 2
+    assert not stuck.reopenable
