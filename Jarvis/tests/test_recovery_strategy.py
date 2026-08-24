@@ -172,7 +172,7 @@ def test_the_loop_and_the_verifier_use_literally_the_same_checks():
     from capabilities.service import CapabilityService, capability_checks
 
     names = {check.name for check in capability_checks()}
-    assert names == {"tests", "contract", "implemented"}
+    assert names == {"tests", "contract", "implemented", "static"}
 
     builder = inspect.getsource(CapabilityService._start_project)
     verifier = inspect.getsource(CapabilityService._verify)

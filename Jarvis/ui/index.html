@@ -253,6 +253,28 @@
   .row .k { color: var(--dim); }
   .row .v { color: var(--text); text-align: right; word-break: break-word; }
 
+  .project {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .project:hover { border-color: #24354b; }
+  .project .goal { color: var(--text); margin-bottom: 6px; font-size: 14px; }
+  .project .meta { color: var(--dim); font-size: 11px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .badge { border-radius: 5px; padding: 1px 7px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+  .badge.active { background: #12301f; color: var(--ok); }
+  .badge.blocked { background: #341c1c; color: var(--danger); }
+  .badge.done { background: #14283a; color: var(--accent); }
+  .badge.idle { background: #1a1f28; color: var(--dim); }
+
+  .steps { margin-top: 10px; }
+  .step { display: flex; gap: 8px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #0c1218; }
+  .step .phase { flex: 0 0 82px; color: var(--dim); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding-top: 2px; }
+  .step .sum { flex: 1; color: #9db0c8; }
+  .step.bad .sum { color: #d98a8a; }
+
   /* ---- knowledge graph --------------------------------------------- */
 
   #graphView {
@@ -325,6 +347,7 @@
     <span class="pill" id="connPill">connecting</span>
     <span class="pill" id="costPill" title="No metered channel is enabled">free</span>
     <span class="spacer"></span>
+    <button class="ghost" id="btnProjects">Projects</button>
     <button class="ghost" id="btnGraph">Knowledge</button>
     <button class="ghost" id="btnActivity" aria-pressed="false">Activity</button>
     <button class="ghost" id="btnDiag">Diagnostics</button>

@@ -136,6 +136,11 @@ def test_placeholder():
 '''
 
 
+#: Where Jarvis itself lives, so a check running in a capability workspace can
+#: import the static checker without depending on how it was launched.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
 @dataclass(frozen=True)
 class CapabilityCheck:
     """One objective check, phrased for the loop and runnable by anything.
@@ -174,11 +179,23 @@ def capability_checks(python: str | None = None) -> list[CapabilityCheck]:
             command=(
                 executable,
                 "-c",
-                "import main; "
-                "assert callable(getattr(main, 'run', None)), 'main.run is missing'; "
-                "r = main.run({'dry_run': True}); "
-                "assert isinstance(r, dict), f'run() returned {type(r)}'; "
-                "print('CONTRACT_OK')",
+                # A bare NameError is a symptom the model diagnoses correctly
+                # and then acts on wrongly: told "media_folders is not defined"
+                # it tries to define it. The cause is that Jarvis TOOLS are not
+                # importable from a capability, and saying so here turns three
+                # wasted repair cycles into one actionable message.
+                "import main\n"
+                "assert callable(getattr(main, 'run', None)), 'main.run is missing'\n"
+                "try:\n"
+                "    r = main.run({'dry_run': True})\n"
+                "except NameError as exc:\n"
+                "    raise SystemExit(\n"
+                "        f'{exc}. That name is a JARVIS TOOL, not something main.py can call. '\n"
+                "        'Tools exist only while investigating. Use the standard library "
+                "(shutil.which, pathlib, subprocess, os) instead, or hard-code what the tool told you.'\n"
+                "    )\n"
+                "assert isinstance(r, dict), f'run() returned {type(r)}'\n"
+                "print('CONTRACT_OK')\n",
             ),
         ),
         CapabilityCheck(
@@ -203,6 +220,28 @@ def capability_checks(python: str | None = None) -> list[CapabilityCheck]:
                 "assert test_src.count('assert') >= 2, "
                 "'the tests make fewer than two assertions; write at least two that check behaviour'; "
                 "print('SUBSTANCE_OK')",
+            ),
+        ),
+        CapabilityCheck(
+            name="static",
+            text=(
+                "every name main.py uses is defined, imported, or a builtin -- including in "
+                "branches the tests never reach"
+            ),
+            command=(
+                executable,
+                "-c",
+                # Executing one path proves one path. A side-effecting
+                # capability is verified almost entirely through its dry run,
+                # so the branch that does the real work is the branch least
+                # likely to have been run. Observed live: a music capability
+                # passed tests, contract and implemented while carrying
+                # `media_control(...)` -- an undefined name -- in the else
+                # branch its dry run never entered.
+                "import sys; "
+                f"sys.path.insert(0, {str(_REPO_ROOT)!r}); "
+                "from capabilities.static_check import main; "
+                "raise SystemExit(main(['main.py']))",
             ),
         ),
     ]
@@ -358,6 +397,19 @@ class CapabilityService:
                 "choosing an approach. Do not assume a program exists. Note that find_program is a Jarvis "
                 "tool returning {found, path}, while shutil.which() returns a path string or None -- in "
                 "your code use shutil.which() and treat its result as a string.",
+                # Observed live, repeatedly: the model investigated with the
+                # media_folders tool, then wrote `media_folders()` into
+                # main.py. Tools and library functions look identical in a
+                # transcript -- both are names that were called and returned
+                # useful data -- so the distinction has to be stated, not
+                # assumed. Three consecutive VERIFY failures came from exactly
+                # this, each diagnosed as "media_folders is not defined".
+                "Jarvis TOOLS (media_folders, find_media, running_processes, find_applications, "
+                "find_program, read_file, ...) exist only while you are investigating. They are NOT "
+                "importable and NOT callable from main.py. Anything main.py needs at runtime must come "
+                "from the Python standard library or a declared dependency. If a tool told you something "
+                "useful -- a folder path, a program location -- put the ANSWER in your code, or "
+                "rediscover it there with shutil.which(), pathlib and os.",
                 "Keep the module-level INPUT_SCHEMA in main.py accurate: it must list every payload key "
                 "run() reads. It is the only way a caller can know what to pass, so a key that is not "
                 "declared there is a key nobody will ever send.",

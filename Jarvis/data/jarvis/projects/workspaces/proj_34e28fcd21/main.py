@@ -7,7 +7,7 @@ INPUT_SCHEMA = {"type": "object", "properties": {"dry_run": {"type": "boolean"},
 
 # Define the media_folders function
 def media_folders():
-    folders = media_folders()['folders']
+    folders = find_media()
     audio_files_count = sum(folder['audio_files'] for folder in folders)
     return {
         'folders': folders,
@@ -50,7 +50,7 @@ def run(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     # Identify local audio files
-    folders = media_folders()['folders']
+    folders = find_media()
     audio_files_count = sum(folder['audio_files'] for folder in folders)
 
     if audio_files_count == 0:

@@ -1,4 +1,68 @@
 {
-  "capabilities": {},
+  "capabilities": {
+    "local.play.music.windows_computer": {
+      "capability_id": "local.play.music.windows_computer",
+      "creation_metadata": {
+        "created_at": "2026-08-24T14:17:04.348000+00:00",
+        "goal": "play music on this Windows computer. Investigate what is actually available: which media applications are installed, whether there are local audio files, and whether the system media keys work. Then implement run(payload) so that it starts music playing, using whatever mechanism this machine really supports.",
+        "keywords": [
+          "actually",
+          "available",
+          "computer",
+          "investigate",
+          "music",
+          "play",
+          "what",
+          "windows"
+        ],
+        "source": "capability_service"
+      },
+      "dependencies": [],
+      "description": "play music on this Windows computer. Investigate what is actually available: which media applications are installed, whether there are local audio files, and whether the system media keys work. Then implement run(payload) so that it starts music playing, using whatever mechanism this machine really supports.",
+      "entrypoint": "main.py",
+      "input_schema": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "output_schema": {
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "permissions_required": [],
+      "source_location": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\capabilities\\installed\\local_play_music_windows_computer\\1.0.0",
+      "status": "active",
+      "tests_location": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\capabilities\\installed\\local_play_music_windows_computer\\1.0.0\\test_capability.py",
+      "validation_status": {
+        "checks": [
+          {
+            "detail": "exit=0\n..                                                                       [100%]\n2 passed in 0.31s\n\n",
+            "name": "tests",
+            "ok": true
+          },
+          {
+            "detail": "exit=0\nCONTRACT_OK\n\n",
+            "name": "contract",
+            "ok": true
+          },
+          {
+            "detail": "exit=0\nSUBSTANCE_OK\n\n",
+            "name": "implemented",
+            "ok": true
+          }
+        ],
+        "verified": true
+      },
+      "version": "1.0.0"
+    }
+  },
   "schema_version": 1
 }

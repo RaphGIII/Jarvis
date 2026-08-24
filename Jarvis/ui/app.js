@@ -246,9 +246,127 @@ function wireInput() {
 
   $("btnClose").onclick = () => ui.panel.classList.remove("open");
 
+  $("btnProjects").onclick = () => showProjects();
   $("btnGraph").onclick = () => openGraph();
   $("btnGraphClose").onclick = () => closeGraph();
   $("graphSearch").addEventListener("input", (e) => graph?.setFilter(e.target.value));
+}
+
+/* ------------------------------------------------------------------ */
+/* projects                                                            */
+/* ------------------------------------------------------------------ */
+
+const STATE_CLASS = {
+  active: "active", running: "active", working: "active",
+  blocked: "blocked", failed: "blocked",
+  accepted: "done", complete: "done", completed: "done",
+};
+
+async function showProjects() {
+  openPanel("Projects", "loading…");
+  const data = await api("/api/projects");
+  const projects = data.projects || [];
+  ui.panelBody.innerHTML = "";
+
+  if (!projects.length) {
+    ui.panelBody.textContent = "No projects yet. Describe something to build and Jarvis will open one.";
+    return;
+  }
+
+  for (const project of projects) {
+    const card = document.createElement("div");
+    card.className = "project";
+
+    const goal = document.createElement("div");
+    goal.className = "goal";
+    goal.textContent = project.goal || "(no goal recorded)";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const badge = document.createElement("span");
+    badge.className = "badge " + (STATE_CLASS[project.state] || "idle");
+    badge.textContent = project.state || "unknown";
+    meta.appendChild(badge);
+    for (const [label, value] of [["tasks", project.tasks], ["steps", project.steps]]) {
+      const span = document.createElement("span");
+      span.textContent = `${value} ${label}`;
+      meta.appendChild(span);
+    }
+
+    card.append(goal, meta);
+    // The id is what "continue the chess project" has to resolve to, so it is
+    // what the card carries rather than the title.
+    card.onclick = () => showProject(project.id);
+    ui.panelBody.appendChild(card);
+  }
+}
+
+async function showProject(id) {
+  openPanel("Project", "loading…");
+  const detail = await api("/api/project", { id });
+  ui.panelBody.innerHTML = "";
+  if (detail.error) { ui.panelBody.textContent = detail.error; return; }
+
+  const goal = document.createElement("div");
+  goal.className = "goal";
+  goal.style.marginBottom = "14px";
+  goal.textContent = detail.goal || "";
+  ui.panelBody.appendChild(goal);
+
+  addSection("Acceptance", (detail.acceptance || []).map((item) =>
+    `${item.satisfied ? "✓" : "·"}  ${item.text}`));
+  addSection("Tasks", (detail.tasks || []).map((task) =>
+    `${task.status}  ${task.title}${task.attempts ? ` (${task.attempts} attempts)` : ""}`));
+
+  const steps = document.createElement("div");
+  steps.className = "steps";
+  const heading = document.createElement("div");
+  heading.className = "node-type";
+  heading.textContent = "Recent activity";
+  steps.appendChild(heading);
+  for (const step of (detail.steps || []).slice(-25).reverse()) {
+    const row = document.createElement("div");
+    row.className = "step" + (step.success ? "" : " bad");
+    const phase = document.createElement("div");
+    phase.className = "phase";
+    phase.textContent = step.phase;
+    const summary = document.createElement("div");
+    summary.className = "sum";
+    summary.textContent = step.summary;
+    row.append(phase, summary);
+    steps.appendChild(row);
+  }
+  ui.panelBody.appendChild(steps);
+
+  const button = document.createElement("button");
+  button.className = "ghost";
+  button.style.marginTop = "14px";
+  button.textContent = "Continue this project";
+  button.onclick = () => {
+    ui.panel.classList.remove("open");
+    api("/api/message", { text: `Continue the project: ${detail.goal}` });
+  };
+  ui.panelBody.appendChild(button);
+}
+
+function addSection(title, lines) {
+  if (!lines.length) return;
+  const heading = document.createElement("div");
+  heading.className = "node-type";
+  heading.style.marginTop = "12px";
+  heading.textContent = title;
+  ui.panelBody.appendChild(heading);
+  for (const line of lines) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = "";
+    const k = document.createElement("span");
+    k.className = "v";
+    k.style.textAlign = "left";
+    k.textContent = line;
+    row.appendChild(k);
+    ui.panelBody.appendChild(row);
+  }
 }
 
 /* ------------------------------------------------------------------ */
