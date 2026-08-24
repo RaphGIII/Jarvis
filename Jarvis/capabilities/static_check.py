@@ -85,13 +85,14 @@ def check_source(source: str, *, filename: str = "main.py") -> StaticReport:
         return report
 
     module_names = _bound_names(tree)
+    annotations = _annotation_nodes(tree)
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            _check_function(node, module_names, report)
+            _check_function(node, module_names, report, annotations)
 
     # Module-level code, outside any function.
-    _check_scope(tree, module_names | _BUILTINS, report, skip_functions=True)
+    _check_scope(tree, module_names | _BUILTINS, report, skip_functions=True, annotations=annotations)
     return report
 
 
@@ -136,10 +137,50 @@ def _bound_names(node: ast.AST) -> set[str]:
 
 
 def _check_function(
-    function: ast.FunctionDef | ast.AsyncFunctionDef, module_names: set[str], report: StaticReport
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    module_names: set[str],
+    report: StaticReport,
+    annotations: set[int],
 ) -> None:
     available = module_names | _bound_names(function) | _BUILTINS
-    _check_scope(function, available, report, skip_functions=False)
+    _check_scope(function, available, report, skip_functions=False, annotations=annotations)
+
+
+def _annotation_nodes(scope: ast.AST) -> set[int]:
+    """Every node that lives inside a type annotation.
+
+    Annotations are not evaluated at runtime under PEP 649 (Python 3.14's
+    default), so a missing ``Any`` in ``def run(p: dict[str, Any])`` imports and
+    runs perfectly well.  Flagging it would be a false positive, and a false
+    positive here is expensive: this check gates acceptance, so it would reject
+    a capability that works.
+
+    Found live -- a generated capability lost its ``from typing import Any``
+    while being edited, and the runtime checks were right that nothing was
+    broken by it.
+    """
+
+    marked: set[int] = set()
+
+    def mark(node: ast.AST | None) -> None:
+        if node is None:
+            return
+        for item in ast.walk(node):
+            marked.add(id(item))
+
+    for node in ast.walk(scope):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            mark(node.returns)
+            arguments = node.args
+            for group in (arguments.args, arguments.posonlyargs, arguments.kwonlyargs):
+                for argument in group:
+                    mark(argument.annotation)
+            for argument in (arguments.vararg, arguments.kwarg):
+                if argument is not None:
+                    mark(argument.annotation)
+        elif isinstance(node, ast.AnnAssign):
+            mark(node.annotation)
+    return marked
 
 
 def _walk_scope(scope: ast.AST, *, skip_functions: bool):
@@ -160,11 +201,18 @@ def _walk_scope(scope: ast.AST, *, skip_functions: bool):
 
 
 def _check_scope(
-    scope: ast.AST, available: set[str], report: StaticReport, *, skip_functions: bool
+    scope: ast.AST,
+    available: set[str],
+    report: StaticReport,
+    *,
+    skip_functions: bool,
+    annotations: set[int],
 ) -> None:
     seen: set[str] = set()
     for node in _walk_scope(scope, skip_functions=skip_functions):
         if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            continue
+        if id(node) in annotations:
             continue
         if node.id in available or node.id in seen:
             continue

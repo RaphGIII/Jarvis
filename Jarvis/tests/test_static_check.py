@@ -197,6 +197,33 @@ def test_a_clean_capability_passes(tmp_path):
     assert check_file(str(target)).ok
 
 
+def test_a_name_used_only_in_an_annotation_is_not_flagged():
+    """Under PEP 649 annotations are never evaluated, so this imports and runs.
+
+    Found live: a generated capability lost its `from typing import Any` while
+    being edited. The runtime checks were right that nothing was broken, and
+    flagging it would have rejected a working capability.
+    """
+
+    source = "def run(payload: dict[str, Any]) -> dict[str, Any]:\n    return {}\n"
+
+    assert check_source(source).ok
+
+
+def test_an_annotated_assignment_is_not_flagged():
+    assert check_source("LIMIT: Final = 3\n").ok
+
+
+def test_a_name_used_in_an_annotation_AND_in_code_is_still_flagged():
+    """The exemption is for annotations, not for the name everywhere."""
+
+    assert not check_source("def run(p: Any):\n    return Any\n").ok
+
+
+def test_a_return_annotation_is_exempt_too():
+    assert check_source("def run(p) -> SomeType:\n    return {}\n").ok
+
+
 def test_the_tool_list_covers_the_desktop_pack():
     from tools.desktop import desktop_tools
 
