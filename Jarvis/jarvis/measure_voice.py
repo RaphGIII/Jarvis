@@ -44,9 +44,19 @@ class Hop:
     name: str
     seconds: float
     detail: str = ""
+    #: Whether this hop is part of the exchange the user actually waits through.
+    #: Warm-up, synthesising the utterance that stands in for a microphone, and
+    #: the check that the detector reset afterwards are all measurement
+    #: apparatus rather than product behaviour.
+    in_exchange: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {"hop": self.name, "seconds": round(self.seconds, 3), "detail": self.detail[:200]}
+        return {
+            "hop": self.name,
+            "seconds": round(self.seconds, 3),
+            "detail": self.detail[:200],
+            "in_exchange": self.in_exchange,
+        }
 
 
 @dataclass
@@ -57,11 +67,27 @@ class VoiceMeasurement:
     wake_score: float = 0.0
     interrupted: bool = False
     time_to_first_audio: float | None = None
-    total_seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
 
-    def add(self, name: str, seconds: float, detail: str = "") -> None:
-        self.hops.append(Hop(name, seconds, detail))
+    def add(self, name: str, seconds: float, detail: str = "", *, in_exchange: bool = False) -> None:
+        self.hops.append(Hop(name, seconds, detail, in_exchange=in_exchange))
+
+    @property
+    def total_seconds(self) -> float:
+        """The exchange, defined as the hops it is made of.
+
+        Held as a wall-clock reading once, taken from the start of the exchange
+        to the end of the last thing the harness happened to do. That reported
+        53s for an exchange whose hops summed to four, because the last thing
+        the harness did was spawn a venv subprocess to check the detector had
+        reset, and importing numpy and openwakeword there took most of a minute.
+
+        Deriving the total from the hops means the headline and the breakdown
+        cannot disagree: anything not marked as part of the exchange cannot
+        silently inflate it.
+        """
+
+        return sum(hop.seconds for hop in self.hops if hop.in_exchange)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -126,10 +152,17 @@ def run(
                     f"{spoken.seconds:.1f}s of audio (stands in for a microphone)")
 
     # -- wake word ------------------------------------------------------
-    started = time.perf_counter()
-    score = _wake_score(spoken)
+    score, wake_load, wake_detect = _wake_score(spoken)
     measurement.wake_score = score
-    measurement.add("wake word", time.perf_counter() - started, f"score {score:.3f}")
+    measurement.add(
+        "wake word", wake_detect,
+        f"score {score:.3f} over {spoken.seconds:.1f}s of audio",
+    )
+    if wake_load:
+        measurement.notes.append(
+            f"the wake detector took {wake_load:.1f}s to load its model in a separate venv; "
+            "that is startup, not detection, and is excluded from the hop above"
+        )
     if score < 0.5:
         measurement.notes.append(
             f"the wake word scored {score:.3f}, below the 0.5 threshold -- "
@@ -143,7 +176,8 @@ def run(
     started = time.perf_counter()
     transcript = engine.transcribe(spoken, language="de")
     measurement.transcript = transcript.text
-    measurement.add("transcribe", time.perf_counter() - started, transcript.text[:60])
+    measurement.add("transcribe", time.perf_counter() - started, transcript.text[:60],
+                    in_exchange=True)
 
     # -- think and speak, concurrently -----------------------------------
     from core.identity import current as current_identity
@@ -185,25 +219,32 @@ def run(
     measurement.answer = "".join(collected).strip()
     measurement.interrupted = speaker.interrupted
     measurement.add("think and speak", time.perf_counter() - started,
-                    f"{metrics.phrases} phrase(s), {metrics.audio_seconds:.1f}s of audio")
+                    f"{metrics.phrases} phrase(s), {metrics.audio_seconds:.1f}s of audio",
+                    in_exchange=True)
 
     if first_audio:
         measurement.time_to_first_audio = first_audio[0] - exchange_started
 
     if barge_in:
         # -- resume listening --------------------------------------------
-        started = time.perf_counter()
-        ready = _wake_score(engine.synthesize(WAKE_PHRASE)) > 0.0
-        measurement.add("resume listening", time.perf_counter() - started,
-                        "detector reset and listening again" if ready else "detector did not reset")
-
-    measurement.total_seconds = time.perf_counter() - exchange_started
+        resumed_score, _, resumed_detect = _wake_score(engine.synthesize(WAKE_PHRASE))
+        # The detection time, not the venv start: same reason as the hop above.
+        measurement.add("resume listening", resumed_detect,
+                        "detector reset and listening again" if resumed_score > 0.0
+                        else "detector did not reset")
     engine.close()
     return measurement
 
 
-def _wake_score(audio: Any) -> float:
-    """Run the real wake detector over synthesised audio, in its own venv."""
+def _wake_score(audio: Any) -> tuple[float, float, float]:
+    """Run the real wake detector over synthesised audio, in its own venv.
+
+    Returns (peak score, model-load seconds, detection seconds). The load is
+    reported apart from the detection because this runs in a separate venv:
+    from the caller's side an interpreter start and an ONNX model load are
+    indistinguishable from the work, and folding them together reported 28s
+    for a hop that takes milliseconds.
+    """
 
     import base64
     import subprocess
@@ -229,11 +270,15 @@ def _wake_score(audio: Any) -> float:
         "pad = np.zeros(16000, dtype=np.int16);"
         "a = np.concatenate([pad, a, pad]);"
         "name = current().resolved_wake_model;"
+        "import time;"
+        "t0 = time.perf_counter();"
         "m = Model(wakeword_models=[name], inference_framework='onnx');"
+        "load = time.perf_counter() - t0;"
+        "t1 = time.perf_counter();"
         "peak = 0.0\n"
         "for i in range(0, len(a) - 1280, 1280):\n"
         "    peak = max(peak, m.predict(a[i:i+1280]).get(name, 0.0))\n"
-        "print(peak)"
+        "print(peak, load, time.perf_counter() - t1)"
     )
     try:
         completed = subprocess.run(
@@ -242,9 +287,15 @@ def _wake_score(audio: Any) -> float:
             capture_output=True, text=True, timeout=180,
             encoding="utf-8", errors="replace",
         )
-        return float((completed.stdout or "0").strip().splitlines()[-1])
+        parts = (completed.stdout or "0").strip().splitlines()[-1].split()
+        peak = float(parts[0])
+        # The subprocess times itself, because from out here the model load
+        # and the interpreter start are indistinguishable from detection.
+        load = float(parts[1]) if len(parts) > 1 else 0.0
+        detect = float(parts[2]) if len(parts) > 2 else 0.0
+        return peak, load, detect
     except Exception:
-        return 0.0
+        return 0.0, 0.0, 0.0
 
 
 def main(argv: list[str] | None = None) -> int:
