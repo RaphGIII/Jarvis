@@ -166,8 +166,17 @@ class ExpertGateway:
             result.provider = result.provider or provider.name
             result.duration_seconds = result.duration_seconds or (time.perf_counter() - started)
 
-            if result.status.ran:
+            # Verify whenever the provider may have left usable work behind --
+            # including a TIMEOUT. Observed live: the expert wrote a complete,
+            # correct 20KB implementation and was cut off at its budget while
+            # tidying up. Refusing to look at the workspace because the clock
+            # ran out threw away work that passed every acceptance check.
+            if result.status.ran or result.status is ExpertStatus.TIMEOUT:
                 result.test_evidence = self.verify(job)
+                if result.status is ExpertStatus.TIMEOUT and result.verified:
+                    # The work is done and proven; how it ended is a detail.
+                    result.status = ExpertStatus.COMPLETED
+                    result.blocker = ""
                 if result.status is ExpertStatus.COMPLETED and not result.verified:
                     # The provider said it was done and the checks disagree.
                     # The checks win; that is what they are for.

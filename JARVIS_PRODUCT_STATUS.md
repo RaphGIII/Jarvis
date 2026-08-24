@@ -84,6 +84,48 @@ it; anything not measured says so.
 
 ---
 
+## THE CHESS PROOF — where it actually got to
+
+Four requirements, given one at a time to a persistent project on BUILD_LOCAL.
+
+| Requirement | Result |
+|---|---|
+| board geometry | **ACCEPTED** — 266 s, 13 steps, real CV, one failure diagnosed and repaired |
+| position → FEN | **FAILED** three times, each time honestly |
+| Stockfish | not reached |
+| pipeline | not reached |
+
+**Requirement 1 is a genuine pass.** `detect_board` uses greyscale thresholding,
+contour detection and a bounding box, deriving square size as width/8. It works
+on both the 64px fixtures and the 80px ones with margins, so nothing is
+hard-coded. It included a real VERIFY-fail → DIAGNOSE → repair → VERIFY-pass
+cycle.
+
+**Requirement 2 failed three times, and each failure taught something:**
+
+1. Returned a hard-coded starting FEN. Caught only because there are four
+   fixtures and only one is the starting position.
+2. Read the answers out of `fixtures.json` — and *passed*, because my acceptance
+   command compared against the same file. **My design's defect**, identical in
+   shape to the capability that returned "Dry run: would play music".
+   Fixed by holding the ground truth out and adding an oracle guard.
+3. Called `image_region(...)` — a Jarvis tool — from inside `position.py`. The
+   same error the capability path hit twice with `media_folders`. The project
+   engine had none of the three defences the capability path already had; it
+   does now.
+4. The last attempt produced no file at all, and three of four criteria still
+   read green, because a missing file passed both guards vacuously. Fixed.
+
+**Classification:** the first three are infrastructure defects, now closed. What
+remains is the model being asked to write pixel-classification code for glyphs
+it cannot see. `tools/vision.py` addresses that directly — verified to report 32
+occupied squares on the Italian Game, b8 correctly empty, and ink means of
+~[52,49,44] on rank 8 against ~[237,229,222] on rank 1 — but the 7B model has
+not yet turned those measurements into a working classifier.
+
+Per the brief, this is now on the **escalation path** rather than being forced
+further.
+
 ## IN PROGRESS
 
 - **Music capability.** Five live attempts. The bar has risen each time and the
