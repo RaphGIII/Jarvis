@@ -941,6 +941,10 @@ class ProjectEngine:
         # and could not splice it in. Sending the whole small file is the way
         # out, and it will still meet the shrink guard if it sends a fragment.
         "unparseable",
+        # The model sent an edit identical to what is already there, which means
+        # its idea of the file and the file itself have diverged. Sending the
+        # whole small file resynchronises them.
+        "no effective edit",
     )
 
     def _anchor_failed_before(self, task: Task) -> bool:

@@ -309,3 +309,80 @@ def test_a_large_file_is_shown_in_full_when_the_context_allows(tmp_path):
     shown = _focused_edit_context(root, goal, {}, max_chars=engineer._focus_budget())
     assert "MARKER_TO_FIND = 'here'" in shown, "the line to edit must actually appear"
     assert "00001:" not in shown, "and unnumbered, so the anchor can be copied verbatim"
+
+
+def test_a_file_that_fits_the_budget_is_shown_whole(tmp_path):
+    """Range selection ranks by keyword density, and documentation wins.
+
+    Asked twice to add an exit word to the CLI, the local model twice edited the
+    help text instead of the code -- because the help line "/quit /exit /bye
+    leave" matches the goal more densely than the code implementing it, and
+    range selection showed only that. The file fitted the budget nearly twice
+    over; a hard-coded 3200-character threshold forced the selection anyway.
+    """
+
+    from development.repository_engineer import _focused_edit_context
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = (
+        'HELP = """\n'
+        "  /quit  /exit  /bye    leave\n"
+        '"""\n\n'
+        + "\n".join(f"def filler_{index}():\n    return {index}\n" for index in range(120))
+        + '\n\ndef handle(command):\n    if command in {"/quit", "/exit", "/bye"}:\n        return False\n'
+    )
+    (root / "cli.py").write_text(source, encoding="utf-8")
+    goal = SelfImprovementGoal(objective="add /goodbye as another way to quit", allowed_paths=["cli.py"])
+
+    shown = _focused_edit_context(root, goal, {}, max_chars=40000)
+
+    assert 'if command in {"/quit", "/exit", "/bye"}:' in shown, "the code that implements the behaviour must be shown"
+    assert "def filler_60():" in shown, "and the whole file with it, since it fits"
+
+
+def test_a_file_too_large_for_the_budget_still_falls_back_to_ranges(tmp_path):
+    """The threshold moved; the fallback did not disappear."""
+
+    from development.repository_engineer import _focused_edit_context
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    body = "\n".join(f"def filler_{index}():\n    return {index}\n" for index in range(4000))
+    (root / "big.py").write_text(body + "\nUNIQUE_MARKER = 1\n", encoding="utf-8")
+    goal = SelfImprovementGoal(objective="change UNIQUE_MARKER", allowed_paths=["big.py"])
+
+    shown = _focused_edit_context(root, goal, {}, max_chars=6000)
+
+    assert len(shown) <= 6500, "a file that cannot fit must not be dumped whole"
+    assert "UNIQUE_MARKER" in shown, "and the relevant region must still be selected"
+
+
+def test_a_completed_run_finishes_its_heartbeat(tmp_path):
+    """The doctor reported a finished self-development run as DEAD.
+
+    finish() was only called on the error path, so a run that completed left a
+    heartbeat that never said so.
+    """
+
+    import subprocess
+
+    from runtime.heartbeat import Heartbeat, check_liveness
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+    for args in (["init"], ["config", "user.email", "j@x.invalid"], ["config", "user.name", "J"], ["add", "."]):
+        subprocess.run(["git", *args], cwd=str(root), capture_output=True, timeout=60)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-m", "b"], cwd=str(root), capture_output=True, timeout=60)
+
+    path = tmp_path / "hb.json"
+    engineer = RepositoryEngineer(
+        brain=FakeBrain(),  # no generate_* methods: the run fails immediately
+        worktree_root=tmp_path / "wt",
+        max_cycles=1,
+        heartbeat=Heartbeat(path, run="test"),
+    )
+    engineer.improve(root, SelfImprovementGoal(objective="anything", allowed_paths=["calc.py"]))
+
+    assert check_liveness(path).state == "finished", "a run that ended must say so in its heartbeat"

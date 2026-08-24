@@ -723,8 +723,10 @@ class RepositoryEngineer:
                 if self.checkpoint:
                     self.checkpoint.save(RepositoryStage.EVALUATION_COMPLETE, result.to_dict())
                 self.memory.record({"trajectory_id": result.trajectory_id, **trajectory, "outcome": result.to_dict()})
+                self.heartbeat.finish(result.status)
                 return result
             result = self._rejected(worktree, trajectory, last_failures, before_benchmarks, last_targeted, last_full, review, max_dev_cycles)
+            self.heartbeat.finish(result.status)
             return result
         except Exception as exc:
             provider_failure = _provider_failure_payload(exc)
@@ -1736,7 +1738,16 @@ def _focused_edit_context(worktree, goal, context, *, max_chars=5000):
         if not lines:
             continue
 
-        if len(text) <= 3200:
+        # Show the whole file whenever it fits in what is left of the budget.
+        #
+        # This threshold used to be a hard-coded 3200 characters and never moved
+        # when the budget grew to 39k. The consequence was not merely wasteful,
+        # it was wrong: range selection ranks lines by keyword overlap, and the
+        # help text at the top of the CLI mentions "/quit /exit /bye leave" more
+        # densely than the code that implements them. Asked twice to add an exit
+        # word, the model twice edited the documentation, because that is the
+        # only part of the file it was shown.
+        if len(text) <= max(3200, remaining):
             selected_ranges = [(0, len(lines))]
         else:
             scored = []
