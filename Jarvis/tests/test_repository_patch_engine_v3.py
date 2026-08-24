@@ -311,14 +311,24 @@ def test_a_large_file_is_shown_in_full_when_the_context_allows(tmp_path):
     assert "00001:" not in shown, "and unnumbered, so the anchor can be copied verbatim"
 
 
-def test_a_file_that_fits_the_budget_is_shown_whole(tmp_path):
+def test_the_branch_is_shown_and_the_help_decoy_is_not(tmp_path):
     """Range selection ranks by keyword density, and documentation wins.
 
     Asked twice to add an exit word to the CLI, the local model twice edited the
     help text instead of the code -- because the help line "/quit /exit /bye
     leave" matches the goal more densely than the code implementing it, and
-    range selection showed only that. The file fitted the budget nearly twice
-    over; a hard-coded 3200-character threshold forced the selection anyway.
+    range selection showed only that.
+
+    This test used to demand the WHOLE file whenever it fitted the budget, which
+    fixed the immediate bug by making the branch visible.  It also kept the
+    decoy visible, and two further live runs then edited the help text again
+    with the real code sitting right there in the prompt.  Showing the model
+    both and hoping it picks correctly is not retrieval.
+
+    The contract is now the stronger one the docstring always implied: the
+    executable branch is shown, and the help text that merely mentions the same
+    words is not.  :mod:`development.code_index` separates them by syntactic
+    role, so this no longer depends on where the lines happen to sit.
     """
 
     from development.repository_engineer import _focused_edit_context
@@ -338,7 +348,7 @@ def test_a_file_that_fits_the_budget_is_shown_whole(tmp_path):
     shown = _focused_edit_context(root, goal, {}, max_chars=40000)
 
     assert 'if command in {"/quit", "/exit", "/bye"}:' in shown, "the code that implements the behaviour must be shown"
-    assert "def filler_60():" in shown, "and the whole file with it, since it fits"
+    assert "leave" not in shown, "and the help text that outscores it lexically must NOT be"
 
 
 def test_a_file_too_large_for_the_budget_still_falls_back_to_ranges(tmp_path):

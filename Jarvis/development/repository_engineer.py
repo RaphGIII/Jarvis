@@ -1721,6 +1721,15 @@ def _focused_edit_context(worktree, goal, context, *, max_chars=5000):
         if lowered not in keywords:
             keywords.append(lowered)
 
+    # Deterministic navigation first: software finds the code, the model edits
+    # it.  Lexical scoring cannot separate `if word in {"/quit", "/bye"}` from a
+    # help string listing the same words, and when it guesses wrong the model
+    # never sees the line it was asked to change -- the observed cause of four
+    # consecutive failed self-patch runs.  The AST can separate them for free.
+    indexed = _indexed_regions(root, keywords, candidates, max_chars)
+    if indexed:
+        return indexed
+
     chunks = []
     remaining = max_chars
 
@@ -1809,6 +1818,88 @@ def _focused_edit_context(worktree, goal, context, *, max_chars=5000):
         return "(no focused editable code found)"
 
     return "".join(chunks)
+
+
+def _indexed_regions(root, keywords, candidates, max_chars):
+    """Select source regions by syntactic role, and say why each was chosen.
+
+    Returns "" when the index has nothing to offer -- no Python candidates, no
+    hits -- so the caller falls back to plain lexical selection rather than
+    handing the model an empty block.
+    """
+
+    python_paths = [relative for relative, path in candidates if str(path).endswith(".py")]
+    if not python_paths:
+        return ""
+
+    try:
+        from development.code_index import CodeIndex, Role
+    except ImportError:  # pragma: no cover - defensive
+        return ""
+
+    index = CodeIndex(root)
+
+    # Literal terms -- "/goodbye", "--verbose", "SOME_KEY" -- are what a goal is
+    # usually phrased in, and they are exactly what plain search over-matches.
+    # Path components ("jarvis", "cli") are excluded: they match every line in
+    # the file and so distinguish nothing, which is the definition of noise.
+    path_words = {part.lower() for relative in python_paths for part in re.split(r"[/._]", relative) if part}
+    literals = [
+        word
+        for word in keywords
+        if (word.startswith("/") or "_" in word or len(word) > 5) and word.lower() not in path_words
+    ]
+
+    # Command-like tokens first: "/quit" is the kind of term a goal hinges on,
+    # while "implementiere" is filler that happens to be long.  Then keep
+    # scanning until three terms have actually RESOLVED -- taking the first
+    # three off the list reported nothing at all when the three leading terms
+    # had no hits and the term that mattered sat fourth.
+    literals.sort(key=lambda word: (not word.startswith("/"), -len(word)))
+
+    report_lines = []
+    for term in literals[:12]:
+        if len(report_lines) >= 3:
+            break
+        term = term.rstrip(".,;:!?)")
+        occurrences = index.find_literal(term, paths=python_paths, limit=12)
+        if not occurrences:
+            continue
+        executable = [item for item in occurrences if item.role.executable]
+        prose = [item for item in occurrences if not item.role.executable]
+        if executable and prose:
+            # The one sentence that would have prevented four failed runs.
+            report_lines.append(
+                f"'{term}' appears as EXECUTABLE CODE at "
+                + ", ".join(f"{item.path}:{item.line}" for item in executable[:4])
+                + " and as NON-EXECUTABLE TEXT (help/docs/comments) at "
+                + ", ".join(f"{item.path}:{item.line}" for item in prose[:4])
+                + ". Change the executable code; editing the text will not work."
+            )
+
+    header = ""
+    if report_lines:
+        header = "REPOSITORY INDEX (deterministic, trust this over your own search):\n" + "\n".join(
+            f"  {line}" for line in report_lines
+        ) + "\n"
+
+    regions = index.regions_for_terms(
+        keywords,
+        paths=python_paths,
+        budget_chars=max(1000, max_chars - len(header)),
+        max_regions=6,
+    )
+    if not regions:
+        return ""
+
+    # If the best region is real code, drop pure-prose regions entirely: showing
+    # the help text alongside the branch is what invited the model to edit it.
+    if regions[0].role >= Role.FUNCTION_CODE:
+        executable_regions = [region for region in regions if region.role.executable]
+        if executable_regions:
+            regions = executable_regions
+
+    return header + "".join(region.render() for region in regions)
 
 
 def _patch_schema() -> dict[str, Any]:
