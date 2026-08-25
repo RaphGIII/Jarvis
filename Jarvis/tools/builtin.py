@@ -327,17 +327,31 @@ def _with_small_file_hint(error: EditError, context: ToolContext) -> str:
         lines = None
 
     small = lines is not None and lines <= _SMALL_FILE_LINES
-    if not (small and lines is not None) and not repeated:
+    if not small and not repeated:
         return error.detail
 
-    why = (
-        f"{error.path} is only {lines} lines." if small
-        else f"That is {misses[error.path]} failed anchors in {error.path} in a row, "
-        "so the text you are matching against is not what the file contains."
-    )
+    if small:
+        return (
+            f"{error.detail}\n{error.path} is only {lines} lines. Rather than fight the anchor, "
+            f"call write_file with the complete corrected contents of {error.path}."
+        )
+
+    # Repeated misses on a file too large to retype. "Rewrite the whole file"
+    # is the right advice for sixty lines and actively harmful for seven
+    # hundred: told that during a live repair, the model replaced a 688-line
+    # module with a 37-line sketch, and only the edit engine's shrink guard
+    # stopped it from destroying a working implementation to fix one number.
+    # The problem is the same -- the model's picture of the file has drifted --
+    # but the remedy is to go and look, not to retype from memory.
+    # Deliberately does not name the rewrite tool, even to say it would refuse.
+    # The advice has to be unambiguous: a model that sees the name tends to
+    # reach for it, which is how a 688-line module came to be replaced by a
+    # 37-line sketch.
     return (
-        f"{error.detail}\n{why} Rather than fight the anchor, call write_file with the "
-        f"complete corrected contents of {error.path}."
+        f"{error.detail}\nThat is {misses[error.path]} failed anchors in {error.path} in a row, "
+        f"so the text you are matching against is not what the file contains. {error.path} is "
+        f"{lines} lines -- far too long to retype from memory. Call read_file on the region you "
+        f"want to change, then anchor on a short unique line you have just read."
     )
 
 

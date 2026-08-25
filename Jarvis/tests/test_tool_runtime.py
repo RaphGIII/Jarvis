@@ -558,9 +558,9 @@ def test_a_repeated_anchor_miss_is_told_to_rewrite_the_file(registry, context, w
     second = call(registry, context, "apply_edits", files=[dict(edit)])
 
     assert not first.ok and not second.ok
-    assert "write_file" not in first.error, "one miss is not yet evidence of drift"
-    assert "write_file" in second.error
+    assert "read_file" not in first.error, "one miss is not yet evidence of drift"
     assert "2 failed anchors" in second.error
+    assert "read_file" in second.error
 
 
 def test_a_short_file_is_told_to_rewrite_on_the_first_miss(registry, context, workspace):
@@ -590,3 +590,40 @@ def test_anchor_misses_are_counted_per_file_not_globally(registry, context, work
     other = call(registry, context, "apply_edits", files=[{"path": "b.py", **absent}])
 
     assert "write_file" not in other.error
+
+
+def test_a_long_file_is_never_told_to_rewrite_itself_from_memory(registry, context, workspace):
+    """The advice that unblocks a sixty-line file destroys a seven-hundred-line one.
+
+    Observed during a live capability repair: told to "call write_file with the
+    complete corrected contents", the model replaced a 688-line module with a
+    37-line sketch, and only the edit engine's shrink guard stopped a working
+    implementation from being lost to fix one number. The drift is the same;
+    the remedy is to go and look, not to retype.
+    """
+
+    long_file = "\n".join(f"line {index}" for index in range(700)) + "\n"
+    (workspace / "big.py").write_text(long_file, encoding="utf-8")
+    edit = {"path": "big.py", "search": "def absent():\n    return 1", "replace": "x"}
+
+    call(registry, context, "apply_edits", files=[dict(edit)])
+    second = call(registry, context, "apply_edits", files=[dict(edit)])
+
+    assert "write_file" not in second.error, "a 700-line file cannot be retyped"
+    assert "read_file" in second.error
+    assert "700 lines" in second.error
+
+
+def test_the_two_remedies_do_not_get_mixed_up(registry, context, workspace):
+    """Small files get 'rewrite it'; long ones get 'go and read it'."""
+
+    (workspace / "tiny.py").write_text("a = 1\n", encoding="utf-8")
+    (workspace / "huge.py").write_text("\n".join(f"l{i}" for i in range(500)), encoding="utf-8")
+    absent = {"search": "def absent():\n    return 1", "replace": "z"}
+
+    tiny = call(registry, context, "apply_edits", files=[{"path": "tiny.py", **absent}])
+    call(registry, context, "apply_edits", files=[{"path": "huge.py", **absent}])
+    huge = call(registry, context, "apply_edits", files=[{"path": "huge.py", **absent}])
+
+    assert "write_file" in tiny.error and "read_file" not in tiny.error
+    assert "read_file" in huge.error and "write_file" not in huge.error
