@@ -733,6 +733,48 @@ def test_an_action_turn_shows_working_then_verifying(live):
     assert states.index("working") < states.index("verifying")
 
 
+def test_a_failed_action_leaves_the_interface_in_an_error_state(live, tmp_path):
+    """A failure that returns straight to idle looks like a success from across
+    the room -- the same defect as a reassuring sentence, in the interface."""
+
+    plan = {"action": "file.write", "path": "blocked.txt", "content": "x"}
+    core, client = live(PlanningProvider(plan))
+    (Path(core.kernel.state_root) / "workspace").mkdir(parents=True, exist_ok=True)
+    (Path(core.kernel.state_root) / "workspace" / "blocked.txt").mkdir()
+
+    client.say("Erstelle die Datei blocked.txt mit dem Inhalt x")
+
+    assert core.receipts.all()[-1].verified is False
+    assert client.states()[-1] == "error"
+
+
+def test_a_new_conversation_clears_the_transcript_but_never_the_record(live, tmp_path):
+    """Hiding the transcript is a convenience. Hiding the evidence would be the
+    thing this system exists to prevent."""
+
+    plan = {"action": "file.write", "path": "kept.txt", "content": "x"}
+    core, client = live(PlanningProvider(plan))
+    client.say("Erstelle die Datei kept.txt mit dem Inhalt x")
+    receipts_before = len(core.receipts.all())
+    activity_before = len(core.activity.recent())
+
+    client.call("/api/new")
+
+    assert core.history == []
+    assert core.state.state is JarvisState.IDLE
+    assert len(core.receipts.all()) == receipts_before
+    assert len(core.activity.recent()) == activity_before
+
+
+def test_a_verified_action_returns_to_idle(live):
+    plan = {"action": "file.write", "path": "fine.txt", "content": "x"}
+    _core, client = live(PlanningProvider(plan))
+
+    client.say("Erstelle die Datei fine.txt mit dem Inhalt x")
+
+    assert client.states()[-1] == "idle"
+
+
 def test_an_action_turn_does_not_stream_model_prose(live):
     """There is no window in which the model's words are the answer."""
 

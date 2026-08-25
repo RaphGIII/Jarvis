@@ -129,6 +129,9 @@ class JarvisHTTPServer:
             # are on the API rather than only in the event stream because a
             # client that was not connected at the time still has to be able to
             # ask what this system has done.
+            # What the Activity view reads. Durable, so a client that was not
+            # connected at the time still sees everything that happened.
+            "/api/activity": lambda body: self.core.list_activity(int(body.get("limit", 200) or 200)),
             "/api/receipts": lambda body: self.core.list_receipts(int(body.get("limit", 50) or 50)),
             "/api/receipt": lambda body: self.core.receipt(str(body.get("id", ""))),
             "/api/knowledge/graph": lambda body: self.core.knowledge_graph(
@@ -185,6 +188,7 @@ class JarvisHTTPServer:
             "/api/persona": lambda body: self.core.set_persona(str(body.get("name", ""))),
             "/api/language": lambda body: self.core.set_language(str(body.get("language", ""))),
             "/api/stop": lambda _: self.core.stop_current(),
+            "/api/new": lambda _: self.core.new_conversation(),
         }
         handler = routes.get(path)
         if handler is None:

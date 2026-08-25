@@ -44,6 +44,16 @@ function startJarvis() {
   eye = new JarvisEye($("eye"));
   eye.start();
 
+  // The eye is a canvas: CSS changes the element's size, but the backing store
+  // has to be re-cut or the hero eye is a 108px drawing stretched to 420. An
+  // observer rather than a transitionend handler, because it also has to fire
+  // while the transition is running and on an ordinary window resize.
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => eye.resize()).observe($("eye"));
+  } else {
+    window.addEventListener("resize", () => eye.resize());
+  }
+
   wireInput();
   connect();
   refreshStatus();
@@ -267,9 +277,17 @@ function wireInput() {
 
   $("btnMic").onclick = () => toggleMic();
 
-  $("btnActivity").onclick = (e) => {
-    activityOn = !activityOn;
-    e.currentTarget.setAttribute("aria-pressed", String(activityOn));
+  $("btnActivity").onclick = () => showActivity();
+
+  // A conversation with no messages is the hero state, so clearing one returns
+  // to it. The eye's own resize observer handles the rest.
+  $("btnNew").onclick = async () => {
+    ui.log.innerHTML = "";
+    streaming = null;
+    ui.app.classList.remove("conversing");
+    // The server forgets the transcript too, so the next prompt starts clean
+    // rather than carrying context the user believes they cleared.
+    await api("/api/new", {});
   };
 
   $("btnDiag").onclick = async () => {
@@ -287,6 +305,174 @@ function wireInput() {
   $("btnGraph").onclick = () => openGraph();
   $("btnGraphClose").onclick = () => closeGraph();
   $("graphSearch").addEventListener("input", (e) => graph?.setFilter(e.target.value));
+}
+
+/* ------------------------------------------------------------------ */
+/* activity                                                            */
+/* ------------------------------------------------------------------ */
+
+/* How each entry kind is labelled and coloured. The class decides the colour,
+   so a row's appearance is a function of what the backend recorded and never
+   of anything a model wrote. */
+const ACTIVITY_KINDS = {
+  "request":          { label: "REQUEST",   cls: "req" },
+  "answer":           { label: "ANSWER",    cls: "ans" },
+  "action.verified":  { label: "VERIFIED",  cls: "ok" },
+  "action.ran":       { label: "UNVERIFIED",cls: "warn" },
+  "action.failed":    { label: "FAILED",    cls: "bad" },
+  "tool":             { label: "TOOL",      cls: "tool" },
+  "state.working":    { label: "WORKING",   cls: "work" },
+  "state.verifying":  { label: "VERIFYING", cls: "work" },
+  "state.researching":{ label: "RESEARCH",  cls: "tool" },
+  "state.coding":     { label: "CODING",    cls: "tool" },
+  "state.waiting":    { label: "WAITING",   cls: "warn" },
+  "state.error":      { label: "ERROR",     cls: "bad" },
+  "error":            { label: "ERROR",     cls: "bad" },
+  "progress":         { label: "PROGRESS",  cls: "tool" },
+  "notification":     { label: "NOTE",      cls: "tool" },
+};
+
+function clockOf(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso.slice(11, 19) : d.toLocaleTimeString();
+}
+
+async function showActivity() {
+  openPanel("Activity", "loading…");
+  const data = await api("/api/activity", { limit: 300 });
+  ui.panelBody.innerHTML = "";
+
+  const entries = data.activity || [];
+
+  // The live-echo toggle lives here rather than in the header: it is a
+  // preference about the chat transcript, not a second Activity view.
+  const controls = document.createElement("label");
+  controls.className = "activity-controls";
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = activityOn;
+  box.onchange = () => { activityOn = box.checked; };
+  controls.append(box, document.createTextNode(" echo actions into the conversation as they happen"));
+  ui.panelBody.appendChild(controls);
+
+  if (data.error) {
+    const err = document.createElement("div");
+    err.className = "activity-empty";
+    err.textContent = `The activity log could not be read: ${data.error}`;
+    ui.panelBody.appendChild(err);
+    return;
+  }
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "activity-empty";
+    empty.textContent = "Nothing recorded yet. Every request, action and verification appears here.";
+    ui.panelBody.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "activity";
+  for (const entry of entries.slice().reverse()) list.appendChild(activityRow(entry));
+  ui.panelBody.appendChild(list);
+}
+
+function activityRow(entry) {
+  const meta = ACTIVITY_KINDS[entry.kind] || { label: entry.kind.toUpperCase(), cls: "tool" };
+  const row = document.createElement("div");
+  row.className = `act ${meta.cls}`;
+
+  const head = document.createElement("div");
+  head.className = "act-head";
+
+  const tag = document.createElement("span");
+  tag.className = "act-tag";
+  tag.textContent = meta.label;
+
+  const when = document.createElement("span");
+  when.className = "act-when";
+  when.textContent = clockOf(entry.at);
+
+  const text = document.createElement("span");
+  text.className = "act-sum";
+  text.textContent = entry.summary || "(no detail recorded)";
+
+  head.append(tag, text, when);
+  row.appendChild(head);
+
+  const body = activityDetail(entry);
+  if (body) {
+    head.classList.add("expandable");
+    body.hidden = true;
+    head.onclick = () => { body.hidden = !body.hidden; };
+    row.appendChild(body);
+  }
+  return row;
+}
+
+/* The expanded view. Everything here comes from the persisted entry — nothing
+   is recomputed in the browser, so what the user reads is what was recorded. */
+function activityDetail(entry) {
+  const receipt = entry.receipt_id ? entry.detail : null;
+  if (!receipt && !Object.keys(entry.detail || {}).length) return null;
+
+  const body = document.createElement("div");
+  body.className = "act-body";
+
+  const line = (k, v) => {
+    if (v === undefined || v === null || v === "") return;
+    const el = document.createElement("div");
+    el.className = "act-kv";
+    el.innerHTML = "";
+    const key = document.createElement("span");
+    key.className = "act-k";
+    key.textContent = k;
+    const val = document.createElement("span");
+    val.className = "act-v";
+    val.textContent = String(v);
+    el.append(key, val);
+    body.appendChild(el);
+  };
+
+  if (receipt) {
+    line("action", receipt.kind);
+    line("executor", receipt.executor);
+    line("timestamp", entry.at);
+    const ev = receipt.evidence || {};
+    line("target", ev.path || ev.project_id || ev.title || ev.track || ev.query || "");
+    line("result", receipt.verified ? "verified" : receipt.ok ? "ran, not verified" : "failed");
+    line("took", receipt.duration_seconds !== undefined ? `${receipt.duration_seconds}s` : "");
+    if (!receipt.ok) line("failure", receipt.detail);
+    line("receipt", receipt.id);
+
+    const checks = receipt.verifications || [];
+    if (checks.length) {
+      const head = document.createElement("div");
+      head.className = "act-k act-checks-head";
+      head.textContent = "verification evidence";
+      body.appendChild(head);
+      for (const check of checks) {
+        const el = document.createElement("div");
+        el.className = "act-check" + (check.passed ? "" : " bad");
+        el.textContent = `${check.passed ? "✓" : "✗"} ${check.check}` +
+                         (check.observed ? ` — ${check.observed}` : "");
+        body.appendChild(el);
+      }
+    } else {
+      const el = document.createElement("div");
+      el.className = "act-check bad";
+      el.textContent = "✗ no verification was recorded for this action";
+      body.appendChild(el);
+    }
+    return body;
+  }
+
+  for (const [key, value] of Object.entries(entry.detail || {})) {
+    if (value === null || value === "" || typeof value === "object") continue;
+    line(key, value);
+  }
+  line("timestamp", entry.at);
+  return body.children.length ? body : null;
 }
 
 /* ------------------------------------------------------------------ */

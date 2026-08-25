@@ -100,6 +100,7 @@ class JarvisCore:
         self._gateway: Any = None
         self._receipts: Any = None
         self._actions: Any = None
+        self._activity: Any = None
         #: Receipts produced during this conversation, in memory.  The claim
         #: guard consults them on every streamed chunk, and re-reading the
         #: ledger file that often would cost more than the check saves.
@@ -145,6 +146,23 @@ class JarvisCore:
 
             self._gateway = DeviceGateway(self.kernel.state_root / "devices.json")
         return self._gateway
+
+    @property
+    def activity(self) -> Any:
+        """The durable record of what happened, fed only by the event bus.
+
+        Attached on first access rather than in ``__init__`` because touching
+        it builds the kernel, and constructing the core must stay free.  The
+        cost of that is that nothing is recorded until something asks -- so
+        :meth:`warm` attaches it at startup, which is where the first events
+        appear anyway.
+        """
+
+        if self._activity is None:
+            from runtime.activity import ActivityLog
+
+            self._activity = ActivityLog(self.kernel.state_root / "activity.jsonl").attach(self.bus)
+        return self._activity
 
     @property
     def receipts(self) -> Any:
@@ -200,6 +218,14 @@ class JarvisCore:
         text = (text or "").strip()
         if not text:
             return {"ok": False, "error": "empty message"}
+
+        # Touched before the first event is published, so the request that
+        # started everything is in the record rather than missing from it.
+        # `warm()` normally pays this cost at startup; here it is the guarantee.
+        try:
+            self.activity
+        except Exception:
+            pass
 
         from persona.language import stable_language
 
@@ -340,6 +366,12 @@ class JarvisCore:
             compose(receipt, language=self.language),
             scope=scope,
             backend=receipt.executor,
+            # An action that did not verify leaves the eye red rather than
+            # returning to idle. Going straight back to idle made a failure
+            # look exactly like a success from across the room, which is the
+            # same defect as a reassuring sentence -- only in the interface.
+            # It clears on the next turn, like every other state.
+            final_state=JarvisState.IDLE if receipt.verified else JarvisState.ERROR,
             # The transcript gets the fact, not the evidence. The user needs
             # every check; the next prompt needs one line that cannot be
             # mistaken for the model's own prose.
@@ -486,8 +518,16 @@ class JarvisCore:
                 pass
         return correction(claim, language=self.language)
 
-    def _deliver(self, answer: str, *, scope: str, backend: str, context_text: str = "") -> None:
-        """Record the assistant's turn, publish it, and go idle."""
+    def _deliver(
+        self,
+        answer: str,
+        *,
+        scope: str,
+        backend: str,
+        context_text: str = "",
+        final_state: JarvisState = JarvisState.IDLE,
+    ) -> None:
+        """Record the assistant's turn, publish it, and settle into a state."""
 
         reply = ConversationTurn(
             role="assistant", text=answer, at=_now(), backend=backend, context_text=context_text
@@ -495,7 +535,7 @@ class JarvisCore:
         with self._lock:
             self._history.append(reply)
         self.emit(EventType.MESSAGE, reply.to_dict(), scope=scope)
-        self.state.set(JarvisState.IDLE)
+        self.state.set(final_state, detail="" if final_state is JarvisState.IDLE else answer[:120])
 
     def _generate(self, provider: Any, prompt: str) -> Iterable[str]:
         """Stream from a provider, falling back to a single block if it cannot."""
@@ -568,6 +608,11 @@ class JarvisCore:
         """
 
         def run() -> None:
+            try:
+                # Before the first diagnostic, so startup itself is on the record.
+                self.activity
+            except Exception:
+                pass
             self.emit(EventType.DIAGNOSTIC, {"warming": "started"})
             try:
                 from brain.tiers import ModelTier
@@ -734,6 +779,23 @@ class JarvisCore:
         self.state.set(JarvisState.IDLE, detail="interrupted")
         return {"ok": True}
 
+    def new_conversation(self) -> dict[str, Any]:
+        """Start fresh: clear the transcript and settle the state.
+
+        The *conversation* resets; the *record* does not.  The activity log and
+        the receipt ledger are untouched, so a failed action the user just
+        cleared off their screen is still there for anyone who goes looking.
+        Hiding the transcript is a convenience; hiding the evidence would be
+        the thing this whole system exists to prevent.
+        """
+
+        with self._lock:
+            self._history.clear()
+        self._session_receipts.clear()
+        self.language = ""
+        self.state.set(JarvisState.IDLE)
+        return {"ok": True, "cleared": True}
+
     # ------------------------------------------------------------------
     # Projects
     # ------------------------------------------------------------------
@@ -833,6 +895,15 @@ class JarvisCore:
             "active": [item for item in records if item.get("status") == "active"],
             "disabled": [item for item in records if item.get("status") != "active"],
         }
+
+    def list_activity(self, limit: int = 200) -> dict[str, Any]:
+        """Everything that happened, newest last, from the durable log."""
+
+        try:
+            entries = [entry.to_dict() for entry in self.activity.recent(limit)]
+        except Exception as exc:
+            return {"activity": [], "error": f"{type(exc).__name__}: {exc}"}
+        return {"activity": entries, "count": len(entries)}
 
     def list_receipts(self, limit: int = 50) -> dict[str, Any]:
         """Every side effect this system has performed, newest last."""
