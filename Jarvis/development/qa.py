@@ -124,7 +124,7 @@ class InternalTestEngineer:
         if self.brain is None or not hasattr(self.brain, "generate_structured"):
             return []
         prompt = (
-            "Return JSON only. You are Jarvis TestEngineer. Create internal black-box tests from the contract.\n"
+            "Return JSON only. You are a test engineer. Create internal black-box tests from the contract.\n"
             "Do not use hidden verifier tests. Do not include implementation code.\n"
             "Schema: {\"cases\":[{\"name\":\"...\",\"input\":{},\"expected\":{},\"raises\":false}]}\n"
             f"Specification:\n{json.dumps(spec.to_dict(), indent=2, sort_keys=True)}\n"

@@ -405,6 +405,17 @@ class ModelProbe:
     def probe_all(self, *, force: bool = False) -> dict[ModelTier, ModelHealth]:
         return {tier: self.probe(tier, force=force) for tier in self.catalog.tiers()}
 
+    def cached_all(self) -> dict[ModelTier, ModelHealth]:
+        """What is already known, generating nothing.
+
+        A probe is a real generation, and on a single GPU generating on one
+        tier evicts another.  So there has to be a way to *report* health
+        without changing it: drawing a diagnostics panel should not load a 7B
+        model and make the user's next sentence cost a reload.
+        """
+
+        return {tier: self._cache[tier] for tier in self.catalog.tiers() if tier in self._cache}
+
     def invalidate(self, tier: ModelTier | None = None) -> None:
         if tier is None:
             self._cache.clear()

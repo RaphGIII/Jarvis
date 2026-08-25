@@ -331,6 +331,18 @@ def write_file(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any
     content = str(arguments["content"])
     target = resolve_readable(context, path)
 
+    if target.exists() and not target.is_file():
+        # Named explicitly, because the generic path produced "existing edit
+        # target does not exist: zeus_fail.txt" about something that plainly
+        # does exist -- it is a directory. A message that misnames the problem
+        # cannot be acted on by a user or repaired by a model.
+        raise ToolError(
+            f"{path} already exists and is a directory, not a file; "
+            "nothing can be written there. Choose another name or remove the directory.",
+            kind="path_conflict",
+            retryable=False,
+        )
+
     if target.exists() and target.is_file():
         try:
             current = target.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n")

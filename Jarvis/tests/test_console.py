@@ -239,11 +239,22 @@ def test_use_rejects_malformed_json_without_crashing(console, capsys):
 
 def test_persona_lists_and_switches(console, capsys):
     _, out = _run(console, "/persona", capsys)
-    assert "jarvis" in out and "mentor" in out
+    assert "default" in out and "mentor" in out
 
     _, out = _run(console, "/persona mentor", capsys)
     assert "now mentor" in out
     assert console.personas.active().name == "mentor"
+
+
+def test_the_old_persona_name_still_switches(console, capsys):
+    """The built-ins were called "jarvis" when the product was. Renaming them
+    must not turn a stored preference or a typed `/persona jarvis` into an error.
+    """
+
+    _, out = _run(console, "/persona jarvis", capsys)
+
+    assert "now default" in out
+    assert console.personas.active().name == "default"
 
 
 def test_an_unknown_persona_is_reported_with_the_options(console, capsys):

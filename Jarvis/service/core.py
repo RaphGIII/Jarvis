@@ -33,9 +33,19 @@ class ConversationTurn:
     at: str = ""
     #: Which tier answered.  Recorded always, shown only in diagnostics.
     backend: str = ""
+    #: What this turn contributes to the *next* prompt, when that should differ
+    #: from what the user was shown.  An action turn displays its full evidence
+    #: block -- paths, byte counts, every check -- and that is right for a
+    #: reader and wrong for a transcript: a model shown three receipts saying
+    #: "erstellt / geschrieben / ok" starts producing that language itself, and
+    #: the next ordinary answer trips the claim guard. Empty means "same text".
+    context_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {"role": self.role, "text": self.text, "at": self.at, "backend": self.backend}
+
+    def for_prompt(self, *, limit: int = 400) -> str:
+        return (self.context_text or self.text)[:limit]
 
 
 class JarvisCore:
@@ -88,6 +98,12 @@ class JarvisCore:
         self._voice: Any = None
         self._personas: Any = None
         self._gateway: Any = None
+        self._receipts: Any = None
+        self._actions: Any = None
+        #: Receipts produced during this conversation, in memory.  The claim
+        #: guard consults them on every streamed chunk, and re-reading the
+        #: ledger file that often would cost more than the check saves.
+        self._session_receipts: list[Any] = []
         #: The language the conversation is currently in.  Sticky: it changes
         #: only on a confident detection, because flipping mid-conversation
         #: changes the recogniser hint and the voice, which sounds worse than
@@ -129,6 +145,26 @@ class JarvisCore:
 
             self._gateway = DeviceGateway(self.kernel.state_root / "devices.json")
         return self._gateway
+
+    @property
+    def receipts(self) -> Any:
+        """The durable record of every side effect this system has performed."""
+
+        if self._receipts is None:
+            from runtime.receipts import ReceiptLedger
+
+            self._receipts = ReceiptLedger(self.kernel.state_root / "receipts.jsonl")
+        return self._receipts
+
+    @property
+    def actions(self) -> Any:
+        """The only thing here that may change the world."""
+
+        if self._actions is None:
+            from service.actions import ActionExecutor
+
+            self._actions = ActionExecutor(self.kernel)
+        return self._actions
 
     @property
     def experts(self) -> Any:
@@ -187,10 +223,142 @@ class JarvisCore:
         return {"ok": True, "accepted": text}
 
     def _answer(self, text: str, scope: str) -> None:
+        """Route the request, then let the right machinery answer it.
+
+        This branch is the fix.  Before it, every message went to the model and
+        the model's prose was the product's output -- so "create this file"
+        produced a confident description of a file that did not exist, complete
+        with an invented path.  Nothing was executed because there was nothing
+        here that could execute.
+
+        Conversation keeps exactly the path it had, which is what keeps it
+        instant.  Everything with a truth condition goes somewhere that can
+        establish it.
+        """
+
+        from service.intent import Intent, classify
+
+        classification = classify(text)
+        self.emit(
+            EventType.DIAGNOSTIC,
+            {"classified": classification.to_dict(), "text": text[:120]},
+            scope=scope,
+        )
+
+        # CAPABILITY joins READ rather than going to the executor, because
+        # "learn to do X" cannot be executed from a chat turn in this system.
+        # Answering it conversationally invites "I can do that now" -- a
+        # present-tense capability claim, which the claim guard does not catch
+        # because nothing was claimed to have been *done*. The registry knows
+        # what is actually installed; the model does not.
+        if classification.intent in {Intent.READ, Intent.CAPABILITY}:
+            self._answer_from_records(text, scope, classification)
+            return
+        if classification.intent.has_side_effect:
+            self._answer_by_executing(text, scope, classification)
+            return
+        self._answer_conversationally(text, scope)
+
+    # -- the three answering paths --------------------------------------
+
+    def _answer_from_records(self, text: str, scope: str, classification: Any) -> None:
+        """A question about this system, answered from its registries."""
+
+        from service.intent import Intent
+        from service.reads import answer as read_answer
+
+        self.state.set(JarvisState.WORKING, detail=classification.reason[:120], scope=scope)
+        try:
+            body = read_answer(
+                self, text, language=self.language,
+                acquisition=classification.intent is Intent.CAPABILITY,
+            )
+        except Exception as exc:
+            self.state.set(JarvisState.ERROR, detail=str(exc)[:200])
+            self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
+            return
+        self.emit(
+            EventType.TOOL,
+            {"summary": f"read: {classification.reason}", "source": "registry"},
+            scope=scope,
+        )
+        self._deliver(
+            body, scope=scope, backend="registry",
+            context_text=f"[answered from the registry: {classification.reason}]",
+        )
+
+    def _answer_by_executing(self, text: str, scope: str, classification: Any) -> None:
+        """A request with a side effect.  Nothing is said until something is done.
+
+        No model output reaches the user on this path.  The model is asked for
+        one thing -- a machine-readable plan -- and the sentence the user reads
+        is composed from the receipt by :func:`service.actions.compose`.  There
+        is no step here at which a model could assert that something worked.
+        """
+
+        from brain.tiers import ModelTier
+        from service.actions import compose
+
+        self.state.set(JarvisState.WORKING, detail=classification.reason[:120], scope=scope)
+        try:
+            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+            plan = self.actions.plan(text, provider)
+        except Exception as exc:
+            self.state.set(JarvisState.ERROR, detail=str(exc)[:200])
+            self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
+            return
+
+        if plan.declined:
+            # The classifier is biased toward ACTION on purpose, so it over-
+            # triggers; the planner is the second opinion. "Schreibe mir ein
+            # Gedicht" lands here, and the honest thing is to have the
+            # conversation, not to refuse it. The claim guard still covers it.
+            self.emit(
+                EventType.TOOL,
+                {"summary": f"no executable action: {plan.reason[:160]}", "declined": True},
+                scope=scope,
+            )
+            self._answer_conversationally(text, scope)
+            return
+
+        self.emit(
+            EventType.TOOL,
+            {"summary": f"executing {plan.action}", "action": plan.to_dict()},
+            scope=scope,
+        )
+        receipt = self.actions.execute(plan, request=text)
+
+        self.state.set(JarvisState.VERIFYING, detail=receipt.kind, scope=scope)
+        self.receipts.record(receipt)
+        self._session_receipts.append(receipt)
+        self.emit(
+            EventType.TOOL,
+            {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()},
+            scope=scope,
+        )
+        self._deliver(
+            compose(receipt, language=self.language),
+            scope=scope,
+            backend=receipt.executor,
+            # The transcript gets the fact, not the evidence. The user needs
+            # every check; the next prompt needs one line that cannot be
+            # mistaken for the model's own prose.
+            context_text=f"[executed {receipt.kind}: "
+            f"{'verified' if receipt.verified else 'not verified'}, receipt {receipt.id}]",
+        )
+
+    def _answer_conversationally(self, text: str, scope: str) -> None:
         from brain.tiers import ModelTier
 
         self.state.set(JarvisState.THINKING, detail=text[:120], scope=scope)
         collected: list[str] = []
+        #: Populated by the guard inside ``tee`` when the model claims a side
+        #: effect that nothing performed.  A list because a closure cannot
+        #: rebind a local.
+        fabricated: list[Any] = []
+        #: Receipts that back a claim the model made in passing, so the answer
+        #: can carry its own evidence rather than asking to be believed.
+        supported: list[Any] = []
         backend = ""
         try:
             tier = ModelTier.FAST_LOCAL
@@ -207,10 +375,32 @@ class JarvisCore:
                 would hear as speech that does not match the text on screen.
                 """
 
+                from runtime.receipts import supporting
+                from service.claims import find_claim
+
                 for chunk in stream:
                     if self._stop_requested.is_set():
                         return
                     collected.append(chunk)
+                    # Checked as each chunk arrives rather than at the end.  A
+                    # false claim that has already been printed and spoken has
+                    # been believed; replacing it afterwards corrects the record
+                    # but not the impression.  The chunk that completes the
+                    # claim is withheld, so the user never sees the finished
+                    # sentence -- at most "Datei wurde", never "wurde erstellt".
+                    joined = "".join(collected)
+                    claim = find_claim(joined)
+                    if claim is not None:
+                        # A claim about something that really was executed is
+                        # not a fabrication. Checked against the session's
+                        # receipts in memory, so this costs a scan of a short
+                        # list rather than a file read per token.
+                        backing = supporting(self._session_receipts, joined)
+                        if backing is None:
+                            fabricated.append(claim)
+                            return
+                        if backing not in supported:
+                            supported.append(backing)
                     self.emit(EventType.TOKEN, {"text": chunk}, scope=scope)
                     yield chunk
 
@@ -233,7 +423,75 @@ class JarvisCore:
             return
 
         answer = "".join(collected).strip()
-        reply = ConversationTurn(role="assistant", text=answer, at=_now(), backend=backend)
+        context_text = ""
+        if fabricated:
+            answer = self._block_fabrication(fabricated[0], text, scope)
+            backend = "claim-guard"
+            # Kept out of the transcript entirely. Feeding the correction back
+            # in would put the very vocabulary the guard watches for into the
+            # model's context, which is how one interception becomes a run of
+            # them.
+            context_text = "[the previous answer was withheld: unsupported success claim]"
+        elif supported:
+            # The assistant referred to something it really did. Name the
+            # receipt so the user can check rather than take its word.
+            answer += "\n\n" + "\n".join(f"receipt {item.id}" for item in supported)
+        self._deliver(answer, scope=scope, backend=backend, context_text=context_text)
+
+    def _block_fabrication(self, claim: Any, request: str, scope: str) -> str:
+        """Refuse to ship a success the system cannot account for.
+
+        Recorded as a receipt rather than merely logged, because "it tried to
+        tell you it had done something" is exactly the kind of durable fact the
+        receipt ledger exists to hold -- and because a user who was told a
+        falsehood should be able to find the interception afterwards.
+        """
+
+        from runtime.receipts import Receipt, Verification
+        from service.claims import correction
+
+        self.state.set(JarvisState.VERIFYING, detail="checking a success claim", scope=scope)
+        receipt = self.receipts.record(
+            Receipt(
+                kind="claim.blocked",
+                executor="service.claims",
+                ok=False,
+                request=request,
+                detail=f"the model claimed a completed side effect with no receipt: {claim.phrase!r}",
+                evidence={"claim": claim.to_dict()},
+                verifications=(
+                    Verification(
+                        check="a verified receipt supports this claim",
+                        passed=False,
+                        observed=(
+                            f"nothing in this conversation's {len(self._session_receipts)} "
+                            "receipt(s) matches what the claim names"
+                        ),
+                        expected="a verified receipt naming the same file or project",
+                    ),
+                ),
+            )
+        )
+        self.emit(
+            EventType.TOOL,
+            {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()},
+            scope=scope,
+        )
+        # Stop the voice too. Correcting the text while the speaker finishes
+        # saying the false sentence would fix the transcript and not the lie.
+        if self._voice is not None:
+            try:
+                self._voice.interrupt()
+            except Exception:
+                pass
+        return correction(claim, language=self.language)
+
+    def _deliver(self, answer: str, *, scope: str, backend: str, context_text: str = "") -> None:
+        """Record the assistant's turn, publish it, and go idle."""
+
+        reply = ConversationTurn(
+            role="assistant", text=answer, at=_now(), backend=backend, context_text=context_text
+        )
         with self._lock:
             self._history.append(reply)
         self.emit(EventType.MESSAGE, reply.to_dict(), scope=scope)
@@ -264,7 +522,9 @@ class JarvisCore:
 
         base = self.identity.persona_preamble()
         try:
-            system = self.personas.system_prompt(base=base)
+            system = self.personas.system_prompt(
+                base=base, assistant=self.identity.assistant_name
+            )
         except Exception:
             # A missing or unreadable persona file must not silence Jarvis.
             system = base
@@ -277,12 +537,17 @@ class JarvisCore:
             )
 
         recent = self.history[-8:]
-        transcript = "\n".join(f"{turn.role}: {turn.text}" for turn in recent[:-1])
+        transcript = "\n".join(f"{turn.role}: {turn.for_prompt()}" for turn in recent[:-1])
+        # The speaker label comes from the identity, never from persona_name.
+        # Those were the same field, so `--persona Jarvis` -- the default in
+        # jarvis/serve.py -- ended every prompt with "Jarvis:", asking the model
+        # in the most direct way available to answer as Jarvis. It duly did.
+        # persona_name selects a *style*; who is speaking is not a style.
         return (
             system
             + "\n\n"
             + (f"Recent conversation:\n{transcript}\n\n" if transcript else "")
-            + f"user: {text}\n{self.persona_name}:"
+            + f"user: {text}\n{self.identity.assistant_name}:"
         )
 
     # ------------------------------------------------------------------
@@ -481,6 +746,9 @@ class JarvisCore:
         return [
             {
                 "id": project.id,
+                # The title is what a user names a project and what they will
+                # look for in the panel; the goal can be a paragraph.
+                "title": getattr(project, "title", "") or "",
                 "goal": project.goal,
                 "state": getattr(project.state, "value", str(project.state)),
                 "tasks": len(getattr(project, "tasks", [])),
@@ -524,14 +792,59 @@ class JarvisCore:
     # Capabilities and knowledge
     # ------------------------------------------------------------------
 
+    #: The registry is a file, not a directory.  Passing the directory made
+    #: ``CapabilityRegistry`` raise on read, the bare ``except`` swallowed it,
+    #: and this endpoint returned ``[]`` forever -- indistinguishable from
+    #: "there are no capabilities".  Every other call site in the tree already
+    #: passes ``registry.json``; this one did not.
+    CAPABILITY_REGISTRY = ("capabilities", "registry.json")
+
+    def _capability_registry(self) -> Any:
+        from capabilities.registry import CapabilityRegistry
+
+        path = self.kernel.state_root.joinpath(*self.CAPABILITY_REGISTRY)
+        return CapabilityRegistry(path)
+
     def list_capabilities(self) -> list[dict[str, Any]]:
         try:
-            from capabilities.registry import CapabilityRegistry
-
-            registry = CapabilityRegistry(self.kernel.state_root / "capabilities")
-            return [manifest.to_dict() for manifest in registry.all()]
+            return [manifest.to_dict() for manifest in self._capability_registry().all()]
         except Exception:
             return []
+
+    def capability_report(self) -> dict[str, Any]:
+        """What the registry actually holds, with the failure visible.
+
+        Separate from :meth:`list_capabilities` because that one has to keep
+        returning a list for the existing endpoint, and a list has nowhere to
+        put "the registry could not be read".  An answer about capabilities
+        that silently degrades to "none" is the same defect as a model
+        inventing them, arrived at from the other direction.
+        """
+
+        path = self.kernel.state_root.joinpath(*self.CAPABILITY_REGISTRY)
+        try:
+            manifests = self._capability_registry().all()
+        except Exception as exc:
+            return {"path": str(path), "error": f"{type(exc).__name__}: {exc}", "active": [], "disabled": []}
+        records = [manifest.to_dict() for manifest in manifests]
+        return {
+            "path": str(path),
+            "error": "",
+            "active": [item for item in records if item.get("status") == "active"],
+            "disabled": [item for item in records if item.get("status") != "active"],
+        }
+
+    def list_receipts(self, limit: int = 50) -> dict[str, Any]:
+        """Every side effect this system has performed, newest last."""
+
+        try:
+            return {"receipts": [receipt.to_dict() for receipt in self.receipts.recent(limit)]}
+        except Exception as exc:
+            return {"receipts": [], "error": f"{type(exc).__name__}: {exc}"}
+
+    def receipt(self, receipt_id: str) -> dict[str, Any]:
+        found = self.receipts.get(receipt_id)
+        return found.to_dict() if found is not None else {"error": f"no receipt {receipt_id!r}"}
 
     def knowledge_graph(self, *, query: str = "", limit: int = 300) -> dict[str, Any]:
         try:
@@ -693,16 +1006,45 @@ class JarvisCore:
         """Whether local inference worked, as of the last completed probe."""
 
         age = time.time() - self._health_checked_at
+        # Never while a turn is in flight. Even a cheap probe queues behind or
+        # ahead of the user's generation on a single GPU, and a status badge
+        # must not be able to slow down the thing it is reporting on.
+        if self.state.state.busy:
+            return self._health_ok
         if age > self.HEALTH_TTL_SECONDS and not self._probe_running.is_set():
             self._probe_running.set()
             threading.Thread(target=self._probe_health, daemon=True, name="jarvis-probe").start()
         return self._health_ok
 
     def _probe_health(self) -> None:
+        """Is local inference working?  Asked of the model that answers.
+
+        This used to call ``ready_for_autonomous_work()``, which runs a real
+        generation on **BUILD_LOCAL** -- the 7B coder.  On a single GPU that
+        evicts the 4B conversational model, and the user's next sentence then
+        pays to load it back.  Measured on this machine:
+
+            after a FAST_LOCAL generation : qwen3:4b-instruct resident
+            after the BUILD_LOCAL probe (47.1s): qwen2.5-coder:7b resident
+            next FAST_LOCAL generation costs 28.3s
+
+        It fired on a 120-second timer whenever the UI drew its status badge,
+        so conversation paid a 28-second reload every two minutes, for the life
+        of the process.  A status light was the most expensive thing running.
+
+        The badge's actual question is "can it answer me", and what answers is
+        FAST_LOCAL -- which is already resident, so probing it is nearly free.
+        BUILD_LOCAL readiness is a different question, asked by the thing that
+        is about to use BUILD_LOCAL, where loading it is the point rather than
+        collateral damage.
+        """
+
+        from brain.tiers import ModelTier
+
         try:
-            ready, detail = self.kernel.ready_for_autonomous_work()
-            self._health_ok = bool(ready)
-            self._health_detail = str(detail)
+            health = self.kernel.probe.probe(ModelTier.FAST_LOCAL)
+            self._health_ok = bool(health.online)
+            self._health_detail = health.summary()
         except Exception as exc:
             self._health_ok = False
             self._health_detail = f"{type(exc).__name__}: {exc}"
@@ -745,15 +1087,23 @@ class JarvisCore:
         self._expert_probe_running.clear()
         self.emit(EventType.DIAGNOSTIC, {"experts": status})
 
-    def diagnostics(self) -> dict[str, Any]:
-        """The truth about the machinery, for when the user asks for it."""
+    def diagnostics(self, *, refresh: bool = False) -> dict[str, Any]:
+        """The truth about the machinery, for when the user asks for it.
+
+        Reports measured health rather than measuring it.  Probing a tier is a
+        real generation, so drawing this panel used to evict the conversational
+        model and leave the user's next sentence 28 seconds slower -- a
+        diagnostic that degraded the thing it was diagnosing.  ``refresh=True``
+        is the explicit way to pay that cost on purpose.
+        """
 
         payload: dict[str, Any] = {
             "persona": self.persona_name,
             "identity": self.identity.to_dict(),
+            "measured": refresh,
         }
         try:
-            payload["kernel"] = self.kernel.status()
+            payload["kernel"] = self.kernel.status(force=refresh, probe=refresh)
         except Exception as exc:
             payload["kernel"] = {"error": str(exc)}
         try:

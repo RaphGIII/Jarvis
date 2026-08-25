@@ -164,6 +164,18 @@
   .turn.jarvis .what { color: var(--text); }
   .turn.error .what { color: var(--danger); }
   .turn.note .what { color: var(--dim); font-size: 13px; font-style: italic; }
+  /* A receipt reads as evidence, not as conversation: monospaced, boxed, and
+     coloured by whether it was verified rather than by whether it was said. */
+  .turn.receipt .what {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12.5px; line-height: 1.55; color: var(--dim);
+    border-left: 2px solid var(--dim); padding: 6px 0 6px 12px;
+  }
+  .turn.receipt .who { font-size: 11px; letter-spacing: .04em; }
+  .turn.receipt.good .what { border-left-color: #3fb98a; color: #b6cfc4; }
+  .turn.receipt.bad  .what { border-left-color: var(--danger); color: #d6b4b4; }
+  .turn.receipt .check { margin-top: 4px; opacity: .85; }
+  .turn.receipt .check.bad { color: var(--danger); opacity: 1; }
 
   .cursor {
     display: inline-block;

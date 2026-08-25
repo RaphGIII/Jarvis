@@ -141,6 +141,10 @@ function handle(type, payload) {
 
     case "tool":
     case "progress":
+      // A receipt is shown whether or not Activity is on. It is the evidence
+      // that something really happened, and hiding it behind a toggle would
+      // put the claim on screen while the proof stayed off it.
+      if (payload.receipt) { addReceipt(payload.receipt); break; }
       if (activityOn && payload.summary) addTurn("note", "", payload.summary);
       break;
   }
@@ -187,6 +191,32 @@ function finishStreaming(finalText) {
     addTurn("jarvis", window.ASSISTANT_NAME || "Jarvis", finalText);
   }
   ui.app.classList.add("conversing");
+  scrollDown();
+}
+
+/* A receipt, rendered as evidence rather than as prose. The verdict word comes
+   from the receipt's own `verified` flag, never from any text the model wrote. */
+function addReceipt(receipt) {
+  const verdict = receipt.verified ? "verified"
+                : receipt.ok ? "ran, unverified"
+                : "failed";
+  // A fallback for the text, because addTurn drops an empty turn — and a
+  // receipt with a terse detail must still show its checks.
+  const el = addTurn(`receipt ${receipt.verified ? "good" : "bad"}`,
+                     `${receipt.kind} · ${verdict}`,
+                     receipt.detail || receipt.kind || "action");
+  if (!el) return;
+  for (const check of receipt.verifications || []) {
+    const row = document.createElement("div");
+    row.className = "check" + (check.passed ? "" : " bad");
+    row.textContent = `${check.passed ? "✓" : "✗"} ${check.check}` +
+                      (check.observed ? ` — ${check.observed}` : "");
+    el.appendChild(row);
+  }
+  const id = document.createElement("div");
+  id.className = "check";
+  id.textContent = receipt.id;
+  el.appendChild(id);
   scrollDown();
 }
 

@@ -49,14 +49,25 @@ class Persona:
     #: Extra lines appended verbatim to the system prompt.
     extra_instructions: list[str] = field(default_factory=list)
 
-    def system_prompt(self, *, base: str = "") -> str:
-        """Assemble the system prompt for this persona."""
+    def system_prompt(self, *, base: str = "", assistant: str = "") -> str:
+        """Assemble the system prompt for this persona.
+
+        ``assistant`` fills the :data:`NAME` placeholder.  Substituted with
+        ``replace`` rather than ``str.format`` because a user-defined persona is
+        free-text and may legitimately contain braces; a persona that crashed
+        the prompt by mentioning a dict would be an absurd failure mode.
+        """
+
+        if not assistant:
+            from core.identity import current
+
+            assistant = current().assistant_name
 
         parts: list[str] = []
         if base:
             parts.append(base.strip())
         if self.character:
-            parts.append(self.character.strip())
+            parts.append(self.character.strip().replace(NAME, assistant))
         if self.style:
             parts.append(f"Communication style: {self.style}.")
         if self.language and self.language != "auto":
@@ -80,15 +91,28 @@ class Persona:
         return cls(**{key: value for key, value in data.items() if key in allowed})
 
 
+#: Written into a persona's character text wherever the assistant's own name
+#: belongs.  Substituted at prompt time from :mod:`core.identity`.
+#:
+#: These personas used to spell the name out: *"You are JARVIS, an autonomous
+#: engineering assistant..."*.  The product was renamed to ZEUS by setting
+#: :class:`~core.identity.Identity`, and the identity preamble duly said "You
+#: are Zeus" -- and then the persona said "You are JARVIS" immediately after it,
+#: so the live product introduced itself as JARVIS to a user who asked it who it
+#: was.  A name that is configuration in one file and a literal in another is
+#: not configuration.
+NAME = "{assistant}"
+
+
 def builtin_personas() -> dict[str, Persona]:
     """A deliberately short list: enough to prove the architecture works."""
 
     return {
-        "jarvis": Persona(
-            name="jarvis",
+        "default": Persona(
+            name="default",
             description="The default: a capable, direct engineering assistant.",
             character=(
-                "You are JARVIS, an autonomous engineering assistant running locally on the user's own machine. "
+                f"You are {NAME}, an autonomous engineering assistant running locally on the user's own machine. "
                 "You understand goals, decompose them, use tools, verify results with real evidence, "
                 "and learn from what worked and what did not."
             ),
@@ -98,7 +122,7 @@ def builtin_personas() -> dict[str, Persona]:
             name="mentor",
             description="Explains the reasoning, for when the user is learning.",
             character=(
-                "You are JARVIS in teaching mode. Explain why, not just what. "
+                f"You are {NAME} in teaching mode. Explain why, not just what. "
                 "Name the trade-offs you considered and the one you chose."
             ),
             style="patient and explanatory",
@@ -106,14 +130,14 @@ def builtin_personas() -> dict[str, Persona]:
         "terse": Persona(
             name="terse",
             description="Answers only, for when the user already knows the context.",
-            character="You are JARVIS. Answer in as few words as the question allows. No preamble.",
+            character=f"You are {NAME}. Answer in as few words as the question allows. No preamble.",
             style="minimal",
         ),
-        "jarvis_de": Persona(
-            name="jarvis_de",
+        "default_de": Persona(
+            name="default_de",
             description="The default persona, always answering in German.",
             character=(
-                "Du bist JARVIS, ein autonomer Engineering-Assistent, der lokal auf dem Rechner des Nutzers laeuft. "
+                f"Du bist {NAME}, ein autonomer Engineering-Assistent, der lokal auf dem Rechner des Nutzers laeuft. "
                 "Du verstehst Ziele, zerlegst sie, benutzt Werkzeuge und pruefst Ergebnisse mit echten Belegen."
             ),
             style="praezise und technisch",
@@ -122,13 +146,18 @@ def builtin_personas() -> dict[str, Persona]:
     }
 
 
+#: Personas that used to carry the old name, so a stored ``active`` selection
+#: from before the rename still resolves instead of falling over.
+RENAMED = {"jarvis": "default", "jarvis_de": "default_de"}
+
+
 class PersonaStore:
     """Loads, saves and selects personas, including per-project overrides."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._personas: dict[str, Persona] = builtin_personas()
-        self._active = "jarvis"
+        self._active = "default"
         #: project id -> persona name.  A long-running project can keep its own
         #: voice without the user re-selecting it every session.
         self._project_overrides: dict[str, str] = {}
@@ -150,8 +179,11 @@ class PersonaStore:
                 persona = Persona.from_dict(data)
                 self._personas[persona.name] = persona
         active = payload.get("active")
-        if isinstance(active, str) and active in self._personas:
-            self._active = active
+        if isinstance(active, str):
+            # A selection saved before the rename still names "jarvis".
+            active = RENAMED.get(active, active)
+            if active in self._personas:
+                self._active = active
         overrides = payload.get("project_overrides")
         if isinstance(overrides, dict):
             self._project_overrides = {str(k): str(v) for k, v in overrides.items()}
@@ -180,6 +212,9 @@ class PersonaStore:
         return sorted(self._personas)
 
     def get(self, name: str) -> Persona:
+        # Old names keep resolving. Renaming a persona must not turn a stored
+        # preference, a config file or a --persona flag into a crash.
+        name = RENAMED.get(name, name)
         if name not in self._personas:
             raise KeyError(f"unknown persona: {name}. Available: {', '.join(self.names())}")
         return self._personas[name]
@@ -193,7 +228,10 @@ class PersonaStore:
 
     def activate(self, name: str) -> Persona:
         persona = self.get(name)
-        self._active = name
+        # The resolved name, not the one asked for: activating "jarvis" and
+        # then storing "jarvis" as active would write a name that no longer
+        # exists, and the next load would raise on it.
+        self._active = persona.name
         self.save()
         return persona
 
@@ -216,5 +254,5 @@ class PersonaStore:
         self.save()
         return persona
 
-    def system_prompt(self, *, project_id: str | None = None, base: str = "") -> str:
-        return self.active(project_id=project_id).system_prompt(base=base)
+    def system_prompt(self, *, project_id: str | None = None, base: str = "", assistant: str = "") -> str:
+        return self.active(project_id=project_id).system_prompt(base=base, assistant=assistant)

@@ -205,7 +205,7 @@ def test_personas_can_be_listed(core):
     listing = core.list_personas()
 
     assert listing["active"]["name"]
-    assert any(item["name"] == "jarvis" for item in listing["personas"])
+    assert any(item["name"] == "default" for item in listing["personas"])
 
 
 def test_the_backend_is_never_the_identity(core):

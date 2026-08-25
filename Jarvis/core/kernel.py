@@ -197,10 +197,48 @@ class JarvisKernel:
     def health(self, *, force: bool = False) -> dict[ModelTier, ModelHealth]:
         return self.probe.probe_all(force=force)
 
-    def status(self, *, force: bool = False) -> dict[str, Any]:
-        """A complete, honest picture of what is and is not working."""
+    def status(self, *, force: bool = False, probe: bool = True) -> dict[str, Any]:
+        """A complete, honest picture of what is and is not working.
+
+        ``probe=False`` reports what has already been measured and generates
+        nothing.  Observing a system must not change it: a probe is a real
+        generation, and on a single GPU a probe of BUILD_LOCAL evicts the
+        conversational model, so simply *asking* for status made the user's
+        next sentence cost a 28-second reload.
+
+        An unmeasured tier is reported as ``unmeasured`` rather than as
+        offline.  Not measured yet and measured-and-broken are different
+        claims, and collapsing them tells the user their system is failing when
+        it is merely unexamined.
+        """
+
+        if not probe:
+            cached = self.probe.cached_all()
+            tiers = {
+                tier.value: (
+                    cached[tier].to_dict()
+                    if tier in cached
+                    else {
+                        "tier": tier.value,
+                        "model": self.catalog.get(tier).model,
+                        "state": "unmeasured",
+                        "online": False,
+                        "detail": "not probed; ask for a refresh to measure it",
+                    }
+                )
+                for tier in self.catalog.tiers()
+            }
+            return {**self._status_body(), "tiers": tiers}
 
         health = self.health(force=force)
+        return {
+            **self._status_body(),
+            "tiers": {tier.value: item.to_dict() for tier, item in health.items()},
+        }
+
+    def _status_body(self) -> dict[str, Any]:
+        """Everything in the status payload that costs no generation."""
+
         return {
             "state_root": str(self.state_root),
             "host": self.host.to_dict(),
@@ -210,7 +248,6 @@ class JarvisKernel:
                 "reserved_vram_mib": self.resources.reserved_vram_mib,
                 "tuned_at": self.resources.tuned_at or "never (using defaults)",
             },
-            "tiers": {tier.value: item.to_dict() for tier, item in health.items()},
             "paid_tiers_enabled": [tier.value for tier in self.catalog.paid_tiers_enabled()],
             "cloud_free": not self.catalog.paid_tiers_enabled(),
             "tools": self.tools.names(),

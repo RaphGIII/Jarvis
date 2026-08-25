@@ -29,7 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8420, help="port (0 picks a free one)")
     parser.add_argument("--token", default="", help="shared token; generated when omitted")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
-    parser.add_argument("--persona", default="Jarvis", help="persona name")
+    # Empty rather than a name: the assistant's identity comes from
+    # config/identity.json, and a default here silently overrode it.
+    parser.add_argument("--persona", default="", help="persona name (default: the configured identity)")
     parser.add_argument("--no-warm", action="store_true", help="do not preload models at startup")
     parser.add_argument("--no-speech", action="store_true", help="do not preload the speech stack")
     return parser

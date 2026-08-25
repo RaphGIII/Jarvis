@@ -8,7 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from config import MAX_NEW_TOKENS, MODEL_ID, SYSTEM_PROMPT
+from config import MAX_NEW_TOKENS, MODEL_ID, system_prompt
 
 
 class BrainProvider(Protocol):
@@ -76,7 +76,7 @@ class LocalTransformersBrainProvider:
         self.tokenizer = getattr(brain, "tokenizer", None)
 
     def generate(self, prompt: str, *, max_tokens: int = MAX_NEW_TOKENS, temperature: float = 0.2, top_p: float | None = None) -> str:
-        return self.brain.ask(SYSTEM_PROMPT, prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        return self.brain.ask(system_prompt(), prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
 
     def generate_coding(self, prompt: str, *, max_tokens: int = 450, temperature: float = 0.6, top_p: float = 0.9) -> str:
         return self.generate(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
@@ -243,7 +243,7 @@ class OpenAICompatibleBrainProvider:
         payload = {
             "model": self.config.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt()},
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature,
@@ -376,7 +376,7 @@ def provider_for_spec(spec: Any) -> BrainProvider:
     if provider == "ollama":
         from brain.ollama import OllamaBrainProvider
 
-        return OllamaBrainProvider(spec, system_prompt=SYSTEM_PROMPT)
+        return OllamaBrainProvider(spec, system_prompt=system_prompt())
 
     if provider in {"openai_compatible", "openai", "vllm"}:
         return OpenAICompatibleBrainProvider(

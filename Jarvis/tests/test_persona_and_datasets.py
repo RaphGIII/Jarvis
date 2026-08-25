@@ -20,8 +20,8 @@ def store(tmp_path):
 
 
 def test_the_default_persona_is_available(store):
-    assert store.active().name == "jarvis"
-    assert "jarvis" in store.names()
+    assert store.active().name == "default"
+    assert "default" in store.names()
 
 
 def test_a_persona_shapes_the_system_prompt(store):
@@ -33,17 +33,17 @@ def test_a_persona_shapes_the_system_prompt(store):
 def test_language_is_a_preference_not_a_capability(store):
     """Supporting a language must not require programming anything."""
 
-    german = store.get("jarvis_de").system_prompt()
+    german = store.get("default_de").system_prompt()
     assert "Always reply in German" in german
 
-    default = store.get("jarvis").system_prompt()
+    default = store.get("default").system_prompt()
     assert "same language the user writes in" in default
 
 
 def test_a_new_language_costs_nothing_but_configuration(store):
-    japanese = Persona(name="jarvis_ja", character="You are JARVIS.", language="Japanese")
+    japanese = Persona(name="zeus_ja", character="You are Zeus.", language="Japanese")
     store.define(japanese)
-    assert "Always reply in Japanese" in store.get("jarvis_ja").system_prompt()
+    assert "Always reply in Japanese" in store.get("zeus_ja").system_prompt()
 
 
 @pytest.mark.parametrize("name", sorted(builtin_personas()))
@@ -82,8 +82,8 @@ def test_a_project_can_keep_its_own_voice(store):
     store.activate("jarvis")
     store.set_for_project("proj_1", "mentor")
     assert store.active(project_id="proj_1").name == "mentor"
-    assert store.active(project_id="proj_2").name == "jarvis"
-    assert store.active().name == "jarvis"
+    assert store.active(project_id="proj_2").name == "default"
+    assert store.active().name == "default"
 
 
 def test_clearing_a_project_override_falls_back(store):
@@ -100,7 +100,7 @@ def test_an_unknown_persona_is_reported_with_the_options(store):
 def test_a_corrupt_persona_file_does_not_stop_startup(tmp_path):
     path = tmp_path / "personas.json"
     path.write_text("{not json", encoding="utf-8")
-    assert PersonaStore(path).active().name == "jarvis"
+    assert PersonaStore(path).active().name == "default"
 
 
 # ==================================================================== datasets

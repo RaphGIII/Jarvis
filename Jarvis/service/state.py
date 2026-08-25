@@ -34,6 +34,11 @@ class JarvisState(str, Enum):
     SPEAKING = "speaking"
     #: A project or mission is running.
     WORKING = "working"
+    #: An action has run and its effect is being checked independently.
+    #: Distinct from WORKING on purpose: "I did it" and "I confirmed it" are
+    #: different claims, and the interface should not blur them when the whole
+    #: point of the action path is that the second one is earned.
+    VERIFYING = "verifying"
     #: Gathering information from documents or the web.
     RESEARCHING = "researching"
     #: Writing or editing code.
@@ -52,6 +57,7 @@ class JarvisState(str, Enum):
         return self in {
             JarvisState.THINKING,
             JarvisState.WORKING,
+            JarvisState.VERIFYING,
             JarvisState.RESEARCHING,
             JarvisState.CODING,
             JarvisState.TRANSCRIBING,

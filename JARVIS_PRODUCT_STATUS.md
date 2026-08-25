@@ -29,6 +29,11 @@ it; anything not measured says so.
 | Wake word CPU | 3–5 ms per 80 ms frame |
 | Audio meter, silence vs 0.3 tone | **0.02 → 0.30** (the playback proof) |
 | Research: source ranking | docs.python.org **100** > Stack Overflow **60**, live |
+| **Wake word detection** | **0.22 s** at score 0.989 (model load excluded) |
+| **Transcribe, 2.9 s German utterance** | **1.07 s**, correct |
+| **Question ends -> first audio out** | **2.00 s** warm |
+| **Whole spoken exchange** | **1.99 s** warm (34.9 s warm-up, once) |
+| **Action: request -> verified receipt** | **1.0-1.4 s** (file write, project create) |
 | Startup warm-up | 15.7 s, background |
 | UI page load | **61 ms** |
 | Expert job, end to end | 244 s, independently verified |
@@ -200,6 +205,154 @@ use `chess.engine` and to write the path with forward slashes. One instruction
 was followed only once a check restated it mechanically; the other never was.
 More prose for the model to ignore was not the missing piece.
 
+## THE ACTION-EXECUTION FIX
+
+The live product was allowing the model to fabricate side effects. Asked to
+create a file with exact contents, verify it, and only then confirm, ZEUS
+replied:
+
+```
+Datei "zeus_test.txt" wurde erstellt und mit dem Inhalt "ZEUS funktioniert"
+gespeichert. Speicherort: /home/user/Projekte/Zeus_Testprojekt/zeus_test.txt
+Existenz geprueft: Datei existiert und enthaelt den erwarteten Inhalt.
+```
+
+No file existed. The path is a Linux path invented on a Windows machine. The
+same turn claimed to have *verified* its own fiction. Asked to create a project,
+it reported success and the Projects panel was unchanged. Asked who it was, it
+said "Ich bin JARVIS".
+
+**Root cause: there was no execution layer on the conversation path.** Every
+message went to `_answer`, which composed a prompt, streamed the model's reply,
+and shipped it. That is correct for "explain recursion" and catastrophic for
+"create this file", because the second has a truth condition. The event stream
+proves it: `thinking -> idle`, zero tool events, nothing else.
+
+The system prompt already said *"Never claim an action was performed unless it
+actually was"*, ranked last so no persona could crowd it out. It made no
+difference. **A rule the model is free to ignore is not a mechanism.**
+
+### The architecture
+
+    classify -> route -> execute -> verify independently -> compose from the receipt
+
+| Layer | File | What it guarantees |
+|---|---|---|
+| Classification | `service/intent.py` | Every request is typed before anything answers it |
+| Execution | `service/actions.py` | Side effects go through the real tool/project layer |
+| Evidence | `runtime/receipts.py` | A success exists only as a verified receipt |
+| Reporting | `service/actions.compose` | The outcome sentence is written by code |
+| Backstop | `service/claims.py` | A success claim with no receipt never ships |
+| Registry answers | `service/reads.py` | Capability/project questions bypass the model |
+
+**The model proposes; the executor disposes; code writes the verdict.** The
+model turns prose into `{"action": "file.write", "path": ..., "content": ...}`
+-- extraction, which is checkable. It is never asked whether the write worked,
+because it cannot see the filesystem, and a model that cannot see something
+produces the most plausible continuation instead. There is no prompt anywhere in
+the new code telling the model to be honest. There is nowhere for it to be
+dishonest.
+
+Two properties are enforced rather than documented:
+
+* **Verification is done by something other than the writer.** A file write is
+  confirmed by re-reading the bytes off disk; a project by reloading it from a
+  *fresh* store. A writer that reports success and a reader that trusts the
+  writer agree with each other about a file that is not there.
+* **An action that verified nothing is not verified.** `Receipt.verified`
+  requires at least one check that actually passed. "Ran cleanly, checked
+  nothing" is a distinct outcome from "checked and passed" -- the vacuous-truth
+  failure that this project has already been bitten by once.
+
+### The claim guard, and why it needed a second version
+
+The classifier is biased toward ACTION on purpose: a false positive costs one
+short generation, a false negative costs a lie about the user's filesystem. The
+guard covers what it still misses -- it watches the generated answer for a
+completion claim and withholds it when no receipt backs it. It checks *during*
+streaming and drops the chunk that completes the claim, because a sentence
+already printed and spoken has been believed; replacing it afterwards fixes the
+transcript, not the impression.
+
+Its first version asked "was anything executed **this turn**". That is the wrong
+question one turn later: having genuinely written `zeus_test.txt`, ZEUS must be
+able to say so when asked. It was blocking true statements, which teaches the
+user the honesty machinery is noise -- at which point it protects nobody. The
+question is now whether **this claim** has evidence: the claim is matched
+against the session's verified receipts by the concrete things they name. A
+claim naming nothing ("Done.") matches nothing and stays blocked, which is the
+safe direction. A permitted claim carries its receipt id.
+
+### Identity: four separate leaks, none of them the persona setting
+
+`config/identity.json` said ZEUS the whole time. The name leaked from elsewhere:
+
+1. `config.SYSTEM_PROMPT` opened *"You are JARVIS"* and is attached to the
+   **provider**, so it reached every inference path under every persona.
+2. Every built-in persona spelled the name out in its character text, and was
+   read *after* the identity preamble.
+3. `jarvis/serve.py` defaulted `--persona Jarvis`, and `persona_name` was also
+   the prompt's speaker label -- so every prompt ended `"Jarvis:"`, asking the
+   model in the most direct way available to answer as Jarvis. It duly did.
+4. The desktop notification title and the QA prompt were literals.
+
+A name that is configuration in one file and a literal in four others is not
+configuration. All four now resolve through `core.identity`.
+
+### Two latency defects found while proving requirement F
+
+Conversation was intermittently taking 30-76 s. Measured rather than guessed:
+
+```
+after a FAST_LOCAL generation        : qwen3:4b-instruct resident
+after the BUILD_LOCAL probe (47.1 s) : qwen2.5-coder:7b resident
+next FAST_LOCAL generation costs 28.3 s
+```
+
+* The **status badge** answered "is local inference working" by running a real
+  generation on BUILD_LOCAL -- the 7B coder -- on a 120-second timer. On a
+  single GPU that evicts the 4B conversational model, so conversation paid a
+  28-second reload every two minutes for the life of the process. A status light
+  was the most expensive thing running. It now probes the tier that actually
+  answers, and never while a turn is in flight.
+* **Reading diagnostics probed every tier**, with the same effect: a diagnostic
+  that degraded the thing it diagnosed. It now reports what has been measured
+  and marks the rest `unmeasured` -- which is not the same claim as offline.
+  Measuring is opt-in via `refresh=true`.
+
+Also fixed: an action turn's full evidence block was going into the conversation
+transcript, and a model shown three receipts saying "erstellt / geschrieben /
+ok" starts producing that language itself. The user sees every check; the
+transcript gets one line.
+
+### Live acceptance, on the running product
+
+**21/21.** Real server, real socket, real 4B model, real filesystem, and a
+server restart in the middle of B.
+
+| | Result |
+|---|---|
+| A identity | "Ich bin Zeus" -- never JARVIS |
+| B project | created, on disk, **survives a restart**, visible through the Projects API |
+| C file | `...\data\jarvis\workspace\zeus_test.txt`, bytes `b'ZEUS funktioniert'` |
+| D forced failure | directory occupying the path -> honest failure, no success claim |
+| E capabilities | answered from `registry.json`, agrees with Diagnostics |
+| F conversation | 2.4 s / 4.2 s / 2.8 s, all FAST_LOCAL, no receipts |
+
+D was forced with a real OS-level conflict, not a mock. Its first message read
+*"existing edit target does not exist: zeus_fail.txt"* about a path that plainly
+did exist -- as a directory. A failure message that misnames the problem cannot
+be acted on, so `write_file` now names it.
+
+### Tests
+
+`tests/test_action_receipts.py`, 81 tests, driven over the **real HTTP+SSE
+path** rather than in-process, because the defect was reported against the
+running product. Everything is real except the model, which is replaced by one
+that lies as fluently as possible. Ten fabrications are parametrised rather than
+one, because the usual fix for this class of bug handles the sentence that was
+reported and the next phrasing walks straight through.
+
 ## IN PROGRESS
 
 - **Music capability.** Six live attempts, none passing. The bar has risen each
@@ -231,8 +384,23 @@ Nothing is blocked on the user.
 - **`winsound.Beep` is inaudible to the meter.** It bypasses the session mixer,
   so a capability using it would fail the audible check despite a human hearing
   it. `PlaySound` and system sounds read 0.278–0.955.
-- **STT on synthetic speech is imperfect** — "mein Jarvis-Projekt" → "meinen
-  Jarvisprojekts". Real microphone accuracy has still not been measured.
+- **The action surface is deliberately narrow.** Write a file, read a file,
+  create a project. Anything else is declined in so many words. Widening it
+  means adding an executor with real verification, not adding a sentence to a
+  prompt -- a chat turn that could invoke `run_command` is a much larger
+  security decision than this fix made.
+- **File actions are confined to `data/jarvis/workspace`.** A chat turn that can
+  drop files anywhere in the source tree is a separate decision.
+- **The claim guard is the weaker of the two defences.** The strong one is that
+  an action turn never streams model prose at all. The guard covers classifier
+  misses, and matches claims to receipts by the names they mention -- so a
+  fabrication that happens to name a real earlier artefact could pass. The
+  classification and the composed-from-receipt outcome are what carry the
+  guarantee.
+- **Capability acquisition is not reachable from chat**, and says so rather than
+  promising. The registry currently holds zero capabilities.
+- **STT accuracy is measured on synthetic speech only.** The German TTS voice is
+  cleaner than a room; real microphone accuracy has still not been measured.
 - **Wake word is English-pronunciation only.** "YAR-vis" scores 0.04.
 - **The Codex adapter has never run.** Written against documented behaviour.
 - **Chess fixtures are rendered, not photographed.** Real photographs are the

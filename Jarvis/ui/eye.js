@@ -24,6 +24,9 @@ const STATES = {
   thinking:     { pupil: 0.22, spin:  1.35, glow: 0.72, tension: 0.86, jitter: 0.10, hue: 205, arcs: 0.80, breathe: 0.022 },
   speaking:     { pupil: 0.40, spin:  0.30, glow: 1.00, tension: 1.06, jitter: 0.00, hue: 194, arcs: 0.95, breathe: 0.140 },
   working:      { pupil: 0.26, spin:  1.00, glow: 0.62, tension: 0.90, jitter: 0.06, hue: 168, arcs: 0.75, breathe: 0.035 },
+  // Narrow pupil, almost no spin: checking, not doing. Deliberately distinct
+  // from working, because "I did it" and "I confirmed it" are different claims.
+  verifying:    { pupil: 0.18, spin:  0.18, glow: 0.70, tension: 1.04, jitter: 0.02, hue: 128, arcs: 0.90, breathe: 0.028 },
   researching:  { pupil: 0.33, spin:  0.62, glow: 0.66, tension: 0.97, jitter: 0.14, hue: 268, arcs: 0.85, breathe: 0.040 },
   coding:       { pupil: 0.24, spin:  1.15, glow: 0.68, tension: 0.88, jitter: 0.05, hue: 148, arcs: 0.78, breathe: 0.030 },
   waiting:      { pupil: 0.34, spin:  0.06, glow: 0.42, tension: 1.02, jitter: 0.00, hue: 42,  arcs: 0.60, breathe: 0.055 },

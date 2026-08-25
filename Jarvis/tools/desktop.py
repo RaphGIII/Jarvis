@@ -321,7 +321,12 @@ def clipboard_write(payload: dict[str, Any], context: ToolContext) -> dict[str, 
 def notify(payload: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Show a desktop notification."""
 
-    title = str(payload.get("title", "Jarvis"))
+    from core.identity import current
+
+    # A desktop notification is about as user-facing as this system gets, so
+    # the name on it is the configured one rather than a literal.
+    identity = current()
+    title = str(payload.get("title") or identity.product_name)
     message = str(payload.get("message", ""))
     if payload.get("dry_run"):
         return {"ok": True, "dry_run": True, "would_notify": f"{title}: {message}"}
@@ -336,7 +341,7 @@ def notify(payload: dict[str, Any], context: ToolContext) -> dict[str, Any]:
         "[Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
         f"$t.GetElementsByTagName('text')[0].AppendChild($t.CreateTextNode({_ps_quote(title)})) > $null; "
         f"$t.GetElementsByTagName('text')[1].AppendChild($t.CreateTextNode({_ps_quote(message)})) > $null; "
-        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Jarvis')"
+        f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier({_ps_quote(identity.product_name)})"
         ".Show([Windows.UI.Notifications.ToastNotification]::new($t))"
     )
     completed = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], timeout=20)

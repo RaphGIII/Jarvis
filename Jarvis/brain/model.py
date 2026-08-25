@@ -1,6 +1,6 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from config import MAX_NEW_TOKENS, MODEL_ID, SYSTEM_PROMPT
+from config import MAX_NEW_TOKENS, MODEL_ID, system_prompt
 
 
 class JarvisBrain:
@@ -56,7 +56,7 @@ class JarvisBrain:
         ).strip()
 
     def think(self, user_prompt, max_tokens=MAX_NEW_TOKENS):
-        return self.ask(SYSTEM_PROMPT, user_prompt, max_tokens=max_tokens)
+        return self.ask(system_prompt(), user_prompt, max_tokens=max_tokens)
 
     def think_coding(self, user_prompt, max_tokens=900, temperature=0.6, top_p=0.9):
-        return self.ask(SYSTEM_PROMPT, user_prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        return self.ask(system_prompt(), user_prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)

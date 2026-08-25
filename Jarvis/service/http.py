@@ -125,6 +125,12 @@ class JarvisHTTPServer:
             "/api/projects": lambda _: {"projects": self.core.list_projects()},
             "/api/project": lambda body: self.core.project_detail(str(body.get("id", ""))),
             "/api/capabilities": lambda _: {"capabilities": self.core.list_capabilities()},
+            # Receipts are the record of everything that actually changed. They
+            # are on the API rather than only in the event stream because a
+            # client that was not connected at the time still has to be able to
+            # ask what this system has done.
+            "/api/receipts": lambda body: self.core.list_receipts(int(body.get("limit", 50) or 50)),
+            "/api/receipt": lambda body: self.core.receipt(str(body.get("id", ""))),
             "/api/knowledge/graph": lambda body: self.core.knowledge_graph(
                 query=str(body.get("query", "")), limit=int(body.get("limit", 300) or 300)
             ),
@@ -162,7 +168,12 @@ class JarvisHTTPServer:
                 recursive=bool(body.get("recursive", True)),
                 max_files=int(body.get("max_files", 500) or 500),
             ),
-            "/api/diagnostics": lambda _: self.core.diagnostics(),
+            # refresh=true asks for live probes, which cost a real generation
+            # on every tier. Opt-in, because the default must not slow down the
+            # conversation it is reporting on.
+            "/api/diagnostics": lambda body: self.core.diagnostics(
+                refresh=str(body.get("refresh", "")).lower() in {"1", "true", "yes"}
+            ),
             "/api/voice": lambda body: self.core.voice_settings(
                 **{
                     key: body[key]
