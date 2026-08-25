@@ -138,6 +138,7 @@ class AcquisitionMission:
         ledger: Any = None,
         controller: Any = None,
         memory: Any = None,
+        missions: Any = None,
     ) -> None:
         self.service = service
         self.kernel = kernel
@@ -146,6 +147,7 @@ class AcquisitionMission:
         self._ledger = ledger
         self._controller = controller
         self._memory = memory
+        self._missions = missions
 
     # -- wiring ----------------------------------------------------------
 
@@ -164,6 +166,16 @@ class AcquisitionMission:
 
             self._controller = EscalationController(self.ledger)
         return self._controller
+
+    @property
+    def missions(self) -> Any:
+        """Checkpoints, so an interrupted mission is not a wasted one."""
+
+        if self._missions is None:
+            from runtime.missions import MissionStore
+
+            self._missions = MissionStore(Path(self.kernel.state_root) / "missions")
+        return self._missions
 
     @property
     def memory(self) -> Any:
@@ -250,9 +262,20 @@ class AcquisitionMission:
             goal = remembered + goal
             result.goal = goal
 
+        # And what THIS mission already established, if it was interrupted.
+        checkpoint = self._open_checkpoint(capability_id, goal, repair, result)
+        already_done = checkpoint.local_attempts if checkpoint else 0
+
         outcome = None
         for attempt in range(self.MAX_LOCAL_ATTEMPTS):
             result.local_attempts = attempt + 1
+            if attempt < already_done:
+                # Its answer is known. Repeating it would cost half an hour to
+                # rediscover a failure and would record a second one in the
+                # ledger, which the escalation controller reasons from.
+                self._step(result, "resume",
+                           f"local attempt {attempt + 1} was already made; not repeating it")
+                continue
             attempt_started = time.perf_counter()
             self._step(result, "build_local", f"attempt {attempt + 1} of {self.MAX_LOCAL_ATTEMPTS}")
             try:
@@ -284,6 +307,14 @@ class AcquisitionMission:
                         succeeded=bool(outcome and outcome.usable),
                         seconds=time.perf_counter() - attempt_started)
             )
+            self._checkpoint(
+                capability_id, goal, repair, result,
+                tier="build_local",
+                succeeded=bool(outcome and outcome.usable),
+                evidence=(outcome.reason if outcome is not None else "attempt raised")[:400],
+                seconds=time.perf_counter() - attempt_started,
+                phase="build_local",
+            )
             if outcome is not None and outcome.usable:
                 result.acquired = True
                 result.capability_id = outcome.capability_id
@@ -291,6 +322,7 @@ class AcquisitionMission:
                 result.seconds = time.perf_counter() - started
                 self._step(result, "acquired", f"{outcome.capability_id} verified locally")
                 self._remember(goal, task_class, result, provider="build_local")
+                self._finish_checkpoint(capability_id, result)
                 return result
 
             if attempt + 1 >= self.MIN_LOCAL_ATTEMPTS:
@@ -457,7 +489,80 @@ class AcquisitionMission:
         result.capability_id = installed
         self._step(result, "promote", f"registered {installed} after independent verification")
         self._remember(goal, task_class, result, provider=result.expert_used or "expert")
+        self._finish_checkpoint(capability_id, result)
         return result
+
+    # -- checkpoints ------------------------------------------------------
+
+    def _open_checkpoint(self, capability_id: str, goal: str, repair: str,
+                         result: AcquisitionResult) -> Any:
+        """The evidence this mission already gathered, if it was interrupted."""
+
+        if not capability_id:
+            return None
+        try:
+            existing = self.missions.resumable(capability_id, goal, repair)
+        except Exception as exc:
+            self._step(result, "resume", f"checkpoint unreadable: {exc}", ok=False)
+            return None
+        if existing is not None:
+            self._step(result, "resume", existing.describe())
+        return existing
+
+    def _checkpoint(self, capability_id: str, goal: str, repair: str,
+                    result: AcquisitionResult, *, tier: str, succeeded: bool,
+                    evidence: str, seconds: float, phase: str) -> None:
+        """Write down what was just established, before doing anything else.
+
+        Saved after every attempt rather than at the end, because the end is
+        exactly what an interruption prevents.
+        """
+
+        if not capability_id:
+            return
+        try:
+            from runtime.missions import Attempt as MissionAttempt
+            from runtime.missions import MissionCheckpoint, fingerprint
+
+            checkpoint = self.missions.load(capability_id)
+            if checkpoint is None or checkpoint.goal_fingerprint != fingerprint(goal):
+                checkpoint = MissionCheckpoint(
+                    capability_id=capability_id,
+                    goal_fingerprint=fingerprint(goal),
+                    defect=repair,
+                )
+            from datetime import datetime, timezone
+
+            checkpoint.attempts.append(
+                MissionAttempt(
+                    tier=tier,
+                    hypothesis=result.steps[-1].detail[:300] if result.steps else "",
+                    evidence=evidence,
+                    succeeded=succeeded,
+                    seconds=seconds,
+                    at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            checkpoint.phase = phase
+            checkpoint.escalated = result.escalated
+            checkpoint.acquired = result.acquired
+            checkpoint.next_action = (
+                "escalate" if not succeeded and result.local_attempts >= self.MAX_LOCAL_ATTEMPTS
+                else "another local attempt" if not succeeded else "done"
+            )
+            self.missions.save(checkpoint)
+        except Exception as exc:
+            self._step(result, "checkpoint", f"could not save: {exc}", ok=False)
+
+    def _finish_checkpoint(self, capability_id: str, result: AcquisitionResult) -> None:
+        """A mission that succeeded has nothing left to resume."""
+
+        if not capability_id or not result.acquired:
+            return
+        try:
+            self.missions.clear(capability_id)
+        except Exception:
+            pass
 
     # -- what gets carried forward ---------------------------------------
 
