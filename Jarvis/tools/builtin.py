@@ -291,27 +291,52 @@ _SMALL_FILE_LINES = 60
 
 
 def _with_small_file_hint(error: EditError, context: ToolContext) -> str:
-    """Point at ``write_file`` when a short file is fighting the anchor matcher.
+    """Point at ``write_file`` when the anchor matcher is winning.
 
-    A local model that cannot land an anchor will usually keep failing the same
-    way -- observed as eight consecutive misses on a twenty-line module, each
-    with a perfectly correct diagnosis attached. When the file is short enough
-    to reproduce reliably, saying so converts a dead end into one more attempt
-    that can actually succeed.
+    A local model that cannot land an anchor keeps failing the same way --
+    observed as eight consecutive misses on a twenty-line module, each with a
+    perfectly correct diagnosis attached. Saying so converts a dead end into one
+    more attempt that can actually succeed.
+
+    Two signals, because the first one alone was tuned too tightly. File size
+    was the original trigger, and during a live capability build it withheld
+    this advice from a 69-line file for being nine lines over the threshold; the
+    model then missed the same anchor three times running while diagnosing the
+    underlying bug correctly every time.
+
+    The stronger signal is *repetition*. A second failure on the same path means
+    the model's picture of the file has drifted from what is on disk, and no
+    further anchor it invents from that picture is going to match. That needs no
+    threshold and cannot be mistuned.
     """
 
     if error.kind not in _ANCHOR_TROUBLE or not error.path:
         return error.detail
+
+    # `scratch` is shared between the agent loop and its tools, which is what
+    # lets a tool notice it is being asked the same impossible thing again.
+    misses = context.scratch.setdefault("anchor_misses", {})
+    misses[error.path] = misses.get(error.path, 0) + 1
+    repeated = misses[error.path] >= 2
+
+    lines: int | None = None
     try:
         path = resolve_readable(context, error.path)
         lines = len(path.read_text(encoding="utf-8-sig", errors="replace").splitlines())
     except (ToolError, OSError):
+        lines = None
+
+    small = lines is not None and lines <= _SMALL_FILE_LINES
+    if not (small and lines is not None) and not repeated:
         return error.detail
-    if lines > _SMALL_FILE_LINES:
-        return error.detail
+
+    why = (
+        f"{error.path} is only {lines} lines." if small
+        else f"That is {misses[error.path]} failed anchors in {error.path} in a row, "
+        "so the text you are matching against is not what the file contains."
+    )
     return (
-        f"{error.detail}\n"
-        f"{error.path} is only {lines} lines. Rather than fight the anchor, call write_file with the "
+        f"{error.detail}\n{why} Rather than fight the anchor, call write_file with the "
         f"complete corrected contents of {error.path}."
     )
 

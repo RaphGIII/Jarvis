@@ -349,18 +349,29 @@ class AcquisitionMission:
     # -- helpers that reach into the capability service -------------------
 
     def _workspace_for(self, goal: str) -> Path | None:
-        """The workspace of the most recent acquisition project for this goal."""
+        """The workspace of the *latest* acquisition attempt for this goal.
+
+        Sorted by recency here rather than trusting the search order.  Three
+        attempts leave three near-identical projects, and ``ProjectStore.find``
+        ranks by keyword overlap with a bonus for non-terminal state -- which
+        happens to tie-break on ``updated_at`` today, but would hand the expert
+        attempt one's abandoned workspace the moment those scores diverged.
+        The expert should be fixing the most recent attempt, not an older one.
+        """
 
         try:
-            projects = self.kernel.projects.find(goal, limit=3)
+            projects = [
+                project for project in self.kernel.projects.find(goal, limit=6)
+                if getattr(project, "kind", "") == "capability"
+            ]
         except Exception:
             return None
+        projects.sort(key=lambda project: getattr(project, "updated_at", ""), reverse=True)
         for project in projects:
-            if getattr(project, "kind", "") == "capability":
-                try:
-                    return Path(self.kernel.projects.workspace_for(project))
-                except Exception:
-                    continue
+            try:
+                return Path(self.kernel.projects.workspace_for(project))
+            except Exception:
+                continue
         return None
 
     def _verify_workspace(self, workspace: Path, extra_checks: list[Any] | None) -> dict[str, Any]:

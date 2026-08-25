@@ -537,3 +537,56 @@ def test_an_anchorless_edit_is_still_refused_on_a_file_with_content(registry, co
     result = call(registry, context, "apply_edits", files=[{"path": "app.py", "replace": "import shutil\n"}])
     assert not result.ok and result.error_kind == "empty_search"
     assert (workspace / "app.py").read_bytes() == before
+
+
+def test_a_repeated_anchor_miss_is_told_to_rewrite_the_file(registry, context, workspace):
+    """Observed live during a capability build: the model diagnosed the bug
+    correctly three times running and missed the same anchor every time.
+
+    The advice that would have unblocked it existed but was gated on file
+    size, and the file was nine lines over the threshold. Repetition is the
+    stronger signal -- a second miss on one path means the text being matched
+    against is not what the file holds, so no further anchor invented from
+    that picture will match either. It also needs no threshold to mistune.
+    """
+
+    long_file = "\n".join(f"line {index}" for index in range(200)) + "\n"
+    (workspace / "long.py").write_text(long_file, encoding="utf-8")
+    edit = {"path": "long.py", "search": "def absent():\n    return 1", "replace": "x"}
+
+    first = call(registry, context, "apply_edits", files=[dict(edit)])
+    second = call(registry, context, "apply_edits", files=[dict(edit)])
+
+    assert not first.ok and not second.ok
+    assert "write_file" not in first.error, "one miss is not yet evidence of drift"
+    assert "write_file" in second.error
+    assert "2 failed anchors" in second.error
+
+
+def test_a_short_file_is_told_to_rewrite_on_the_first_miss(registry, context, workspace):
+    """Size is still a signal: a file small enough to reproduce reliably does
+    not need a second failure to prove the point."""
+
+    (workspace / "small.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+
+    result = call(
+        registry, context, "apply_edits",
+        files=[{"path": "small.py", "search": "def absent():\n    return 1", "replace": "z"}],
+    )
+
+    assert not result.ok
+    assert "write_file" in result.error
+    assert "only 2 lines" in result.error
+
+
+def test_anchor_misses_are_counted_per_file_not_globally(registry, context, workspace):
+    """Drift in one file says nothing about another."""
+
+    (workspace / "a.py").write_text("\n".join(f"a{i}" for i in range(200)), encoding="utf-8")
+    (workspace / "b.py").write_text("\n".join(f"b{i}" for i in range(200)), encoding="utf-8")
+    absent = {"search": "def absent():\n    return 1", "replace": "x"}
+
+    call(registry, context, "apply_edits", files=[{"path": "a.py", **absent}])
+    other = call(registry, context, "apply_edits", files=[{"path": "b.py", **absent}])
+
+    assert "write_file" not in other.error

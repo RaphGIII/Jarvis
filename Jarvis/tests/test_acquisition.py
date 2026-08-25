@@ -66,19 +66,22 @@ class StubService:
 
 
 class StubProject:
-    kind = "capability"
-    id = "proj_1"
+    def __init__(self, id="proj_1", updated_at="2026-01-01T00:00:00", kind="capability"):
+        self.id = id
+        self.updated_at = updated_at
+        self.kind = kind
 
 
 class StubStore:
-    def __init__(self, workspace):
+    def __init__(self, workspace, projects=None):
         self._workspace = workspace
+        self._projects = projects or [StubProject()]
 
     def find(self, goal, limit=3):
-        return [StubProject()]
+        return list(self._projects)
 
     def workspace_for(self, project):
-        return self._workspace
+        return self._workspace / project.id if self._projects[0].id != "proj_1" else self._workspace
 
 
 class StubKernel:
@@ -292,6 +295,49 @@ def test_the_mission_records_every_stage_for_the_activity_view(tmp_path):
     assert "expert" in stages
     assert "verify" in stages
     assert events, "the mission must be visible while it runs, not only afterwards"
+
+
+def test_the_expert_is_pointed_at_the_most_recent_attempt(tmp_path):
+    """Three attempts leave three near-identical projects. Handing the expert
+    the first one's abandoned workspace would have it fix code nothing runs."""
+
+    (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+    kernel = StubKernel(tmp_path)
+    kernel.projects = StubStore(
+        tmp_path / "workspace",
+        projects=[
+            StubProject("attempt_1", "2026-01-01T10:00:00"),
+            StubProject("attempt_3", "2026-01-01T12:00:00"),
+            StubProject("attempt_2", "2026-01-01T11:00:00"),
+        ],
+    )
+    gateway = StubGateway()
+    run = AcquisitionMission(
+        service=StubService(succeed_on=None, verify_ok=True), kernel=kernel,
+        gateway=gateway, ledger=StubLedger(), controller=StubController(escalate=True),
+    )
+
+    run.run("build a provider")
+
+    assert gateway.jobs[0].workspace.name == "attempt_3"
+
+
+def test_a_project_that_is_not_a_capability_build_is_never_handed_over(tmp_path):
+    (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+    kernel = StubKernel(tmp_path)
+    kernel.projects = StubStore(
+        tmp_path / "workspace",
+        projects=[StubProject("some_app", "2026-01-01T12:00:00", kind="software")],
+    )
+    run = AcquisitionMission(
+        service=StubService(succeed_on=None), kernel=kernel, gateway=StubGateway(),
+        ledger=StubLedger(), controller=StubController(escalate=True),
+    )
+
+    result = run.run("build a provider")
+
+    assert result.acquired is False
+    assert "no workspace" in result.reason
 
 
 def test_a_service_that_raises_does_not_end_the_mission(tmp_path):

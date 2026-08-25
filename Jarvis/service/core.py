@@ -191,9 +191,26 @@ class JarvisCore:
                 # named after a provider. Without it lookup degrades to lexical
                 # matching, which is worse but still works.
                 graph = None
+            from projects.engine import EngineHooks
+
+            # Every step of a build is published. Without this an acquisition
+            # is forty silent minutes followed by a verdict -- which is exactly
+            # what Activity is supposed to stop being.
+            def on_step(project: Any, step: Any) -> None:
+                self.emit(
+                    EventType.PROGRESS,
+                    {
+                        "summary": f"{getattr(step.phase, 'value', step.phase)}: {step.summary[:160]}",
+                        "project": project.id,
+                        "ok": bool(step.success),
+                        "productive": bool(getattr(step, "productive", False)),
+                        "step": getattr(step, "index", 0),
+                    },
+                )
+
             self._capabilities = CapabilityService(
                 registry=CapabilityRegistry(root / "registry.json"),
-                engine=self.kernel.engine(),
+                engine=self.kernel.engine(hooks=EngineHooks(on_step=on_step)),
                 graph=graph,
                 root=root / "installed",
                 execution_timeout=120.0,
