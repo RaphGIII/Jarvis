@@ -354,3 +354,137 @@ def test_a_service_that_raises_does_not_end_the_mission(tmp_path):
     assert result.acquired is False
     assert service.calls == AcquisitionMission.MAX_LOCAL_ATTEMPTS
     assert any("fell over" in step.detail for step in result.steps)
+
+
+def test_a_repair_tells_the_expert_to_change_as_little_as_possible(tmp_path):
+    """Observed: asked to fix one wrong constant in a 794-line module, an
+    expert that said plainly its permissions refused to execute python grew
+    the file to 979 lines, introduced a Windows path mangled by string
+    escaping, and left the constant untouched. Editing blind is a reason to
+    change less, not more."""
+
+    (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+    gateway = StubGateway()
+    run = mission(tmp_path, service=StubService(succeed_on=None, verify_ok=True),
+                  controller=StubController(escalate=True), gateway=gateway)
+
+    run.run("build a provider", capability_id="cap.x", repair="limit=20 is rejected")
+
+    constraints = " ".join(gateway.jobs[0].constraints).lower()
+    assert "smallest change" in constraints
+    assert "not a rewrite" in constraints
+    assert "raw strings" in constraints, "the path-escape trap must be named"
+    assert "unable to execute" in constraints
+
+
+def test_a_first_build_is_not_told_to_change_as_little_as_possible(tmp_path):
+    """There is nothing to preserve yet, and telling it to be conservative
+    about code that does not exist would be nonsense."""
+
+    (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+    gateway = StubGateway()
+    run = mission(tmp_path, service=StubService(succeed_on=None, verify_ok=True),
+                  controller=StubController(escalate=True), gateway=gateway)
+
+    run.run("build a provider", capability_id="cap.x")
+
+    constraints = " ".join(gateway.jobs[0].constraints).lower()
+    assert "not a rewrite" not in constraints
+
+
+def test_a_repair_retires_the_broken_version_before_rebuilding(tmp_path):
+    """The resolver must stop handing out something known to be broken, and
+    the rebuild needs the installed source to start from."""
+
+    class Registry:
+        def __init__(self):
+            self.disabled = []
+
+        def disable(self, capability_id, reason=""):
+            self.disabled.append((capability_id, reason))
+
+    service = StubService(succeed_on=1)
+    service.registry = Registry()
+    run = mission(tmp_path, service=service)
+
+    run.run("build a provider", capability_id="cap.x", repair="search returns 400")
+
+    assert service.registry.disabled == [("cap.x", "search returns 400")]
+
+
+# --------------------------------------------------------------------------
+# A repair brief is not a build brief
+# --------------------------------------------------------------------------
+
+def test_a_repair_brief_leads_with_the_defect():
+    """A model plans from what it reads first.
+
+    The defect used to be appended after the full capability specification, and
+    the planner read a build brief and planned a build: handed a 794-line
+    implementation failing one check, it decomposed into "implement the run
+    function", "implement search", "implement playback control", grew the file
+    by fifty lines re-implementing what already worked, and never touched the
+    one wrong constant it was sent to change.
+    """
+
+    from service.acquisition import repair_goal
+
+    brief = repair_goal("Build a music provider. It must play, pause, resume...",
+                        "search returns 400 Invalid limit")
+
+    head = brief[:200].lower()
+    assert "repair" in head
+    assert "not a rebuild" in head
+    assert "invalid limit" in head, "the defect must be in the first thing read"
+    # The specification is still present, but demoted to reference.
+    assert "for reference only" in brief.lower()
+    assert brief.lower().index("the defect to fix") < brief.lower().index("build a music provider")
+
+
+def test_a_repair_brief_forbids_re_implementing_what_works():
+    from service.acquisition import repair_goal
+
+    brief = repair_goal("spec", "defect").lower()
+
+    assert "do not re-implement" in brief
+    assert "do not add features" in brief
+    assert "smaller the change" in brief
+    assert "anchor on a line you have just read" in brief
+
+
+def test_the_mission_uses_the_repair_brief_when_repairing(tmp_path):
+    class Recording(StubService):
+        def __init__(self):
+            super().__init__(succeed_on=1)
+            self.goals = []
+            self.registry = type("R", (), {"disable": lambda self, cid, reason="": None})()
+
+        def ensure(self, goal, **kwargs):
+            self.goals.append(goal)
+            return super().ensure(goal, **kwargs)
+
+    service = Recording()
+    run = mission(tmp_path, service=service)
+
+    run.run("the full specification", capability_id="cap.x", repair="one wrong constant")
+
+    assert service.goals[0].lower().startswith("repair an existing")
+    assert "one wrong constant" in service.goals[0]
+
+
+def test_a_first_build_gets_the_plain_specification(tmp_path):
+    class Recording(StubService):
+        def __init__(self):
+            super().__init__(succeed_on=1)
+            self.goals = []
+
+        def ensure(self, goal, **kwargs):
+            self.goals.append(goal)
+            return super().ensure(goal, **kwargs)
+
+    service = Recording()
+    run = mission(tmp_path, service=service)
+
+    run.run("the full specification", capability_id="cap.x")
+
+    assert service.goals[0] == "the full specification"

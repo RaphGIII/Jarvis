@@ -85,6 +85,40 @@ class AcquisitionResult:
         }
 
 
+def repair_goal(specification: str, defect: str) -> str:
+    """A brief for fixing working code, with the defect first.
+
+    Ordering is the whole point.  The defect used to be appended *after* the
+    full capability specification, and the planner read a build brief and
+    planned a build: handed a 794-line implementation that failed one check, it
+    decomposed the work into "implement the run function", "implement search",
+    "implement playback control", "implement current state reporting", grew the
+    file by fifty lines re-implementing what already worked, and never touched
+    the one wrong constant it had been sent to change.
+
+    A model plans from what it reads first.  So a repair brief opens with the
+    defect and says in its first line that this is not a rebuild; the
+    specification follows as reference material for a file that already
+    satisfies it.
+    """
+
+    return (
+        "REPAIR an existing, working implementation. This is NOT a rebuild.\n\n"
+        f"THE DEFECT TO FIX:\n{defect}\n\n"
+        "main.py already exists in the workspace and already implements this capability. "
+        "It passes every check except the one implied above. Your entire job is to make "
+        "that one check pass.\n\n"
+        "  - Find the specific code responsible for the defect and change it.\n"
+        "  - Do NOT re-implement actions that already work.\n"
+        "  - Do NOT add features, restructure, reformat or rename anything.\n"
+        "  - The smaller the change, the more likely it is to be correct.\n"
+        "  - If an anchor will not match, read the region first and anchor on a line you "
+        "have just read. Do not retype the file from memory.\n\n"
+        "For reference only -- the contract the existing file already satisfies:\n\n"
+        f"{specification}"
+    )
+
+
 class AcquisitionMission:
     """Builds a missing capability, escalating only on counted evidence."""
 
@@ -186,7 +220,7 @@ class AcquisitionMission:
         task_class = classify_goal(goal)
         if repair and capability_id:
             self._retire(capability_id, repair, result)
-            goal = f"{goal}\n\nThis capability already exists and is being repaired. The defect:\n{repair}\n"
+            goal = repair_goal(goal, repair)
             result.goal = goal
         self._step(result, "start",
                    ("repairing " + capability_id) if repair else "missing capability"
@@ -247,6 +281,7 @@ class AcquisitionMission:
                         constraints=expert_constraints,
                         acceptance=expert_acceptance,
                         task_class=task_class,
+                        repair_mode=bool(repair),
                     )
                     result.seconds = time.perf_counter() - started
                     return escalated
@@ -305,6 +340,7 @@ class AcquisitionMission:
         constraints: list[str] | None,
         acceptance: list[tuple[str, list[str]]] | None,
         task_class: str,
+        repair_mode: bool = False,
     ) -> AcquisitionResult:
         """Ask an expert, then verify its work here before believing any of it."""
 
@@ -324,10 +360,28 @@ class AcquisitionMission:
             status = {"error": str(exc)}
         self._step(result, "escalation", f"gateway status: {status}")
 
+        # A repair is not a rewrite, and the expert may be unable to run
+        # anything to find out. Observed: asked to fix one wrong constant in a
+        # 794-line module, an expert that said plainly its permissions refused
+        # to execute python grew the file to 979 lines, introduced a Windows
+        # path mangled by string escaping, and left the constant untouched.
+        # Editing blind is a reason to change less, not more.
+        repair_rules = [
+            "This is a REPAIR of working code, not a rewrite. Make the smallest change that "
+            "fixes the stated defect and nothing else.",
+            "Do not restructure, reformat, rename, or 'improve' anything you were not asked "
+            "to fix. Every unrelated edit is a new way for this to fail.",
+            "You may be unable to execute anything here. If so, say so, and be more "
+            "conservative rather than less: an unverified broad change is worse than an "
+            "unverified narrow one.",
+            "Windows paths must use raw strings, forward slashes or pathlib. A backslash in "
+            "an ordinary string is an escape and the path will not be what it looks like.",
+        ] if repair_mode else []
+
         job = ExpertJob(
             goal=goal,
             workspace=Path(workspace),
-            constraints=list(constraints or []),
+            constraints=list(constraints or []) + repair_rules,
             acceptance=list(acceptance or []),
             previous_failures=[step.detail for step in result.steps
                                if step.stage == "build_local" and not step.ok],
