@@ -530,7 +530,7 @@ def test_the_search_gate_would_have_caught_the_shipped_bug():
 
     names = [check.name for check in provider_extra_checks()]
 
-    assert names == ["playback", "search"]
+    assert names == ["playback", "search", "switch"]
     command = " ".join(provider_extra_checks()[1].command)
     assert "'action':'search'" in command
     assert "track_id" in command, "a search that returns nothing must fail the gate"
@@ -759,3 +759,40 @@ def test_a_defect_report_states_observations_not_remedies(tmp_path):
     for prescription in ("pause first", "you should", "the fix is", "change the"):
         assert prescription not in defect
     assert "establish for yourself" in defect
+
+
+def test_a_gate_covers_playing_a_track_while_something_else_plays():
+    """The defect six gates could not see.
+
+    `playback` proves resume and pause. `search` proves a name resolves. Neither
+    proves the thing a user actually asks for: start THIS track, now, while
+    something else is playing. A provider passed all six while being unable to
+    do exactly that.
+    """
+
+    from service.music import provider_extra_checks
+
+    switch = [c for c in provider_extra_checks() if c.name == "switch"]
+    assert switch, "nothing gated the state the defect lives in"
+
+    command = " ".join(switch[0].command)
+    assert "action='resume'" in command or "'action': 'resume'" in command, (
+        "the gate must start from a playing state"
+    )
+    assert "playing_before.playing" in command
+    assert "media_session.read" in command, "the verdict must come from the OS"
+    for track in ACCEPTANCE_TRACKS:
+        assert track not in command.lower(), "the gate must not name a track"
+
+
+def test_the_switch_gate_uses_the_providers_own_search_as_its_answer_key():
+    """It cannot name a track without becoming hardcodeable, so it asks the
+    provider what exists and then holds it to that."""
+
+    from service.music import provider_extra_checks
+
+    command = " ".join(
+        part for check in provider_extra_checks() if check.name == "switch" for part in check.command
+    )
+    assert "action='search'" in command or "'action': 'search'" in command
+    assert "wanted = found['title']" in command

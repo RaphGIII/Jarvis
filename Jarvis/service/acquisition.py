@@ -137,6 +137,7 @@ class AcquisitionMission:
         gateway: Any = None,
         ledger: Any = None,
         controller: Any = None,
+        memory: Any = None,
     ) -> None:
         self.service = service
         self.kernel = kernel
@@ -144,6 +145,7 @@ class AcquisitionMission:
         self._gateway = gateway
         self._ledger = ledger
         self._controller = controller
+        self._memory = memory
 
     # -- wiring ----------------------------------------------------------
 
@@ -162,6 +164,22 @@ class AcquisitionMission:
 
             self._controller = EscalationController(self.ledger)
         return self._controller
+
+    @property
+    def memory(self) -> Any:
+        """Lessons from work that was independently verified.
+
+        Recall is gated on :attr:`experts.memory.Lesson.verified`, so what a
+        provider *said* it did never becomes something a later run is taught.
+        An unverified lesson is a rumour, and putting a rumour in a prompt as
+        though it were knowledge is how one bad answer becomes several.
+        """
+
+        if self._memory is None:
+            from experts.memory import ExpertMemory
+
+            self._memory = ExpertMemory(Path(self.kernel.state_root) / "expert_lessons.jsonl")
+        return self._memory
 
     @property
     def gateway(self) -> Any:
@@ -226,6 +244,12 @@ class AcquisitionMission:
                    ("repairing " + capability_id) if repair else "missing capability"
                    + f"; task class {task_class!r}")
 
+        # What worked last time, before spending anything finding out again.
+        remembered = self._recall(goal, task_class, result)
+        if remembered:
+            goal = remembered + goal
+            result.goal = goal
+
         outcome = None
         for attempt in range(self.MAX_LOCAL_ATTEMPTS):
             result.local_attempts = attempt + 1
@@ -266,6 +290,7 @@ class AcquisitionMission:
                 result.verification = dict(outcome.verification or {})
                 result.seconds = time.perf_counter() - started
                 self._step(result, "acquired", f"{outcome.capability_id} verified locally")
+                self._remember(goal, task_class, result, provider="build_local")
                 return result
 
             if attempt + 1 >= self.MIN_LOCAL_ATTEMPTS:
@@ -431,7 +456,62 @@ class AcquisitionMission:
         result.acquired = True
         result.capability_id = installed
         self._step(result, "promote", f"registered {installed} after independent verification")
+        self._remember(goal, task_class, result, provider=result.expert_used or "expert")
         return result
+
+    # -- what gets carried forward ---------------------------------------
+
+    def _recall(self, goal: str, task_class: str, result: AcquisitionResult) -> str:
+        """Verified lessons relevant to this goal, as prompt text."""
+
+        try:
+            context = self.memory.context_for(goal, task_class=task_class)
+        except Exception as exc:
+            self._step(result, "recall", f"memory unavailable: {exc}", ok=False)
+            return ""
+        if context:
+            self._step(result, "recall",
+                       f"{context.count('A previous task of this kind')} verified lesson(s) recalled")
+        return context
+
+    def _remember(self, goal: str, task_class: str, result: AcquisitionResult,
+                  *, provider: str) -> None:
+        """Write down what worked, with the verification that proved it.
+
+        Only ever called after this process has re-run the checks itself, and
+        the verification recorded is that re-run -- not the provider's account
+        of it. ``Lesson.verified`` gates recall, so a lesson without real
+        evidence can be written but can never be taught.
+        """
+
+        from experts.memory import Lesson
+
+        checks = [
+            {"criterion": str(check.get("name", "")), "passed": bool(check.get("ok"))}
+            for check in (result.verification.get("checks") or [])
+        ]
+        if not checks:
+            self._step(result, "remember", "nothing verified to remember", ok=False)
+            return
+        try:
+            self.memory.record(
+                Lesson(
+                    task_class=task_class,
+                    goal=goal[:1500],
+                    failed_approaches=[step.detail for step in result.steps
+                                       if step.stage == "build_local" and not step.ok][:6],
+                    successful_approach=next(
+                        (step.detail for step in reversed(result.steps)
+                         if step.stage in {"expert", "build_local"} and step.ok), ""),
+                    verification=checks,
+                    provider=provider,
+                    pattern=f"capability {result.capability_id} satisfied: "
+                            + ", ".join(item["criterion"] for item in checks if item["passed"]),
+                )
+            )
+            self._step(result, "remember", f"lesson recorded ({len(checks)} verified checks)")
+        except Exception as exc:
+            self._step(result, "remember", f"could not record: {exc}", ok=False)
 
     # -- helpers that reach into the capability service -------------------
 

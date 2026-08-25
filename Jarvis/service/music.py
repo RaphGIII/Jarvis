@@ -826,6 +826,54 @@ _SEARCH_CHECK = (
 )
 
 
+#: The gate for the defect that six other gates could not see.
+#:
+#: `playback` proves resume and pause. `search` proves a name resolves to a
+#: track. Neither proves the thing a user actually asks for: start THIS track,
+#: now, while something else is playing. A provider passed all six while being
+#: unable to do exactly that -- handing `spotify:track:<id>` to a player that is
+#: already playing was silently ignored and the existing queue carried on.
+#:
+#: It names no track. It asks the provider to search for a common word, takes
+#: whatever comes back as the expectation, and then requires that to be what
+#: Windows reports playing. The provider supplies its own answer key and still
+#: cannot pass by recognising a string.
+#:
+#: It deliberately starts from a PLAYING state, because that is the state the
+#: defect lives in and the one every other gate happened to avoid.
+_PLAY_WHILE_PLAYING_CHECK = (
+    "import sys, time;"
+    "import main;"
+    "sys.path.append(r'" + str(Path(__file__).resolve().parent.parent) + "');"
+    "from runtime.secrets import SecretStore;"
+    "from tools import media_session;"
+    "import pathlib;"
+    "root = pathlib.Path(r'" + str(Path(__file__).resolve().parent.parent) + "') / 'data' / 'jarvis' / 'secrets';"
+    "s = SecretStore(root).read('spotify', ('client_id','client_secret'), env_prefix='SPOTIFY');"
+    "print('SWITCH_SKIPPED no credentials configured') if not s.present else None;"
+    "sys.exit(0) if not s.present else None;"
+    "creds = {'client_id': s.get('client_id'), 'client_secret': s.get('client_secret')};"
+    "found = main.run(dict(creds, action='search', query='love'));"
+    "assert found.get('ok') and found.get('title'), 'search failed: ' + str(found);"
+    "wanted = found['title'];"
+    "main.run({'action': 'resume'});"
+    "time.sleep(2.0);"
+    "playing_before = media_session.read(app='spotify');"
+    "assert playing_before.playing, 'could not get the player into a playing state to test against';"
+    "r = main.run(dict(creds, action='play', query=wanted));"
+    "time.sleep(3.0);"
+    "after = media_session.read(app='spotify');"
+    "assert after.ok, 'no media session after play: ' + after.error;"
+    "assert after.playing, 'not playing after play: ' + after.status;"
+    "wl = [w for w in wanted.lower().split() if len(w) > 2];"
+    "hit = sum(1 for w in wl if w in (after.title or '').lower());"
+    "assert hit >= max(1, (len(wl) * 6) // 10), "
+    "'asked for ' + repr(wanted) + ' while ' + repr(playing_before.title) + ' was playing, "
+    "but Windows reports ' + repr(after.title);"
+    "print('SWITCH_OK', playing_before.title, '->', after.title)"
+)
+
+
 def provider_extra_checks(python: str | None = None) -> list[Any]:
     """The playback check, as a gate on the *local* build as well.
 
@@ -858,6 +906,12 @@ def provider_extra_checks(python: str | None = None) -> list[Any]:
             text=("run({'action':'search', 'query': ...}) resolves free text to a real track "
                   "id and title through the provider's own API"),
             command=(interpreter, "-c", _SEARCH_CHECK),
+        ),
+        CapabilityCheck(
+            name="switch",
+            text=("run({'action':'play', 'query': ...}) starts the REQUESTED track even when "
+                  "the player is already playing something else, confirmed by reading Windows"),
+            command=(interpreter, "-c", _PLAY_WHILE_PLAYING_CHECK),
         ),
     ]
 

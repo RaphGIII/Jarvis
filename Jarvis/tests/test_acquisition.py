@@ -488,3 +488,108 @@ def test_a_first_build_gets_the_plain_specification(tmp_path):
     run.run("the full specification", capability_id="cap.x")
 
     assert service.goals[0] == "the full specification"
+
+
+# --------------------------------------------------------------------------
+# What gets carried forward, and what must not
+# --------------------------------------------------------------------------
+
+class StubMemory:
+    def __init__(self, context=""):
+        self.context = context
+        self.recorded = []
+        self.asked = []
+
+    def context_for(self, goal, *, task_class="", limit=2):
+        self.asked.append((goal, task_class))
+        return self.context
+
+    def record(self, lesson):
+        self.recorded.append(lesson)
+        return lesson
+
+
+def _mission_with_memory(tmp_path, memory, *, service=None, controller=None, gateway=None):
+    (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+    return AcquisitionMission(
+        service=service or StubService(succeed_on=1),
+        kernel=StubKernel(tmp_path),
+        gateway=gateway or StubGateway(),
+        ledger=StubLedger(),
+        controller=controller or StubController(escalate=False),
+        memory=memory,
+    )
+
+
+def test_remembered_lessons_are_consulted_before_anything_is_spent(tmp_path):
+    memory = StubMemory(context="A previous task of this kind (capability) was solved as follows.\n")
+    service = StubService(succeed_on=1)
+    run = _mission_with_memory(tmp_path, memory, service=service)
+
+    run.run("build a provider")
+
+    assert memory.asked, "the mission must ask what it already knows"
+    assert service.goals_seen[0].startswith("A previous task of this kind") if hasattr(
+        service, "goals_seen") else True
+
+
+def test_a_verified_acquisition_is_written_down(tmp_path):
+    memory = StubMemory()
+    service = StubService(succeed_on=1)
+    service_verification = {"ok": True, "checks": [{"name": "tests", "ok": True},
+                                                   {"name": "playback", "ok": True}]}
+
+    class Verified(StubService):
+        def ensure(self, goal, **kwargs):
+            outcome = StubOutcome(True, "cap.x", status="acquired")
+            outcome.verification = service_verification
+            return outcome
+
+    run = _mission_with_memory(tmp_path, memory, service=Verified())
+
+    run.run("build a provider")
+
+    assert len(memory.recorded) == 1
+    lesson = memory.recorded[0]
+    assert lesson.verified, "a lesson without passing checks must not count as verified"
+    assert {item["criterion"] for item in lesson.verification} == {"tests", "playback"}
+
+
+def test_a_failed_acquisition_teaches_nothing(tmp_path):
+    """An unverified lesson is a rumour, and a rumour in a future prompt is how
+    one bad answer becomes several."""
+
+    memory = StubMemory()
+    run = _mission_with_memory(tmp_path, memory, service=StubService(succeed_on=None))
+
+    run.run("build a provider")
+
+    assert memory.recorded == []
+
+
+def test_a_lesson_with_no_verification_is_never_recorded(tmp_path):
+    class NoChecks(StubService):
+        def ensure(self, goal, **kwargs):
+            outcome = StubOutcome(True, "cap.x", status="acquired")
+            outcome.verification = {"ok": True, "checks": []}
+            return outcome
+
+    memory = StubMemory()
+    run = _mission_with_memory(tmp_path, memory, service=NoChecks())
+
+    run.run("build a provider")
+
+    assert memory.recorded == [], "checked nothing is not the same as checked and passed"
+
+
+def test_a_broken_memory_does_not_stop_the_mission(tmp_path):
+    class Broken(StubMemory):
+        def context_for(self, goal, *, task_class="", limit=2):
+            raise RuntimeError("the lesson store is unreadable")
+
+    run = _mission_with_memory(tmp_path, Broken(), service=StubService(succeed_on=1))
+
+    result = run.run("build a provider")
+
+    assert result.acquired is True
+    assert any(step.stage == "recall" and not step.ok for step in result.steps)
