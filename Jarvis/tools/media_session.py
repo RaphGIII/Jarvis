@@ -103,6 +103,15 @@ class MediaState:
 #: incantation for consuming a WinRT IAsyncOperation from PowerShell.
 _SCRIPT = r"""
 $ErrorActionPreference = "Stop"
+# PowerShell writes using the console's output encoding, which on this machine
+# is a legacy code page. Python decodes as UTF-8, so every non-ASCII character
+# came back as U+FFFD: "Bück dich" was stored in a receipt as "B<?>ck dich" and
+# then failed to match the title Windows had actually reported. For a German
+# user that is most track titles. Both encodings are set because they govern
+# different paths -- $OutputEncoding for the pipeline, [Console]::OutputEncoding
+# for what reaches a redirected stdout.
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 try {
   Add-Type -AssemblyName System.Runtime.WindowsRuntime
   $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {

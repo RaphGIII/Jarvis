@@ -796,3 +796,44 @@ def test_the_switch_gate_uses_the_providers_own_search_as_its_answer_key():
     )
     assert "action='search'" in command or "'action': 'search'" in command
     assert "wanted = found['title']" in command
+
+
+def test_powershell_output_is_read_as_utf8(monkeypatch):
+    """Every non-ASCII character came back as U+FFFD.
+
+    PowerShell writes using the console's output encoding, which on this
+    machine is a legacy code page; Python decodes as UTF-8. "Bück dich" was
+    stored in a receipt as "B�ck dich" and then failed to match the title
+    Windows had actually reported -- so a correct answer was recorded as a
+    failed check. For a German user that is most track titles.
+    """
+
+    from tools import media_session
+
+    captured = {}
+    monkeypatch.setattr(media_session, "_powershell", lambda: "powershell")
+    monkeypatch.setattr(
+        media_session.subprocess, "run",
+        lambda cmd, **kw: captured.update(argv=list(cmd), kwargs=kw) or type(
+            "R", (), {"stdout": '{"ok": true}', "stderr": "", "returncode": 0})(),
+    )
+
+    media_session.read(app="spotify")
+
+    script = captured["argv"][captured["argv"].index("-Command") + 1]
+    assert "[Console]::OutputEncoding" in script, "stdout encoding must be pinned"
+    assert "$OutputEncoding" in script, "the pipeline encoding must be pinned too"
+    assert captured["kwargs"].get("encoding") == "utf-8"
+
+
+def test_a_non_ascii_title_survives_the_round_trip():
+    """Constructed rather than parsed: the failure was in decoding, so the test
+    has to exercise the decoder with bytes that would break it."""
+
+    from tools.media_session import _state
+
+    state = _state({"ok": True, "app": "Spotify.exe", "title": "Bück dich",
+                    "artist": "Rammstein", "status": "Playing"})
+
+    assert state.title == "Bück dich"
+    assert "�" not in state.describe()
