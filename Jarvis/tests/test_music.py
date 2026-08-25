@@ -638,3 +638,88 @@ def test_a_behavioural_failure_is_still_a_defect(tmp_path, reason):
     outcome = service.run(MusicRequest("play", query="something"))
 
     assert outcome.defect, f"{reason!r} is the implementation's fault"
+
+
+# --------------------------------------------------------------------------
+# The transport commands have to actually be sent
+# --------------------------------------------------------------------------
+
+def test_a_transport_command_reaches_powershell(monkeypatch):
+    """It did not, for the life of this module.
+
+    The script declared `param($Command)` and the invocation ended
+    `-Command <script> -Command <command>`. PowerShell takes the first
+    -Command as the script and treats the rest as arguments to it, so
+    $Command kept its default of "status": every pause and skip silently read
+    the state, changed nothing, and returned the unchanged reading as though
+    the player had refused. Reads were unaffected, which is exactly why it went
+    unnoticed -- the module looked like it worked.
+    """
+
+    from tools import media_session
+
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["argv"] = list(command)
+        return type("R", (), {"stdout": '{"ok": true, "status": "Paused"}', "stderr": "",
+                              "returncode": 0})()
+
+    monkeypatch.setattr(media_session.subprocess, "run", fake_run)
+    monkeypatch.setattr(media_session, "_powershell", lambda: "powershell")
+
+    media_session.control("pause", app="spotify")
+
+    argv = captured["argv"]
+    assert argv.count("-Command") == 1, "a second -Command becomes an argument, not a parameter"
+    script = argv[argv.index("-Command") + 1]
+    assert "$Command = 'pause'" in script
+    assert "$App = 'spotify'" in script
+
+
+@pytest.mark.parametrize("command", ["play", "pause", "next", "previous"])
+def test_every_transport_command_is_passed_through(monkeypatch, command):
+    from tools import media_session
+
+    captured = {}
+    monkeypatch.setattr(media_session, "_powershell", lambda: "powershell")
+    monkeypatch.setattr(
+        media_session.subprocess, "run",
+        lambda cmd, **kw: captured.update(argv=list(cmd)) or type(
+            "R", (), {"stdout": '{"ok": true}', "stderr": "", "returncode": 0})(),
+    )
+
+    media_session.control(command, app="")
+
+    script = captured["argv"][captured["argv"].index("-Command") + 1]
+    assert f"$Command = '{command}'" in script
+
+
+def test_an_unsupported_transport_command_is_refused():
+    from tools import media_session
+
+    state = media_session.control("self_destruct")
+
+    assert state.ok is False
+    assert "unsupported" in state.error
+
+
+def test_a_quote_cannot_escape_the_generated_script(monkeypatch):
+    """Both values are interpolated into PowerShell source."""
+
+    from tools import media_session
+
+    captured = {}
+    monkeypatch.setattr(media_session, "_powershell", lambda: "powershell")
+    monkeypatch.setattr(
+        media_session.subprocess, "run",
+        lambda cmd, **kw: captured.update(argv=list(cmd)) or type(
+            "R", (), {"stdout": '{"ok": true}', "stderr": "", "returncode": 0})(),
+    )
+
+    media_session.control("status", app="spot'; Remove-Item X -Recurse; '")
+
+    script = captured["argv"][captured["argv"].index("-Command") + 1]
+    assert "Remove-Item" in script, "the text survives, but as one quoted literal"
+    assert script.count("$App = '") == 1
+    assert "'; Remove-Item" not in script.split("$App = '")[1].split("'\n")[0] + "'"

@@ -102,7 +102,6 @@ class MediaState:
 #: because Windows PowerShell 5.1 has no ``await`` -- this is the standard
 #: incantation for consuming a WinRT IAsyncOperation from PowerShell.
 _SCRIPT = r"""
-param([string]$Command = "status")
 $ErrorActionPreference = "Stop"
 try {
   Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -175,11 +174,21 @@ def _invoke(command: str, *, app: str = "") -> dict[str, Any]:
     shell = _powershell()
     if shell is None:
         return {"ok": False, "error": "powershell is not on PATH"}
-    script = f"$App = '{app.replace(chr(39), '')}'\n" + _SCRIPT
+    # Both values are prepended as assignments rather than passed as
+    # parameters. They used to be: the script declared `param($Command)` and
+    # the invocation ended `-Command <script> -Command <command>`. PowerShell
+    # takes the first -Command as the script and treats everything after it as
+    # arguments to that script, so $Command kept its default of "status" --
+    # every transport call silently read the state and changed nothing, then
+    # returned the unchanged reading as though the command had been refused.
+    # Reads were unaffected, which is why it went unnoticed.
+    safe_app = app.replace("'", "")
+    safe_command = command.replace("'", "")
+    script = f"$App = '{safe_app}'\n$Command = '{safe_command}'\n" + _SCRIPT
     try:
         completed = subprocess.run(
             [shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-Command", script, "-Command", command],
+             "-Command", script],
             capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
             encoding="utf-8", errors="replace",
         )
