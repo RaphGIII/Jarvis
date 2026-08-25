@@ -181,6 +181,32 @@ def _audio_python() -> str:
     return sys.executable
 
 
+#: Cached once per process. The cache itself is durable across runs; this only
+#: avoids re-reading the file for every project created in one session.
+_ENVIRONMENT: list[str] | None = None
+
+
+def _environment_briefing() -> list[str]:
+    """What is true about this machine, from the deterministic probe cache.
+
+    Falls back to an empty list rather than to guesses: a briefing that is
+    wrong about the environment is worse than one that says nothing, which is
+    the lesson of four capability attempts that failed on packages the model
+    had no way to know were absent.
+    """
+
+    global _ENVIRONMENT
+    if _ENVIRONMENT is None:
+        try:
+            from runtime.environment import EnvironmentCache
+
+            cache = EnvironmentCache(_REPO_ROOT / "data" / "jarvis" / "environment.json")
+            _ENVIRONMENT = cache.briefing()
+        except Exception:
+            _ENVIRONMENT = []
+    return _ENVIRONMENT
+
+
 def _importable_packages(limit: int = 24) -> str:
     """Third-party packages the capability's interpreter can actually import.
 
@@ -549,6 +575,22 @@ class CapabilityService:
                 "run() reads. It is the only way a caller can know what to pass, so a key that is not "
                 "declared there is a key nobody will ever send.",
                 "Write real tests in test_capability.py that prove behaviour, not just key presence.",
+                # Facts about this machine, probed deterministically and cached
+                # rather than rediscovered by the loop. Four of the six earlier
+                # music attempts failed on environment facts nobody had told the
+                # model; INVESTIGATE then spent a tool call per attempt
+                # re-establishing things that had not changed in days. Each line
+                # carries how it was determined, so the difference between a
+                # checked fact and an assumed one stays visible.
+                *(
+                    [
+                        "Facts about this machine, each established by the probe named in brackets. "
+                        "You do not need to rediscover these:",
+                        *(f"  - {line}" for line in _environment_briefing()),
+                    ]
+                    if _environment_briefing()
+                    else []
+                ),
                 # The failure this prevents: a test asserting a specific player is installed,
                 # which is false on this machine, so a correct implementation still fails.
                 "Tests must NOT assert that any particular external program is installed. Assert on "

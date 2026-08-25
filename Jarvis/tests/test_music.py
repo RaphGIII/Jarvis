@@ -723,3 +723,39 @@ def test_a_quote_cannot_escape_the_generated_script(monkeypatch):
     assert "Remove-Item" in script, "the text survives, but as one quoted literal"
     assert script.count("$App = '") == 1
     assert "'; Remove-Item" not in script.split("$App = '")[1].split("'\n")[0] + "'"
+
+
+def test_a_defect_report_carries_the_state_the_world_was_in(tmp_path):
+    """"play returned ok=False" says what broke and nothing about when.
+
+    The same action against the same code succeeds or fails depending on what
+    the player was doing beforehand, which is exactly the variable a repair has
+    to discover. The report states it rather than making the loop go and find
+    it -- or worse, not think to look.
+    """
+
+    playing_before = MediaState(ok=True, app="Spotify.exe", title="Africa",
+                                artist="TOTO", status="Playing")
+    service = build(tmp_path, session=FakeSession(playing_before),
+                    execution=FakeExecution(ok=False, error="started 'Africa' instead of 'Du Hast'"))
+
+    outcome = service.run(MusicRequest("play", query="Du Hast Rammstein"))
+
+    assert "player BEFORE" in outcome.defect
+    assert "Africa" in outcome.defect
+    assert "Playing" in outcome.defect
+    assert "'query': 'Du Hast Rammstein'" in outcome.defect
+
+
+def test_a_defect_report_states_observations_not_remedies(tmp_path):
+    """A report that names the fix stops being evidence and becomes a patch
+    written by whoever wrote the report."""
+
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    execution=FakeExecution(ok=False, error="wrong track"))
+
+    defect = service.run(MusicRequest("play", query="x")).defect.lower()
+
+    for prescription in ("pause first", "you should", "the fix is", "change the"):
+        assert prescription not in defect
+    assert "establish for yourself" in defect

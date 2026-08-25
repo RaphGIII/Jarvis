@@ -245,6 +245,33 @@ def is_environmental(reason: str) -> bool:
     return any(marker in lowered for marker in ENVIRONMENTAL)
 
 
+def defect_report(request: Any, reason: str, before: Any, after: Any) -> str:
+    """A defect report carrying the state the world was in, not just the error.
+
+    "play returned ok=False" tells a repair loop what broke and nothing about
+    when.  The same action against the same code succeeds or fails depending on
+    what the player was doing beforehand, and that is precisely the variable a
+    repair has to discover -- so the report states it rather than making the
+    loop go and find it, or worse, not think to look.
+
+    Deliberately observations only.  It says what was true before, what was
+    asked for, and what was true after; it does not say what to change. A
+    report that names the remedy stops being evidence and starts being a patch
+    written by whoever wrote the report.
+    """
+
+    return (
+        f"run({{'action': '{request.action}'"
+        + (f", 'query': {request.query!r}" if request.query else "")
+        + f"}}) returned ok=False.\n"
+        f"  provider said : {reason}\n"
+        f"  player BEFORE : {before.describe() if before is not None else 'unknown'}\n"
+        f"  player AFTER  : {after.describe() if after is not None else 'unknown'}\n"
+        "  This is what was observed. It is not a diagnosis: establish for yourself "
+        "under which prior player states the action succeeds and under which it does not."
+    )
+
+
 @dataclass
 class MusicOutcome:
     """What happened, with the evidence to back it."""
@@ -446,7 +473,8 @@ class MusicService:
                 defect=(
                     ""
                     if is_environmental(reason)
-                    else f"run({{'action': '{request.action}'}}) returned ok=False: {reason}"
+                    else defect_report(request, reason, before, self.session.read(
+                        app="spotify" if self.provider == "spotify" else ""))
                 ),
             )
 
