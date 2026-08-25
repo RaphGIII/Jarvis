@@ -108,6 +108,9 @@ class JarvisCore:
         #: Guards capability acquisition: two missions for the same capability
         #: running at once would fight over the same workspace.
         self._acquiring = threading.Lock()
+        #: Consecutive failures per capability. One failure is an incident;
+        #: two in a row is a defect worth rebuilding for. Reset by any success.
+        self._defects: dict[str, int] = {}
         #: Receipts produced during this conversation, in memory.  The claim
         #: guard consults them on every streamed chunk, and re-reading the
         #: ledger file that often would cost more than the check saves.
@@ -213,7 +216,10 @@ class JarvisCore:
                 engine=self.kernel.engine(hooks=EngineHooks(on_step=on_step)),
                 graph=graph,
                 root=root / "installed",
-                execution_timeout=120.0,
+                # A cold call starts PowerShell, fetches a token and searches over
+                # the network. 120s was tight enough that a busy machine looked
+                # like a broken capability.
+                execution_timeout=240.0,
             )
         return self._capabilities
 
@@ -431,12 +437,15 @@ class JarvisCore:
         # original request is then answered -- without the user asking twice.
         if outcome.gap:
             outcome = self._acquire_then_retry(request, scope)
-        elif outcome.defect:
+        elif outcome.defect and self._defect_confirmed(outcome):
             # The provider exists and is broken. Same shape, different cause:
             # repair it and answer the question that found the defect. Only
             # once -- a repair that does not fix it must surface as a failure
             # rather than as a loop.
             outcome = self._acquire_then_retry(request, scope, repair=outcome.defect)
+
+        if outcome.receipt.verified and outcome.capability_id:
+            self._defects.pop(outcome.capability_id, None)
 
         self.state.set(JarvisState.VERIFYING, detail=outcome.receipt.kind, scope=scope)
         self.receipts.record(outcome.receipt)
@@ -456,6 +465,32 @@ class JarvisCore:
             f"receipt {outcome.receipt.id}]",
             final_state=JarvisState.IDLE if outcome.receipt.verified else JarvisState.ERROR,
         )
+
+    def _defect_confirmed(self, outcome: Any) -> bool:
+        """Whether a failure has happened often enough to be the code's fault.
+
+        One failure is an incident; two in a row is a defect.  Retiring a
+        capability that has passed every gate, on the strength of a single bad
+        call, disables working functionality and spends half an hour rebuilding
+        something that may be perfectly correct -- which is exactly what
+        happened to a verified Spotify provider when one cold call ran over its
+        timeout.
+
+        Counted per capability and reset by any success, so a provider that
+        works intermittently is left alone and one that has genuinely broken is
+        repaired on its second consecutive failure.
+        """
+
+        capability = outcome.capability_id or "unknown"
+        self._defects[capability] = self._defects.get(capability, 0) + 1
+        if self._defects[capability] < 2:
+            self.emit(
+                EventType.TOOL,
+                {"summary": f"{capability} failed once ({outcome.defect[:120]}); "
+                            "waiting for a second failure before rebuilding it"},
+            )
+            return False
+        return True
 
     def _acquire_then_retry(self, request: Any, scope: str, *, repair: str = "") -> Any:
         """Build (or fix) the provider, then answer the request that needed it."""

@@ -591,3 +591,50 @@ def test_a_provider_that_never_existed_is_not_reported_as_retired(tmp_path):
     service.capabilities.registry = Registry()
 
     assert service.retired_capability() is None
+
+
+# --------------------------------------------------------------------------
+# A slow machine is not a broken capability
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "the capability did not finish within 120s",
+        "could not reach Spotify: timed out",
+        "connection reset by peer",
+        "no active media session",
+        "powershell is not on PATH",
+    ],
+)
+def test_an_environmental_failure_is_not_a_defect(tmp_path, reason):
+    """Measured: a verified Spotify provider was disabled, and half an hour
+    spent rebuilding it, because one cold call -- PowerShell starting, a token
+    fetched, a search over the network -- ran past a 120s budget on a machine
+    that had just spent thirty minutes running a 7B model. The code was
+    correct. The clock ran out."""
+
+    service = build(tmp_path, session=FakeSession(NOTHING),
+                    execution=FakeExecution(ok=False, error=reason))
+
+    outcome = service.run(MusicRequest("play", query="something"))
+
+    assert outcome.receipt.ok is False, "it still failed and must be reported as failing"
+    assert outcome.defect == "", f"{reason!r} says nothing about the implementation"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Spotify replied 400 Bad Request Invalid limit",
+        "KeyError: 'tracks'",
+        "the provider returned a string, not a dict",
+    ],
+)
+def test_a_behavioural_failure_is_still_a_defect(tmp_path, reason):
+    service = build(tmp_path, session=FakeSession(NOTHING),
+                    execution=FakeExecution(ok=False, error=reason))
+
+    outcome = service.run(MusicRequest("play", query="something"))
+
+    assert outcome.defect, f"{reason!r} is the implementation's fault"

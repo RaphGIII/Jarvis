@@ -213,6 +213,38 @@ def extract_query(text: str) -> str:
 # Execution
 # --------------------------------------------------------------------------
 
+#: Failures that say something about the machine, not about the code.
+#:
+#: Treating these as defects retires a working capability and spends half an
+#: hour rebuilding something that was never broken.  Measured: a verified
+#: Spotify provider was disabled because one cold call -- PowerShell starting,
+#: a token being fetched, a search over the network -- did not finish inside a
+#: 120-second budget on a machine that had just spent thirty minutes running a
+#: 7B model. The code was correct. The clock ran out.
+#:
+#: The distinction is the familiar one in this project: ``ok=False`` is a proxy
+#: covering both "it behaved incorrectly" and "it never got to finish", and
+#: only the first is evidence about the implementation.
+ENVIRONMENTAL = (
+    "did not finish within",
+    "timed out",
+    "timeout",
+    "could not reach",
+    "connection",
+    "temporarily unavailable",
+    "no active media session",
+    "is not running",
+    "powershell is not on path",
+)
+
+
+def is_environmental(reason: str) -> bool:
+    """Whether a failure is about the machine rather than about the code."""
+
+    lowered = (reason or "").lower()
+    return any(marker in lowered for marker in ENVIRONMENTAL)
+
+
 @dataclass
 class MusicOutcome:
     """What happened, with the evidence to back it."""
@@ -411,7 +443,11 @@ class MusicService:
                     request=request.query, provider=self.provider, output=output,
                 ),
                 capability_id=capability_id,
-                defect=f"run({{'action': '{request.action}'}}) returned ok=False: {reason}",
+                defect=(
+                    ""
+                    if is_environmental(reason)
+                    else f"run({{'action': '{request.action}'}}) returned ok=False: {reason}"
+                ),
             )
 
         after = self._settled(request)
