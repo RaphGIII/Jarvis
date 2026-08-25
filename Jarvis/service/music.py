@@ -222,6 +222,11 @@ class MusicOutcome:
     capability_id: str = ""
     gap: bool = False
     requirement: Any = None
+    #: The provider itself is broken -- it failed, or it claimed something the
+    #: operating system contradicts. Distinct from a gap (nothing installed) and
+    #: from a requirement (the user has not supplied a credential), because
+    #: those are not the capability's fault and rebuilding it would fix neither.
+    defect: str = ""
     detail: dict[str, Any] = field(default_factory=dict)
 
 
@@ -267,6 +272,12 @@ class MusicService:
     def output(self) -> str:
         return str(self.preferences.get("music.default_output", "this_pc"))
 
+    @property
+    def capability_id(self) -> str:
+        """The identifier the preferred provider is registered under."""
+
+        return f"music.provider.{self.provider.lower()}"
+
     def provider_capability(self) -> Any:
         """The registered capability implementing the preferred provider.
 
@@ -282,13 +293,34 @@ class MusicService:
             return None
         for manifest in manifests:
             identifier = str(getattr(manifest, "capability_id", "")).lower()
-            if identifier == f"music.provider.{wanted}":
+            if identifier == self.capability_id:
                 return manifest
         for manifest in manifests:
             identifier = str(getattr(manifest, "capability_id", "")).lower()
             if identifier.startswith("music.provider.") and wanted in identifier:
                 return manifest
         return None
+
+    def retired_capability(self) -> Any:
+        """A version of the provider that exists but has been disabled.
+
+        Distinguishes "there has never been one" from "there was one and it
+        was withdrawn". Saying "I have no capability yet, building one now"
+        while actually repairing a disabled version is a small lie, and it also
+        misdescribes what will happen -- a rebuild starts from the installed
+        source, not from nothing.
+        """
+
+        registry = getattr(self.capabilities, "registry", None)
+        if registry is None:
+            return None
+        try:
+            manifest = registry.get(self.capability_id)
+        except Exception:
+            return None
+        if manifest is None or str(getattr(manifest, "status", "")) == "active":
+            return None
+        return manifest
 
     # -- credentials ------------------------------------------------------
 
@@ -371,18 +403,26 @@ class MusicService:
 
         output = dict(getattr(execution, "output", {}) or {})
         if not getattr(execution, "ok", False):
+            reason = (getattr(execution, "error", "")
+                      or str(output.get("error", "the provider failed")))
             return MusicOutcome(
                 receipt=failed(
-                    f"music.{request.action}", capability_id,
-                    getattr(execution, "error", "") or str(output.get("error", "the provider failed")),
+                    f"music.{request.action}", capability_id, reason,
                     request=request.query, provider=self.provider, output=output,
                 ),
                 capability_id=capability_id,
+                defect=f"run({{'action': '{request.action}'}}) returned ok=False: {reason}",
             )
 
         after = self._settled(request)
         verifications = self.verify(request, before, after, output)
         ok = all(item.passed for item in verifications)
+        # A provider that ran cleanly and did not do what it said is broken in
+        # the way that matters most, so it is a defect rather than a bad day.
+        defect = "" if ok else (
+            f"run({{'action': '{request.action}'}}) reported success, but Windows disagrees: "
+            + "; ".join(f"{item.check} -> {item.observed}" for item in verifications if not item.passed)
+        )
         return MusicOutcome(
             receipt=Receipt(
                 kind=f"music.{request.action}",
@@ -404,6 +444,7 @@ class MusicService:
                 duration_seconds=time.perf_counter() - started,
             ),
             capability_id=capability_id,
+            defect=defect,
             detail=output,
         )
 
@@ -681,6 +722,46 @@ def provider_acceptance(python: str | None = None) -> list[tuple[str, list[str]]
     ]
 
 
+#: The check that exercises the search path against the real provider.
+#:
+#: Its absence is why a broken search shipped. The playback gate proved the
+#: capability could control a player and the acceptance commands proved it
+#: handled contracts and unknown actions honestly -- and nothing at all
+#: exercised name-to-track resolution, so a Spotify provider that could not
+#: search was registered as verified. Real execution then found what no gate
+#: had asked: Spotify rejects `limit=20` with "Invalid limit" despite
+#: documenting a maximum of 50.
+#:
+#: It names no track. The query is a common word and the assertion is only that
+#: *some* track came back with an id -- enough to prove the request, the auth
+#: and the parsing all work, and not enough for an implementation to pass by
+#: recognising a string.
+#:
+#: Credentials are read from the secret store by the check itself rather than
+#: baked into the command, so they never reach a project record, a log or a
+#: process list. The check skips rather than fails when there are none: a
+#: machine without credentials cannot search, and holding that against the
+#: capability would be blaming it for its environment.
+_SEARCH_CHECK = (
+    "import sys;"
+    "import main;"
+    "sys.path.append(r'" + str(Path(__file__).resolve().parent.parent) + "');"
+    "from runtime.secrets import SecretStore;"
+    "import pathlib;"
+    "root = pathlib.Path(r'" + str(Path(__file__).resolve().parent.parent) + "') / 'data' / 'jarvis' / 'secrets';"
+    "s = SecretStore(root).read('spotify', ('client_id','client_secret'), env_prefix='SPOTIFY');"
+    "print('SEARCH_SKIPPED no credentials configured') if not s.present else None;"
+    "sys.exit(0) if not s.present else None;"
+    "r = main.run({'action':'search','query':'love','client_id':s.get('client_id'),"
+    "'client_secret':s.get('client_secret')});"
+    "assert isinstance(r, dict), r;"
+    "assert r.get('ok') is True, 'search failed: ' + str(r.get('error'));"
+    "assert r.get('track_id'), 'search returned no track id: ' + str(r);"
+    "assert r.get('title'), 'search returned no title: ' + str(r);"
+    "print('SEARCH_OK', r.get('title'), '-', r.get('artist'))"
+)
+
+
 def provider_extra_checks(python: str | None = None) -> list[Any]:
     """The playback check, as a gate on the *local* build as well.
 
@@ -699,14 +780,21 @@ def provider_extra_checks(python: str | None = None) -> list[Any]:
 
     from capabilities.service import CapabilityCheck
 
+    interpreter = python or sys.executable
     return [
         CapabilityCheck(
             name="playback",
             text=("run({'action':'resume'}) actually starts playback and "
                   "run({'action':'pause'}) actually stops it, both confirmed by reading "
                   "Windows' media session afterwards"),
-            command=(python or sys.executable, "-c", _PLAYBACK_CHECK),
-        )
+            command=(interpreter, "-c", _PLAYBACK_CHECK),
+        ),
+        CapabilityCheck(
+            name="search",
+            text=("run({'action':'search', 'query': ...}) resolves free text to a real track "
+                  "id and title through the provider's own API"),
+            command=(interpreter, "-c", _SEARCH_CHECK),
+        ),
     ]
 
 

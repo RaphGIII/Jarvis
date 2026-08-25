@@ -450,3 +450,46 @@ def test_the_skeleton_marker_reaches_both_gates(service):
     criterion = next(item for item in project.acceptance if item.text == wanted.text)
     assert NOT_IMPLEMENTED in " ".join(criterion.check)
     assert not criterion.satisfied
+
+
+def test_a_named_capability_keeps_its_name(service, tmp_path):
+    """The id a build uses must be the id it registers under.
+
+    They diverged: `acquire` derived one from the goal text via `suggest_id`
+    while the caller registered under its own. A rebuild then looked up an id
+    that had never been registered, found nothing installed, and started from
+    a blank skeleton -- silently discarding the working implementation it was
+    supposed to be repairing.
+    """
+
+    built = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+
+    outcome = built.ensure("do a thing", max_steps=20, capability_id="music.provider.example")
+
+    assert outcome.usable, outcome.reason
+    assert outcome.capability_id == "music.provider.example"
+    assert built.registry.get("music.provider.example") is not None
+
+
+def test_a_rebuild_starts_from_the_installed_version(service, tmp_path):
+    """Rebuilding means improving what exists. Starting from the skeleton
+    throws away everything that worked to fix the one thing that did not."""
+
+    built = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+    built.ensure("do a thing", max_steps=20, capability_id="cap.example")
+    built.registry.disable("cap.example", reason="a defect found in use")
+
+    project = built._start_project("do a thing", "cap.example", max_steps=5)
+    seeded = (built.engine.store.workspace_for(project) / "main.py").read_text(encoding="utf-8")
+
+    assert "JARVIS_CAPABILITY_NOT_IMPLEMENTED" not in seeded
+    assert seeded.strip() == GOOD_IMPLEMENTATION.strip()
+
+
+def test_a_first_build_still_starts_from_the_skeleton(service, tmp_path):
+    built = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+
+    project = built._start_project("something new", "cap.brand_new", max_steps=5)
+    seeded = (built.engine.store.workspace_for(project) / "main.py").read_text(encoding="utf-8")
+
+    assert "JARVIS_CAPABILITY_NOT_IMPLEMENTED" in seeded

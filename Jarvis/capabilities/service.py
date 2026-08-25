@@ -399,8 +399,18 @@ class CapabilityService:
         keywords: list[str] | None = None,
         max_seconds: float | None = None,
         extra_checks: list[CapabilityCheck] | None = None,
+        capability_id: str = "",
     ) -> CapabilityOutcome:
-        """Return a capability for ``goal``, acquiring one if none exists."""
+        """Return a capability for ``goal``, acquiring one if none exists.
+
+        ``capability_id`` lets a caller name the thing being built instead of
+        having one derived from the goal text.  That matters for anything with
+        a contract rather than a description -- a music provider is looked up
+        as ``music.provider.spotify``, not as whatever ``suggest_id`` makes of
+        a paragraph -- and it is what lets a rebuild find the installed version
+        to start from.  Without it a repair silently began from a blank
+        skeleton, because the id it looked up was not the id it registered.
+        """
 
         existing = self.resolve(goal)
         if existing is not None:
@@ -417,6 +427,7 @@ class CapabilityService:
             keywords=keywords,
             max_seconds=max_seconds,
             extra_checks=extra_checks,
+            capability_id=capability_id,
         )
 
     def acquire(
@@ -427,6 +438,7 @@ class CapabilityService:
         keywords: list[str] | None = None,
         max_seconds: float | None = None,
         extra_checks: list[CapabilityCheck] | None = None,
+        capability_id: str = "",
     ) -> CapabilityOutcome:
         """Build, verify and register a new capability.
 
@@ -437,7 +449,7 @@ class CapabilityService:
         without satisfying them and cannot self-certify them either.
         """
 
-        capability_id = self.suggest_id(goal)
+        capability_id = capability_id or self.suggest_id(goal)
         project = self._start_project(
             goal, capability_id, max_steps=max_steps, max_seconds=max_seconds,
             extra_checks=extra_checks,
@@ -560,10 +572,48 @@ class CapabilityService:
         workspace = self.engine.store.workspace_for(project)
         # Seed the workspace so the model edits a working skeleton rather than
         # inventing the file layout, which it gets wrong far more often.
-        (workspace / "main.py").write_text(_TEMPLATE_MAIN, encoding="utf-8")
-        (workspace / "test_capability.py").write_text(_TEMPLATE_TEST, encoding="utf-8")
+        #
+        # When a version of this capability already exists, seed from *that*
+        # instead. Rebuilding a capability means improving the one there is;
+        # starting from the skeleton throws away everything that worked in
+        # order to fix the one thing that did not. Observed: a Spotify provider
+        # of 794 working lines failed a single check because Spotify rejects
+        # `limit=20` despite documenting a maximum of 50, and repairing it from
+        # a blank template would have discarded the WinRT interop, the token
+        # flow and the URI handoff to change one number.
+        seeded = self._seed_from_installed(capability_id, workspace)
+        if not seeded:
+            (workspace / "main.py").write_text(_TEMPLATE_MAIN, encoding="utf-8")
+            (workspace / "test_capability.py").write_text(_TEMPLATE_TEST, encoding="utf-8")
         self.engine.store.save(project)
         return project
+
+    def _seed_from_installed(self, capability_id: str, workspace: Path) -> bool:
+        """Copy the installed version of a capability into a fresh workspace.
+
+        Returns whether anything was copied.  A disabled capability counts:
+        being disabled is usually *why* it is being rebuilt.
+        """
+
+        manifest = self.registry.get(capability_id)
+        if manifest is None:
+            return False
+        source = Path(str(getattr(manifest, "source_location", "") or ""))
+        if not source.is_dir() or not (source / "main.py").is_file():
+            return False
+        copied = False
+        for item in source.iterdir():
+            if item.name in {"__pycache__", ".pytest_cache", ".venv"} or item.suffix == ".pyc":
+                continue
+            try:
+                if item.is_dir():
+                    shutil.copytree(item, workspace / item.name, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, workspace / item.name)
+                copied = True
+            except OSError:
+                continue
+        return copied
 
     # ------------------------------------------------------------------
     # Verification and installation

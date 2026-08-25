@@ -169,15 +169,28 @@ class AcquisitionMission:
         max_seconds: float = 1800.0,
         expert_constraints: list[str] | None = None,
         expert_acceptance: list[tuple[str, list[str]]] | None = None,
+        repair: str = "",
     ) -> AcquisitionResult:
-        """Attempt locally, count the evidence, escalate only if it says to."""
+        """Attempt locally, count the evidence, escalate only if it says to.
+
+        ``repair`` names a defect in an already-registered capability.  It is
+        disabled first, so the resolver stops handing out something known to be
+        broken and the rebuild seeds from the installed source rather than from
+        a blank skeleton -- a repair improves what exists.
+        """
 
         started = time.perf_counter()
         result = AcquisitionResult(goal=goal)
         from experts.escalation import Attempt, classify_goal
 
         task_class = classify_goal(goal)
-        self._step(result, "start", f"missing capability; task class {task_class!r}")
+        if repair and capability_id:
+            self._retire(capability_id, repair, result)
+            goal = f"{goal}\n\nThis capability already exists and is being repaired. The defect:\n{repair}\n"
+            result.goal = goal
+        self._step(result, "start",
+                   ("repairing " + capability_id) if repair else "missing capability"
+                   + f"; task class {task_class!r}")
 
         outcome = None
         for attempt in range(self.MAX_LOCAL_ATTEMPTS):
@@ -191,6 +204,11 @@ class AcquisitionMission:
                     keywords=list(keywords or []),
                     max_seconds=max_seconds,
                     extra_checks=list(extra_checks or []),
+                    # Named rather than derived from the goal text. The id the
+                    # build uses has to be the id it registers under, or a
+                    # rebuild looks up something that does not exist and starts
+                    # from a blank skeleton instead of the working version.
+                    capability_id=capability_id,
                 )
             except Exception as exc:
                 outcome = None
@@ -240,6 +258,21 @@ class AcquisitionMission:
         result.seconds = time.perf_counter() - started
         self._step(result, "failed", result.reason, ok=False)
         return result
+
+    def _retire(self, capability_id: str, defect: str, result: AcquisitionResult) -> None:
+        """Stop handing out a capability that is known to be broken.
+
+        Disabling rather than deleting: the installed source is what the
+        rebuild seeds from, and the record of what was registered and why it
+        stopped being trusted is worth keeping.
+        """
+
+        try:
+            self.service.registry.disable(capability_id, reason=defect[:300])
+        except Exception as exc:
+            self._step(result, "retire", f"could not disable {capability_id}: {exc}", ok=False)
+            return
+        self._step(result, "retire", f"disabled {capability_id}: {defect[:160]}")
 
     def _should_escalate(self, task_class: str, result: AcquisitionResult) -> Any:
         from experts.escalation import EscalationSignals

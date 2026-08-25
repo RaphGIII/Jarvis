@@ -432,9 +432,10 @@ def test_the_local_build_is_gated_on_playback_too():
     from service.music import provider_extra_checks
 
     checks = provider_extra_checks()
+    playback = [check for check in checks if check.name == "playback"]
 
-    assert [check.name for check in checks] == ["playback"]
-    command = " ".join(checks[0].command)
+    assert playback, "the local build must be gated on real playback"
+    command = " ".join(playback[0].command)
     assert "media_session" in command, "the gate must read the OS, not the capability"
     assert "resume" in command and "pause" in command
 
@@ -458,3 +459,135 @@ def test_provider_keywords_bridge_the_words_a_user_says_to_the_provider_name():
     for spoken in ("musik", "lied", "song", "spielen"):
         assert spoken in keywords
     assert "spotify" in keywords
+
+
+# --------------------------------------------------------------------------
+# A broken provider is a defect, not a gap and not the user's fault
+# --------------------------------------------------------------------------
+
+def test_a_provider_that_fails_is_marked_as_a_defect(tmp_path):
+    """Observed live: a registered, verified Spotify provider whose search was
+    rejected by Spotify for sending limit=20, which the API documents as legal
+    and rejects anyway. Only real execution finds that."""
+
+    service = build(tmp_path, session=FakeSession(NOTHING),
+                    execution=FakeExecution(ok=False, error="Spotify replied 400 Invalid limit"))
+
+    outcome = service.run(MusicRequest("play", query="something"))
+
+    assert outcome.defect
+    assert "Invalid limit" in outcome.defect
+    assert outcome.gap is False, "the capability exists; rebuilding from scratch is not the fix"
+
+
+def test_a_provider_contradicted_by_windows_is_a_defect(tmp_path):
+    service = build(tmp_path, session=FakeSession(NOTHING),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.defect
+    assert "Windows disagrees" in outcome.defect
+
+
+def test_a_missing_credential_is_never_treated_as_a_defect(tmp_path):
+    """Rebuilding the capability would not supply a credential the user has
+    not given it, so calling that a defect would send ZEUS off to fix the
+    wrong thing for half an hour."""
+
+    service = build(tmp_path, session=FakeSession(NOTHING), credentials=False)
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.defect == ""
+    assert outcome.requirement is not None
+
+
+def test_a_missing_capability_is_a_gap_not_a_defect(tmp_path):
+    service = build(tmp_path, session=FakeSession(NOTHING), manifests=[])
+
+    outcome = service.run(MusicRequest("play", query="x"))
+
+    assert outcome.gap is True
+    assert outcome.defect == ""
+
+
+def test_a_verified_action_reports_no_defect(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.defect == ""
+
+
+def test_the_search_gate_would_have_caught_the_shipped_bug():
+    """Its absence is why the bug shipped: the playback gate proved the
+    capability could drive a player, the acceptance commands proved it handled
+    contracts honestly, and nothing exercised name-to-track resolution at all."""
+
+    from service.music import provider_extra_checks
+
+    names = [check.name for check in provider_extra_checks()]
+
+    assert names == ["playback", "search"]
+    command = " ".join(provider_extra_checks()[1].command)
+    assert "'action':'search'" in command
+    assert "track_id" in command, "a search that returns nothing must fail the gate"
+    for track in ACCEPTANCE_TRACKS:
+        assert track not in command.lower(), "the gate must not name a track"
+
+
+def test_the_search_gate_reads_credentials_rather_than_carrying_them():
+    """A secret in a command string reaches the project record, the logs and
+    every process list on the machine."""
+
+    from service.music import provider_extra_checks
+
+    command = " ".join(provider_extra_checks()[1].command)
+
+    assert "SecretStore" in command
+    assert "s.get('client_secret')" in command
+
+
+def test_a_disabled_version_is_reported_as_a_repair_not_a_first_build(tmp_path):
+    """Saying "I have no capability yet, building one now" while rebuilding a
+    disabled version is a small lie, and it misdescribes what will happen --
+    the rebuild starts from the installed source, not from nothing."""
+
+    class Registry:
+        def __init__(self, status):
+            self._status = status
+
+        def get(self, capability_id):
+            return FakeManifest(capability_id, status=self._status)
+
+    service = build(tmp_path, session=FakeSession(NOTHING), manifests=[])
+    service.capabilities.registry = Registry("disabled")
+
+    retired = service.retired_capability()
+
+    assert retired is not None
+    assert service.capability_id == "music.provider.spotify"
+
+
+def test_an_active_capability_is_not_reported_as_retired(tmp_path):
+    class Registry:
+        def get(self, capability_id):
+            return FakeManifest(capability_id, status="active")
+
+    service = build(tmp_path, session=FakeSession(NOTHING), manifests=[])
+    service.capabilities.registry = Registry()
+
+    assert service.retired_capability() is None
+
+
+def test_a_provider_that_never_existed_is_not_reported_as_retired(tmp_path):
+    class Registry:
+        def get(self, capability_id):
+            return None
+
+    service = build(tmp_path, session=FakeSession(NOTHING), manifests=[])
+    service.capabilities.registry = Registry()
+
+    assert service.retired_capability() is None

@@ -431,6 +431,12 @@ class JarvisCore:
         # original request is then answered -- without the user asking twice.
         if outcome.gap:
             outcome = self._acquire_then_retry(request, scope)
+        elif outcome.defect:
+            # The provider exists and is broken. Same shape, different cause:
+            # repair it and answer the question that found the defect. Only
+            # once -- a repair that does not fix it must surface as a failure
+            # rather than as a loop.
+            outcome = self._acquire_then_retry(request, scope, repair=outcome.defect)
 
         self.state.set(JarvisState.VERIFYING, detail=outcome.receipt.kind, scope=scope)
         self.receipts.record(outcome.receipt)
@@ -451,8 +457,8 @@ class JarvisCore:
             final_state=JarvisState.IDLE if outcome.receipt.verified else JarvisState.ERROR,
         )
 
-    def _acquire_then_retry(self, request: Any, scope: str) -> Any:
-        """Build the missing provider, then answer the request that needed it."""
+    def _acquire_then_retry(self, request: Any, scope: str, *, repair: str = "") -> Any:
+        """Build (or fix) the provider, then answer the request that needed it."""
 
         from runtime.receipts import failed
         from service.acquisition import AcquisitionMission
@@ -476,10 +482,23 @@ class JarvisCore:
                 gap=True,
             )
         try:
-            self.state.set(JarvisState.CODING, detail=f"building the {provider} provider", scope=scope)
+            # A disabled version is still a version: rebuilding it starts from
+            # its installed source, so calling that "building one now" would
+            # misdescribe both what exists and what is about to happen.
+            retired = self.music.retired_capability()
+            if not repair and retired is not None:
+                repair = str(
+                    (getattr(retired, "validation_status", {}) or {}).get("disabled_reason", "")
+                ) or "a previously registered version was withdrawn"
+            verb = "repairing" if repair else "building"
+            self.state.set(JarvisState.CODING, detail=f"{verb} the {provider} provider", scope=scope)
             self.emit(
                 EventType.NOTIFICATION,
-                {"text": f"I have no verified {provider} capability yet. Building one now."},
+                {"text": (
+                    f"The {provider} capability is broken: {repair[:200]} Repairing it now."
+                    if repair else
+                    f"I have no verified {provider} capability yet. Building one now."
+                )},
                 scope=scope,
             )
             mission = AcquisitionMission(
@@ -499,6 +518,7 @@ class JarvisCore:
                 expert_acceptance=provider_acceptance(),
                 max_steps=60,
                 max_seconds=1800.0,
+                repair=repair,
             )
             self.emit(
                 EventType.PROGRESS,
@@ -510,14 +530,19 @@ class JarvisCore:
                 return MusicOutcome(
                     receipt=failed(
                         f"music.{request.action}", "capability.acquisition",
-                        f"I could not build a verified {provider} capability: {result.reason}",
+                        f"I could not {'repair' if repair else 'build'} a verified {provider} "
+                        f"capability: {result.reason}",
                         request=request.query, acquisition=result.to_dict(),
                     ),
                     gap=True,
                 )
-            # Built and verified: answer the question that started this.
+            # Built and verified: answer the question that started this. The
+            # retry's own defect field is discarded -- one repair per turn, so a
+            # fix that does not hold surfaces as a failure rather than a loop.
             self.state.set(JarvisState.WORKING, detail=f"music: {request.action}", scope=scope)
-            return self.music.run(request)
+            retried = self.music.run(request)
+            retried.defect = ""
+            return retried
         finally:
             self._acquiring.release()
 
