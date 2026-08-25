@@ -312,3 +312,75 @@ def test_inflection_alone_does_not_hide_a_capability(graph):
     memory.record_capability("audio.play_file", "plays an audio file through the speakers")
     assert memory.known_capabilities("play an audio file")
     assert memory.known_capabilities("playing audio files")
+
+
+def test_the_graph_can_be_used_from_more_than_one_thread(tmp_path):
+    """It could not, and the failure was expensive and misread.
+
+    SQLite refuses a connection used from a thread other than the one that
+    created it. The graph now lives on a long-lived service object that several
+    threads reach: the HTTP handler builds it lazily, the answering thread
+    queries it, the acquisition thread writes to it.
+
+    A live capability repair died instantly with "SQLite objects created in a
+    thread can only be used in that same thread", the mission counted that as a
+    failed local attempt, and escalated over it -- so the local tier never ran
+    at all and the ledger recorded a failure it had not earned.
+    """
+
+    import threading
+
+    from knowledge.graph import KnowledgeGraph, Node, NodeType
+
+    graph = KnowledgeGraph(tmp_path / "palace.sqlite")
+    graph.add_node(Node(type=NodeType.NOTE, title="written on the main thread"))
+
+    failures: list[str] = []
+
+    def worker() -> None:
+        try:
+            graph.add_node(Node(type=NodeType.NOTE, title="written on a worker"))
+            graph.export(limit=10)
+        except Exception as exc:  # noqa: BLE001 - the point is to report it
+            failures.append(repr(exc))
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert failures == []
+    assert len(graph.export(limit=10)["nodes"]) == 2
+    graph.close()
+
+
+def test_closing_releases_connections_opened_on_other_threads(tmp_path):
+    import threading
+
+    from knowledge.graph import KnowledgeGraph, Node, NodeType
+
+    graph = KnowledgeGraph(tmp_path / "palace.sqlite")
+
+    def worker() -> None:
+        graph.add_node(Node(type=NodeType.NOTE, title="worker"))
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert len(graph._connections) >= 2
+    graph.close()
+    assert graph._connections == []
+
+
+def test_a_graph_survives_being_closed_and_used_again(tmp_path):
+    """close() is not a one-way door; a fresh connection is made on demand."""
+
+    from knowledge.graph import KnowledgeGraph, Node, NodeType
+
+    graph = KnowledgeGraph(tmp_path / "palace.sqlite")
+    graph.add_node(Node(type=NodeType.NOTE, title="before"))
+    graph.close()
+
+    graph.add_node(Node(type=NodeType.NOTE, title="after"))
+
+    assert len(graph.export(limit=10)["nodes"]) == 2

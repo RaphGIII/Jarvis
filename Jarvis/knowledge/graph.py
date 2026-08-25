@@ -31,6 +31,7 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import uuid
 import zlib
 from dataclasses import asdict, dataclass, field
@@ -288,13 +289,59 @@ class KnowledgeGraph:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.embedder: Embedder = embedder or LexicalEmbedder()
-        self._connection = sqlite3.connect(str(self.path))
-        self._connection.row_factory = sqlite3.Row
-        self._connection.executescript(_SCHEMA)
-        self._connection.commit()
+        #: One connection per thread.  SQLite refuses a connection used from a
+        #: thread other than the one that made it, and this graph now lives on a
+        #: long-lived service object that several threads reach: the HTTP
+        #: handler builds it lazily, the answering thread queries it, the
+        #: acquisition thread writes to it.
+        #:
+        #: Observed as a capability acquisition dying instantly with
+        #: "SQLite objects created in a thread can only be used in that same
+        #: thread" -- which the mission then counted as a failed local attempt
+        #: and escalated over, so the local tier never actually ran.
+        self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
+        self._bootstrap()
+
+    def _bootstrap(self) -> None:
+        connection = self._connect()
+        connection.executescript(_SCHEMA)
+        connection.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            str(self.path),
+            # Several threads may write. SQLite serialises them; without a
+            # timeout the loser raises "database is locked" immediately.
+            timeout=30.0,
+        )
+        connection.row_factory = sqlite3.Row
+        self._local.connection = connection
+        with self._connections_lock:
+            self._connections.append(connection)
+        return connection
+
+    @property
+    def _connection(self) -> sqlite3.Connection:
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            connection = self._connect()
+        return connection
 
     def close(self) -> None:
-        self._connection.close()
+        """Close every connection this graph opened, on any thread."""
+
+        with self._connections_lock:
+            connections, self._connections = self._connections, []
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                # A connection belonging to a thread that has already gone is
+                # not something the caller can do anything about.
+                continue
+        self._local = threading.local()
 
     def __enter__(self) -> "KnowledgeGraph":
         return self
