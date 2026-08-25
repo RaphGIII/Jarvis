@@ -1,0 +1,460 @@
+"""Music: generic above the provider, verified below it.
+
+Two things are being defended here.
+
+*The conversational layer must never learn the word Spotify.*  The forbidden
+shape is ``if "music" in text: open_spotify()`` -- it makes one provider the
+only provider, buries the user's preference in a conditional, and puts
+provider-specific behaviour where nothing can verify it.  So the tests check
+that the routing is driven by a stored preference and a registered capability,
+and that swapping the preference swaps the provider with no code change.
+
+*A provider must not be able to report its own success.*  This project has
+already registered a music capability that returned ``{"message": "Dry run:
+..."}`` from every branch and played nothing.  So the provider's output is
+never the verdict: Windows is asked what is actually playing, and the receipt is
+built from that.  The adversarial tests below give the provider every
+opportunity to lie -- ok=True, a plausible track name, a confident message --
+and check that the receipt still says what the operating system said.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from runtime.preferences import Preferences
+from runtime.secrets import SecretStore
+from service.intent import Intent, classify
+from service.music import (
+    MusicRequest,
+    MusicService,
+    compose,
+    extract_query,
+    provider_acceptance,
+    provider_constraints,
+    provider_goal,
+    provider_keywords,
+    understand,
+)
+from tools.media_session import MediaState
+
+
+# --------------------------------------------------------------------------
+# Fakes: a Windows that says what we tell it, a provider that does what we say
+# --------------------------------------------------------------------------
+
+class FakeSession:
+    """Stands in for the operating system's media session."""
+
+    def __init__(self, *states):
+        self.states = list(states) or [MediaState(ok=False, error="no session")]
+        self.reads = 0
+
+    def read(self, *, app=""):
+        self.reads += 1
+        return self.states[min(self.reads - 1, len(self.states) - 1)]
+
+
+class FakeManifest:
+    def __init__(self, capability_id, status="active"):
+        self.capability_id = capability_id
+        self.status = status
+
+
+class FakeExecution:
+    def __init__(self, ok=True, output=None, error=""):
+        self.ok = ok
+        self.output = output or {}
+        self.error = error
+
+
+class FakeCapabilities:
+    """A capability registry plus executor, with no subprocesses involved."""
+
+    def __init__(self, manifests=(), execution=None):
+        self._manifests = list(manifests)
+        self._execution = execution or FakeExecution()
+        self.calls = []
+
+    def list(self):
+        return list(self._manifests)
+
+    def execute(self, capability_id, payload=None):
+        self.calls.append((capability_id, dict(payload or {})))
+        return self._execution
+
+
+PLAYING = MediaState(ok=True, app="Spotify.exe", title="Lose Yourself", artist="Eminem",
+                     status="Playing", position_seconds=3.0, duration_seconds=326.0)
+PAUSED = MediaState(ok=True, app="Spotify.exe", title="Lose Yourself", artist="Eminem",
+                    status="Paused", position_seconds=3.0)
+WRONG_TRACK = MediaState(ok=True, app="Spotify.exe", title="Never Gonna Give You Up",
+                         artist="Rick Astley", status="Playing")
+NOTHING = MediaState(ok=False, error="no active media session")
+
+
+def build(tmp_path, *, session, manifests=(("music.provider.spotify",)), execution=None,
+          provider="spotify", credentials=True):
+    prefs = Preferences(tmp_path / "preferences.json")
+    prefs.set("music.default_provider", provider)
+    secrets_root = tmp_path / "secrets"
+    if credentials:
+        secrets_root.mkdir(parents=True, exist_ok=True)
+        (secrets_root / "spotify.json").write_text(
+            '{"client_id": "abc", "client_secret": "xyz"}', encoding="utf-8"
+        )
+    return MusicService(
+        preferences=prefs,
+        capabilities=FakeCapabilities(
+            [FakeManifest(name) for name in (manifests[0] if isinstance(manifests[0], tuple) else manifests)]
+            if manifests else [],
+            execution,
+        ),
+        secrets=SecretStore(secrets_root),
+        session=session,
+    )
+
+
+# --------------------------------------------------------------------------
+# The conversational layer knows nothing about providers
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text,action,query",
+    [
+        ("Zeus, spiel Lose Yourself von Eminem auf Spotify.", "play", "Lose Yourself Eminem"),
+        ("Spiel Bohemian Rhapsody von Queen", "play", "Bohemian Rhapsody Queen"),
+        ("spiel mir Feeling Good von Nina Simone", "play", "Feeling Good Nina Simone"),
+        ("Play Get Lucky by Daft Punk", "play", "Get Lucky Daft Punk"),
+        ("Spiel Du Hast von Rammstein", "play", "Du Hast Rammstein"),
+        ("Pause.", "pause", ""),
+        ("Stoppe die Musik", "pause", ""),
+        ("Weiter.", "resume", ""),
+        ("Naechstes Lied.", "next", ""),
+        ("Nächstes Lied bitte", "next", ""),
+        ("Vorheriges Lied", "previous", ""),
+        ("Was laeuft gerade?", "current", ""),
+        ("Was läuft gerade?", "current", ""),
+    ],
+)
+def test_a_music_sentence_becomes_a_provider_independent_request(text, action, query):
+    request = understand(text)
+
+    assert request is not None, f"{text!r} was not recognised as music"
+    assert request.action == action
+    assert request.query == query
+    assert "spotify" not in request.to_dict()["action"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Wie geht es mit meinem Projekt weiter?",   # contains "weiter"
+        "Erklaer mir ein Beispiel fuer Rekursion",  # contains "spiel"
+        "Erstelle die Datei zeus_test.txt mit dem Inhalt X",
+        "Wer bist du?",
+        "Welche Faehigkeiten sind verifiziert?",
+    ],
+)
+def test_sentences_that_merely_contain_a_music_word_are_not_music(text):
+    """"weiter" ends a German sentence about a project as readily as it
+    resumes a track, and "Beispiel" contains "spiel"."""
+
+    assert understand(text) is None
+    assert classify(text).intent is not Intent.MUSIC
+
+
+def test_music_requests_are_classified_as_music():
+    assert classify("Spiel Lose Yourself von Eminem").intent is Intent.MUSIC
+    assert classify("Pause.").intent is Intent.MUSIC
+
+
+def test_asking_for_music_with_no_track_named_is_a_resume_not_a_search():
+    assert understand("Mach Musik an").action == "resume"
+    assert extract_query("Mach Musik an") == ""
+
+
+# --------------------------------------------------------------------------
+# Provider selection comes from a preference
+# --------------------------------------------------------------------------
+
+def test_the_provider_comes_from_a_stored_preference(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING))
+
+    assert service.provider == "spotify"
+    assert service.output == "this_pc"
+
+
+def test_changing_the_preference_changes_the_provider_with_no_code_change(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    manifests=["music.provider.spotify", "music.provider.deezer"],
+                    provider="deezer")
+
+    manifest = service.provider_capability()
+
+    assert service.provider == "deezer"
+    assert manifest.capability_id == "music.provider.deezer"
+
+
+def test_an_unregistered_provider_is_a_gap_not_a_substitution(tmp_path):
+    """The failure that matters: no Spotify capability must never become
+    'here is a YouTube link instead'."""
+
+    service = build(tmp_path, session=FakeSession(NOTHING), manifests=[])
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.gap is True
+    assert outcome.receipt.ok is False
+    assert "spotify" in outcome.receipt.detail.lower()
+    text = compose(outcome).lower()
+    for substitute in ("youtube", "browser", "instead", "stattdessen"):
+        assert substitute not in text
+
+
+# --------------------------------------------------------------------------
+# Credentials
+# --------------------------------------------------------------------------
+
+def test_playing_by_name_without_credentials_fails_with_the_exact_requirement(tmp_path):
+    service = build(tmp_path, session=FakeSession(NOTHING), credentials=False)
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.receipt.ok is False
+    assert outcome.requirement is not None
+    assert "developer.spotify.com" in outcome.receipt.detail
+    assert "SPOTIFY_CLIENT_ID" in str(outcome.requirement.env_vars)
+
+
+def test_transport_still_works_without_credentials(tmp_path):
+    """Pausing does not need a search, so it must not need a search's secret."""
+
+    service = build(tmp_path, session=FakeSession(PAUSED), credentials=False,
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("pause"))
+
+    assert outcome.requirement is None
+    assert outcome.receipt.verified is True
+
+
+def test_credentials_never_appear_in_the_receipt(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    execution=FakeExecution(ok=True, output={"ok": True, "client_secret": "xyz"}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert "xyz" not in str(outcome.receipt.to_dict())
+
+
+def test_a_partial_credential_counts_as_absent(tmp_path):
+    """A client id with no secret cannot authenticate; reporting it as present
+    turns a clear 'not configured' into a confusing 'unauthorised' later."""
+
+    root = tmp_path / "secrets"
+    root.mkdir(parents=True)
+    (root / "spotify.json").write_text('{"client_id": "abc", "client_secret": ""}', encoding="utf-8")
+
+    secret = SecretStore(root).read("spotify", ("client_id", "client_secret"), env_prefix="SPOTIFY")
+
+    assert secret.present is False
+
+
+# --------------------------------------------------------------------------
+# The provider does not get to say whether it worked
+# --------------------------------------------------------------------------
+
+def test_a_provider_reporting_success_while_nothing_plays_is_not_verified(tmp_path):
+    """The exact shape of the earlier fake music capability."""
+
+    service = build(
+        tmp_path,
+        session=FakeSession(NOTHING),
+        execution=FakeExecution(ok=True, output={"ok": True, "message": "Now playing Lose Yourself"}),
+    )
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.receipt.ok is False
+    assert outcome.receipt.verified is False
+    assert "not treating" in compose(outcome).lower() or "failed" in compose(outcome).lower()
+
+
+def test_a_provider_that_plays_the_wrong_track_is_not_verified(tmp_path):
+    service = build(tmp_path, session=FakeSession(WRONG_TRACK),
+                    execution=FakeExecution(ok=True, output={"ok": True, "title": "Lose Yourself"}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.receipt.verified is False
+    failed_checks = [check.check for check in outcome.receipt.failures]
+    assert "the requested track is playing" in failed_checks
+
+
+def test_a_provider_claiming_to_pause_while_playback_continues_is_not_verified(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("pause"))
+
+    assert outcome.receipt.verified is False
+    assert any("paused" in check.check for check in outcome.receipt.failures)
+
+
+def test_playing_the_right_track_verifies(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.receipt.verified is True
+    assert outcome.receipt.evidence["track"] == "Lose Yourself - Eminem"
+    assert "Lose Yourself" in compose(outcome)
+
+
+def test_a_subtitled_track_still_counts_as_the_requested_one(tmp_path):
+    """Spotify returns "Lose Yourself - From '8 Mile' Soundtrack"; calling that
+    a mismatch would fail a request that succeeded."""
+
+    subtitled = MediaState(ok=True, app="Spotify.exe", status="Playing",
+                           title="Lose Yourself - From \"8 Mile\" Soundtrack", artist="Eminem")
+    service = build(tmp_path, session=FakeSession(subtitled),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.receipt.verified is True
+
+
+def test_a_player_that_is_not_the_chosen_provider_fails_the_check(tmp_path):
+    other = MediaState(ok=True, app="chrome.exe", title="Lose Yourself", artist="Eminem",
+                       status="Playing")
+    service = build(tmp_path, session=FakeSession(other),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    assert outcome.receipt.verified is False
+    assert any("Spotify" in check.check for check in outcome.receipt.failures)
+
+
+def test_next_requires_the_track_to_actually_change(tmp_path):
+    same = MediaState(ok=True, app="Spotify.exe", title="Lose Yourself", artist="Eminem",
+                      status="Playing")
+    service = build(tmp_path, session=FakeSession(same, same, same),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("next"))
+
+    assert outcome.receipt.verified is False
+    assert any("changed" in check.check for check in outcome.receipt.failures)
+
+
+def test_a_provider_that_fails_is_reported_honestly(tmp_path):
+    service = build(tmp_path, session=FakeSession(NOTHING),
+                    execution=FakeExecution(ok=False, error="track not found"))
+
+    outcome = service.run(MusicRequest("play", query="Nonexistent Song"))
+
+    assert outcome.receipt.ok is False
+    assert "track not found" in outcome.receipt.detail
+    assert "receipt" in compose(outcome)
+
+
+def test_every_verification_records_what_was_observed(tmp_path):
+    service = build(tmp_path, session=FakeSession(PLAYING),
+                    execution=FakeExecution(ok=True, output={"ok": True}))
+
+    outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
+
+    for check in outcome.receipt.verifications:
+        assert check.observed, f"{check.check} recorded no observation"
+
+
+# --------------------------------------------------------------------------
+# The acquisition brief must not contain the demo
+# --------------------------------------------------------------------------
+
+#: The tracks live acceptance uses. Nothing the builder is shown may name them.
+ACCEPTANCE_TRACKS = ("lose yourself", "eminem", "bohemian rhapsody", "queen",
+                     "du hast", "rammstein", "get lucky", "daft punk",
+                     "feeling good", "nina simone")
+
+
+@pytest.mark.parametrize("track", ACCEPTANCE_TRACKS)
+def test_nothing_the_builder_is_shown_names_an_acceptance_track(track):
+    """An example in a brief is the first thing a struggling implementation
+    special-cases. If the acceptance track appears anywhere the builder can
+    read it, a passing capability might only be recognising a string."""
+
+    shown = " ".join([
+        provider_goal("spotify"),
+        " ".join(provider_constraints("spotify")),
+        " ".join(provider_keywords("spotify")),
+        " ".join(" ".join(command) for _text, command in provider_acceptance()),
+    ]).lower()
+
+    assert track not in shown
+
+
+def test_the_provider_goal_forbids_substitution():
+    goal = provider_goal("spotify").lower()
+
+    assert "never substitute" in goal
+    for substitute in ("youtube", "browser", "generated tone"):
+        assert substitute in goal, "the goal must name what it is forbidding"
+
+
+def test_the_provider_goal_carries_the_facts_that_sank_earlier_attempts():
+    goal = provider_goal("spotify")
+
+    assert "winrt" in goal and "winsdk" in goal, "packages that are not installed"
+    assert "standard library" in goal.lower() or "PowerShell" in goal
+    assert "client_id" in goal and "client_secret" in goal
+
+
+def test_the_constraints_repeat_the_lessons_of_six_failed_attempts():
+    constraints = " ".join(provider_constraints("spotify")).lower()
+
+    assert "not\nimportable" in constraints or "importable" in constraints
+    assert "dry_run" in constraints
+    assert ".get()" in constraints
+    assert "standard library" in constraints
+
+
+def test_the_local_build_is_gated_on_playback_too():
+    """The four standard capability checks -- tests pass, run() returns a dict,
+    the marker is gone, no undefined names -- are all satisfiable by a
+    capability that does nothing at all. That is how this project once
+    registered a music capability that returned "Dry run:" from every branch."""
+
+    from service.music import provider_extra_checks
+
+    checks = provider_extra_checks()
+
+    assert [check.name for check in checks] == ["playback"]
+    command = " ".join(checks[0].command)
+    assert "media_session" in command, "the gate must read the OS, not the capability"
+    assert "resume" in command and "pause" in command
+
+
+def test_acceptance_commands_check_behaviour_rather_than_wording():
+    commands = provider_acceptance()
+
+    assert len(commands) >= 3
+    joined = " ".join(" ".join(command) for _text, command in commands)
+    assert "INPUT_SCHEMA" in joined
+    assert "teleport" in joined, "an unsupported action must be exercised"
+    assert "dry_run" in joined
+
+
+def test_provider_keywords_bridge_the_words_a_user_says_to_the_provider_name():
+    """Lexical matching cannot get from "spiel was von den Beatles" to a
+    capability called music.provider.spotify. The keywords are the bridge."""
+
+    keywords = provider_keywords("spotify")
+
+    for spoken in ("musik", "lied", "song", "spielen"):
+        assert spoken in keywords
+    assert "spotify" in keywords

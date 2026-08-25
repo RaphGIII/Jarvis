@@ -52,12 +52,16 @@ class Intent(str, Enum):
     PROJECT = "project"
     #: "Learn to do X" -- acquiring something the system cannot currently do.
     CAPABILITY = "capability"
+    #: Play, pause, skip, what is playing.  A side effect on the world like any
+    #: other, routed to whichever provider the user prefers -- this layer never
+    #: learns which one that is.
+    MUSIC = "music"
 
     @property
     def has_side_effect(self) -> bool:
         """Whether answering this may change the world."""
 
-        return self in {Intent.ACTION, Intent.PROJECT, Intent.CAPABILITY}
+        return self in {Intent.ACTION, Intent.PROJECT, Intent.CAPABILITY, Intent.MUSIC}
 
     @property
     def needs_receipt(self) -> bool:
@@ -251,6 +255,17 @@ def classify(text: str) -> Classification:
     normalized = f" {(text or '').strip().lower()} "
     if not normalized.strip():
         return Classification(Intent.CONVERSATION, "empty message")
+
+    # Music first, and asked of the music module rather than answered with a
+    # keyword list here. "Pause." and "Weiter." are transport commands that
+    # every later rule would either miss or mistake for something else, and the
+    # test for whether a sentence is about music belongs next to the code that
+    # then has to parse it.
+    from service.music import understand
+
+    heard = understand(text)
+    if heard is not None:
+        return Classification(Intent.MUSIC, heard.reason, matched=heard.action)
 
     for hint in READ_HINTS:
         if hint in normalized:

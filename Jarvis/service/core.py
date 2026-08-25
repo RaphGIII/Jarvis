@@ -101,6 +101,13 @@ class JarvisCore:
         self._receipts: Any = None
         self._actions: Any = None
         self._activity: Any = None
+        self._preferences: Any = None
+        self._secrets: Any = None
+        self._capabilities: Any = None
+        self._music: Any = None
+        #: Guards capability acquisition: two missions for the same capability
+        #: running at once would fight over the same workspace.
+        self._acquiring = threading.Lock()
         #: Receipts produced during this conversation, in memory.  The claim
         #: guard consults them on every streamed chunk, and re-reading the
         #: ledger file that often would cost more than the check saves.
@@ -146,6 +153,64 @@ class JarvisCore:
 
             self._gateway = DeviceGateway(self.kernel.state_root / "devices.json")
         return self._gateway
+
+    @property
+    def preferences(self) -> Any:
+        """What the user prefers -- provider choice, output device, and so on."""
+
+        if self._preferences is None:
+            from runtime.preferences import Preferences
+
+            self._preferences = Preferences(self.kernel.state_root / "preferences.json")
+        return self._preferences
+
+    @property
+    def secrets(self) -> Any:
+        if self._secrets is None:
+            from runtime.secrets import SecretStore
+
+            self._secrets = SecretStore(self.kernel.state_root / "secrets")
+        return self._secrets
+
+    @property
+    def capabilities(self) -> Any:
+        """The capability service: what ZEUS can do, and how it learns more."""
+
+        if self._capabilities is None:
+            from capabilities.registry import CapabilityRegistry
+            from capabilities.service import CapabilityService
+
+            root = self.kernel.state_root / "capabilities"
+            graph = None
+            try:
+                from knowledge.graph import KnowledgeGraph
+
+                graph = KnowledgeGraph(self.kernel.state_root / "knowledge" / "palace.sqlite")
+            except Exception:
+                # The graph is what lets "play something" reach a capability
+                # named after a provider. Without it lookup degrades to lexical
+                # matching, which is worse but still works.
+                graph = None
+            self._capabilities = CapabilityService(
+                registry=CapabilityRegistry(root / "registry.json"),
+                engine=self.kernel.engine(),
+                graph=graph,
+                root=root / "installed",
+                execution_timeout=120.0,
+            )
+        return self._capabilities
+
+    @property
+    def music(self) -> Any:
+        if self._music is None:
+            from service.music import MusicService
+
+            self._music = MusicService(
+                preferences=self.preferences,
+                capabilities=self.capabilities,
+                secrets=self.secrets,
+            )
+        return self._music
 
     @property
     def activity(self) -> Any:
@@ -280,6 +345,9 @@ class JarvisCore:
         if classification.intent in {Intent.READ, Intent.CAPABILITY}:
             self._answer_from_records(text, scope, classification)
             return
+        if classification.intent is Intent.MUSIC:
+            self._answer_musically(text, scope, classification)
+            return
         if classification.intent.has_side_effect:
             self._answer_by_executing(text, scope, classification)
             return
@@ -312,6 +380,129 @@ class JarvisCore:
             body, scope=scope, backend="registry",
             context_text=f"[answered from the registry: {classification.reason}]",
         )
+
+    def _answer_musically(self, text: str, scope: str, classification: Any) -> None:
+        """A music request, routed to whichever provider the user prefers.
+
+        No model runs on this path at all.  The request is parsed
+        deterministically, the provider comes from a stored preference, and the
+        outcome is read back from the operating system -- so "Pause." costs a
+        media-session call and nothing else, and a music turn can never wake
+        BUILD_LOCAL or an expert.
+        """
+
+        from service.music import compose as compose_music
+        from service.music import understand
+
+        request = understand(text)
+        if request is None:  # pragma: no cover - the classifier only sends music here
+            self._answer_conversationally(text, scope)
+            return
+
+        self.state.set(JarvisState.WORKING, detail=f"music: {request.action}", scope=scope)
+        self.emit(
+            EventType.TOOL,
+            {"summary": f"music.{request.action}" + (f" {request.query!r}" if request.query else ""),
+             "music": request.to_dict()},
+            scope=scope,
+        )
+
+        outcome = self.music.run(request)
+
+        # A capability gap is not a failure. It is a request that arrived before
+        # the thing that serves it existed, so the thing gets built and the
+        # original request is then answered -- without the user asking twice.
+        if outcome.gap:
+            outcome = self._acquire_then_retry(request, scope)
+
+        self.state.set(JarvisState.VERIFYING, detail=outcome.receipt.kind, scope=scope)
+        self.receipts.record(outcome.receipt)
+        self._session_receipts.append(outcome.receipt)
+        self.emit(
+            EventType.TOOL,
+            {"summary": outcome.receipt.summary(), "receipt_id": outcome.receipt.id,
+             "receipt": outcome.receipt.to_dict()},
+            scope=scope,
+        )
+        self._deliver(
+            compose_music(outcome, language=self.language),
+            scope=scope,
+            backend=outcome.capability_id or "music.resolver",
+            context_text=f"[music.{request.action}: "
+            f"{'verified' if outcome.receipt.verified else 'not verified'}, "
+            f"receipt {outcome.receipt.id}]",
+            final_state=JarvisState.IDLE if outcome.receipt.verified else JarvisState.ERROR,
+        )
+
+    def _acquire_then_retry(self, request: Any, scope: str) -> Any:
+        """Build the missing provider, then answer the request that needed it."""
+
+        from runtime.receipts import failed
+        from service.acquisition import AcquisitionMission
+        from service.music import (
+            MusicOutcome,
+            provider_acceptance,
+            provider_constraints,
+            provider_extra_checks,
+            provider_goal,
+            provider_keywords,
+        )
+
+        provider = self.music.provider
+        if not self._acquiring.acquire(blocking=False):
+            return MusicOutcome(
+                receipt=failed(
+                    f"music.{request.action}", "music.resolver",
+                    "a capability for this is already being built; ask again in a moment",
+                    request=request.query,
+                ),
+                gap=True,
+            )
+        try:
+            self.state.set(JarvisState.CODING, detail=f"building the {provider} provider", scope=scope)
+            self.emit(
+                EventType.NOTIFICATION,
+                {"text": f"I have no verified {provider} capability yet. Building one now."},
+                scope=scope,
+            )
+            mission = AcquisitionMission(
+                service=self.capabilities,
+                kernel=self.kernel,
+                emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
+            )
+            result = mission.run(
+                provider_goal(provider),
+                capability_id=f"music.provider.{provider}",
+                keywords=provider_keywords(provider),
+                # The same playback gate on both paths: a local build and an
+                # expert's build are held to one bar, and neither is judged by
+                # checks a capability that does nothing could pass.
+                extra_checks=provider_extra_checks(),
+                expert_constraints=provider_constraints(provider),
+                expert_acceptance=provider_acceptance(),
+                max_steps=60,
+                max_seconds=1800.0,
+            )
+            self.emit(
+                EventType.PROGRESS,
+                {"summary": f"acquisition finished: {'acquired' if result.acquired else 'failed'}",
+                 "acquisition": result.to_dict()},
+                scope=scope,
+            )
+            if not result.acquired:
+                return MusicOutcome(
+                    receipt=failed(
+                        f"music.{request.action}", "capability.acquisition",
+                        f"I could not build a verified {provider} capability: {result.reason}",
+                        request=request.query, acquisition=result.to_dict(),
+                    ),
+                    gap=True,
+                )
+            # Built and verified: answer the question that started this.
+            self.state.set(JarvisState.WORKING, detail=f"music: {request.action}", scope=scope)
+            return self.music.run(request)
+        finally:
+            self._acquiring.release()
 
     def _answer_by_executing(self, text: str, scope: str, classification: Any) -> None:
         """A request with a side effect.  Nothing is said until something is done.
