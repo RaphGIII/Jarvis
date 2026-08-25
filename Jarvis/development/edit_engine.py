@@ -603,6 +603,42 @@ def _all_spans(haystack: str, needle: str) -> list[int]:
     return spans
 
 
+#: How much of the near-miss region to quote back. Enough to anchor on,
+#: short enough not to bury the error it is attached to.
+_REGION_LINES = 14
+
+
+def _nearest_region(current: str, start: int, end: int, relative: str) -> str:
+    """Show the code the anchor came closest to, rather than describing it.
+
+    A near miss means the model is matching against text it invented instead of
+    text that exists -- measured at 0.47 similarity against a real file during
+    a live repair, over six attempts, while ``read_file`` sat unused. Telling it
+    to go and read did not work: it reached for a wholesale rewrite instead and
+    tried to replace 688 lines with 39.
+
+    So the file comes to it. Quoting the closest region turns "your anchor did
+    not match" into "here is what is actually there", which is the difference
+    between a failure a model can act on and one it can only repeat. It also
+    costs nothing when the model was right about the region and merely
+    imprecise about the text.
+    """
+
+    lines = current.splitlines()
+    if not lines:
+        return ""
+    first = max(0, current.count("\n", 0, start) - 2)
+    last = min(len(lines), current.count("\n", 0, end) + 3)
+    if last <= first:
+        return ""
+    window = lines[first:min(last, first + _REGION_LINES)]
+    numbered = "\n".join(f"{first + offset + 1:>5} | {line}" for offset, line in enumerate(window))
+    return (
+        f"\nThe closest thing in {relative} is at line {first + 1}. "
+        "Copy an anchor out of this, exactly as it appears:\n" + numbered
+    )
+
+
 def _locate_by_window(current: str, search: str, relative: str) -> Match:
     search_lines = search.splitlines() or [search]
     if len(search_lines) > 40:
@@ -670,7 +706,8 @@ def _locate_by_window(current: str, search: str, relative: str) -> Match:
     if best_score < minimum:
         raise EditError(
             "no_unique_match",
-            f"no safe unique match for {relative} (best similarity {best_score:.2f} < {minimum})",
+            f"no safe unique match for {relative} (best similarity {best_score:.2f} < {minimum})"
+            + _nearest_region(current, start, end, relative),
             path=relative,
             recoverable=True,
         )

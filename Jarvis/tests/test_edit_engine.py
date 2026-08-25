@@ -766,3 +766,68 @@ def test_reassigning_an_ordinary_lowercase_name_is_ordinary_python(tmp_path):
     _write(tmp_path, "m.py", "value = 1\n")
     _engine(tmp_path).apply(parse_bundle({"files": [{"path": "m.py", "search": "value = 1", "replace": "value = 1\nvalue = 2"}]}))
     assert (tmp_path / "m.py").read_text(encoding="utf-8").count("value =") == 2
+
+
+# --------------------------------------------------------------------------
+# A near miss shows the code rather than describing the miss
+# --------------------------------------------------------------------------
+
+def test_a_near_miss_quotes_the_closest_region(tmp_path):
+    """Measured during a live repair: six attempts at 0.47 similarity against a
+    real file, `read_file` never used, and a reach for a wholesale rewrite that
+    tried to replace 688 lines with 39. Telling it to go and read did not work,
+    so the file comes to it instead."""
+
+    from development.edit_engine import EditEngine, PathPolicy
+
+    source = "\n".join(f"line_{index} = {index}" for index in range(60))
+    source += '\n\ndef resolve(query):\n    url = SEARCH + encode({"q": query, "limit": 20})\n'
+    (tmp_path / "main.py").write_text(source, encoding="utf-8")
+    engine = EditEngine(PathPolicy(root=tmp_path))
+
+    with pytest.raises(EditError) as raised:
+        engine.apply(parse_bundle({"analysis": "fix", "files": [{
+            "path": "main.py",
+            "search": 'url = SEARCH + encode({"q": query, "type": "track", "limit": 20})',
+            "replace": "x",
+        }]}))
+
+    detail = str(raised.value)
+    assert "closest thing in main.py is at line" in detail
+    assert 'url = SEARCH + encode({"q": query, "limit": 20})' in detail, "the real line must be shown"
+    assert "|" in detail, "lines are numbered so an anchor can be copied exactly"
+
+
+def test_the_quoted_region_is_bounded(tmp_path):
+    """A quoted region long enough to bury the error it is attached to would
+    trade one unusable message for another."""
+
+    from development.edit_engine import EditEngine, PathPolicy, _REGION_LINES
+
+    (tmp_path / "big.py").write_text(
+        "\n".join(f"row_{index}()" for index in range(400)), encoding="utf-8"
+    )
+    engine = EditEngine(PathPolicy(root=tmp_path))
+
+    # Similar enough to have a nearest region, different enough to miss.
+    with pytest.raises(EditError) as raised:
+        engine.apply(parse_bundle({"analysis": "fix", "files": [{
+            "path": "big.py",
+            "search": "\n".join(f"row_{index}_renamed()" for index in range(30, 60)),
+            "replace": "x",
+        }]}))
+
+    quoted = [line for line in str(raised.value).splitlines() if " | " in line]
+    assert quoted, "a near miss must still quote something"
+    assert len(quoted) <= _REGION_LINES
+
+
+def test_a_successful_edit_is_unaffected(tmp_path):
+    from development.edit_engine import EditEngine, PathPolicy
+
+    (tmp_path / "main.py").write_text("a = 1\nb = 2\nc = 3\n", encoding="utf-8")
+    engine = EditEngine(PathPolicy(root=tmp_path))
+
+    engine.apply(parse_bundle({"analysis": "fix", "files": [{"path": "main.py", "search": "b = 2", "replace": "b = 20"}]}))
+
+    assert (tmp_path / "main.py").read_text(encoding="utf-8") == "a = 1\nb = 20\nc = 3\n"
