@@ -804,6 +804,33 @@ def test_a_replacement_naming_something_absent_is_still_refused(registry, contex
     assert module.read_text(encoding="utf-8") == MODULE
 
 
+def test_a_replacement_carrying_other_statements_is_refused(registry, context, module):
+    """Only def/class statements were counted, so a module-level assignment
+    travelled along with the definition and was spliced into the middle of the
+    file. Observed live during the archive-count repair: a replacement carrying
+    both `INPUT_SCHEMA = {...}` and `def run(...)`, refused downstream by the
+    duplicate-definition guard with a message about INPUT_SCHEMA -- not what the
+    model thought it was doing, and not where it would have looked."""
+
+    result = call(registry, context, "replace_definition", path="big.py", name="tail",
+                  source="CONSTANT = 99\n\n\ndef tail():\n    return CONSTANT\n")
+
+    assert not result.ok
+    assert "ONLY the definition" in result.error
+    assert "NOTHING WAS WRITTEN" in result.error
+    assert module.read_text(encoding="utf-8") == MODULE
+
+
+def test_a_definition_with_a_decorator_is_still_one_statement(registry, context, module):
+    """A decorator is part of the definition, not another statement."""
+
+    result = call(registry, context, "replace_definition", path="big.py", name="tail",
+                  source="@staticmethod\ndef tail():\n    return 7\n")
+
+    assert result.ok, result.error
+    assert "@staticmethod" in module.read_text(encoding="utf-8")
+
+
 def test_a_name_that_is_not_there_lists_the_ones_that_are(registry, context, module):
     """An error a model can act on names the alternatives; a similarity score
     cannot be edited into a correct call."""

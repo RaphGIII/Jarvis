@@ -465,6 +465,26 @@ def replace_definition(arguments: dict[str, Any], context: ToolContext) -> dict[
             f"defines {defined or 'nothing'}. NOTHING WAS WRITTEN.",
             kind="invalid_arguments", retryable=True,
         )
+    if len(parsed.body) != 1:
+        # Only def/class statements were being counted, so a module-level
+        # assignment or import travelled along with the definition and was
+        # spliced into the middle of the file. Observed live during the
+        # archive-count repair: a replacement carrying both `INPUT_SCHEMA = {...}`
+        # and `def run(...)`, refused downstream by the duplicate-definition
+        # guard with a message about INPUT_SCHEMA -- which is not what the model
+        # thought it was doing and not where it would have looked.
+        #
+        # The rule is the one the tool's name already implies: this replaces a
+        # definition, so it takes a definition. Anything else in the file is
+        # changed with a different call.
+        extra = len(parsed.body) - 1
+        raise ToolError(
+            f"the replacement must contain ONLY the definition of {wanted!r} -- you also sent "
+            f"{extra} other top-level statement(s), which would be inserted into the middle of "
+            f"{path} and duplicate what is already there. Send just the def or class. "
+            "NOTHING WAS WRITTEN.",
+            kind="invalid_arguments", retryable=True,
+        )
 
     lines = text.splitlines(keepends=True)
     start = min([node.lineno] + [item.lineno for item in getattr(node, "decorator_list", [])]) - 1

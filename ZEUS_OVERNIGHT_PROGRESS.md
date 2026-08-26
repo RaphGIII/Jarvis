@@ -22,8 +22,8 @@ Not synonyms, and never used as such below.
 
 ## Current position
 
-**Commit:** `d00599d` + this working tree
-**Milestone:** three capabilities promoted; Spotify 9/9 live; suite green (1637 passed, 0 failed)
+**Commit:** `213fbc5` + this working tree
+**Milestone:** three capabilities active; Spotify 9/9 live; suite green (1646 passed, 0 failed)
 **Human action required:** none
 
 ---
@@ -491,7 +491,7 @@ does not exist'}` rather than a traceback.
 Resolution with three capabilities installed:
 `find("zip a folder into an archive") -> ['archive.zip.create']`.
 
-### A gap in my own gate
+### A gap in my own gate — and the repair that correctly refused to happen
 
 The independent check found something the gate did not: it reports
 `'files': 1` while archiving five. The contract in the goal asks for a count,
@@ -500,8 +500,54 @@ the archive is correct, and the number beside it is not.
 The gate proved the *artifact* and never checked the numbers the capability
 reported *about* the artifact — the same shape of omission as the six Spotify
 gates that each covered a state and between them missed play-while-playing.
-Recorded here rather than quietly fixed, because a gate found wanting is worth
-more written down than corrected in silence.
+
+So the gate was widened and shown to reject the installed version *before* any
+repair ran — `it reported files=2 for an archive of 5` — and handed to the
+repair loop. **It did not fix it, and that is the right outcome.**
+
+```
+expert: completed  ("files came from files_count, a counter that ...")
+verify: the expert's work did not verify:
+        tests=FAILED  contract=ok  implemented=ok  static=ok
+        roundtrip=ok  missing_source=ok  counts=ok
+restore: put archive.zip.create back into service; its defect is unfixed but it works
+```
+
+The expert fixed the count — `counts=ok` — and broke the capability's own
+tests. Six gates green and one red is not a promotion, and nothing was promoted.
+`archive.zip.create` v1.0.0 is still active, still correct about the archive,
+still wrong about the number beside it, and its manifest records why it came
+back: *the repair did not produce a verified replacement*.
+
+That restore is the fix from this sprint firing in a real run rather than in a
+test. Before it, this repair would have cost the capability.
+
+**Three defects were found on the way, all of them in the escape hatch built
+earlier in this same sprint.**
+
+`replace_definition` was added because a model that cannot land an anchor on a
+long file has nowhere to go. It then sat on the menu unused through eleven
+anchor failures, because:
+
+- **the withdrawal was per-task.** Taking `apply_edits` off the menu is the
+  thing that works — a model cannot choose what it is not offered — and the
+  signal was the task's own `last_error`. DIAGNOSE creates a new task whenever
+  it cannot reopen one; a new task has no last error; the anchor came straight
+  back. Eleven failures across six tasks, and not one of them counted.
+- **an ambiguous anchor never counted as anchor trouble at all.** The marker
+  list is matched against message *text* and held the *kind* names, so
+  `ambiguous_search` never once fired. The engine emits *"search matched N
+  places in ..."*. An ambiguous anchor was 5 of the 22 failed EXECUTE steps in
+  the Priority 2 measurement — the second commonest edit failure there is.
+- **and when it was finally reached, it refused the call.** The model sent a
+  perfect `def run(payload)` under the name `run.payload.get('source')`, having
+  over-generalised the dotted form documented for methods. The replacement
+  already says what it defines, so the name is now taken from it. Then it sent
+  a replacement carrying `INPUT_SCHEMA = {...}` *and* the def, which duplicated
+  the assignment: a replacement for one definition must be one definition.
+
+An escape hatch that is never offered is not an escape hatch, and none of that
+was visible until a real repair went looking for it.
 
 ---
 
@@ -547,6 +593,14 @@ with nothing removed the model could act on.
    cross-domain acquisition needed one local attempt and an escalation; the
    question is whether the reusable pattern now recorded makes the second one
    cheaper.
-4. `main.py` for the Spotify provider is 708 lines and its repair spent eight
-   consecutive anchor failures before escalating. `replace_definition` exists
-   now; whether a local attempt can use it is untested against a real repair.
+4. `archive.zip.create` still reports the wrong file count. The widened gate is
+   written and bites; the repair loop failed to satisfy it, the expert fixed the
+   count and broke the tests, and nothing was promoted. It is the smallest open
+   defect in the system and the best next test of the repair loop.
+5. The three `replace_definition` fixes landed after that repair had already
+   run. Whether a local attempt can now use the tool is untested against a real
+   repair -- the archive count is the obvious thing to try it on.
+6. A repair disables what it rebuilds, and `_restore` covers every path the
+   mission returns through. A process that is KILLED returns through none of
+   them, so the disable outlives the mission. Recovering that needs work at
+   mission start rather than at mission end.
