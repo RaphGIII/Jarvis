@@ -1001,10 +1001,30 @@ def _safe_env() -> dict[str, str]:
 
 
 def _keywords_from(goal: str) -> list[str]:
+    """Subject words from a goal, for the registry to index the capability under.
+
+    The first eight long words of a goal, which is fine for the goal that
+    creates a capability and wrong for the goal that repairs one. A repair
+    brief opens with the defect -- deliberately, so the planner plans a repair
+    rather than a rebuild -- so its first eight long words are *defect,
+    existing, implementation, rebuild, repair, working*, and those are what
+    v1.0.4 of a music provider ended up indexed under. It then answered
+    "rebuild the existing implementation because of a defect and repair the
+    working code" with a music player.
+
+    Filtered against the same vocabulary resolution ignores, so a word that
+    could never contribute to a match is never stored as one either. Every
+    capability's goal contains these words; a term shared by everything
+    distinguishes nothing.
+    """
+
     import re
 
-    stopwords = {
-        "the", "and", "for", "with", "that", "this", "from", "into", "can", "able", "build",
-        "make", "create", "reusable", "capability", "jarvis", "please", "want", "need", "should",
-    }
-    return [word for word in re.split(r"[^a-z0-9]+", goal.lower()) if len(word) > 3 and word not in stopwords][:8]
+    from capabilities.registry import BOILERPLATE
+
+    stopwords = BOILERPLATE | {"jarvis", "please", "want", "need", "should", "able"}
+    return [
+        word
+        for word in re.split(r"[^a-z0-9]+", goal.lower())
+        if len(word) > 3 and word not in stopwords
+    ][:8]

@@ -290,6 +290,30 @@ Also removed: the `vision / build_local / succeeded / 0.005 s` row the original
 false positive wrote to the performance ledger. The escalation controller
 reasons from counts, and nothing was built.
 
+### A seventh, found only because a second capability existed
+
+With two capabilities in the registry, one query still resolved wrongly:
+
+    "rebuild the existing implementation because of a defect and repair the
+     working code"  ->  music.provider.spotify
+
+Keywords are derived from the goal that produced the capability. The goal that
+*creates* one describes it; the goal that produces v1.0.4 of one is a repair
+brief, and a repair brief opens with the defect -- deliberately, because
+`8804d67` fixed a planner that rebuilt instead of repairing when it did not.
+So the music provider was indexed under *defect, existing, implementation,
+rebuild, repair, working*, and every capability that is ever repaired acquires
+the same six.
+
+The vocabulary resolution ignores is now also the vocabulary that is never
+stored, so a word that could not contribute to a match cannot be recorded as
+one. 12/12 on the live registry, including four queries that must resolve to
+nothing.
+
+This one is worth noting for how it was found: it was invisible with one
+capability installed. The benchmark did not test it; having done the benchmark
+made it testable.
+
 ### The pattern, again
 
 Five of the six are the same shape as the defect this benchmark was written to

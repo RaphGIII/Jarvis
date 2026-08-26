@@ -213,3 +213,86 @@ def test_ensure_with_a_name_rebuilds_when_that_capability_is_disabled(tmp_path):
     CapabilityService.ensure(service, SCREEN_GOAL, capability_id="system.screen.capture")
 
     assert built == ["system.screen.capture"]
+
+
+# --------------------------------------------------------------------------
+# What a capability is indexed under, when the goal that produced it was a repair
+# --------------------------------------------------------------------------
+#
+# Keywords are derived from the goal. The goal that creates a capability
+# describes the capability; the goal that produces version 1.0.4 of one is a
+# repair brief, which opens with the defect -- deliberately, so the planner
+# plans a repair rather than a rebuild. So `music.provider.spotify` came to be
+# indexed under *defect, existing, implementation, rebuild, repair, working*,
+# and with two capabilities installed it answered "rebuild the existing
+# implementation because of a defect and repair the working code" with a music
+# player. Measured on the live registry, 2026-08-26.
+
+
+REPAIR_GOAL = (
+    "Rebuild the existing implementation because of a defect: the working "
+    "playback path ignores a track URI while something is already playing. "
+    "Repair it so a requested song replaces what is playing."
+)
+
+
+def test_a_repair_goal_does_not_index_a_capability_under_the_repair():
+    from capabilities.service import _keywords_from
+
+    derived = set(_keywords_from(REPAIR_GOAL))
+
+    assert not derived & {"rebuild", "existing", "implementation", "defect", "repair", "working"}
+
+
+def test_a_repair_goal_still_yields_its_subject():
+    from capabilities.service import _keywords_from
+
+    derived = set(_keywords_from(REPAIR_GOAL))
+
+    assert {"playback", "track", "song", "playing"} & derived
+
+
+def test_build_and_capability_vocabulary_is_not_a_subject():
+    """Every capability's goal contains these, so a match on them means nothing."""
+
+    from capabilities.service import _keywords_from
+
+    derived = set(_keywords_from(
+        "Build a reusable capability that can create and replace things, version 2"
+    ))
+
+    assert not derived & {"build", "reusable", "capability", "create", "replace", "version"}
+
+
+def test_process_vocabulary_resolves_to_nothing_at_all(tmp_path):
+    """The end of the defect, at the level a caller sees it.
+
+    The keywords here are the ones the live registry actually held for
+    music.provider.spotify v1.0.4 -- derived from its repair goal, and the
+    reason a request about rebuilding an implementation resolved to a music
+    player. A manifest that was never repaired would not reproduce it.
+    """
+
+    polluted = _music()
+    polluted.creation_metadata["keywords"] = [
+        "abspielen", "action", "audio", "defect", "existing", "implementation",
+        "lied", "music", "musik", "pause", "play", "playback", "rebuild",
+        "repair", "skip", "song", "spielen", "spotify", "titel", "track", "working",
+    ]
+    registry = _registry(tmp_path, polluted, _capture())
+
+    assert registry.find(
+        "rebuild the existing implementation because of a defect and repair the working code"
+    ) == []
+
+
+def test_the_two_installed_capabilities_do_not_answer_for_each_other(tmp_path):
+    registry = _registry(tmp_path, _music(), _capture())
+
+    music = [m.capability_id for m in registry.find("play Bohemian Rhapsody on spotify")]
+    screen = [m.capability_id for m in registry.find("take a screenshot of my screen")]
+
+    assert music[:1] == ["music.provider.spotify"]
+    assert screen[:1] == ["system.screen.capture"]
+    assert "music.provider.spotify" not in screen
+    assert "system.screen.capture" not in music

@@ -10,7 +10,20 @@ from capabilities.models import CapabilityManifest
 #: nothing about whether two capabilities are related. Drawn from the words
 #: that actually produced a false match between a music provider and a
 #: screen-capture goal, plus the ordinary English around them.
-_BOILERPLATE = frozenset("""
+#:
+#: The second block is the vocabulary of *building and repairing* capabilities,
+#: which is not a subject either. A capability's stored keywords are derived
+#: from the goal that produced it, and the goal that produces version 1.0.4 of
+#: anything is a repair brief -- so `music.provider.spotify` came to be indexed
+#: under *defect, existing, implementation, rebuild, repair, working*, and
+#: answered "rebuild the existing implementation because of a defect and repair
+#: the working code" with a music player. Every capability in the registry
+#: acquires these words, so they can only ever produce a false match.
+#:
+#: Exported rather than private: the same words must be excluded where keywords
+#: are *stored*, not only where they are matched, or the registry keeps filling
+#: up with terms that are then filtered out on every single query.
+BOILERPLATE = frozenset("""
 accept accepts accepted actually and anything are because been before being
 call called caller cannot check checked checks computer current currently
 declare declared error errors exist exists expected fail failed failure false
@@ -23,7 +36,17 @@ str string success successful take takes than that the them then there these
 this those true unless use used uses using value values what when where
 which while will with without work works write writes written you your
 dict bool int list none true false main test tests
+
+attempt attempted attempts broken build building built capability capabilities
+change changed changes create created creating defect defects existing feature
+fix fixed fixes fixing implement implementing improve improved make making
+missing new provider rebuild rebuilding rebuilt reusable repair repaired
+repairing reimplement replace replacing rewrite rewriting version versions
+work working thing something anything everything currently what which
 """.split())
+
+#: The old private name, kept because the module has been imported under it.
+_BOILERPLATE = BOILERPLATE
 
 #: How many of a capability's *own* subject terms must appear in the query
 #: before it is considered a candidate at all. One is enough when the terms
