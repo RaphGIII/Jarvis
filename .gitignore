@@ -46,3 +46,7 @@ Jarvis/data/jarvis/
 # ZEUS.exe build output
 dist/
 build/
+
+# Promotion snapshots and audit: runtime state, written by the promoter
+Jarvis/data/snapshots/
+Jarvis/data/promotions.jsonl

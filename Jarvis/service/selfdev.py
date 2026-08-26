@@ -259,6 +259,8 @@ class SelfDevRunner:
             return self.run(mission)
         policy = self.owner.read("policy").get("self_development", {})
         mission.outcome, mission.reason = "", ""
+        if not mission.acceptance:
+            self._understand(mission)
         self._phase(mission, "RESUME", f"resuming with the existing candidate ({len(mission.changed_files)} files)")
         try:
             self.set_state(JarvisState.VERIFYING, detail="re-verifying the candidate", scope=mission.scope)
