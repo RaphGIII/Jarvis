@@ -412,6 +412,76 @@ def test_a_repair_retires_the_broken_version_before_rebuilding(tmp_path):
     assert service.registry.disabled == [("cap.x", "search returns 400")]
 
 
+class _Registry:
+    """A registry that remembers being disabled and put back."""
+
+    def __init__(self, status="active"):
+        self.disabled: list[tuple[str, str]] = []
+        self.restored: list[tuple[str, str]] = []
+        self.status = status
+
+    def disable(self, capability_id, reason=""):
+        self.disabled.append((capability_id, reason))
+        self.status = "disabled"
+
+    def restore(self, capability_id, reason=""):
+        self.restored.append((capability_id, reason))
+        self.status = "active"
+
+    def get(self, capability_id):
+        return type("M", (), {"status": self.status, "capability_id": capability_id})()
+
+
+def test_a_repair_that_fails_puts_the_capability_back(tmp_path):
+    """One failed repair must not cost the capability it was improving.
+
+    The repair disables the broken version first, on purpose: the resolver
+    should stop handing out something known to be defective while the rebuild
+    runs. If the rebuild then fails and nothing puts it back, "this has a
+    defect" has become "this does not exist" -- and the defect was, by
+    definition, something the capability was mostly working around.
+    """
+
+    service = StubService(succeed_on=None, verify_ok=False)
+    service.registry = _Registry()
+    run = mission(tmp_path, service=service, controller=StubController(escalate=False))
+
+    result = run.run("build a provider", capability_id="cap.x", repair="current takes 26s")
+
+    assert not result.acquired
+    assert service.registry.disabled == [("cap.x", "current takes 26s")]
+    assert [item[0] for item in service.registry.restored] == ["cap.x"]
+    assert service.registry.status == "active"
+
+
+def test_a_repair_that_succeeds_leaves_the_old_version_disabled(tmp_path):
+    """The replacement is registered and active; putting the defective one
+    back would undo the repair."""
+
+    service = StubService(succeed_on=1)
+    service.registry = _Registry()
+    run = mission(tmp_path, service=service)
+
+    result = run.run("build a provider", capability_id="cap.x", repair="current takes 26s")
+
+    assert result.acquired
+    assert service.registry.restored == []
+
+
+def test_a_first_build_that_fails_restores_nothing(tmp_path):
+    """Nothing was disabled, because nothing existed. There is no other
+    capability whose status this failure may touch."""
+
+    service = StubService(succeed_on=None, verify_ok=False)
+    service.registry = _Registry()
+    run = mission(tmp_path, service=service, controller=StubController(escalate=False))
+
+    run.run("build a provider", capability_id="cap.x")
+
+    assert service.registry.disabled == []
+    assert service.registry.restored == []
+
+
 # --------------------------------------------------------------------------
 # A repair brief is not a build brief
 # --------------------------------------------------------------------------

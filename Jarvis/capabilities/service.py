@@ -576,6 +576,25 @@ class CapabilityService:
                 # then concludes the machine has no player at all.
                 "To find a program, use shutil.which() from the standard library. Do not write your own "
                 "PATH search: shutil.which handles the .exe/.cmd extensions Windows needs.",
+                # Measured twice on this machine, four months apart, in two
+                # different files doing the same job. `tools.media_session` was
+                # changed from an inline script to a file in `2f3a4a2` -- 4.4 s
+                # a call became 1.1 s including PowerShell's own startup, while
+                # the work inside was about a millisecond. The Spotify
+                # capability was written before that and still passes its
+                # script with -EncodedCommand: 8.8 s of wall clock for 0.3 s of
+                # work, on every "what's playing".
+                #
+                # It is stated here because the lesson lived in a Jarvis module
+                # that a model-authored capability cannot see. A capability
+                # briefing is the only place a fact like this reaches the code
+                # that needs it.
+                "If you run PowerShell, write the script to a file once and run it with -File, passing "
+                "values through a param() block. Do NOT pass a long script with -Command or "
+                "-EncodedCommand: PowerShell re-parses the whole string on every invocation, and "
+                "measured on this machine that is 8.8 seconds of wall clock for 0.3 seconds of work. "
+                "One -Command, never two -- a second one is read as an argument to the first and the "
+                "command silently does nothing.",
                 "Prefer the Python standard library over an external program whenever it can do the job. "
                 "A capability with no external dependency is more reliable and needs no installation.",
                 "Use the 'find_program' tool to check what is actually installed on this machine before "

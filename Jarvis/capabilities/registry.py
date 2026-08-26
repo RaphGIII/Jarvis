@@ -165,6 +165,30 @@ class CapabilityRegistry:
         self._save()
         return manifest
 
+    def restore(self, capability_id: str, reason: str = "") -> CapabilityManifest:
+        """Put a disabled capability back into service.
+
+        The counterpart to :meth:`disable`, and it exists because a repair
+        disables what it is about to rebuild -- so that the resolver stops
+        handing out something known to be defective while the rebuild runs. If
+        the rebuild then fails, the old behaviour left the registry with a
+        verified capability disabled and nothing in its place: one failed
+        repair, and the system could no longer play music at all.
+
+        A capability with a known defect is worse than one without and better
+        than none. Why it was disabled stays on the record, and what put it
+        back is recorded next to it.
+        """
+
+        manifest = self._records[capability_id]
+        manifest.status = "active"
+        manifest.validation_status = {
+            **manifest.validation_status,
+            "restored_reason": reason or "a repair did not produce a verified replacement",
+        }
+        self._save()
+        return manifest
+
     def all(self) -> list[CapabilityManifest]:
         return list(self._records.values())
 

@@ -341,6 +341,8 @@ class AcquisitionMission:
                         repair_mode=bool(repair),
                     )
                     result.seconds = time.perf_counter() - started
+                    if repair and capability_id and not escalated.acquired:
+                        self._restore(capability_id, escalated)
                     return escalated
 
         result.reason = (
@@ -349,7 +351,36 @@ class AcquisitionMission:
         )
         result.seconds = time.perf_counter() - started
         self._step(result, "failed", result.reason, ok=False)
+        if repair and capability_id:
+            self._restore(capability_id, result)
         return result
+
+    def _restore(self, capability_id: str, result: AcquisitionResult) -> None:
+        """Undo a retirement that bought nothing.
+
+        A repair disables the capability first, on purpose. If it then fails,
+        leaving it disabled turns "this has a defect" into "this does not
+        exist" -- and the defect was, by definition, something the capability
+        was still mostly working around. Measured cost of not doing this: one
+        failed repair cycle and the music provider is gone until another
+        acquisition succeeds, which is the expensive thing repair exists to
+        avoid.
+        """
+
+        manifest = self.service.registry.get(capability_id)
+        if manifest is None or manifest.status == "active":
+            return
+        try:
+            self.service.registry.restore(
+                capability_id, reason="the repair did not produce a verified replacement"
+            )
+        except Exception as exc:
+            self._step(result, "restore", f"could not restore {capability_id}: {exc}", ok=False)
+            return
+        self._step(
+            result, "restore",
+            f"put {capability_id} back into service; its defect is unfixed but it works",
+        )
 
     def _retire(self, capability_id: str, defect: str, result: AcquisitionResult) -> None:
         """Stop handing out a capability that is known to be broken.
