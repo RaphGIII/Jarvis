@@ -22,8 +22,8 @@ Not synonyms, and never used as such below.
 
 ## Current position
 
-**Commit:** `20d5034` + this working tree
-**Milestone:** Priority 3 PASSED; Spotify 9/9 live; suite green (1621 passed, 0 failed)
+**Commit:** `d00599d` + this working tree
+**Milestone:** three capabilities promoted; Spotify 9/9 live; suite green (1637 passed, 0 failed)
 **Human action required:** none
 
 ---
@@ -457,6 +457,51 @@ answer being read as the wider one. `shutil.which` for *is it available*.
 *Would leave unparseable* for *is broken*. A diagnosis under a heading that says
 *known facts*. Term overlap for *is about the same thing*. The proxy is right
 while things are small and quietly stops being right as they grow.
+
+---
+
+## Priority 3b — a third domain, and the first acquisition BUILD_LOCAL finished alone
+
+`archive.zip.create` v1.0.0 — PROMOTED. Package a folder into a zip: no WinRT,
+no display, no player, reachable from the standard library in a few lines. That
+was the point. The ledger recorded **0% local success over nine attempts**, and
+a task the 7B model should be able to finish alone is the one that says whether
+that number is about the model or about the pipeline.
+
+| | screen capture | zip archive |
+|---|---|---|
+| wall clock | 47.6 min | **7.5 min** |
+| model calls | 49 | **11** |
+| engine steps | 48 | 13 |
+| BUILD_LOCAL prompt | 24,155 chars | **17,381 chars** |
+| tier changes | 6 (~303 s of reloading) | **0** |
+| ExpertGateway | required | **not reached** |
+| second use | 0.459 s, 0 model calls | 0.0 s, 0 model calls |
+
+Six times faster, and it never left the local tier. The prompt reduction shows
+up exactly where it was measured to be — 24,155 → 17,381 characters is the 28%
+this sprint removed.
+
+Verified from outside, on a folder built *after* the capability was registered
+so nothing about it could have been anticipated: five files including a unicode
+name and five levels of nesting, an empty directory, every byte identical, and
+a missing source folder answered with `{'ok': False, 'error': 'Source folder
+does not exist'}` rather than a traceback.
+
+Resolution with three capabilities installed:
+`find("zip a folder into an archive") -> ['archive.zip.create']`.
+
+### A gap in my own gate
+
+The independent check found something the gate did not: it reports
+`'files': 1` while archiving five. The contract in the goal asks for a count,
+the archive is correct, and the number beside it is not.
+
+The gate proved the *artifact* and never checked the numbers the capability
+reported *about* the artifact — the same shape of omission as the six Spotify
+gates that each covered a state and between them missed play-while-playing.
+Recorded here rather than quietly fixed, because a gate found wanting is worth
+more written down than corrected in silence.
 
 ---
 
