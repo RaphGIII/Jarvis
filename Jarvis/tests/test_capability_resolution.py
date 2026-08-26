@@ -296,3 +296,66 @@ def test_the_two_installed_capabilities_do_not_answer_for_each_other(tmp_path):
     assert screen[:1] == ["system.screen.capture"]
     assert "music.provider.spotify" not in screen
     assert "system.screen.capture" not in music
+
+
+# --------------------------------------------------------------------------
+# A capability that declares no keywords must still be findable
+# --------------------------------------------------------------------------
+#
+# Matching on the identifier and the declared keywords killed the false
+# positive, and introduced a false negative underneath it. An identifier can be
+# a code name: `custom.scale` shares no word with "double an integer from the
+# request payload". A capability with no keywords therefore became invisible to
+# resolution the moment it was registered, and the caller rebuilt from scratch
+# what it had just finished building.
+#
+# Caught by three v04 tests -- the second call re-acquiring instead of reusing
+# is exactly what they assert. They passed at `b4b27e2` and failed at
+# `e26f723`; the whole of that commit is the difference.
+
+
+def _unlabelled(tmp_path):
+    """A manifest as the v04 runtime registers them: an opaque id, no keywords."""
+
+    return _registry(tmp_path, CapabilityManifest(
+        capability_id="custom.scale",
+        description="Double an integer x from the request payload. " + CONTRACT,
+    ))
+
+
+def test_a_capability_with_no_keywords_is_found_by_its_description(tmp_path):
+    registry = _unlabelled(tmp_path)
+
+    found = registry.find("Double an integer x from the request payload.")
+
+    assert [m.capability_id for m in found] == ["custom.scale"]
+
+
+def test_the_description_fallback_does_not_bring_the_false_positive_back(tmp_path):
+    """The music provider and the screen-capture goal shared only contract
+    vocabulary, and every word of it is removed before this comparison. So the
+    fallback is safe precisely because the boilerplate filter came first."""
+
+    registry = _registry(tmp_path, CapabilityManifest(
+        capability_id="music.provider.spotify",
+        description="Build a spotify music provider for Windows. " + CONTRACT,
+    ))
+
+    assert registry.find(SCREEN_GOAL) == []
+
+
+def test_a_capability_that_declares_keywords_is_still_judged_on_them(tmp_path):
+    """The fallback is for capabilities that say nothing. One that has said what
+    it is for is taken at its word, and its prose cannot widen that."""
+
+    registry = _registry(tmp_path, _music(
+        description="Build a spotify music provider that captures a screen png. " + CONTRACT,
+    ))
+
+    assert registry.find(SCREEN_GOAL) == []
+
+
+def test_an_unrelated_request_still_matches_nothing(tmp_path):
+    registry = _unlabelled(tmp_path)
+
+    assert registry.find("what is the weather tomorrow") == []

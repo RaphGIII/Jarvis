@@ -495,3 +495,93 @@ def test_tv_mode_is_the_same_page_not_a_second_one(server):
 
     assert "body.tv" in body, "the kiosk styles live in the same document"
     assert 'id="eye"' in body, "and so does everything else"
+
+
+# --------------------------------------------------------------------------
+# An answer that dies in its thread must say so
+# --------------------------------------------------------------------------
+#
+# `say()` returns {"ok": True, "accepted": text} the moment the answering
+# thread starts -- that is what lets Jarvis begin speaking before it has
+# finished thinking. Everything after that point is out of the request's reach,
+# so an exception there reached a daemon thread's default handler, printed to a
+# stderr nobody reads, and the user simply never got an answer. Accepted, no
+# reply, no error: the request reported success and the work did not happen,
+# which is the failure this system exists to prevent, in the one place nothing
+# was watching for it.
+#
+# Found by a voice test whose stub kernel was missing an attribute JarvisCore
+# had come to need. The lookup raised inside this thread and the only visible
+# symptom was silence.
+
+
+class _ExplodingCore(JarvisCore):
+    """A core whose answering step always raises, however it is reached."""
+
+    def _answer(self, text: str, scope: str) -> None:
+        raise RuntimeError("the answering machinery fell over")
+
+
+def _collect(core, timeout: float = 5.0):
+    """Every event the core publishes while it fails to answer."""
+
+    seen = []
+    with core.bus.subscribe() as subscription:
+        core.send_message("hallo")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            event = subscription.get(timeout=0.25)
+            if event is not None:
+                seen.append(event)
+                if event.type is EventType.MESSAGE:
+                    break
+    return seen
+
+
+def test_a_failure_in_the_answering_thread_reaches_the_client():
+    core = _ExplodingCore(kernel=None)
+
+    seen = _collect(core)
+
+    errors = [event for event in seen if event.type is EventType.ERROR]
+    assert errors, "the failure was never published"
+    assert "the answering machinery fell over" in str(errors[0].payload)
+
+
+def test_a_failure_in_the_answering_thread_still_produces_a_reply():
+    """A person waiting for an answer has to be told there is not going to be
+    one. An error event serves a client watching the stream; it does not serve
+    someone looking at a conversation."""
+
+    core = _ExplodingCore(kernel=None)
+
+    seen = _collect(core)
+
+    messages = [event for event in seen if event.type is EventType.MESSAGE]
+    assert messages, "nothing was said to the user at all"
+    assert "went wrong" in str(messages[0].payload.get("text", ""))
+
+
+def test_the_accepted_response_is_still_immediate():
+    """The guard must not turn an asynchronous answer into a synchronous one:
+    returning at once is what lets speech start before the answer is finished."""
+
+    core = _ExplodingCore(kernel=None)
+
+    result = core.send_message("hallo")
+
+    assert result["ok"] and result["accepted"] == "hallo"
+
+
+def test_the_traceback_travels_with_the_error():
+    """Re-raising would put it on a stderr nobody reads and end the thread the
+    same way it used to end. The one place that can see the failure has to
+    carry what is needed to diagnose it."""
+
+    core = _ExplodingCore(kernel=None)
+
+    seen = _collect(core)
+
+    errors = [event for event in seen if event.type is EventType.ERROR]
+    assert errors
+    assert "_answer_guarded" in str(errors[0].payload.get("traceback", ""))

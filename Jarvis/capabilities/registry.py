@@ -53,6 +53,10 @@ _BOILERPLATE = BOILERPLATE
 #: are distinctive, which is the point of scoring on keywords rather than prose.
 _MIN_SUBJECT_HITS = 1
 
+#: A term derived from prose rather than declared as a keyword has to be long
+#: enough to mean something on its own.
+_DERIVED_MINIMUM = 4
+
 #: Below this length a term is too short to be safely matched as part of
 #: another word: "png" inside "opening" would be a hit, and a false one.
 _COMPOUND_MINIMUM = 6
@@ -80,6 +84,39 @@ def _compound_hits(query_terms: set[str], subject: set[str]) -> int:
                 hits += 1
                 break
     return hits
+
+
+def _subject_sentence(description: str) -> str:
+    """The opening sentence of a description -- what the capability is about.
+
+    A description here is one sentence of subject followed by a contract:
+    payload keys, return shapes, dry-run rules, "it must ACTUALLY WORK". The
+    contract is written in the same house style for every capability, so it is
+    the part that makes two unrelated capabilities look alike -- which is the
+    whole defect this module was repaired for.
+
+    Removing the known contract words was not enough on its own. Feeding whole
+    descriptions back in for keyword-less capabilities immediately produced the
+    old false match again on seventeen terms -- *action, afterwards,
+    description, directly, doing, dry, every, function, happening, honour,
+    index, outside, perform, raise, would* -- none of them in the boilerplate
+    list and none of them about music or screens. Any list of such words is a
+    list of the ones seen so far.
+
+    Where the subject is is not a matter of taste: a capability states what it
+    is for and then says how it must behave. Reading the first sentence is a
+    rule about structure rather than about vocabulary, so it does not need
+    maintaining as the house style grows.
+    """
+
+    import re
+
+    text = " ".join(str(description or "").split())
+    if not text:
+        return ""
+    match = re.search(r"(?<=[.!?])\s", text)
+    sentence = text[: match.start()] if match else text
+    return sentence[:300]
 
 
 class CapabilityRegistry:
@@ -122,26 +159,56 @@ class CapabilityRegistry:
         what get matched; the description can only break a tie.
         """
 
-        query_terms = self._terms(query) - _BOILERPLATE
+        query_terms = self._terms(query) - BOILERPLATE
         if not query_terms:
             return []
         scored: list[tuple[float, float, CapabilityManifest]] = []
         for manifest in self._records.values():
             if manifest.status != "active":
                 continue
-            subject = self._terms(manifest.capability_id.replace(".", " ")) | {
+            keywords = {
                 term
                 for keyword in (manifest.creation_metadata.get("keywords") or [])
                 for term in self._terms(str(keyword))
             }
-            subject -= _BOILERPLATE
+            subject = self._terms(manifest.capability_id.replace(".", " ")) | keywords
+            subject -= BOILERPLATE
+            if not keywords:
+                # Nothing declared. The identifier is then the only thing this
+                # capability says it is for, and an identifier can be a code
+                # name: `custom.scale` shares no word with "double an integer
+                # from the request payload", so a capability that had just been
+                # built, verified and registered could not be found a second
+                # later, and the caller rebuilt it from scratch.
+                #
+                # Measured: `e26f723` fixed a false positive and introduced this
+                # false negative, and three v04 tests caught it -- the second
+                # call re-acquiring instead of reusing is what they assert.
+                #
+                # The description is allowed back in only here, and only through
+                # the same boilerplate filter. That filter is what made the
+                # original false positive impossible: the music provider and the
+                # screen-capture goal shared *accept, actually, cannot, checked,
+                # current, error, exists, failure, file, match, must, name,
+                # never, not* and nothing else, and every one of those is gone
+                # before this line runs.
+                #: Only terms long enough to be distinctive. A declared keyword of
+                #: any length is a choice -- *png*, *vlc*, *api* are all real --
+                #: but a three-letter word pulled out of prose is not chosen by
+                #: anyone, and *for* alone was enough to match a music provider
+                #: to a screen-capture goal once the description came back in.
+                subject |= {
+                    term
+                    for term in self._terms(_subject_sentence(manifest.description)) - BOILERPLATE
+                    if len(term) >= _DERIVED_MINIMUM
+                }
             hits = len(query_terms & subject) + _compound_hits(query_terms, subject)
             if manifest.capability_id.lower() in query.lower():
                 hits += 4
             if hits < _MIN_SUBJECT_HITS:
                 # Nothing this capability says it is for appears in the query.
                 continue
-            described = self._terms(manifest.description) - _BOILERPLATE
+            described = self._terms(manifest.description) - BOILERPLATE
             tiebreak = len(query_terms & described) / max(1, len(query_terms))
             scored.append((hits / max(1, len(query_terms)), tiebreak, manifest))
         scored.sort(key=lambda item: (item[0], item[1], item[2].capability_id), reverse=True)

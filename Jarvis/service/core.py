@@ -328,13 +328,63 @@ class JarvisCore:
         # once and the client watches the event stream, which is what makes
         # "Jarvis starts speaking before the answer is finished" possible.
         thread = threading.Thread(
-            target=self._answer, args=(text, scope), daemon=True, name="jarvis-answer"
+            target=self._answer_guarded, args=(text, scope), daemon=True, name="jarvis-answer"
         )
         with self._lock:
             self._current_work = thread
         self._stop_requested.clear()
         thread.start()
         return {"ok": True, "accepted": text}
+
+    def _answer_guarded(self, text: str, scope: str) -> None:
+        """Run :meth:`_answer`, and never let it fail in silence.
+
+        ``say()`` returns ``{"ok": True, "accepted": text}`` the moment the
+        thread starts, because that is what lets Jarvis begin speaking before it
+        has finished thinking. The consequence is that everything after that
+        point is out of the request's reach: an exception here reaches a daemon
+        thread's default handler, which prints to stderr nobody is reading, and
+        the user simply never gets an answer. Accepted, no reply, no error --
+        the request reported success and the work did not happen, which is the
+        exact failure this system exists to prevent, in the one place nothing
+        was watching for it.
+
+        Found by a voice test whose stub kernel lacked ``state_root``: the
+        preferences lookup raised inside this thread, nothing was spoken, and
+        the only visible symptom was silence.
+
+        The message goes out as an ERROR event *and* as a normal reply, because
+        a client watching the stream should see the failure and a person waiting
+        for an answer should be told there is not going to be one.
+        """
+
+        import traceback
+
+        try:
+            self._answer(text, scope)
+        except BaseException as exc:  # noqa: BLE001 - a thread boundary swallows everything
+            detail = f"{type(exc).__name__}: {exc}"
+            # The traceback travels with the event rather than being re-raised.
+            # Re-raising would put it on a stderr nobody is reading and end the
+            # thread the same way it used to end; carrying it here means the
+            # one place that can see the failure also carries what is needed to
+            # diagnose it.
+            try:
+                self.emit(
+                    EventType.ERROR,
+                    {"error": detail, "traceback": traceback.format_exc()[-4000:]},
+                    scope=scope,
+                )
+            except Exception:
+                pass
+            try:
+                self.state.set(JarvisState.ERROR, detail=detail[:200])
+                self._deliver(
+                    f"Something went wrong while I was answering that: {detail}",
+                    scope=scope, backend="error", final_state=JarvisState.ERROR,
+                )
+            except Exception:
+                pass
 
     def _answer(self, text: str, scope: str) -> None:
         """Route the request, then let the right machinery answer it.
