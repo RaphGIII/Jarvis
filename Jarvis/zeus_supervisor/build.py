@@ -36,7 +36,7 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
     dist = dist or (repository.parent / "dist")
     work = repository.parent / "build" / "pyinstaller"
     dist.mkdir(parents=True, exist_ok=True)
-    entry = HERE / "__main__.py"
+    entry = HERE / "launch.py"
     command = [
         sys.executable, "-m", "PyInstaller",
         "--name", "ZEUS", "--noconfirm", "--clean", "--noconsole",
@@ -45,7 +45,7 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
         "--paths", str(repository),
         "--hidden-import", "zeus_supervisor.supervisor",
         "--hidden-import", "zeus_supervisor.preflight",
-        "--hidden-import", "zeus_supervisor.build",
+        "--hidden-import", "zeus_supervisor.build", "--hidden-import", "zeus_supervisor.__main__",
         str(entry),
     ]
     icon = repository / "ui" / "zeus.ico"
@@ -76,7 +76,7 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
     print(f"built {exe} ({exe.stat().st_size // 1024} KB), revision {revision[:12]}")
 
     if shortcuts and sys.platform == "win32":
-        for name, target_dir in (("Desktop", Path.home() / "Desktop"),
+        for name, target_dir in (("Desktop", _desktop_dir()),
                                  ("Start Menu", Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs")):
             if not target_dir.is_dir():
                 continue
@@ -91,6 +91,20 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
             completed = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
             print(f"{name} shortcut: {'ok' if completed.returncode == 0 else completed.stderr.strip()[:200]} -> {link}")
     return exe
+
+
+def _desktop_dir() -> Path:
+    """Where the Desktop really is: OneDrive moves it, and the registry knows."""
+
+    try:
+        import winreg
+
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            value, _ = winreg.QueryValueEx(key, "Desktop")
+            return Path(os.path.expandvars(str(value)))
+    except Exception:
+        return Path.home() / "Desktop"
 
 
 def main(argv: list[str] | None = None) -> int:

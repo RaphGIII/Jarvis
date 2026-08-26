@@ -89,5 +89,40 @@ def main(argv: list[str] | None = None) -> int:
     return Supervisor(config, log=print if not getattr(sys, "frozen", False) else None).run()
 
 
+def _frozen_main() -> int:
+    """No console, so a crash must go to a file and a message box, not a dialog
+    titled 'Unhandled exception in script' with a traceback nobody can read."""
+
+    import io
+    import traceback
+
+    # PyInstaller's --noconsole leaves stdout/stderr as None; anything that
+    # prints would then raise. Give them somewhere to go.
+    if sys.stdout is None:
+        sys.stdout = io.StringIO()
+    if sys.stderr is None:
+        sys.stderr = io.StringIO()
+    try:
+        return main()
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    except BaseException:  # noqa: BLE001 - last resort, must not hide anything
+        text = traceback.format_exc()
+        log = Path(sys.executable).resolve().parent / "ZEUS-error.log"
+        try:
+            log.write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
+                None, f"ZEUS could not start.\n\n{text[-900:]}\n\nSaved to {log}", "ZEUS", 0x10
+            )
+        except Exception:
+            pass
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_frozen_main() if getattr(sys, "frozen", False) else main())
