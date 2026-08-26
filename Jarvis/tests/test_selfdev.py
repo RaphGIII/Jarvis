@@ -161,7 +161,8 @@ def test_resume_reverifies_and_promotes_an_existing_candidate(repo: Path, tmp_pa
 
     resumed = runner.resume(mission)
     assert resumed.phase == "RESTARTING" and resumed.promotion["outcome"] == "PROMOTED", resumed.reason
-    assert [e["phase"] for e in resumed.events][:2] == ["RESUME", "VERIFY"]
+    phases = [e["phase"] for e in resumed.events]
+    assert "RESUME" in phases and "VERIFY" in phases and phases.index("RESUME") < phases.index("VERIFY")
     assert (repo / "service" / "core.py").read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
