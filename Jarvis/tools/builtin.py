@@ -421,15 +421,6 @@ def replace_definition(arguments: dict[str, Any], context: ToolContext) -> dict[
             kind="syntax_error", retryable=True,
         ) from None
 
-    node, container = _locate_definition(tree, name)
-    if node is None:
-        available = ", ".join(_definition_names(tree)[:25]) or "none"
-        raise ToolError(
-            f"{path} has no top-level definition called {name!r}. It defines: {available}. "
-            "Use the exact name, or ClassName.method for a method.",
-            kind="unknown_definition", retryable=True,
-        )
-
     replacement = textwrap.dedent(source).strip("\n")
     try:
         parsed = ast.parse(replacement)
@@ -440,6 +431,33 @@ def replace_definition(arguments: dict[str, Any], context: ToolContext) -> dict[
             kind="syntax_error", retryable=True,
         ) from None
     defined = _definition_names(parsed)
+
+    node, container = _locate_definition(tree, name)
+    if node is None and len(defined) == 1:
+        # The replacement says what it defines, in code, and it has to define
+        # exactly one thing anyway. So `name` is a second statement of a fact
+        # already established -- and a redundant parameter is somewhere to be
+        # wrong. Observed live during the archive-count repair: the model sent
+        # a perfectly good `def run(payload)` under the name
+        # "run.payload.get('source')", having over-generalised the dotted form
+        # documented for methods, and the edit was refused for the one part of
+        # the call that carried no information.
+        #
+        # Nothing is loosened by this. The file must still contain the
+        # definition, the replacement must still define exactly one, and
+        # everything outside it is still preserved byte for byte.
+        node, container = _locate_definition(tree, defined[0])
+        if node is not None:
+            name = defined[0]
+
+    if node is None:
+        available = ", ".join(_definition_names(tree)[:25]) or "none"
+        raise ToolError(
+            f"{path} has no top-level definition called {name!r}. It defines: {available}. "
+            "Use the exact name, or ClassName.method for a method.",
+            kind="unknown_definition", retryable=True,
+        )
+
     wanted = name.split(".")[-1]
     if defined != [wanted]:
         raise ToolError(

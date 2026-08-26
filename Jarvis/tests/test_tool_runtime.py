@@ -773,6 +773,37 @@ def test_a_method_keeps_the_indentation_of_its_class(registry, context, module):
     assert "    def play(self, track):" in body
 
 
+def test_the_name_is_taken_from_the_replacement_when_the_given_one_is_wrong(registry, context, module):
+    """The replacement says what it defines, in code, and it has to define
+    exactly one thing anyway -- so `name` restates a fact already established,
+    and a redundant parameter is somewhere to be wrong.
+
+    Observed live during the archive-count repair: the model sent a perfectly
+    good `def run(payload)` under the name "run.payload.get('source')", having
+    over-generalised the dotted form documented for methods, and the edit was
+    refused for the one part of the call that carried no information.
+    """
+
+    result = call(registry, context, "replace_definition", path="big.py",
+                  name="_powershell.verb.timeout", source=FASTER)
+
+    assert result.ok, result.error
+    body = module.read_text(encoding="utf-8")
+    assert "-File" in body
+    assert "CONSTANT = 1" in body and "def tail():" in body
+
+
+def test_a_replacement_naming_something_absent_is_still_refused(registry, context, module):
+    """Inference finds the definition the replacement declares. It does not
+    invent one that is not in the file."""
+
+    result = call(registry, context, "replace_definition", path="big.py",
+                  name="whatever", source="def not_in_the_file():\n    pass\n")
+
+    assert not result.ok
+    assert module.read_text(encoding="utf-8") == MODULE
+
+
 def test_a_name_that_is_not_there_lists_the_ones_that_are(registry, context, module):
     """An error a model can act on names the alternatives; a similarity score
     cannot be edited into a correct call."""

@@ -764,9 +764,9 @@ class ProjectEngine:
             # The file the task and the last failure are about goes first, and
             # in full: that is the text an anchor has to be copied from.
             + self._workspace_snapshot(context, focus=f"{task.title} {task.detail} {task.last_error}")
-            + self._anchor_trouble_notice(task)
+            + self._anchor_trouble_notice(task, project)
             + f"{self._project_brief(project)}\n"
-            f"Available tools:\n{self.tools.render_for_prompt(exclude=self._withdrawn_tools(task))}\n"
+            f"Available tools:\n{self.tools.render_for_prompt(exclude=self._withdrawn_tools(task, project))}\n"
         )
         self.last_model_error = ""
         payload = self._ask_json(prompt, schema, max_tokens=1600)
@@ -1263,6 +1263,13 @@ class ProjectEngine:
         "no safe unique match",
         "ambiguous_search",
         "must match exactly once",
+        # The two spellings the edit engine actually emits when an anchor is
+        # ambiguous. The kind names above are kinds; this list is matched
+        # against message *text*, so "ambiguous_search" never once fired --
+        # and an ambiguous anchor was 5 of the 22 failed EXECUTE steps in the
+        # sprint measurement, the second commonest edit failure there is.
+        "search matched",
+        "search matches",
         # Repeatedly sending an anchorless edit is the same predicament wearing
         # a different error: the model knows the content it wants and cannot
         # express it as an anchor.
@@ -1287,7 +1294,13 @@ class ProjectEngine:
     def _anchor_failed_before(self, task: Task) -> bool:
         return bool(task.last_error) and any(marker in task.last_error for marker in self._ANCHOR_TROUBLE)
 
-    def _withdrawn_tools(self, task: Task) -> set[str]:
+    #: How many recent EXECUTE steps to read for anchor trouble, and how many
+    #: of them must show it. Two, because one miss is ordinary and two in the
+    #: last handful means the model's picture of the file has drifted.
+    _ANCHOR_HISTORY_STEPS = 8
+    _ANCHOR_HISTORY_FAILURES = 2
+
+    def _withdrawn_tools(self, task: Task, project: Project | None = None) -> set[str]:
         """Tools to stop offering for this attempt.
 
         A model that cannot land an anchor keeps trying to land an anchor, and
@@ -1296,12 +1309,44 @@ class ProjectEngine:
         times running.  Taking ``apply_edits`` off the menu does work, for the
         same reason that removing the rewrite verb from the repository schema
         worked: a model cannot choose what it is not offered.
+
+        The signal used to be the task's own ``last_error``, and that made the
+        withdrawal easy to escape without meaning to. DIAGNOSE creates a new
+        task whenever it cannot reopen one, a new task has no last error, and
+        the anchor comes straight back. Measured on the archive repair: eleven
+        anchor failures across six tasks, and ``apply_edits`` was on the menu
+        for every one of them, because no single task had failed twice in a
+        row with it.
+
+        So the project's recent history counts too. Anchors that keep missing
+        are a fact about the model's picture of the files, not about which task
+        happened to be open when they missed.
         """
 
-        return {"apply_edits"} if self._anchor_failed_before(task) else set()
+        if self._anchor_failed_before(task) or self._anchor_trouble_recently(project):
+            return {"apply_edits"}
+        return set()
 
-    def _anchor_trouble_notice(self, task: Task) -> str:
-        if not self._anchor_failed_before(task):
+    def _anchor_trouble_recently(self, project: Project | None) -> bool:
+        """Whether anchored edits have been missing lately, on any task."""
+
+        if project is None:
+            return False
+        seen = 0
+        for step in reversed(project.steps[-self._ANCHOR_HISTORY_STEPS:]):
+            if step.phase is not Phase.EXECUTE:
+                continue
+            for call in step.tool_calls:
+                error = str(call.get("error") or "")
+                if error and any(marker in error for marker in self._ANCHOR_TROUBLE):
+                    seen += 1
+                    break
+            if seen >= self._ANCHOR_HISTORY_FAILURES:
+                return True
+        return False
+
+    def _anchor_trouble_notice(self, task: Task, project: Project | None = None) -> str:
+        if not (self._anchor_failed_before(task) or self._anchor_trouble_recently(project)):
             return ""
         # Two ways out, because there are two situations and only one used to be
         # named. Sending the whole file back is right for a short one and

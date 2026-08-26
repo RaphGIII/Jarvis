@@ -1216,3 +1216,122 @@ def test_a_satisfied_criterion_contributes_no_notice(tmp_path):
     project.acceptance[0].satisfied = True
 
     assert _Engine()._foreign_frame_notice(project, ToolContext(workspace=tmp_path)) == ""
+
+
+# --------------------------------------------------------------------------
+# A new task used to hand the anchor back
+# --------------------------------------------------------------------------
+#
+# Taking apply_edits off the menu is what works -- a model cannot choose what it
+# is not offered -- and the signal was the task's own last_error. DIAGNOSE
+# creates a new task whenever it cannot reopen one, a new task has no last
+# error, and the anchor came straight back.
+#
+# Measured on the archive-count repair: eleven anchor failures across six tasks,
+# and apply_edits was offered for every one of them, because no single task had
+# failed twice in a row with it. `replace_definition` was on the menu the whole
+# time and never chosen, which is the same lesson as always: advice does not
+# work, removing the option does.
+
+
+def _execute_step(error: str):
+    from projects.models import Phase, StepRecord
+
+    return StepRecord(
+        phase=Phase.EXECUTE,
+        summary="tried an edit",
+        success=False,
+        tool_calls=[{"name": "apply_edits", "ok": False, "error": error}],
+    )
+
+
+def _fresh_task():
+    from projects.models import Task
+
+    return Task(title="a task nobody has failed yet", detail="")
+
+
+def test_repeated_anchor_failures_withdraw_the_tool_from_a_brand_new_task():
+    from projects.models import Project
+
+    project = Project(goal="fix the count")
+    project.steps.append(_execute_step("apply_edits: no safe unique match for main.py"))
+    project.steps.append(_execute_step("apply_edits: search matches 2 different places in main.py"))
+
+    withdrawn = _Engine()._withdrawn_tools(_fresh_task(), project)
+
+    assert "apply_edits" in withdrawn
+
+
+def test_one_miss_is_not_enough_to_withdraw_anything():
+    """One failed anchor is ordinary editing. Two in the last few steps is a
+    picture of the file that has drifted."""
+
+    from projects.models import Project
+
+    project = Project(goal="fix the count")
+    project.steps.append(_execute_step("apply_edits: no safe unique match for main.py"))
+
+    assert _Engine()._withdrawn_tools(_fresh_task(), project) == set()
+
+
+def test_a_clean_history_withdraws_nothing():
+    from projects.models import Project
+
+    assert _Engine()._withdrawn_tools(_fresh_task(), Project(goal="fix the count")) == set()
+
+
+def test_failures_that_are_not_about_anchors_do_not_withdraw_the_editor():
+    """A test that failed is not a reason to stop offering the edit tool."""
+
+    from projects.models import Project
+
+    project = Project(goal="fix the count")
+    project.steps.append(_execute_step("run_tests: 1 failed, 3 passed"))
+    project.steps.append(_execute_step("run_tests: 1 failed, 3 passed"))
+
+    assert _Engine()._withdrawn_tools(_fresh_task(), project) == set()
+
+
+def test_old_anchor_trouble_stops_counting():
+    """The signal is "lately", not "ever" -- a project that has since been
+    editing happily should get its tool back."""
+
+    from projects.models import Phase, Project, StepRecord
+
+    project = Project(goal="fix the count")
+    project.steps.append(_execute_step("apply_edits: no safe unique match for main.py"))
+    project.steps.append(_execute_step("apply_edits: no safe unique match for main.py"))
+    for _ in range(_Engine()._ANCHOR_HISTORY_STEPS):
+        project.steps.append(StepRecord(phase=Phase.EXECUTE, summary="edited fine", success=True))
+
+    assert _Engine()._withdrawn_tools(_fresh_task(), project) == set()
+
+
+def test_an_ambiguous_anchor_counts_as_anchor_trouble():
+    """The marker list is matched against message TEXT, and it held the kind
+    names -- so "ambiguous_search" never once fired against a real message. An
+    ambiguous anchor was 5 of the 22 failed EXECUTE steps in the sprint
+    measurement, the second commonest edit failure there is."""
+
+    from projects.models import Project
+
+    project = Project(goal="fix the count")
+    project.steps.append(_execute_step("apply_edits: search matched 2 places in main.py:"))
+    project.steps.append(_execute_step(
+        "apply_edits: search matches 3 different places in main.py; make the anchor unique"))
+
+    assert "apply_edits" in _Engine()._withdrawn_tools(_fresh_task(), project)
+
+
+def test_the_notice_names_both_ways_out():
+    from projects.models import Project
+
+    project = Project(goal="fix the count")
+    project.steps.append(_execute_step("apply_edits: no safe unique match for main.py"))
+    project.steps.append(_execute_step("apply_edits: no safe unique match for main.py"))
+
+    notice = _Engine()._anchor_trouble_notice(_fresh_task(), project)
+
+    assert "replace_definition" in notice
+    assert "write_file" in notice

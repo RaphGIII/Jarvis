@@ -778,7 +778,12 @@ def test_a_new_conversation_clears_the_transcript_but_never_the_record(live, tmp
     client.call("/api/new")
 
     assert core.history == []
-    assert core.state.state is JarvisState.IDLE
+    # Settled rather than read: /api/new sets IDLE, and a trailing STATE from
+    # the turn before it arrives a moment later on the same stream. Reading
+    # immediately is the same race `7e76681` fixed for the other state
+    # assertions in this file, and it behaved the same way -- green alone, red
+    # in a full run.
+    assert client.settled("idle") == "idle"
     assert len(core.receipts.all()) == receipts_before
     assert len(core.activity.recent()) == activity_before
 
