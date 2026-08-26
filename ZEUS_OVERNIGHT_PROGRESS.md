@@ -597,9 +597,14 @@ with nothing removed the model could act on.
    written and bites; the repair loop failed to satisfy it, the expert fixed the
    count and broke the tests, and nothing was promoted. It is the smallest open
    defect in the system and the best next test of the repair loop.
-5. The three `replace_definition` fixes landed after that repair had already
-   run. Whether a local attempt can now use the tool is untested against a real
-   repair -- the archive count is the obvious thing to try it on.
+5. The three `replace_definition` fixes were then tried against that same
+   repair, and the local tier still could not land it -- but it did not fail on
+   anchors this time. It went 6/1 green, then thrashed writing its own tests and
+   went backwards to 3/4, and `replace_definition` was never reached because the
+   anchor failures had scrolled out of the withdrawal window while it did so.
+   That is a model-competence limit rather than a pipeline one, which is what
+   [[jarvis-mission-state]] already names as the binding constraint. The tool
+   remains untested against a repair it could actually have carried.
 6. A repair disables what it rebuilds, and `_restore` covers every path the
    mission returns through. A process that is KILLED returns through none of
    them, so the disable outlives the mission. Recovering that needs work at
