@@ -22,8 +22,8 @@ Not synonyms, and never used as such below.
 
 ## Current position
 
-**Commit:** `e26f723` + this working tree
-**Milestone:** Priority 3 PASSED — `system.screen.capture` acquired, verified and promoted
+**Commit:** `37abca4` + this working tree
+**Milestone:** Priority 3 PASSED; Spotify A–G all green; `music.provider.spotify` v1.0.5
 **Human action required:** none
 
 ---
@@ -41,10 +41,18 @@ Not synonyms, and never used as such below.
 | C | pause | `Bohemian Rhapsody - Queen [Paused]` |
 | D | resume | `Bohemian Rhapsody - Queen [Playing]` |
 | E | next | `'Bohemian Rhapsody' -> 'God Save the Queen'` |
-| F | what's playing | running |
-| G | restart + reuse, no reacquisition | running |
+| F | what's playing | `CANNIBAL - MoreTekk`, matched against Windows |
+| G | restart + reuse, no reacquisition | `Du hast - Rammstein [Playing]` — 61 s, 0 acquisitions |
 
 B is the defect that took four repair cycles. It is fixed and verified.
+
+F failed once, and it failed in the measuring instrument. The harness read
+Windows, asked, and compared the answer against the reading it had taken
+several seconds earlier; Spotify auto-advanced in between, so the two were
+describing different moments. A verdict reached against a stale observation —
+this time in the ruler. It now pauses first so the queue cannot advance, reads
+before and after, and requires the answer to name a track that was genuinely
+current while ZEUS was looking.
 
 ### The defect, and why six gates missed it
 
@@ -63,11 +71,57 @@ it asks the provider to search for a common word, takes the result as the
 expectation, and requires that to be what Windows reports. Verified against
 v1.0.4: `SWITCH_OK Feel Good Inc. -> Love Me Not`.
 
-### Open Spotify issue
+### The latency defect — found, handed to ZEUS, repaired, verified
 
-First play costs ~186 s cold, ~60 s warm. The capability spawns a fresh
-PowerShell per operation and its await loop blocks up to 30 s. Not shippable
-latency; not yet handed to the repair loop.
+`music.provider.spotify` **v1.0.5**, promoted after ZEUS re-ran all eight gates
+itself. 24.3 minutes, 13 model calls, one local attempt, escalated once.
+
+Measured before, through the product and then through each layer:
+
+| | |
+|---|---|
+| "what's playing", through the product | 154.7 s cold, 30.2 s warm |
+| `run({'action': 'current'})` | 151 s cold, 26.5 s warm |
+| `tools.media_session.read()` — the same question | **1.3 s** |
+| the WinRT work, timed inside the PowerShell script | **0.3 s** |
+
+So the capability spent between twenty and a hundred and fifty times what the
+work costs, and it was not the model: only FAST_LOCAL is ever loaded during
+that turn, and it answers ordinary chat in 1.1 s.
+
+The cause was measured, not guessed. Stage timings taken *inside* PowerShell —
+`Add-Type` 0.11 s, resolve the WinRT types 0.16 s, `RequestAsync` 0.19 s,
+`GetSessions` 0.20 s, `GetPlaybackInfo` 0.22 s, `TryGetMediaPropertiesAsync`
+0.24 s, emit 0.30 s — around **8.8 s of wall clock**. The stopwatch starts after
+parsing, so the missing time is spent before the first line runs: the bridge
+handed PowerShell the whole 5 kB script with `-EncodedCommand`, and PowerShell
+re-parses that string on every invocation.
+
+**This exact defect was measured and fixed once already**, in `2f3a4a2`, in
+`tools/media_session.py` — 4.4 s a call down to 1.1 s by running the script from
+a file with a `param()` block. The capability was written before that commit and
+could not see the lesson, because the lesson lived in a Jarvis module a
+model-authored capability has no access to. It is now a capability constraint,
+which is the only place a fact like that reaches the code that needs it.
+
+The gate was written before the repair and proved to bite against the defect:
+`a warm current took 26.5s; the budget is 8.0s and Windows answers in 0.3s`. It
+checks correctness alongside the clock, from Windows, so a capability cannot
+pass it by answering faster from somewhere other than the operating system.
+
+Measured after, independently, through the registry:
+
+| | before | after |
+|---|---|---|
+| `run({'action': 'current'})` | 26.5 s warm | **1.7 s** |
+| "what's playing", through the product | 30.2 s warm | **5.1 s** |
+| — cold | 154.7 s | **5.0 s** |
+| ordinary chat (FAST_LOCAL) | 1.1 s | 1.5 s |
+| `status` | 0.3 s, no model call | 0.3 s, no model call |
+
+The expert reported its own attempt as **failed**. ZEUS re-ran the gates and
+promoted on its own verification — the fifth time in five that the rule has
+been the difference between a verdict and a claim.
 
 ---
 
@@ -313,6 +367,33 @@ nothing.
 This one is worth noting for how it was found: it was invisible with one
 capability installed. The benchmark did not test it; having done the benchmark
 made it testable.
+
+### The two local models cannot both be resident, and that is hardware
+
+Six tier changes in the passing acquisition cost about **303 seconds — 11% of
+the run** — reloading a model that had been resident moments earlier.
+
+| from → to | first call after the change |
+|---|---|
+| BUILD → FAST | 88.9 s, 34.8 s, 34.5 s (on 210-character prompts) |
+| FAST → BUILD | 112.9 s, 74.0 s, 79.5 s |
+
+Steady-state, the same tiers cost 3.0 s and 37.5 s. So roughly 150 seconds on
+each side of the swap is pure reloading.
+
+Tested rather than assumed, at two context sizes:
+
+```
+num_ctx 8192   coder 5.12 GB resident -> load qwen3:4b -> coder EVICTED
+num_ctx 4096   coder 4.74 GB resident -> load qwen3:4b -> coder EVICTED
+```
+
+4.74 + 3.18 GB is 7.9 GB on an 8 GB card that already owes ~0.7 GB to the
+display. They do not fit at any context size, so this is not a configuration
+mistake and cannot be tuned away. The remedy, if it is worth taking, is
+behavioural — do not interleave the tiers inside one mission — and it is
+recorded here rather than acted on, because the measurement does not yet say
+which FAST_LOCAL calls those were.
 
 ### The pattern, again
 
