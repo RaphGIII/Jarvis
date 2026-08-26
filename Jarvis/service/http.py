@@ -192,6 +192,22 @@ class JarvisHTTPServer:
             # The supervisor's contract. READY here means the conversation
             # model produced real text in this process -- the port being open
             # is what the supervisor already knows.
+            # The owner core. Reading is open to any authenticated client;
+            # approve and rollback are the only writers the five documents
+            # have, and they exist only here -- no model, capability, expert
+            # or ingestion path holds a reference to them.
+            "/api/selfdev": lambda _: self.core.list_selfdev(),
+            "/api/owner": lambda _: self.core.owner_view(),
+            "/api/owner/propose": lambda body: self.core.owner_propose(
+                dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui"
+            ),
+            "/api/owner/approve": lambda body: self.core.owner_approve(
+                str(body.get("transaction_id", "")), confirm=bool(body.get("confirm", False))
+            ),
+            "/api/owner/reject": lambda body: self.core.owner_reject(str(body.get("transaction_id", ""))),
+            "/api/owner/rollback": lambda body: self.core.owner_rollback(
+                str(body.get("audit_id", "")), confirm=bool(body.get("confirm", False))
+            ),
             "/api/health": lambda _: self.core.lifecycle.health(),
             "/api/supervisor": lambda _: self.core.lifecycle.supervisor_status(),
             "/api/restart": lambda body: self.core.lifecycle.request_restart(

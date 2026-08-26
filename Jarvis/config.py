@@ -32,7 +32,15 @@ def system_prompt(identity=None) -> str:
         from core.identity import current
 
         identity = current()
-    return f"\nYou are {identity.assistant_name}, an autonomous artificial intelligence.\n{BEHAVIOUR_PROMPT}"
+    # The owner's personality reaches every route through this one function,
+    # so FAST_LOCAL chat and BUILD_LOCAL work describe the same character.
+    try:
+        from owner.core import current as owner_core
+
+        personality = "\n" + owner_core().personality_prompt() + "\n"
+    except Exception:
+        personality = ""
+    return f"\nYou are {identity.assistant_name}, this user's personal AI system.\n{personality}{BEHAVIOUR_PROMPT}"
 
 
 def __getattr__(name: str):

@@ -526,6 +526,16 @@ class RepositoryEngineer:
                 full_test_commands = None
                 benchmark_commands = None
 
+        # The owner's protected paths apply to every goal that targets ZEUS
+        # itself, whatever the caller declared. A goal cannot opt out of them;
+        # it can only add to them.
+        if (source / "zeus_supervisor").is_dir() or (source / "owner").is_dir():
+            from owner.protected import PROTECTED_PATHS
+
+            merged = list(goal.protected_paths)
+            merged.extend(p for p in PROTECTED_PATHS if p not in merged)
+            goal = SelfImprovementGoal(**{**goal.to_dict(), "protected_paths": merged})
+
         targeted_commands = list(acceptance_commands or goal.tests)
         full_commands = list(full_test_commands if full_test_commands is not None else goal.full_tests)
         bench_commands = list(benchmark_commands if benchmark_commands is not None else goal.benchmark_commands())

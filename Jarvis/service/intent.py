@@ -56,12 +56,15 @@ class Intent(str, Enum):
     #: other, routed to whichever provider the user prefers -- this layer never
     #: learns which one that is.
     MUSIC = "music"
+    #: "Change something about yourself."  Becomes a persistent self-development
+    #: mission: worktree, BUILD_LOCAL, verification, promotion, restart.
+    SELF_DEVELOPMENT = "self_development"
 
     @property
     def has_side_effect(self) -> bool:
         """Whether answering this may change the world."""
 
-        return self in {Intent.ACTION, Intent.PROJECT, Intent.CAPABILITY, Intent.MUSIC}
+        return self in {Intent.ACTION, Intent.PROJECT, Intent.CAPABILITY, Intent.MUSIC, Intent.SELF_DEVELOPMENT}
 
     @property
     def needs_receipt(self) -> bool:
@@ -210,6 +213,55 @@ CAPABILITY_HINTS = (
     "neue fähigkeit",
 )
 
+#: A change to ZEUS itself: its interface, its code, its behaviour.  Checked
+#: before PROJECT and ACTION because "ändere dein Auge" contains an action verb
+#: and "implementiere das in deiner UI" contains a project verb, and both are
+#: about this system rather than about a file or an app.
+SELF_DEVELOPMENT_HINTS = (
+    "an dir selbst",
+    "an dir ",
+    "dich selbst",
+    "verändere dich",
+    "veraendere dich",
+    "ändere dich",
+    "aendere dich",
+    "verbessere dich",
+    "aktualisiere dich",
+    "entwickle dich",
+    "deine oberfläche",
+    "deine oberflaeche",
+    "deine ui",
+    "deiner ui",
+    "dein interface",
+    "deinem interface",
+    "dein auge",
+    "deinem auge",
+    "deinen code",
+    "deinem code",
+    "dein eigener code",
+    "deinen eigenen code",
+    "deinem eigenen code",
+    "dein verhalten",
+    "in dir ",
+    "bei dir ",
+    "change yourself",
+    "about yourself",
+    "improve yourself",
+    "update yourself",
+    "modify yourself",
+    "your own code",
+    "your codebase",
+    "your interface",
+    "your ui",
+    "your eye",
+    "next to your eye",
+    "in your ui",
+    "your behaviour",
+    "your behavior",
+    "self-development",
+    "selbstentwicklung",
+)
+
 #: Durable engineering work.  Kept aligned with :class:`brain.router.BrainRouter`
 #: so the CLI and the web service agree about what a project is.
 PROJECT_HINTS = (
@@ -272,6 +324,16 @@ def classify(text: str) -> Classification:
             return Classification(
                 Intent.READ, f"asks about this system's own state: {hint!r}", matched=hint
             )
+
+    # A question about itself is READ (handled above); a request to change
+    # itself is self-development, and it beats the capability, project and
+    # action rules because all three can be phrased about ZEUS's own code.
+    if not normalized.rstrip().endswith("?"):
+        for hint in SELF_DEVELOPMENT_HINTS:
+            if hint in normalized:
+                return Classification(
+                    Intent.SELF_DEVELOPMENT, f"asks to change this system itself: {hint!r}", matched=hint
+                )
 
     for hint in CAPABILITY_HINTS:
         if hint in normalized:

@@ -397,6 +397,15 @@ class Promoter:
     def _copy_files(self, candidate: Path, files: list[str]) -> list[str]:
         """Copy exactly the declared files, refusing anything that escapes."""
 
+        from owner.protected import protected_violations
+
+        # The owner's domain and the recovery machinery never move through a
+        # promotion. This is the last gate before the live tree, and it does
+        # not trust that an earlier one was consulted.
+        violations = protected_violations(files)
+        if violations:
+            raise ValueError(f"owner-protected paths may not be promoted: {violations[:5]}")
+
         applied: list[str] = []
         for relative in files:
             raw = Path(relative)
