@@ -460,10 +460,48 @@ while things are small and quietly stops being right as they grow.
 
 ---
 
+## Acquisition speed — what was measured, and what was done
+
+The passing run: 48 engine steps, 49 model calls, 47.6 minutes.
+
+| phase | steps | share | failed |
+|---|---|---|---|
+| EXECUTE | 17 | 35% | 4 |
+| DIAGNOSE | 16 | 33% | 0 |
+| VERIFY | 13 | 27% | 13 |
+| INVESTIGATE | 1 | 2% | 0 |
+| DECOMPOSE | 1 | 2% | 0 |
+
+VERIFY costs **no model call at all** — it is the deterministic gate runner. So
+the model budget is EXECUTE and DIAGNOSE, and on this GPU **prefill dominates
+each of them**: 37 BUILD_LOCAL calls at 41.6 s on prompts of 24,000 characters.
+
+Four changes, each from a measurement rather than an intuition:
+
+| change | effect |
+|---|---|
+| the goal was in every prompt twice | brief 29.5 k → 16.6 k chars |
+| `python -c` check scripts pasted in full | −5,385 chars a call |
+| DECOMPOSE planning lookups as tasks | 2 fewer EXECUTE steps, and no lookup task left for a repair to reopen |
+| a task that never exhausts could be reopened for ever | a whole run's tail of no-op EXECUTEs, gone |
+
+Total prompt, same project and state: **41,095 → 29,610 characters, −28%**,
+with nothing removed the model could act on.
+
+---
+
 ## Next actions
 
-1. Finish Spotify acceptance F and G.
-2. Run `jarvis.measure_pipeline --heavy` on a free GPU for latency + eviction numbers.
-3. Optimise generic acquisition speed; reduce model calls that produce no progress.
-4. Checkpoint/resume so a capability mission survives a restart.
-5. Verified-trajectory reuse, so the second acquisition in a domain is cheaper.
+1. `jarvis.measure_pipeline --heavy` on a free GPU, for the numbers this sprint
+   did not need but the roadmap does.
+2. Find which FAST_LOCAL calls happen *inside* an acquisition. Six tier changes
+   cost 303 s and the models cannot coexist, so the only remedy is not to
+   interleave them — and the measurement does not yet say which calls those
+   were. Their prompts were 210 characters, which is the clue.
+3. A third capability, in a third domain, against the numbers above. The first
+   cross-domain acquisition needed one local attempt and an escalation; the
+   question is whether the reusable pattern now recorded makes the second one
+   cheaper.
+4. `main.py` for the Spotify provider is 708 lines and its repair spent eight
+   consecutive anchor failures before escalating. `replace_definition` exists
+   now; whether a local attempt can use it is untested against a real repair.
