@@ -1604,14 +1604,27 @@ class ProjectEngine:
             # dropping the seventh is how carefully-written guidance stops
             # reaching the model.
             lines.append("CONSTRAINTS:\n" + "\n".join(f"  - {item}" for item in project.constraints))
-        if project.requirements:
-            lines.append("REQUIREMENTS:\n" + "\n".join(f"  - {item.text}" for item in project.requirements[-8:]))
+        # The goal is seeded as the project's first requirement, deliberately --
+        # requirements accumulate and the original one belongs among them. It
+        # does not belong in the prompt twice. Measured on a live acquisition:
+        # the goal was 8,416 characters, the single requirement was the same
+        # 8,416 characters, and together they were 56% of a brief that was
+        # itself 72% of every BUILD_LOCAL prompt. On this GPU prefill is most
+        # of a call, so that duplicate was several seconds of every one of
+        # thirty-seven calls.
+        goal_text = project.goal.strip()
+        requirements = [
+            item for item in project.requirements[-8:]
+            if item.text.strip() and item.text.strip() != goal_text
+        ]
+        if requirements:
+            lines.append("REQUIREMENTS:\n" + "\n".join(f"  - {item.text}" for item in requirements))
         if project.acceptance:
             lines.append(
                 "ACCEPTANCE:\n"
                 + "\n".join(
                     f"  - [{'x' if item.satisfied else ' '}] {item.text}"
-                    + (f"  (check: {' '.join(item.check)})" if item.check else "  (NO RUNNABLE CHECK)")
+                    + (f"  (check: {_check_label(item.check)})" if item.check else "  (NO RUNNABLE CHECK)")
                     # The NEWEST eight. Every other list here takes the tail, and
                     # taking the head instead means that on a project which
                     # accumulates requirements -- the case this engine exists for
@@ -1723,6 +1736,31 @@ class ProjectEngine:
             what="model call",
             on_abandon=lambda: self.heartbeat.beat("model_timeout", f"abandoned a call after {timeout:.0f}s"),
         )
+
+
+def _check_label(command: list[str]) -> str:
+    """How a criterion is checked, short enough to be worth saying.
+
+    ``python -m pytest -q test_capability.py`` is worth showing: it tells the
+    model where the tests it must make pass actually live. ``python -c`` with a
+    900-character script after it is not. The model cannot run it, cannot edit
+    it, and cannot learn anything from it that the criterion's own text does not
+    already say -- and the criterion's text is what it is graded against.
+
+    Measured on a live acquisition: eight criteria carried 5,385 characters of
+    inline script between them against 827 characters of criterion text, and
+    every one of those characters was in every prompt of the run.
+    """
+
+    if not command:
+        return ""
+    parts = [str(part) for part in command]
+    for index, part in enumerate(parts):
+        # -c takes a program on the command line; everything after it is source.
+        if part == "-c":
+            return " ".join(parts[: index + 1] + ["..."])
+    rendered = " ".join(parts)
+    return rendered if len(rendered) <= 160 else rendered[:157] + "..."
 
 
 #: Marker in a task's detail identifying it as invented by a diagnosis rather

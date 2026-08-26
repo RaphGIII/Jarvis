@@ -524,3 +524,94 @@ def test_apply_edits_is_withdrawn_after_repeated_unparseable_edits(store, tools)
 
     withdrawn = [prompt for prompt in brain.prompts if "apply_edits is not available" in prompt]
     assert withdrawn, "repeated syntax breakage must push the model onto write_file"
+
+
+# --------------------------------------------------------------------------
+# What a prompt is allowed to spend its characters on
+# --------------------------------------------------------------------------
+#
+# On a GTX 1070 prefill is most of a call, so prompt size decides the wall
+# clock of an acquisition more than anything the model says back. Measured on
+# the live screen-capture run: 37 BUILD_LOCAL calls at 41.6 seconds each,
+# prompts of 24,000 characters, of which the project brief was 72%.
+
+
+def test_the_goal_is_not_sent_twice():
+    """`create_project` seeds the goal as the first requirement, deliberately.
+    It does not belong in the prompt twice.
+
+    Measured on a live acquisition: the goal was 8,416 characters, the single
+    requirement was the same 8,416 characters, and between them they were 56%
+    of the brief -- in every one of thirty-seven calls.
+    """
+
+    from projects.engine import ProjectEngine
+    from projects.models import Project
+
+    goal = "Build a reusable capability that can capture the screen. " * 40
+    project = Project(goal=goal.strip())
+    project.add_requirement(goal.strip(), source="user")
+
+    brief = ProjectEngine._project_brief(ProjectEngine.__new__(ProjectEngine), project)
+
+    assert brief.count("capture the screen") == goal.count("capture the screen")
+    assert "REQUIREMENTS:" not in brief
+
+
+def test_a_requirement_that_is_not_the_goal_is_still_shown():
+    from projects.engine import ProjectEngine
+    from projects.models import Project
+
+    project = Project(goal="build a screenshot capability")
+    project.add_requirement("build a screenshot capability", source="user")
+    project.add_requirement("it must also work on a locked screen", source="user")
+
+    brief = ProjectEngine._project_brief(ProjectEngine.__new__(ProjectEngine), project)
+
+    assert "it must also work on a locked screen" in brief
+
+
+def test_an_inline_check_script_is_not_pasted_into_the_prompt():
+    """The model cannot run it, cannot edit it, and is graded against the
+    criterion's text rather than its script. Eight criteria carried 5,385
+    characters of inline script against 827 of criterion text."""
+
+    from projects.engine import ProjectEngine
+    from projects.models import Project
+
+    script = "import main; assert main.run({})['ok'] is True; " * 30
+    project = Project(goal="build a screenshot capability")
+    project.add_acceptance("run() produces a real PNG", check=["python", "-c", script])
+
+    brief = ProjectEngine._project_brief(ProjectEngine.__new__(ProjectEngine), project)
+
+    assert "run() produces a real PNG" in brief
+    assert script not in brief
+    assert "python -c ..." in brief
+
+
+def test_a_short_check_command_is_still_shown_in_full():
+    """It says where the tests the model must make pass actually live."""
+
+    from projects.engine import ProjectEngine
+    from projects.models import Project
+
+    project = Project(goal="build a screenshot capability")
+    project.add_acceptance("the tests pass",
+                           check=["python", "-m", "pytest", "-q", "test_capability.py"])
+
+    brief = ProjectEngine._project_brief(ProjectEngine.__new__(ProjectEngine), project)
+
+    assert "python -m pytest -q test_capability.py" in brief
+
+
+def test_a_criterion_with_no_check_still_says_so():
+    from projects.engine import ProjectEngine
+    from projects.models import Project
+
+    project = Project(goal="build a screenshot capability")
+    project.add_acceptance("it feels nice to use")
+
+    brief = ProjectEngine._project_brief(ProjectEngine.__new__(ProjectEngine), project)
+
+    assert "NO RUNNABLE CHECK" in brief
