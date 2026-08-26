@@ -724,7 +724,7 @@ def _record_requirements(workspace: Path, packages: list[str]) -> None:
 
 
 def find_program(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
-    """Report whether a program exists on this machine, and where.
+    """Report whether ``name`` is available on this machine, and in what form.
 
     Deliberately NOT called ``which``. It was, and a local model writing a
     capability confused this tool with ``shutil.which``: it called the stdlib
@@ -732,11 +732,87 @@ def find_program(arguments: dict[str, Any], context: ToolContext) -> dict[str, A
     that is the shape *this* tool returns. A tool name that shadows a
     well-known standard-library function with different semantics is a trap,
     and the fix belongs in the name rather than in a warning nobody reads.
+
+    It used to answer a narrower question than the one it was asked. It ran
+    ``shutil.which`` and nothing else, so *is pyautogui available here* came
+    back ``found: false`` -- true of the PATH, false of the machine, and read
+    by the model as the second. Measured live during the screen-capture
+    acquisition:
+
+        find_program({"name": "pyautogui"}) -> {"found": false, "path": ""}
+        find_program({"name": "mss"})       -> {"found": false, "path": ""}
+
+    pyautogui is installed and importable here; the project's own constraints
+    said so two paragraphs above. Both answers looked identical, so the model
+    treated the installed package and the absent one as equally unavailable,
+    picked ``mss`` anyway, and spent the rest of its budget diagnosing an
+    ImportError. An executable check standing in for an availability check is
+    the same substitution as description overlap standing in for relevance.
+
+    So the answer distinguishes the two ways a thing can be here. ``found``
+    means available *somehow*; ``kind`` says which, and is what decides how to
+    use it. A python package reports no ``path`` on purpose -- there is nothing
+    to hand to ``subprocess`` -- and ``answer`` says in words what the fields
+    mean, because the field the model reads first is whichever one it reads
+    first.
     """
 
     name = str(arguments["name"])
     location = shutil.which(name)
-    return {"name": name, "found": bool(location), "path": location or ""}
+    if location:
+        return {
+            "name": name,
+            "found": True,
+            "kind": "executable",
+            "path": location,
+            "importable": False,
+            "answer": f"{name} is an executable program at {location}. Run it with subprocess.",
+        }
+
+    if _importable(name):
+        return {
+            "name": name,
+            "found": True,
+            "kind": "python_package",
+            "path": "",
+            "importable": True,
+            "answer": (
+                f"{name} is NOT a command you can run, but it IS an installed Python package on "
+                f"this machine: `import {name}` works. Use it by importing it. There is no path "
+                f"to pass to subprocess."
+            ),
+        }
+
+    return {
+        "name": name,
+        "found": False,
+        "kind": "absent",
+        "path": "",
+        "importable": False,
+        "answer": (
+            f"{name} is neither a program on PATH nor an installed Python package. Do not import "
+            f"it and do not try to run it -- choose something that is here instead."
+        ),
+    }
+
+
+def _importable(name: str) -> bool:
+    """Whether ``import name`` would work, without running the module.
+
+    ``find_spec`` locates a module without executing it, which matters for a
+    package like pyautogui whose import has side effects on the desktop. A
+    dotted or otherwise unusable name is not importable rather than an error:
+    this is a question, and every question here has an answer.
+    """
+
+    if not name or not name.isidentifier():
+        return False
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError, AttributeError, TypeError):
+        return False
 
 
 # --------------------------------------------------------------------------
@@ -949,8 +1025,11 @@ def builtin_tools() -> list[ToolSpec]:
         ToolSpec(
             name="find_program",
             purpose=(
-                "Check whether a program is installed on this machine and where it lives. "
-                "Returns {found: bool, path: str}. This is a Jarvis tool, not Python's shutil.which()."
+                "Check whether something is available on this machine -- an executable OR an "
+                "importable Python package -- and how to use it. Returns "
+                "{found: bool, kind: 'executable'|'python_package'|'absent', path: str, answer: str}. "
+                "kind='python_package' means import it; there is no path to run. "
+                "This is a Jarvis tool, not Python's shutil.which()."
             ),
             input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
             adapter=find_program,

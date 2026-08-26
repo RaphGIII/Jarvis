@@ -213,14 +213,29 @@ def _importable_packages(limit: int = 24) -> str:
     Checked by importlib rather than listed by hand: a hand-written list drifts
     the moment anything is installed or removed, and a briefing that is wrong
     about the environment is worse than one that says nothing.
+
+    What is returned is what was *probed*, which is not the same as what exists.
+    The briefing used to follow this list with "anything else is NOT installed",
+    and that sentence was false: mss was installed here and on no candidate
+    list, so the model was told to avoid the very library that would have done
+    the job. A bounded probe is the right thing in a prompt; the absolute
+    claimed around it was not. Anything outside this list is *unknown*, and
+    ``find_program`` is what answers for it.
     """
 
     import importlib.util
 
+    # Probed, not assumed. Adding a name here costs one find_spec and makes the
+    # briefing more informative; asserting a name is absent without probing it
+    # is what made the briefing wrong. mss, pyperclip, keyboard, pyscreeze,
+    # pygetwindow and pytesseract were all installed on this machine and on no
+    # list, so a capability that needed one was told to use the standard
+    # library instead.
     candidates = (
         "numpy", "requests", "chess", "cv2", "PIL", "yaml", "bs4", "lxml",
         "pandas", "scipy", "matplotlib", "pygame", "pydub", "mutagen",
         "psutil", "pyautogui", "comtypes", "pycaw", "win32api", "torch",
+        "mss", "pyperclip", "keyboard", "pyscreeze", "pygetwindow", "pytesseract",
     )
     found = []
     for name in candidates:
@@ -579,8 +594,11 @@ class CapabilityService:
                 # nothing told it what this interpreter can import, so it
                 # guessed a plausible name. Listing them is cheap and removes an
                 # entire class of failure.
-                f"Third-party packages you may import: {_importable_packages()}. "
-                "Anything else is NOT installed -- use the standard library instead. "
+                f"Third-party packages known to be importable here: {_importable_packages()}. "
+                "That is what was checked, NOT everything that exists -- before importing anything "
+                "else, call find_program with the package name: it answers kind='python_package' for "
+                "something you can import and kind='absent' for something you cannot. Prefer the "
+                "standard library wherever it can do the job. "
                 "winsound, subprocess, shutil, pathlib and os are always available on Windows.",
                 "Jarvis TOOLS (media_folders, find_media, running_processes, find_applications, "
                 "find_program, read_file, ...) exist only while you are investigating. They are NOT "

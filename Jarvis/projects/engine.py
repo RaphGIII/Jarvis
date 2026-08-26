@@ -631,6 +631,20 @@ class ProjectEngine:
             "Each task must be something one focused change can accomplish.\n"
             "Plan ONLY work the tools below can actually perform. Do not plan steps like\n"
             "initialising a git repository or setting up scaffolding that is not required.\n"
+            # INVESTIGATE has already run and its answers are in KNOWN FACTS.
+            # Planned as tasks, they are re-asked once per cycle and answered
+            # identically, and each one is a step that changes nothing. Worse,
+            # a lookup task always succeeds, so it becomes the most recently
+            # *finished* task -- which is what a repair reopens. Measured live
+            # during the screen-capture acquisition: DECOMPOSE planned "Check
+            # if \'mss\' is installed" and "Check if \'pyautogui\' is installed",
+            # the implementation task was abandoned after three attempts, and
+            # the loop then reopened and re-completed the pyautogui check for
+            # the rest of the run.
+            "Every task must CHANGE something in the workspace -- write a file, fix a line,\n"
+            "add a test. Checking whether something is installed, reading a file or looking\n"
+            "a fact up is NOT a task: that already happened, and what it found is under\n"
+            "KNOWN FACTS above. Decide from those facts here, in the plan.\n"
             "Put source files directly in the workspace root; do not nest a directory named\n"
             "after the project.\n"
             "Also give acceptance criteria. Every criterion SHOULD carry a `check`: an executable\n"
@@ -746,6 +760,7 @@ class ProjectEngine:
             # over and over, because it never sees why the stub is wrong.
             + self._failing_check_evidence(project)
             + self._missing_module_notice(project, context)
+            + self._foreign_frame_notice(project, context)
             # The file the task and the last failure are about goes first, and
             # in full: that is the text an anchor has to be copied from.
             + self._workspace_snapshot(context, focus=f"{task.title} {task.detail} {task.last_error}")
@@ -924,6 +939,7 @@ class ProjectEngine:
             + f"EVIDENCE:\n{evidence[:4000]}\n\n"
             + self._failing_check_evidence(project)
             + self._missing_module_notice(project, context)
+            + self._foreign_frame_notice(project, context)
             # Lead the focus with the work in hand, not the last error. Focusing
             # on the failure alone is self-reinforcing: a model that wrongly
             # edited board.py produces an error naming board.py, which sorts
@@ -1161,9 +1177,26 @@ class ProjectEngine:
                 # lifetime count as a verdict.
                 if task.status is not TaskStatus.DONE or not task.reopenable:
                     continue
-                task.reopenings += 1
                 task.attempts = 0
                 task.last_error = ""
+            elif not task.reopenable:
+                # A task that finishes on its first attempt is never exhausted,
+                # so the reopening budget above never applied to it and nothing
+                # bounded how often it could come back. Measured live during the
+                # screen-capture acquisition: the implementation task was
+                # abandoned after three attempts, which made "Check if
+                # 'pyautogui' is installed" -- one tool call, always succeeds,
+                # changes nothing -- the most recent finished task, and the loop
+                # reopened and re-completed it for the rest of the run while the
+                # defect sat untouched.
+                #
+                # ``max_reopenings`` was written to stop exactly that ("a task
+                # cannot oscillate between DONE and reopened for the whole step
+                # budget") and was only ever consulted down the exhausted path.
+                continue
+            # Counted on every reopening, because what is being bounded is the
+            # oscillation, not the attempts that preceded it.
+            task.reopenings += 1
             task.status = TaskStatus.PENDING
             if fix:
                 task.detail = f"{task.detail}\n\nRepair: {fix}".strip()
@@ -1239,7 +1272,12 @@ class ProjectEngine:
         # capability run; the model could describe the fix perfectly each time
         # and could not splice it in. Sending the whole small file is the way
         # out, and it will still meet the shrink guard if it sends a fragment.
+        #
+        # Two spellings because the rejection was reworded to say plainly that
+        # nothing was written; both are kept so an older recorded error still
+        # trips the withdrawal.
         "unparseable",
+        "is not valid Python",
         # The model sent an edit identical to what is already there, which means
         # its idea of the file and the file itself have diverged. Sending the
         # whole small file resynchronises them.
@@ -1379,6 +1417,108 @@ class ProjectEngine:
         body = "\n".join(f"  {line}" for line in notices)
         return f"WHAT THE FAILURE ACTUALLY MEANS:\n{body}\n\n"
 
+    def _foreign_frame_notice(self, project: Project, context: ToolContext) -> str:
+        """Point at the workspace line when the traceback ends inside a library.
+
+        A traceback names the frame where the exception was *raised*, which for
+        a bad argument is inside whatever was called, not where the mistake was
+        made.  A model reading it top-down believes the last line it sees is the
+        defect -- and the last line it sees is somebody else's code.
+
+        Observed live, three diagnosis cycles running, during the screen-capture
+        acquisition.  main.py called ``sct.shot(mon=monitor)`` with a dict where
+        mss wants an index, and mss raised at::
+
+            File "...site-packages/mss/base.py", line 415, in save
+              monitor = monitors[mon]
+
+        Every diagnosis said, correctly quoting the evidence, that the defect
+        was ``monitor = monitors[mon]``.  It then tried to edit that line, which
+        is not in the workspace and never matched an anchor.  The diagnosis was
+        right about the symptom and pointed at a file the project cannot change.
+
+        So the frame that matters is stated rather than inferred: the deepest
+        frame that is *in the workspace* is the last line the project is
+        responsible for, and the defect is in what it passed.  Mechanical --
+        either a path is under the workspace or it is not -- which is exactly
+        the kind of thing that should not be left to a small model reading a
+        stack trace.
+        """
+
+        import re as _re
+        from pathlib import Path as _Path
+
+        failing = [
+            item for item in project.objective_criteria()
+            if not item.satisfied and item.last_evidence
+        ]
+        if not failing:
+            return ""
+
+        try:
+            workspace = _Path(context.workspace).resolve()
+        except OSError:
+            return ""
+
+        frame = _re.compile(r'File "([^"]+)", line (\d+), in (\S+)\s*\n\s*(.*)')
+        for item in failing:
+            frames = frame.findall(item.last_evidence)
+            if len(frames) < 2:
+                continue
+            deepest_path = frames[-1][0]
+            if self._inside(deepest_path, workspace):
+                # The error was raised in the project's own code. The traceback
+                # already points at the right line; saying more would be noise.
+                continue
+            mine = [f for f in frames if self._inside(f[0], workspace)]
+            if not mine:
+                continue
+            path, line, func, source = mine[-1]
+            library = self._library_name(deepest_path)
+            return (
+                "WHERE THE DEFECT ACTUALLY IS:\n"
+                f"  The exception was raised inside {library}, which is a third-party library. "
+                "You cannot edit it and its code is not the bug.\n"
+                "  The last line of YOUR OWN code on the way there is:\n"
+                f"      {_Path(path).name}, line {line}, in {func}\n"
+                f"        {source.strip()[:200]}\n"
+                f"  The defect is in what that line passes or expects. Change "
+                f"{_Path(path).name} -- searching for a line from {library} will never match.\n\n"
+            )
+        return ""
+
+    @staticmethod
+    def _library_name(path: str) -> str:
+        """What the model would have to install or import, not the file inside it.
+
+        ``base.py`` names a file in fifty packages and identifies none of them.
+        The name that means something is the top-level package under
+        site-packages -- *mss* -- because that is what the model can look up,
+        and what it can be told not to edit.
+        """
+
+        from pathlib import Path as _Path
+
+        parts = _Path(path).parts
+        for marker in ("site-packages", "dist-packages"):
+            if marker in parts:
+                index = parts.index(marker)
+                if index + 1 < len(parts):
+                    return _Path(parts[index + 1]).stem
+        return _Path(path).name
+
+    @staticmethod
+    def _inside(candidate: str, workspace: "Path") -> bool:
+        """Whether a traceback path names a file the project is allowed to edit."""
+
+        from pathlib import Path as _Path
+
+        try:
+            _Path(candidate).resolve().relative_to(workspace)
+        except (OSError, ValueError):
+            return False
+        return True
+
     def _failing_check_evidence(self, project: Project) -> str:
         """The output of the acceptance checks that are currently failing.
 
@@ -1485,8 +1625,23 @@ class ProjectEngine:
                 "TASKS:\n"
                 + "\n".join(f"  - [{task.status.value}] {task.title}" for task in project.tasks[-10:])
             )
-        if project.findings:
-            lines.append("KNOWN FACTS:\n" + "\n".join(f"  - {item.text[:220]}" for item in project.findings[-8:]))
+        # A diagnosis is a guess. It is already in the prompt twice -- as the
+        # queued task's repair text, and in the list of explanations already
+        # ruled out -- and listing it a third time under KNOWN FACTS says it is
+        # established when it is exactly what is in doubt.
+        #
+        # The cost is not only the category error. This window is the last
+        # eight, DIAGNOSE writes one finding per cycle, and a stuck loop
+        # produces nothing else -- so within four cycles every fact the tools
+        # established has been pushed out by the guesses that failed to use
+        # them. Measured live during the screen-capture acquisition: the
+        # research tool returned the correct mss call, `with MSS() as sct:
+        # sct.shot()`, and by the time EXECUTE was writing the line, all eight
+        # KNOWN FACTS were repetitions of one wrong diagnosis, and the answer
+        # was gone.
+        established = [item for item in project.findings if getattr(item, "source", "") != "diagnosis"]
+        if established:
+            lines.append("KNOWN FACTS:\n" + "\n".join(f"  - {item.text[:220]}" for item in established[-8:]))
         failed = [item for item in project.experiments if not item.succeeded]
         if failed:
             lines.append(

@@ -369,6 +369,63 @@ def test_which_reports_a_definitely_present_program(registry, context):
     assert not call(registry, context, "find_program", name="definitely-not-installed-xyz").output["found"]
 
 
+# -- find_program answers about availability, not about PATH ----------------
+#
+# It used to run shutil.which and nothing else, so "is pyautogui available
+# here" came back {found: false, path: ""} -- true of the PATH, false of the
+# machine, and read by the model as the second. Measured live during the
+# screen-capture acquisition of 2026-08-26: pyautogui was installed and
+# importable, the project's own briefing said so, and the tool said no.
+
+
+def test_an_importable_package_is_not_reported_as_absent(registry, context):
+    """The defect, stated as a test. `json` is importable in every interpreter
+    that can run this suite and is on no PATH anywhere."""
+
+    output = call(registry, context, "find_program", name="json").output
+
+    assert output["found"] is True
+    assert output["kind"] == "python_package"
+    assert output["importable"] is True
+
+
+def test_a_python_package_offers_no_path_to_execute(registry, context):
+    """A path is what a caller hands to subprocess. There isn't one, and
+    returning something plausible would be worse than returning nothing."""
+
+    output = call(registry, context, "find_program", name="json").output
+
+    assert output["path"] == ""
+    assert "import json" in output["answer"]
+
+
+def test_an_executable_is_still_reported_as_one(registry, context):
+    output = call(registry, context, "find_program", name=Path(sys.executable).stem).output
+
+    if output["found"] and output["kind"] == "executable":
+        assert output["path"]
+        assert "subprocess" in output["answer"]
+
+
+def test_something_that_is_neither_says_so_in_words(registry, context):
+    output = call(registry, context, "find_program", name="definitely-not-installed-xyz").output
+
+    assert output["found"] is False
+    assert output["kind"] == "absent"
+    assert output["importable"] is False
+    assert "neither" in output["answer"]
+
+
+def test_a_name_that_cannot_be_a_module_does_not_raise(registry, context):
+    """A hyphen makes a name unimportable rather than an error. Every question
+    this tool is asked has an answer; none of them is a traceback."""
+
+    output = call(registry, context, "find_program", name="not-an-identifier").output
+
+    assert output["found"] is False
+    assert output["kind"] == "absent"
+
+
 # ------------------------------------------------------------------ research
 
 

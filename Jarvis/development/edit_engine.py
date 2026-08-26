@@ -1118,10 +1118,24 @@ class EditEngine:
                     f"{number:>5}: {content}"
                     for number, content in enumerate(text.splitlines()[max(0, line - 4) : line + 2], start=max(1, line - 3))
                 )
+                # Whose line 6 this is decides what gets repaired next. The
+                # message used to read "the edit would leave test_capability.py
+                # unparseable: ... at line 6", which is true and was read as
+                # "line 6 of test_capability.py is broken". Measured live during
+                # the screen-capture acquisition: eight consecutive diagnoses of
+                # "an unexpected character after a line continuation character
+                # in test_capability.py on line 6", hunting a syntax error in a
+                # file that had none, while the real defect sat untouched in
+                # main.py. The file was never written -- that is the fact the
+                # message has to lead with.
                 raise EditError(
                     "syntax_error",
-                    f"the edit would leave {relative} unparseable: {exc.msg} at line {line}. "
-                    f"Check the indentation of your replacement text.\n{context}",
+                    f"YOUR REPLACEMENT TEXT is not valid Python: {exc.msg}.\n"
+                    f"NOTHING WAS WRITTEN. {relative} on disk is unchanged and still parses -- "
+                    f"there is no syntax error in it to go and find.\n"
+                    f"Line {line} below is a line of the text YOU SENT, not a line of {relative}:\n"
+                    f"{context}\n"
+                    f"Fix the syntax and indentation of your replacement, then send the edit again.",
                     path=relative,
                     recoverable=True,
                 ) from None

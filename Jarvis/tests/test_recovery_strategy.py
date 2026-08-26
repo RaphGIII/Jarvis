@@ -506,7 +506,11 @@ def test_a_failed_task_out_of_attempts_is_still_finished():
 
 
 def test_a_done_task_with_attempts_left_keeps_its_count():
-    """Reopening is not a free reset -- only exhaustion buys a fresh budget."""
+    """Reopening is not a free reset -- only exhaustion buys a fresh budget.
+
+    The attempt count survives. The reopening is still counted, because that
+    is the thing being bounded.
+    """
 
     from projects.models import Project, Task, TaskStatus
 
@@ -518,7 +522,35 @@ def test_a_done_task_with_attempts_left_keeps_its_count():
 
     assert engine._reopen_failed_task(project, "fix") is task
     assert task.attempts == 1
-    assert task.reopenings == 0
+    assert task.reopenings == 1
+
+
+def test_a_task_that_never_exhausts_cannot_be_reopened_for_ever():
+    """The oscillation is what is bounded, not the attempts that precede it.
+
+    A task that finishes on its first attempt is never exhausted, so the
+    reopening budget was never consulted for it and nothing bounded how often
+    it could come back. Measured live during the screen-capture acquisition of
+    2026-08-26: the implementation task was abandoned after three attempts,
+    which left "Check if 'pyautogui' is installed" -- one tool call, always
+    succeeds, changes nothing -- as the most recent finished task. The loop
+    reopened and re-completed it for the rest of the run while the defect it
+    was supposed to be repairing sat untouched.
+    """
+
+    from projects.models import Project, Task, TaskStatus
+
+    engine = _Engine()
+    project = Project(goal="engine.py")
+    task = Task(title="check whether mss is installed", status=TaskStatus.DONE, attempts=1)
+    project.tasks.append(task)
+    _executed(project, task)
+
+    for _ in range(task.max_reopenings):
+        assert engine._reopen_failed_task(project, "fix") is task
+        task.status = TaskStatus.DONE
+
+    assert engine._reopen_failed_task(project, "fix") is None
 
 
 def test_an_open_task_is_never_reopened():
@@ -1090,3 +1122,97 @@ def test_a_task_is_considered_once_however_often_it_ran(tmp_path):
     reopened = _engine_with_workspace(workspace)._reopen_failed_task(project, "fix")
 
     assert reopened is relevant
+
+
+# --------------------------------------------------------------------------
+# A traceback names where the exception was RAISED, not where the mistake was
+# --------------------------------------------------------------------------
+
+
+def _traceback(workspace, *, deepest_is_mine: bool = False) -> str:
+    """A real two-frame traceback: the project calls a library, the library raises.
+
+    Taken from the screen-capture acquisition of 2026-08-26. main.py passed a
+    dict where mss wanted an index, so mss raised at ``monitor = monitors[mon]``
+    -- a line in site-packages that three consecutive diagnoses named as the
+    defect and then tried to edit.
+    """
+
+    library = (
+        str(workspace / "main.py") if deepest_is_mine
+        else r"C:\Users\someone\AppData\Roaming\Python\Python314\site-packages\mss\base.py"
+    )
+    return (
+        "Traceback (most recent call last):\n"
+        f'  File "{workspace / "test_capability.py"}", line 3, in <module>\n'
+        "    result = main.run({})\n"
+        f'  File "{workspace / "main.py"}", line 20, in run\n'
+        "    shot = sct.shot(mon=monitor, output=path)\n"
+        f'  File "{library}", line 415, in save\n'
+        "    monitor = monitors[mon]\n"
+        "TypeError: list indices must be integers or slices, not dict\n"
+    )
+
+
+def test_the_workspace_frame_is_named_when_a_library_raises(tmp_path):
+    """The evidence's last line belongs to mss. The line to change does not."""
+
+    from tools.registry import ToolContext
+
+    project = _failing_project(_traceback(tmp_path))
+    notice = _Engine()._foreign_frame_notice(project, ToolContext(workspace=tmp_path))
+
+    assert "main.py, line 20, in run" in notice
+    assert "sct.shot(mon=monitor, output=path)" in notice
+    # Named as the library, not as the file inside it: "base.py" identifies
+    # nothing, "mss" is what the model can look up and be told not to edit.
+    assert "mss" in notice and "third-party library" in notice
+    assert "base.py" not in notice
+
+
+def test_nothing_is_said_when_the_project_raised_it_itself(tmp_path):
+    """The traceback already points at an editable line; a notice would be noise."""
+
+    from tools.registry import ToolContext
+
+    project = _failing_project(_traceback(tmp_path, deepest_is_mine=True))
+
+    assert _Engine()._foreign_frame_notice(project, ToolContext(workspace=tmp_path)) == ""
+
+
+def test_nothing_is_said_when_no_frame_belongs_to_the_project(tmp_path):
+    """An import that fails before any project code runs has nothing to point at,
+    and inventing a line to blame would be worse than staying quiet."""
+
+    from tools.registry import ToolContext
+
+    evidence = (
+        "Traceback (most recent call last):\n"
+        '  File "C:\\Python314\\Lib\\runpy.py", line 198, in _run_module_as_main\n'
+        "    return _run_code(code, main_globals, None,\n"
+        '  File "C:\\Python314\\Lib\\site-packages\\pytest\\__main__.py", line 9, in <module>\n'
+        "    raise SystemExit(pytest.console_main())\n"
+        "ModuleNotFoundError: No module named 'nowhere'\n"
+    )
+    project = _failing_project(evidence)
+
+    assert _Engine()._foreign_frame_notice(project, ToolContext(workspace=tmp_path)) == ""
+
+
+def test_a_failure_that_is_not_a_traceback_says_nothing(tmp_path):
+    from tools.registry import ToolContext
+
+    project = _failing_project("FAILED test_capability.py::test_capture - assert False")
+
+    assert _Engine()._foreign_frame_notice(project, ToolContext(workspace=tmp_path)) == ""
+
+
+def test_a_satisfied_criterion_contributes_no_notice(tmp_path):
+    """Only what is currently failing may steer the next repair."""
+
+    from tools.registry import ToolContext
+
+    project = _failing_project(_traceback(tmp_path))
+    project.acceptance[0].satisfied = True
+
+    assert _Engine()._foreign_frame_notice(project, ToolContext(workspace=tmp_path)) == ""

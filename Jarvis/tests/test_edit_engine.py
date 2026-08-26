@@ -493,6 +493,38 @@ def test_an_edit_that_breaks_python_syntax_is_refused(tmp_path):
     assert path.read_text(encoding="utf-8") == original
 
 
+def test_the_refusal_says_the_file_was_not_touched(tmp_path):
+    """Eight identical diagnoses came out of the old wording.
+
+    It read "the edit would leave cli.py unparseable: ... at line 2" -- true,
+    and read by a local model as "line 2 of cli.py is broken". Measured live
+    during the screen-capture acquisition of 2026-08-26: eight consecutive
+    diagnoses hunting a syntax error in a file that had none, while the actual
+    defect sat untouched in another file. The line number belongs to the
+    replacement that was rejected, and the file on disk still parses; both facts
+    have to be in the message, because the one the model acts on is whichever
+    one it reads.
+    """
+
+    original = "def main():\n    if flag:\n        print('a')\n        return\n"
+    path = _write(tmp_path, "cli.py", original)
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(
+            parse_bundle(
+                {"files": [{"path": "cli.py", "search": "        print('a')", "replace": "        print('b'"}]}
+            )
+        )
+
+    message = str(excinfo.value)
+    assert "NOTHING WAS WRITTEN" in message
+    assert "unchanged and still parses" in message
+    assert "YOU SENT" in message
+    assert "YOUR REPLACEMENT TEXT" in message
+    # And the claim it makes about the file has to be true.
+    assert path.read_text(encoding="utf-8") == original
+
+
 def test_a_syntax_failure_rolls_back_the_other_files_too(tmp_path):
     good = _write(tmp_path, "good.py", "x = 1\n")
     _write(tmp_path, "bad.py", "def f():\n    return 1\n")
