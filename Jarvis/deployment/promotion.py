@@ -267,7 +267,13 @@ class Promoter:
         completed = self._git("status", "--porcelain")
         if completed.returncode != 0:
             return False, f"git status failed: {completed.stderr.strip()}"
-        dirty = [line for line in completed.stdout.splitlines() if line.strip()]
+        # Runtime state under data/ is rewritten by the running product (voice
+        # registry, evidence files) and is never what a promotion moves or a
+        # rollback resets, so it does not count as uncommitted work.
+        dirty = [
+            line for line in completed.stdout.splitlines()
+            if line.strip() and not line[3:].strip().strip('"').replace("\\", "/").lstrip("Jarvis/").startswith("data/")
+        ]
         return (not dirty), "\n".join(dirty[:20])
 
     # -- the pipeline ----------------------------------------------------

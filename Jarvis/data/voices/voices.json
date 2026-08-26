@@ -10,6 +10,39 @@
       "licence": "",
       "source": "",
       "notes": ""
+    },
+    {
+      "id": "de_DE-eva_k-x_low",
+      "name": "de DE-eva k-x low",
+      "language": "de-DE",
+      "gender": "",
+      "engine": "piper",
+      "model_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\voices\\de_DE-eva_k-x_low.onnx",
+      "licence": "",
+      "source": "",
+      "notes": ""
+    },
+    {
+      "id": "en_US-amy-medium",
+      "name": "en US-amy-medium",
+      "language": "en-US",
+      "gender": "",
+      "engine": "piper",
+      "model_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\voices\\en_US-amy-medium.onnx",
+      "licence": "",
+      "source": "",
+      "notes": ""
+    },
+    {
+      "id": "en_US-lessac-medium",
+      "name": "en US-lessac-medium",
+      "language": "en-US",
+      "gender": "",
+      "engine": "piper",
+      "model_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\voices\\en_US-lessac-medium.onnx",
+      "licence": "",
+      "source": "",
+      "notes": ""
     }
   ]
 }
