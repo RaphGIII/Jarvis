@@ -679,10 +679,80 @@ class CapabilityService:
         # flow and the URI handoff to change one number.
         seeded = self._seed_from_installed(capability_id, workspace)
         if not seeded:
+            # Nothing installed under this id -- but an earlier attempt at the
+            # same capability may have been interrupted, and its workspace is
+            # still on disk with real code in it.
+            seeded = self._seed_from_interrupted(capability_id, project.id, workspace)
+        if not seeded:
             (workspace / "main.py").write_text(_TEMPLATE_MAIN, encoding="utf-8")
             (workspace / "test_capability.py").write_text(_TEMPLATE_TEST, encoding="utf-8")
         self.engine.store.save(project)
         return project
+
+    def _seed_from_interrupted(self, capability_id: str, current_id: str, workspace: Path) -> bool:
+        """Continue from a previous attempt that was killed before it finished.
+
+        The checkpoint records attempts that *completed*. An attempt that was
+        interrupted -- the machine restarted, the process was killed, the time
+        budget ran out mid-step -- records nothing, so a resumed mission began
+        again from a blank skeleton. Its predecessor's workspace was still on
+        disk the whole time, holding thirty or forty minutes of model output,
+        and nothing looked at it. Observed four times over during the
+        screen-capture benchmark: each restart threw away a partly-written
+        implementation and paid for it again.
+
+        Only a workspace that represents real progress is taken. A file that
+        does not parse cannot be edited by anchors and is worse to inherit than
+        a skeleton, and one that still carries the placeholder marker *is* the
+        skeleton. Newest first, because that is the attempt that got furthest.
+        """
+
+        import ast
+
+        store = getattr(self.engine, "store", None)
+        if store is None:
+            return False
+        try:
+            projects = [
+                item for item in store.list_projects()
+                if item.id != current_id
+                and str(getattr(item, "title", "")) == capability_id
+                and str(getattr(item, "state", "")) not in {"COMPLETED", "ProjectState.COMPLETED"}
+            ]
+        except Exception:
+            return False
+
+        projects.sort(key=lambda item: str(getattr(item, "updated_at", "")), reverse=True)
+        for candidate in projects:
+            source = Path(str(candidate.workspace or ""))
+            main = source / "main.py"
+            if not main.is_file():
+                continue
+            try:
+                text = main.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if NOT_IMPLEMENTED in text:
+                continue
+            try:
+                ast.parse(text)
+            except SyntaxError:
+                continue
+            copied = False
+            for item in source.iterdir():
+                if item.name in {"__pycache__", ".pytest_cache", ".venv"} or item.suffix == ".pyc":
+                    continue
+                try:
+                    if item.is_dir():
+                        shutil.copytree(item, workspace / item.name, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(item, workspace / item.name)
+                    copied = True
+                except OSError:
+                    continue
+            if copied:
+                return True
+        return False
 
     def _seed_from_installed(self, capability_id: str, workspace: Path) -> bool:
         """Copy the installed version of a capability into a fresh workspace.

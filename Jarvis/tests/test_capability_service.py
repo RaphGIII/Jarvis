@@ -189,6 +189,105 @@ def test_the_workspace_is_seeded_with_a_working_skeleton(service):
     assert "run(payload" in (instance.engine.store.workspace_for(project) / "main.py").read_text(encoding="utf-8")
 
 
+# ------------------------------- resuming an attempt that was killed mid-flight
+#
+# The mission checkpoint records attempts that *completed*. An attempt that was
+# interrupted -- the machine restarted, the process killed, a time budget spent
+# mid-step -- records nothing, so the next mission began again from a blank
+# skeleton while its predecessor's workspace sat on disk holding half an hour of
+# model output. Observed four times over during the screen-capture benchmark.
+
+KILLED_MARKER = "MARKER_FROM_THE_KILLED_ATTEMPT"
+
+WORKING_LEFTOVER = KILLED_MARKER + " = 1\n\n\ndef run(payload):\n    return {'ok': True}\n"
+
+
+from pathlib import Path  # noqa: E402  -- used by the resume tests below
+
+
+def _interrupted(instance, capability_id: str, body: str):
+    """A project for ``capability_id`` that was left unfinished, with a workspace."""
+
+    from projects.models import Project, ProjectState
+
+    project = Project(goal="Build a reusable capability that can: " + capability_id,
+                      title=capability_id, kind="capability")
+    project.state = ProjectState.EXECUTING
+    workspace = instance.engine.store.workspace_for(project)
+    workspace.mkdir(parents=True, exist_ok=True)
+    project.workspace = str(workspace)
+    (workspace / "main.py").write_text(body, encoding="utf-8")
+    instance.engine.store.save(project)
+    return project
+
+
+def test_a_killed_attempt_is_continued_rather_than_restarted(service):
+    instance = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+    _interrupted(instance, "audio.player", WORKING_LEFTOVER)
+
+    fresh = instance._start_project("play an audio file", "audio.player", max_steps=5)
+    body = (Path(fresh.workspace) / "main.py").read_text(encoding="utf-8")
+
+    assert KILLED_MARKER in body
+
+
+def test_a_workspace_that_does_not_parse_is_not_inherited(service):
+    """A file anchors cannot be applied to is worse to start from than a skeleton."""
+
+    instance = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+    _interrupted(instance, "audio.player", "def run(payload):\n    return {'ok': True\n")
+
+    fresh = instance._start_project("play an audio file", "audio.player", max_steps=5)
+    body = (Path(fresh.workspace) / "main.py").read_text(encoding="utf-8")
+
+    assert "Capability implementation" in body
+
+
+def test_a_workspace_still_carrying_the_placeholder_is_not_inherited(service):
+    """That workspace *is* the skeleton; inheriting it would claim progress that
+    never happened, and the marker gate would then have nothing left to catch."""
+
+    from capabilities.service import NOT_IMPLEMENTED
+
+    instance = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+    _interrupted(
+        instance, "audio.player",
+        "def run(payload):\n    return {'ok': False, 'error': '" + NOT_IMPLEMENTED + "'}\n",
+    )
+
+    fresh = instance._start_project("play an audio file", "audio.player", max_steps=5)
+    body = (Path(fresh.workspace) / "main.py").read_text(encoding="utf-8")
+
+    assert "Capability implementation" in body
+
+
+def test_another_capabilitys_leftovers_are_not_inherited(service):
+    """Matched on the capability id, not on there being any unfinished project."""
+
+    instance = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+    _interrupted(instance, "system.screen.capture", WORKING_LEFTOVER)
+
+    fresh = instance._start_project("play an audio file", "audio.player", max_steps=5)
+    body = (Path(fresh.workspace) / "main.py").read_text(encoding="utf-8")
+
+    assert KILLED_MARKER not in body
+
+
+def test_the_installed_version_still_wins_over_an_abandoned_attempt(service):
+    """A registered capability has been verified; an interrupted attempt has not."""
+
+    instance = service(ScriptedBrain(implementation=GOOD_IMPLEMENTATION, tests=GOOD_TESTS))
+    first = instance.ensure("play an audio file through the speakers", max_steps=25)
+    assert first.acquired
+
+    _interrupted(instance, first.capability_id, WORKING_LEFTOVER)
+
+    fresh = instance._start_project("play an audio file", first.capability_id, max_steps=5)
+    body = (Path(fresh.workspace) / "main.py").read_text(encoding="utf-8")
+
+    assert KILLED_MARKER not in body
+
+
 # ------------------------------------------------------------------ reuse
 
 
