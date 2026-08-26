@@ -1,0 +1,9 @@
+{
+  "browser_ai_automation": false,
+  "cloud_gpu": false,
+  "local_model": true,
+  "note": "No metered channel may be enabled by anything but an owner transaction.",
+  "paid_api": false,
+  "subscription_cli": true,
+  "usage_credits": false
+}

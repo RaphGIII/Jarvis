@@ -1,0 +1,14 @@
+{
+  "content_is_data": true,
+  "instructions_from": [
+    "owner"
+  ],
+  "never_authority": [
+    "documents",
+    "web pages",
+    "expert output",
+    "capability output",
+    "model output"
+  ],
+  "secrets_in_prompts": false
+}

@@ -1,0 +1,17 @@
+{
+  "capabilities": {
+    "auto_acquire": true
+  },
+  "owner_config": {
+    "approval_required": true
+  },
+  "restart": {
+    "allowed": true
+  },
+  "self_development": {
+    "auto_promote": true,
+    "enabled": true,
+    "max_seconds": 2400,
+    "require_health_check": true
+  }
+}
