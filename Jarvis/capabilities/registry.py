@@ -6,6 +6,59 @@ from pathlib import Path
 from capabilities.models import CapabilityManifest
 
 
+#: Vocabulary that every capability contract contains, so sharing it says
+#: nothing about whether two capabilities are related. Drawn from the words
+#: that actually produced a false match between a music provider and a
+#: screen-capture goal, plus the ordinary English around them.
+_BOILERPLATE = frozenset("""
+accept accepts accepted actually and anything are because been before being
+call called caller cannot check checked checks computer current currently
+declare declared error errors exist exists expected fail failed failure false
+file files first from give given has have how implement implementation
+input into its just key keys machine match matched must name named never not
+now only optional other out output package packages path paths payload
+python read reads report reported reports require required return returned
+returns run running same say says shape should size some standard
+str string success successful take takes than that the them then there these
+this those true unless use used uses using value values what when where
+which while will with without work works write writes written you your
+dict bool int list none true false main test tests
+""".split())
+
+#: How many of a capability's *own* subject terms must appear in the query
+#: before it is considered a candidate at all. One is enough when the terms
+#: are distinctive, which is the point of scoring on keywords rather than prose.
+_MIN_SUBJECT_HITS = 1
+
+#: Below this length a term is too short to be safely matched as part of
+#: another word: "png" inside "opening" would be a hit, and a false one.
+_COMPOUND_MINIMUM = 6
+
+
+def _compound_hits(query_terms: set[str], subject: set[str]) -> int:
+    """Matches where one word contains another, for languages that glue.
+
+    German writes "Bildschirmfoto" where English writes "screen photo", so a
+    keyword of *bildschirm* never equals a query term of *bildschirmfoto* and
+    exact matching misses it entirely. The user said the right word; the
+    tokeniser disagreed about where it ended.
+
+    Only for terms long enough that containment means something. Applied to
+    short ones it manufactures matches -- *png* is inside *opening* -- which is
+    the failure this scoring was just repaired for.
+    """
+
+    hits = 0
+    for term in query_terms:
+        if len(term) < _COMPOUND_MINIMUM or term in subject:
+            continue
+        for candidate in subject:
+            if len(candidate) >= _COMPOUND_MINIMUM and (candidate in term or term in candidate):
+                hits += 1
+                break
+    return hits
+
+
 class CapabilityRegistry:
     """Persistent registry for installed Jarvis capabilities."""
 
@@ -25,19 +78,51 @@ class CapabilityRegistry:
         return self._records.get(capability_id)
 
     def find(self, query: str, *, limit: int = 5) -> list[CapabilityManifest]:
-        query_terms = self._terms(query)
-        scored: list[tuple[float, CapabilityManifest]] = []
+        """Capabilities whose *subject* matches the query.
+
+        Scored on the identifier and the declared keywords, not on the
+        description.  A capability's description is its contract -- payload
+        keys, return shapes, failure rules -- written in the same house style
+        for every capability, so two unrelated capabilities share most of it.
+
+        Measured, when this scored on descriptions: a goal about capturing the
+        screen as a PNG matched the Spotify music provider on 39 of its 90
+        terms, for a score of 0.43. The shared terms were *accept, actually,
+        cannot, checked, current, error, exists, failure, file, match, must,
+        name, never, not* -- every one of them generic English, not one of them
+        about music or screens. The mission concluded a screen-capture
+        capability was already installed and reported it as acquired.
+
+        Term overlap was standing in for "is about the same thing", and stopped
+        being that as soon as descriptions grew. The identifier and the
+        keywords are what a capability declares itself to be *for*, so those are
+        what get matched; the description can only break a tie.
+        """
+
+        query_terms = self._terms(query) - _BOILERPLATE
+        if not query_terms:
+            return []
+        scored: list[tuple[float, float, CapabilityManifest]] = []
         for manifest in self._records.values():
             if manifest.status != "active":
                 continue
-            haystack = self._terms(f"{manifest.capability_id} {manifest.description}")
-            overlap = len(query_terms & haystack)
+            subject = self._terms(manifest.capability_id.replace(".", " ")) | {
+                term
+                for keyword in (manifest.creation_metadata.get("keywords") or [])
+                for term in self._terms(str(keyword))
+            }
+            subject -= _BOILERPLATE
+            hits = len(query_terms & subject) + _compound_hits(query_terms, subject)
             if manifest.capability_id.lower() in query.lower():
-                overlap += 4
-            if overlap:
-                scored.append((overlap / max(1, len(query_terms)), manifest))
-        scored.sort(key=lambda item: (item[0], item[1].capability_id), reverse=True)
-        return [manifest for _, manifest in scored[:limit]]
+                hits += 4
+            if hits < _MIN_SUBJECT_HITS:
+                # Nothing this capability says it is for appears in the query.
+                continue
+            described = self._terms(manifest.description) - _BOILERPLATE
+            tiebreak = len(query_terms & described) / max(1, len(query_terms))
+            scored.append((hits / max(1, len(query_terms)), tiebreak, manifest))
+        scored.sort(key=lambda item: (item[0], item[1], item[2].capability_id), reverse=True)
+        return [manifest for _, _, manifest in scored[:limit]]
 
     def register(self, manifest: CapabilityManifest) -> CapabilityManifest:
         errors = manifest.validate()

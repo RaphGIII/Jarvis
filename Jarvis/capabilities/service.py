@@ -438,15 +438,32 @@ class CapabilityService:
         skeleton, because the id it looked up was not the id it registered.
         """
 
-        existing = self.resolve(goal)
-        if existing is not None:
-            return CapabilityOutcome(
-                goal=goal,
-                capability_id=existing.capability_id,
-                status="available",
-                manifest=existing,
-                reason="an installed capability already covers this",
-            )
+        # A named capability is looked up by name. Similarity is the wrong
+        # question once the caller has said which one it wants, and answering
+        # the wrong question produced the worst false positive in this project:
+        # a mission for `system.screen.capture` resolved by description overlap
+        # to `music.provider.spotify` and reported the screen-capture
+        # capability as acquired, having built nothing.
+        if capability_id:
+            named = self.registry.get(capability_id)
+            if named is not None and named.status == "active":
+                return CapabilityOutcome(
+                    goal=goal,
+                    capability_id=named.capability_id,
+                    status="available",
+                    manifest=named,
+                    reason=f"{capability_id} is already installed",
+                )
+        else:
+            existing = self.resolve(goal)
+            if existing is not None:
+                return CapabilityOutcome(
+                    goal=goal,
+                    capability_id=existing.capability_id,
+                    status="available",
+                    manifest=existing,
+                    reason="an installed capability already covers this",
+                )
         return self.acquire(
             goal,
             max_steps=max_steps,
