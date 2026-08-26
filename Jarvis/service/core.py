@@ -95,6 +95,10 @@ class JarvisCore:
         self._expert_status: dict[str, Any] = {"expert_available": False, "quota_exhausted": False}
         self._expert_checked_at = 0.0
         self._expert_probe_running = threading.Event()
+        #: Live GPU load, sampled off the request path.  Created lazily like
+        #: every other subsystem, so constructing the core still touches no
+        #: hardware.
+        self._gpu_usage: Any = None
         self._voice: Any = None
         self._personas: Any = None
         self._gateway: Any = None
@@ -1341,41 +1345,6 @@ class JarvisCore:
 
         threading.Thread(target=work, daemon=True, name=f"selfdev-{mission.mission_id}").start()
 
-    def _selfdev_runner(self, scope: str) -> Any:
-        from service.selfdev import SelfDevRunner
-
-        return SelfDevRunner(
-            repository=Path(self.kernel.state_root).resolve().parents[1],
-            store=self.selfdev_store, kernel=self.kernel, owner=self.owner, lifecycle=self.lifecycle,
-            gateway=self.experts, emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
-            set_state=self.state.set,
-        )
-
-    def resume_selfdev(self, mission_id: str) -> dict[str, Any]:
-        """Pick a failed or interrupted mission up from its candidate."""
-
-        from service.selfdev import describe
-
-        mission = self.selfdev_store.load(mission_id)
-        if mission is None:
-            return {"ok": False, "error": f"no self-development mission {mission_id}"}
-        if mission.phase == "RESTARTING":
-            return {"ok": False, "error": "that mission is waiting for the restart verdict"}
-        active = self.selfdev_store.active()
-        if active is not None and active.mission_id != mission_id:
-            return {"ok": False, "error": f"mission {active.mission_id} is already running"}
-        runner = self._selfdev_runner(mission.scope)
-
-        def work() -> None:
-            finished = runner.resume(mission)
-            if finished.phase == "RESTARTING":
-                return
-            self._deliver(describe(finished, mission.language or self.language), scope=mission.scope, backend="selfdev",
-                          final_state=JarvisState.IDLE if finished.outcome != "failed" else JarvisState.ERROR)
-
-        threading.Thread(target=work, daemon=True, name=f"selfdev-resume-{mission_id}").start()
-        return {"ok": True, "mission_id": mission_id, "resumed_from": mission.phase}
-
     def _settle_selfdev_after_restart(self) -> int:
         from service.selfdev import describe, settle_after_restart
 
@@ -1753,7 +1722,27 @@ class JarvisCore:
             "language": self.language or "auto",
             "health_checked": self._health_checked_at > 0,
             "uptime_seconds": round(time.time() - self._started_at, 1),
+            "gpu": self.gpu_usage(),
         }
+
+    def gpu_usage(self) -> dict[str, Any]:
+        """How busy the GPU is, as of the last background reading.
+
+        Never blocks and never probes a model: the whole point of showing this
+        beside the eye is that the user can see the card working while Jarvis
+        thinks, and a readout that slowed the generation down would be
+        reporting a cost it created.  A machine with no NVIDIA GPU gets
+        ``available: False`` and the interface simply shows nothing.
+        """
+
+        try:
+            if self._gpu_usage is None:
+                from brain.resources import GpuUsageMonitor
+
+                self._gpu_usage = GpuUsageMonitor()
+            return self._gpu_usage.snapshot()
+        except Exception as exc:
+            return {"measured": True, "available": False, "error": f"{type(exc).__name__}: {exc}"}
 
     # -- background probing ---------------------------------------------
 

@@ -121,6 +121,10 @@ class JarvisHTTPServer:
                 str(body.get("text", "")), scope=str(body.get("scope", ""))
             ),
             "/api/status": lambda _: self.core.status(),
+            # Polled far more often than /api/status, because the whole value
+            # of a live load readout is that it is live. Answered from a
+            # cached background reading, so the extra polling costs nothing.
+            "/api/gpu": lambda _: self.core.gpu_usage(),
             "/api/state": lambda _: self.core.state.snapshot.to_dict(),
             "/api/projects": lambda _: {"projects": self.core.list_projects()},
             "/api/project": lambda body: self.core.project_detail(str(body.get("id", ""))),
@@ -197,7 +201,6 @@ class JarvisHTTPServer:
             # have, and they exist only here -- no model, capability, expert
             # or ingestion path holds a reference to them.
             "/api/selfdev": lambda _: self.core.list_selfdev(),
-            "/api/selfdev/resume": lambda body: self.core.resume_selfdev(str(body.get("mission_id", ""))),
             "/api/owner": lambda _: self.core.owner_view(),
             "/api/owner/propose": lambda body: self.core.owner_propose(
                 dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui"

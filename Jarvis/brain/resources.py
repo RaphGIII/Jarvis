@@ -27,6 +27,7 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -40,16 +41,33 @@ from brain.tiers import ModelCatalog, ModelSpec, ModelTier
 # Host inventory
 # --------------------------------------------------------------------------
 
+def _percent(raw: Any) -> int:
+    """A 0-100 integer, or 0 for anything unreadable."""
+
+    try:
+        return max(0, min(100, int(float(str(raw).strip().rstrip("%")))))
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class GpuInfo:
     name: str
     total_mib: int
     used_mib: int
     free_mib: int
+    #: How busy the card's compute units are right now, 0-100.  Defaults to 0
+    #: so an older reading -- or a driver that reports ``[N/A]`` -- still
+    #: produces a usable record rather than none.
+    utilization_percent: int = 0
 
     @property
     def free_fraction(self) -> float:
         return self.free_mib / self.total_mib if self.total_mib else 0.0
+
+    @property
+    def used_fraction(self) -> float:
+        return self.used_mib / self.total_mib if self.total_mib else 0.0
 
 
 @dataclass
@@ -96,7 +114,7 @@ class HostProbe:
             completed = self._run(
                 [
                     "nvidia-smi",
-                    "--query-gpu=name,memory.total,memory.used,memory.free",
+                    "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu",
                     "--format=csv,noheader,nounits",
                 ],
                 capture_output=True,
@@ -112,12 +130,26 @@ class HostProbe:
         gpus: list[GpuInfo] = []
         for line in completed.stdout.splitlines():
             parts = [part.strip() for part in line.split(",")]
-            if len(parts) != 4:
+            # Four columns is the memory-only form this probe used to ask for.
+            # Accepting it too means a stubbed runner, a recorded output or an
+            # older driver that drops the utilisation column still parses.
+            if len(parts) not in (4, 5):
                 continue
             try:
-                gpus.append(GpuInfo(name=parts[0], total_mib=int(parts[1]), used_mib=int(parts[2]), free_mib=int(parts[3])))
+                memory = (int(parts[1]), int(parts[2]), int(parts[3]))
             except ValueError:
                 continue
+            gpus.append(
+                GpuInfo(
+                    name=parts[0],
+                    total_mib=memory[0],
+                    used_mib=memory[1],
+                    free_mib=memory[2],
+                    # Some drivers report "[N/A]" here; an unreadable load is
+                    # not a reason to discard a perfectly good memory reading.
+                    utilization_percent=_percent(parts[4]) if len(parts) == 5 else 0,
+                )
+            )
         return gpus
 
     def _total_ram_mib(self) -> int:
@@ -150,6 +182,79 @@ class HostProbe:
             except Exception:
                 return 0
         return 0
+
+
+class GpuUsageMonitor:
+    """What the GPU is doing *right now*, cheap enough to put on a UI poll.
+
+    Every reading costs an ``nvidia-smi`` launch -- tens of milliseconds of a
+    process spawn, not a generation, but the interface asks every few seconds
+    and several clients may be watching at once.  So a reading is taken on a
+    background thread and cached, and :meth:`snapshot` returns the last one it
+    got.  That keeps two properties that matter on this machine: the request
+    path never waits on a subprocess, and N watchers cost the same as one.
+
+    A host with no NVIDIA card is the ordinary case, not an error: the probe
+    returns nothing, ``available`` stays false, and the caller shows nothing.
+    """
+
+    #: How stale a reading may be.  Short enough that the number tracks a
+    #: generation starting, long enough that the probe is not the load.
+    DEFAULT_TTL_SECONDS = 3.0
+
+    def __init__(self, *, host_probe: HostProbe | None = None, ttl_seconds: float | None = None) -> None:
+        self.host_probe = host_probe or HostProbe()
+        self.ttl_seconds = float(self.DEFAULT_TTL_SECONDS if ttl_seconds is None else ttl_seconds)
+        self._sample: dict[str, Any] = {"measured": False, "available": False}
+        self._sampled_at = 0.0
+        self._running = threading.Event()
+
+    def snapshot(self) -> dict[str, Any]:
+        """The last reading, refreshing in the background when it is stale."""
+
+        # Read first, then decide whether to refresh: the caller is promised the
+        # reading that existed when it asked, not one that may or may not have
+        # landed by the time this returns.
+        sample = dict(self._sample)
+        if time.time() - self._sampled_at >= self.ttl_seconds and not self._running.is_set():
+            self._running.set()
+            threading.Thread(target=self._refresh, daemon=True, name="jarvis-gpu-usage").start()
+        return sample
+
+    def refresh(self) -> dict[str, Any]:
+        """Take a reading now, on this thread.  For callers that can wait."""
+
+        self._refresh()
+        return dict(self._sample)
+
+    def _refresh(self) -> None:
+        try:
+            gpus = self.host_probe.detect_gpus()
+        except Exception:
+            gpus = []
+        try:
+            self._sample = self._describe(gpus)
+        finally:
+            self._sampled_at = time.time()
+            self._running.clear()
+
+    @staticmethod
+    def _describe(gpus: list[GpuInfo]) -> dict[str, Any]:
+        if not gpus:
+            # "Measured, and there is no NVIDIA GPU here" -- distinct from the
+            # not-yet-measured state, so a client can tell them apart.
+            return {"measured": True, "available": False}
+        gpu = gpus[0]
+        return {
+            "measured": True,
+            "available": True,
+            "name": gpu.name,
+            "utilization_percent": _percent(gpu.utilization_percent),
+            "memory_percent": round(gpu.used_fraction * 100),
+            "memory_used_mib": gpu.used_mib,
+            "memory_total_mib": gpu.total_mib,
+            "gpus": len(gpus),
+        }
 
 
 # --------------------------------------------------------------------------

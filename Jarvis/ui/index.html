@@ -159,8 +159,66 @@
                 height .8s cubic-bezier(.55, 0, .18, 1);
   }
 
+  /* The eye keeps its own box so anything that belongs *to* the eye can be
+     placed against its edge and follow it as it shrinks into the chat layout.
+     The wrapper takes its size from the canvas, so nothing about the existing
+     transition changes. */
+  #eyeWrap { position: relative; display: grid; place-items: center; }
+
+  /* ---- GPU load ------------------------------------------------------
+     Subtle on purpose: a hairline column beside the eye and a small number.
+     It sits outside the canvas rather than being drawn into it, because the
+     eye's colours are a claim about what Jarvis is doing and machine load is
+     not one of them -- mixing the two would make the eye lie. */
+
+  #gpuMeter {
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    opacity: .5;
+    transition: opacity .5s ease;
+    user-select: none;
+    cursor: default;
+  }
+  #gpuMeter[hidden] { display: none; }
+  /* Busy is worth a glance; idle is not. */
+  #gpuMeter.busy { opacity: .85; }
+
+  #gpuBar {
+    position: relative;
+    width: 3px;
+    height: clamp(44px, 8vh, 84px);
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+    transition: height .8s cubic-bezier(.55, 0, .18, 1);
+  }
+  #gpuFill {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 0%;
+    background: linear-gradient(to top, var(--accent), #8fe0ff);
+    transition: height .7s ease, background .5s ease;
+  }
+  #gpuMeter.busy #gpuFill { background: linear-gradient(to top, var(--accent-warm), #ffd79a); }
+
+  #gpuValue {
+    font-size: 9.5px;
+    letter-spacing: .1em;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Once a conversation starts, the eye steps back rather than dominating. */
   #app.conversing #eye { width: 108px; height: 108px; }
+  #app.conversing #gpuBar { height: 40px; }
+  #app.conversing #gpuMeter { margin-left: 10px; }
   #app.conversing #detail { display: none; }
   #app.conversing #heroLine { opacity: 0; height: 0; margin: 0; overflow: hidden; }
 
@@ -442,6 +500,11 @@
   body.tv button.ghost, body.tv .composer, body.tv .hint { display: none; }
   body.tv #eye { width: 30vh; height: 30vh; }
   body.tv #app.conversing #eye { width: 18vh; height: 18vh; }
+  /* Read from across a room: the same readout, scaled with everything else. */
+  body.tv #gpuMeter { margin-left: 26px; }
+  body.tv #gpuBar { width: 5px; height: 11vh; }
+  body.tv #app.conversing #gpuBar { height: 7vh; }
+  body.tv #gpuValue { font-size: 13px; }
   body.tv #stateLabel { font-size: 15px; letter-spacing: .45em; }
   body.tv #detail { font-size: 18px; }
   body.tv .turn .who { flex-basis: 90px; font-size: 13px; }
@@ -454,6 +517,8 @@
   @media (max-width: 620px) {
     #app { padding: 0 12px; }
     #eye { width: 150px; height: 150px; }
+    #gpuMeter { margin-left: 10px; }
+    #gpuBar { height: 44px; }
   }
 </style>
 
@@ -472,7 +537,16 @@
 
   <main>
     <div id="stage">
-      <canvas id="eye" width="420" height="420"></canvas>
+      <div id="eyeWrap">
+        <canvas id="eye" width="420" height="420"></canvas>
+        <!-- The GPU readout rides beside the eye rather than in the header,
+             because it is about the thing the eye represents: this is the card
+             that is thinking. Hidden entirely when there is no GPU to report. -->
+        <div id="gpuMeter" hidden>
+          <div id="gpuBar"><div id="gpuFill"></div></div>
+          <div id="gpuValue">--</div>
+        </div>
+      </div>
       <div id="stateLabel">idle</div>
       <div id="heroLine">Ask __ASSISTANT_NAME__ anything, or give it something to do.</div>
       <div id="detail"></div>

@@ -7,6 +7,7 @@ from brain.resources import (
     ContextBenchmark,
     ContextMeasurement,
     GpuInfo,
+    GpuUsageMonitor,
     HostInfo,
     HostProbe,
     ResourcePolicy,
@@ -75,6 +76,51 @@ def test_detect_returns_a_usable_host_record_on_this_machine():
     info = HostProbe().detect()
     assert info.platform
     assert info.cpu_count >= 1
+
+
+def test_gpu_utilisation_is_read_alongside_memory():
+    probe = HostProbe(runner=lambda *a, **k: _completed("NVIDIA GeForce GTX 1070, 8192, 610, 7582, 37\n"))
+    gpu = probe.detect_gpus()[0]
+    assert gpu.utilization_percent == 37
+    assert gpu.free_mib == 7582  # the memory reading is unchanged
+
+
+def test_an_unreadable_utilisation_does_not_discard_the_memory_reading():
+    """Some drivers report ``[N/A]``; that is not a reason to report no GPU."""
+
+    probe = HostProbe(runner=lambda *a, **k: _completed("NVIDIA GeForce GTX 1070, 8192, 610, 7582, [N/A]\n"))
+    gpus = probe.detect_gpus()
+    assert len(gpus) == 1
+    assert gpus[0].utilization_percent == 0
+    assert gpus[0].total_mib == 8192
+
+
+# ------------------------------------------------------------------ gpu load
+
+
+def test_gpu_usage_reports_load_and_memory():
+    monitor = GpuUsageMonitor(host_probe=StubProbe(_host(total=8192, used=4096, free=4096)))
+    monitor.host_probe._host.gpus[0].utilization_percent = 62
+    sample = monitor.refresh()
+    assert sample["available"] is True
+    assert sample["utilization_percent"] == 62
+    assert sample["memory_percent"] == 50
+
+
+def test_a_host_with_no_gpu_reports_nothing_to_show():
+    """Not an error: the interface hides the readout rather than showing 0%."""
+
+    monitor = GpuUsageMonitor(host_probe=StubProbe(HostInfo()))
+    sample = monitor.refresh()
+    assert sample["measured"] is True
+    assert sample["available"] is False
+
+
+def test_gpu_usage_never_blocks_before_a_reading_exists():
+    """snapshot() answers from cache, so it can sit on the request path."""
+
+    monitor = GpuUsageMonitor(host_probe=StubProbe(_host()))
+    assert monitor.snapshot() == {"measured": False, "available": False}
 
 
 # ------------------------------------------------------------------ policy

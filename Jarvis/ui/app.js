@@ -58,6 +58,13 @@ function startJarvis() {
   connect();
   refreshStatus();
   setInterval(refreshStatus, 15000);
+
+  // The GPU readout is polled on its own, faster clock: status is a badge that
+  // rarely changes, this is a live measurement and is worthless at 15 seconds.
+  // It is answered from a cached background reading on the server, so the
+  // extra requests cost a socket and nothing else.
+  refreshGpu();
+  setInterval(refreshGpu, GPU_POLL_MS);
 }
 
 /* ------------------------------------------------------------------ */
@@ -855,6 +862,75 @@ function setPill(el, text, tone) {
   if (!el) return;
   el.textContent = text;
   el.className = "pill" + (tone ? " " + tone : "");
+}
+
+/* ------------------------------------------------------------------ */
+/* GPU load, beside the eye                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A hairline column and a number next to the eye: what the card that is doing
+ * the thinking is actually doing. It is deliberately quiet -- no colour of its
+ * own until the GPU is genuinely busy -- because it must never compete with the
+ * eye, which is the thing that carries meaning here.
+ *
+ * The whole readout hides itself when there is no GPU to report, rather than
+ * showing 0% or "n/a": a machine with no NVIDIA card is an ordinary machine,
+ * not a broken one, and a permanently empty gauge is just noise.
+ */
+
+const GPU_POLL_MS = 3000;
+// Above this the readout brightens and warms. Below it the card is ticking
+// over, and the number is there only if you look for it.
+const GPU_BUSY_PERCENT = 45;
+
+// The first request only *triggers* the server's first reading, so it comes
+// back unmeasured. Asking again shortly after means the readout appears within
+// a second of the page opening instead of on the next three-second tick. The
+// retry is counted, not conditional on eventually succeeding: a server that
+// never measures must not turn this into an unbounded poll.
+let gpuWarmups = 2;
+
+async function refreshGpu() {
+  // A hidden tab cannot show a live number, and polling from one just keeps a
+  // subprocess warm on a machine that is also holding two models.
+  if (document.hidden) return;
+  let data = null;
+  try {
+    data = await api("/api/gpu");
+  } catch {
+    data = null;
+  }
+  renderGpu(data);
+  if (data && !data.measured && gpuWarmups > 0) {
+    gpuWarmups -= 1;
+    setTimeout(refreshGpu, 700);
+  }
+}
+
+function renderGpu(data) {
+  const meter = $("gpuMeter");
+  if (!meter) return;
+
+  const load = data && data.available ? Number(data.utilization_percent) : NaN;
+  if (!Number.isFinite(load)) {
+    // Not measured yet, no GPU, or the request failed -- all three mean the
+    // same thing to the user: there is nothing honest to show.
+    meter.hidden = true;
+    return;
+  }
+
+  const percent = Math.max(0, Math.min(100, Math.round(load)));
+  meter.hidden = false;
+  meter.classList.toggle("busy", percent >= GPU_BUSY_PERCENT);
+  $("gpuFill").style.height = percent + "%";
+  $("gpuValue").textContent = percent + "%";
+
+  const memory = Number(data.memory_used_mib);
+  meter.title = `GPU ${data.name || ""} — ${percent}% utilisation` +
+    (Number.isFinite(memory) && data.memory_total_mib
+      ? ` · ${memory} of ${data.memory_total_mib} MiB in use`
+      : "");
 }
 
 window.startJarvis = startJarvis;
