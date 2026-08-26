@@ -483,6 +483,125 @@ def test_a_first_build_that_fails_restores_nothing(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# What a lesson from a local build is allowed to teach
+# --------------------------------------------------------------------------
+#
+# The pattern used to be the list of gates that passed: "capability
+# system.screen.capture satisfied: tests, contract, implemented, static,
+# artifact, dimensions". Every one of those names is true of any capability
+# that works, so recalling it teaches the next acquisition nothing. The lessons
+# written from escalations say things like "crop each square from the board
+# geometry, then classify by the colour and shape of the ink" -- that is what a
+# pattern is for. A local build has no expert prose to borrow, but it does have
+# source that has just been independently verified.
+
+CHECKS = [{"criterion": name, "passed": True}
+          for name in ("tests", "contract", "implemented", "static")]
+
+QUOTES = '"' * 3
+
+VERIFIED_SOURCE = "\n".join([
+    QUOTES + "Capture the screen and save it as a PNG.",
+    "",
+    "Longer explanation that does not belong in a one-line pattern.",
+    QUOTES,
+    "",
+    "from __future__ import annotations",
+    "",
+    "import ctypes",
+    "import struct",
+    "import zlib",
+    "from pathlib import Path",
+    "",
+    "",
+    "def run(payload):",
+    "    return {'ok': True}",
+    "",
+])
+
+
+def _mission_over(tmp_path, source):
+    """A mission whose registry knows one capability, optionally with source."""
+
+    from service.acquisition import AcquisitionMission, AcquisitionResult
+
+    location = tmp_path / "installed"
+    if source is not None:
+        location.mkdir(parents=True, exist_ok=True)
+        (location / "main.py").write_text(source, encoding="utf-8")
+
+    class Registry:
+        def get(self, capability_id):
+            return type("M", (), {"source_location": str(location)})()
+
+    run = AcquisitionMission.__new__(AcquisitionMission)
+    run.service = type("S", (), {"registry": Registry()})()
+    result = AcquisitionResult(goal="capture the screen")
+    result.capability_id = "system.screen.capture"
+    return run, result
+
+
+def test_the_pattern_says_what_the_working_code_is_built_on(tmp_path):
+    run, result = _mission_over(tmp_path, VERIFIED_SOURCE)
+
+    pattern = run._reusable_pattern(result, CHECKS)
+
+    assert "ctypes" in pattern and "struct" in pattern and "zlib" in pattern
+
+
+def test_the_pattern_carries_the_capabilitys_own_headline(tmp_path):
+    """Its own first docstring line, which is a claim the gates have tested."""
+
+    run, result = _mission_over(tmp_path, VERIFIED_SOURCE)
+
+    pattern = run._reusable_pattern(result, CHECKS)
+
+    assert "Capture the screen and save it as a PNG." in pattern
+    assert "Longer explanation" not in pattern
+
+
+def test_the_pattern_is_not_merely_the_list_of_gates(tmp_path):
+    """The defect, stated: a pattern true of every capability teaches nothing."""
+
+    run, result = _mission_over(tmp_path, VERIFIED_SOURCE)
+
+    pattern = run._reusable_pattern(result, CHECKS)
+
+    assert pattern != ("capability system.screen.capture satisfied: "
+                       "tests, contract, implemented, static")
+
+
+def test_source_that_cannot_be_read_still_leaves_a_lesson(tmp_path):
+    """A weak pattern is worth more than no lesson, so this falls back rather
+    than raising or recording nothing."""
+
+    run, result = _mission_over(tmp_path, None)
+
+    pattern = run._reusable_pattern(result, CHECKS)
+
+    assert "system.screen.capture" in pattern
+    assert "tests" in pattern
+
+
+def test_unparseable_source_falls_back_too(tmp_path):
+    run, result = _mission_over(tmp_path, "def run(payload):\n    return {'ok': True\n")
+
+    pattern = run._reusable_pattern(result, CHECKS)
+
+    assert "satisfied" in pattern
+
+
+def test_a_failed_gate_is_not_reported_as_verifying_anything(tmp_path):
+    run, result = _mission_over(tmp_path, VERIFIED_SOURCE)
+
+    pattern = run._reusable_pattern(
+        result, CHECKS + [{"criterion": "artifact", "passed": False}]
+    )
+
+    assert "artifact" not in pattern
+
+
+# --------------------------------------------------------------------------
 # A repair brief is not a build brief
 # --------------------------------------------------------------------------
 

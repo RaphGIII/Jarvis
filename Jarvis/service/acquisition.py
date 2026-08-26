@@ -641,13 +641,75 @@ class AcquisitionMission:
                          if step.stage in {"expert", "build_local"} and step.ok), ""),
                     verification=checks,
                     provider=provider,
-                    pattern=f"capability {result.capability_id} satisfied: "
-                            + ", ".join(item["criterion"] for item in checks if item["passed"]),
+                    pattern=self._reusable_pattern(result, checks),
                 )
             )
             self._step(result, "remember", f"lesson recorded ({len(checks)} verified checks)")
         except Exception as exc:
             self._step(result, "remember", f"could not record: {exc}", ok=False)
+
+    def _reusable_pattern(self, result: AcquisitionResult, checks: list[dict[str, Any]]) -> str:
+        """What the verified implementation actually did, for the next one to read.
+
+        The pattern used to be the list of gates that passed --
+        ``capability system.screen.capture satisfied: tests, contract,
+        implemented, static, artifact, dimensions``. Every one of those names
+        is true of any capability that works, so recalling it teaches a future
+        acquisition nothing at all. The other lessons in the store, the ones
+        written from escalations, say things like *"crop each square from the
+        board geometry, then classify by the colour and shape of the ink"* --
+        that is what a pattern is for.
+
+        A local build has no expert prose to borrow, but it has something
+        better: source that has just been independently verified. So the shape
+        is read out of it. Which modules it imports is the design decision that
+        matters most on this machine -- stdlib-only versus a third-party
+        package versus shelling out -- and it is a fact about code that works,
+        derived mechanically. Nothing here can invent anything.
+
+        Falls back to the old summary when the source cannot be read, because a
+        lesson with a weak pattern is still worth more than no lesson.
+        """
+
+        import ast
+
+        satisfied = ", ".join(item["criterion"] for item in checks if item["passed"])
+        fallback = f"capability {result.capability_id} satisfied: {satisfied}"
+
+        manifest = None
+        try:
+            manifest = self.service.registry.get(result.capability_id)
+        except Exception:
+            manifest = None
+        if manifest is None:
+            return fallback
+        source = Path(str(getattr(manifest, "source_location", "") or "")) / "main.py"
+        try:
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, ValueError):
+            return fallback
+
+        modules: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules += [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                modules.append(node.module.split(".")[0])
+        seen: list[str] = []
+        for name in modules:
+            if name and name != "__future__" and name not in seen:
+                seen.append(name)
+
+        summary = (ast.get_docstring(tree) or "").strip().splitlines()
+        headline = summary[0].strip() if summary else ""
+
+        parts = [f"{result.capability_id} works on this machine."]
+        if headline:
+            parts.append(f"It describes itself as: {headline[:200]}")
+        if seen:
+            parts.append("It is built on: " + ", ".join(seen[:12]) + ".")
+        parts.append(f"Verified by: {satisfied}.")
+        return " ".join(parts)[:600]
 
     # -- helpers that reach into the capability service -------------------
 
