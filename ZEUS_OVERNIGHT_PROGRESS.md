@@ -22,8 +22,8 @@ Not synonyms, and never used as such below.
 
 ## Current position
 
-**Commit:** `37abca4` + this working tree
-**Milestone:** Priority 3 PASSED; Spotify A–G all green; `music.provider.spotify` v1.0.5
+**Commit:** `20d5034` + this working tree
+**Milestone:** Priority 3 PASSED; Spotify 9/9 live; suite green (1621 passed, 0 failed)
 **Human action required:** none
 
 ---
@@ -41,8 +41,17 @@ Not synonyms, and never used as such below.
 | C | pause | `Bohemian Rhapsody - Queen [Paused]` |
 | D | resume | `Bohemian Rhapsody - Queen [Playing]` |
 | E | next | `'Bohemian Rhapsody' -> 'God Save the Queen'` |
-| F | what's playing | `CANNIBAL - MoreTekk`, matched against Windows |
-| G | restart + reuse, no reacquisition | `Du hast - Rammstein [Playing]` — 61 s, 0 acquisitions |
+| F | what's playing | `God Save the Queen`, matched against Windows — 4 s |
+| G | restart + reuse, no reacquisition | `Du hast - Rammstein [Playing]` — 14 s, 0 acquisitions |
+
+Re-run end to end against **v1.0.5**: **9/9**. The timings are the repair,
+measured through the product rather than through the capability:
+
+| | v1.0.4 | v1.0.5 |
+|---|---|---|
+| A play a requested track | 186 s | **18 s** |
+| B replace a track while playing | 60 s | **16 s** |
+| G second use, after a restart | 61 s | **14 s** |
 
 B is the defect that took four repair cycles. It is fixed and verified.
 
@@ -394,6 +403,51 @@ mistake and cannot be tuned away. The remedy, if it is worth taking, is
 behavioural — do not interleave the tiers inside one mission — and it is
 recorded here rather than acted on, because the measurement does not yet say
 which FAST_LOCAL calls those were.
+
+### Four tests were red on arrival; all four are green
+
+The full suite was run at the promotion boundary and found four failures. Three
+of them were this sprint's own doing.
+
+**`e26f723` traded a false positive for a false negative.** Bisected: the three
+`test_autonomous_engineering_v04` failures pass at `b4b27e2`, `b6b26d9`,
+`2f3a4a2` and `7e76681`, and fail at `e26f723` — the commit that fixed the worst
+false positive in the project, landed without the full suite being run.
+
+Matching moved to the identifier and the declared keywords, which is right, and
+an identifier can be a code name. `custom.scale` shares no word with *"double an
+integer x from the request payload"*, so a capability that declared no keywords
+became invisible the moment it was registered. All three tests assert the same
+thing: that the second call reuses what the first one built. It was rebuilding
+from scratch what it had finished building a second earlier, and reporting the
+rebuild as a success. The same failure the benchmark exists to measure, from
+the other side — a false positive answers with the wrong capability, a false
+negative pays for the right one twice.
+
+Three defences now, in order: match on what a capability *declares*; fall back
+to the description's **first sentence** only, because a capability states what
+it is for and then states how it must behave; and never on a derived term
+shorter than four characters. The middle rule exists because whole descriptions
+brought the original false match straight back on seventeen shared contract
+words, and the last because after that `for` alone was still enough.
+
+**And the voice failure was a question being read as a command.** *"Wie geht es
+weiter?"* — four words, inside `MAX_TRANSPORT_WORDS` — matched `weiter` and was
+classified as *resume*. Live, that resumed playback, found no verified provider
+and started acquiring a Spotify capability: an autonomous build begun in answer
+to something nobody asked. An interrogative opening now rules out a bare
+transport verb, which needs no threshold — a sentence that begins by asking is
+asking. *"Was ist der nächste Schritt?"* stops being a skip too.
+
+Found because of a fix made along the way: an exception in the answering thread
+used to vanish. `send_message` returns `{"ok": True, "accepted": text}` the
+moment the thread starts — that is what lets Jarvis speak before it has finished
+thinking — so everything after that is out of the request's reach. The exception
+reached a daemon thread's default handler, printed to a stderr nobody reads, and
+the user simply never got an answer. Accepted, no reply, no error. It now
+publishes an ERROR event carrying the traceback and delivers a reply saying so,
+and still returns immediately. It named both missing attributes in the voice
+stub on the first run.
 
 ### The pattern, again
 

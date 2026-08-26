@@ -59,6 +59,23 @@ ACTIONS = ("play", "pause", "resume", "next", "previous", "search", "current")
 #: cruder than parsing and considerably more reliable than a keyword list.
 MAX_TRANSPORT_WORDS = 4
 
+#: Brevity alone was not enough, and the counter-example was four words long.
+#: "Wie geht es weiter?" is inside the limit and is still a question -- observed
+#: live, where it resumed playback and then began acquiring a Spotify provider
+#: to do it with, in answer to something nobody asked.
+#:
+#: An interrogative opening is a stronger signal than a word count because it
+#: needs no threshold: a sentence that begins by asking is asking. The same
+#: reasoning as elsewhere in this project -- a rule about the shape of a
+#: sentence rather than a list of the phrases seen so far.
+#:
+#: This does not silence "Was laeuft gerade?": _CURRENT is matched before any
+#: transport verb and returns first, which is why it is written that way round.
+_INTERROGATIVE = re.compile(
+    r"^(wie|was|warum|wieso|weshalb|wann|wo|wer|welche[srn]?|wieviel|how|what"
+    r"|why|when|where|who|which)\b"
+)
+
 
 def _fold(text: str) -> str:
     lowered = (text or "").lower().replace("ß", "ss")
@@ -149,12 +166,14 @@ def understand(text: str) -> MusicRequest | None:
     if _CURRENT.search(folded):
         return MusicRequest("current", reason="asks what is playing")
 
-    # Transport verbs are accepted bare only in a short utterance. In a longer
-    # sentence they need a music word, otherwise "wie geht es mit meinem
-    # Projekt weiter" becomes a resume.
+    # Transport verbs are accepted bare only in a short utterance that is not a
+    # question. In a longer sentence, or in any question, they need a music word
+    # -- otherwise "wie geht es mit meinem Projekt weiter" becomes a resume, and
+    # so does "wie geht es weiter", which is inside the word limit.
+    commanding = (short and not _INTERROGATIVE.match(folded)) or has_context
     for pattern, action in ((_NEXT, "next"), (_PREVIOUS, "previous"),
                             (_PAUSE, "pause"), (_RESUME, "resume")):
-        if pattern.search(folded) and (short or has_context):
+        if pattern.search(folded) and commanding:
             return MusicRequest(action, reason=f"transport command: {action}")
 
     if _PLAY.search(folded):

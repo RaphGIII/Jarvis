@@ -847,3 +847,56 @@ def test_a_non_ascii_title_survives_the_round_trip():
 
     assert state.title == "Bück dich"
     assert "�" not in state.describe()
+
+
+# --------------------------------------------------------------------------
+# A question is not a transport command, however short it is
+# --------------------------------------------------------------------------
+#
+# Brevity was the whole guard, and the counter-example is four words long.
+# "Wie geht es weiter?" is inside MAX_TRANSPORT_WORDS and is still a question.
+# Observed live in the voice suite: it resumed playback, found no verified
+# provider, and began acquiring a Spotify capability -- an autonomous build,
+# started in answer to something nobody asked.
+
+
+def test_a_four_word_question_is_not_a_resume():
+    from service.music import understand
+
+    assert understand("Wie geht es weiter?") is None
+    assert understand("wie geht es weiter") is None
+
+
+def test_the_bare_command_still_resumes():
+    from service.music import understand
+
+    assert understand("Weiter.").action == "resume"
+    assert understand("weiter").action == "resume"
+
+
+def test_a_question_about_something_else_entirely_is_left_alone():
+    """"Naechste" in a question about steps is not a request for the next track."""
+
+    from service.music import understand
+
+    assert understand("Was ist der naechste Schritt?") is None
+
+
+def test_a_question_that_names_music_is_still_a_music_request():
+    """The interrogative rules out a bare verb, not the domain: someone asking
+    "wie mache ich weiter mit der Musik" has said which weiter they mean."""
+
+    from service.music import understand
+
+    heard = understand("wie geht es weiter mit der musik")
+    assert heard is not None and heard.action == "resume"
+
+
+def test_asking_what_is_playing_still_works():
+    """_CURRENT is matched before any transport verb, which is why asking a
+    question about music is unaffected by a rule about questions."""
+
+    from service.music import understand
+
+    assert understand("Was laeuft gerade?").action == "current"
+    assert understand("what's playing").action == "current"
