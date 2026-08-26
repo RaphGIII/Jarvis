@@ -169,6 +169,23 @@ class Client:
     def states(self) -> list[str]:
         return [payload.get("state", "") for payload in self.of_type("state")]
 
+    def settled(self, expected: str, timeout: float = 10.0) -> str:
+        """The last state, once it stops changing.
+
+        `say` returns on the MESSAGE event, and the state that follows it
+        arrives a moment later on the same stream. Reading immediately is a
+        race that passes alone and fails under load -- which is exactly how it
+        behaved: green in isolation, red in a full run.
+        """
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            current = self.states()
+            if current and current[-1] == expected:
+                return current[-1]
+            time.sleep(0.05)
+        return (self.states() or [""])[-1]
+
 
 @pytest.fixture
 def live(tmp_path):
@@ -745,7 +762,7 @@ def test_a_failed_action_leaves_the_interface_in_an_error_state(live, tmp_path):
     client.say("Erstelle die Datei blocked.txt mit dem Inhalt x")
 
     assert core.receipts.all()[-1].verified is False
-    assert client.states()[-1] == "error"
+    assert client.settled("error") == "error"
 
 
 def test_a_new_conversation_clears_the_transcript_but_never_the_record(live, tmp_path):
@@ -772,7 +789,7 @@ def test_a_verified_action_returns_to_idle(live):
 
     client.say("Erstelle die Datei fine.txt mit dem Inhalt x")
 
-    assert client.states()[-1] == "idle"
+    assert client.settled("idle") == "idle"
 
 
 def test_an_action_turn_does_not_stream_model_prose(live):
