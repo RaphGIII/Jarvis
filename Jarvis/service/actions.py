@@ -65,7 +65,7 @@ class ActionPlan:
         return {"action": self.action, "arguments": dict(self.arguments), "reason": self.reason}
 
 
-SUPPORTED_ACTIONS = ("file.write", "file.read", "project.create", "none")
+SUPPORTED_ACTIONS = ("file.write", "file.read", "project.create", "capability", "none")
 
 
 PLANNER_PROMPT = """You turn a user's request into one machine-readable action. You do not perform it.
@@ -74,12 +74,20 @@ Available actions:
   {{"action": "file.write", "path": "<relative filename>", "content": "<exact file contents>"}}
   {{"action": "file.read", "path": "<relative filename>"}}
   {{"action": "project.create", "name": "<project name>"}}
+  {{"action": "capability", "goal": "<the real-world thing to do>"}}
   {{"action": "none", "reason": "<why none of the above fits>"}}
+
+Use "capability" when the user is asking for something to actually HAPPEN on
+this computer that the first three cannot do -- taking a screenshot, controlling
+a device, reading a sensor, converting a file. Describe the outcome, not how to
+achieve it.
+
+Use "none" for anything that is not a real-world action: questions, opinions,
+explanations, jokes, poems, chat. Writing a poem is not a capability.
 
 Rules:
 - Reply with one JSON object and nothing else. No explanation, no code fence.
 - Copy content and names EXACTLY as the user gave them, including capitalisation.
-- If the user asked for something not in the list above, use "none" and say why.
 - Never invent a path the user did not give. Use a bare filename.
 
 User request:

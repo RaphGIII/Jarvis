@@ -466,6 +466,132 @@ class JarvisCore:
             final_state=JarvisState.IDLE if outcome.receipt.verified else JarvisState.ERROR,
         )
 
+    def _answer_by_capability(self, text: str, scope: str, plan: Any) -> None:
+        """Serve a real-world request from a capability, acquiring one if needed.
+
+        The generic form of the music path.  A request that no built-in action
+        covers is not automatically a refusal: it may be something ZEUS already
+        learned to do, or something it can go and learn.  What it is never
+        allowed to be is a description of the thing happening.
+        """
+
+        from runtime.receipts import Receipt, Verification, failed
+
+        goal = str(plan.arguments.get("goal") or plan.reason or text).strip()
+        self.emit(EventType.TOOL, {"summary": f"capability requested: {goal[:120]}"}, scope=scope)
+
+        manifest = None
+        try:
+            manifest = self.capabilities.resolve(goal)
+        except Exception as exc:
+            self.emit(EventType.ERROR, {"error": f"registry unreadable: {exc}"}, scope=scope)
+
+        if manifest is None:
+            receipt = failed(
+                "capability.missing", "capability.resolver",
+                f"I have no verified capability for that yet: {goal[:160]}",
+                request=text, goal=goal,
+            )
+            self.receipts.record(receipt)
+            self._session_receipts.append(receipt)
+            self.emit(
+                EventType.TOOL,
+                {"summary": receipt.summary(), "receipt_id": receipt.id,
+                 "receipt": receipt.to_dict()},
+                scope=scope,
+            )
+            self._deliver(
+                f"{receipt.detail}\n\nreceipt {receipt.id}",
+                scope=scope, backend="capability.resolver",
+                context_text=f"[no capability for: {goal[:80]}]",
+                final_state=JarvisState.ERROR,
+            )
+            return
+
+        capability_id = str(manifest.capability_id)
+        self.state.set(JarvisState.VERIFYING, detail=capability_id, scope=scope)
+        try:
+            execution = self.capabilities.execute(capability_id, {"goal": goal})
+        except Exception as exc:
+            execution = None
+            self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
+
+        ok = bool(getattr(execution, "ok", False))
+        output = dict(getattr(execution, "output", {}) or {})
+        # A capability's own word is not the verdict. What it produced is
+        # checked here, from outside, exactly as the acquisition gates do.
+        checks = self._verify_capability_output(output)
+        receipt = Receipt(
+            kind=f"capability.{capability_id}",
+            executor=capability_id,
+            ok=ok and all(item.passed for item in checks),
+            request=text,
+            detail=(str(output.get("detail") or output.get("message") or "ran")
+                    if ok else str(getattr(execution, "error", "") or output.get("error", "failed"))),
+            evidence={"goal": goal, "capability": capability_id,
+                      "output": {k: v for k, v in output.items() if k != "client_secret"}},
+            verifications=tuple(checks),
+        )
+        self.receipts.record(receipt)
+        self._session_receipts.append(receipt)
+        self.emit(
+            EventType.TOOL,
+            {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()},
+            scope=scope,
+        )
+        lines = [receipt.detail]
+        if receipt.verifications:
+            lines += ["", "Belege:" if self.language.startswith("de") else "Evidence:"]
+            lines += [f"  - {line}" for line in receipt.evidence_lines()]
+        lines += ["", f"receipt {receipt.id}"]
+        self._deliver(
+            "\n".join(lines), scope=scope, backend=capability_id,
+            context_text=f"[capability {capability_id}: "
+            f"{'verified' if receipt.verified else 'not verified'}, receipt {receipt.id}]",
+            final_state=JarvisState.IDLE if receipt.verified else JarvisState.ERROR,
+        )
+
+    @staticmethod
+    def _verify_capability_output(output: dict[str, Any]) -> list[Any]:
+        """Check whatever the capability says it produced, from outside.
+
+        Deliberately domain-blind: this knows nothing about screenshots or
+        exports. It knows the shape of the claim -- "there is a file at this
+        path" -- and goes and looks, because a capability that reports a path
+        it did not write is the file-write defect wearing different clothes.
+        """
+
+        import time
+
+        from runtime.receipts import Verification
+
+        checks: list[Verification] = []
+        raw = output.get("path") or output.get("file") or output.get("artifact")
+        if not raw:
+            return checks
+        target = Path(str(raw))
+        exists = target.is_file()
+        checks.append(
+            Verification(
+                check="the reported file exists",
+                passed=exists,
+                observed=f"{target} ({target.stat().st_size} bytes)" if exists else f"{target} is not a file",
+                expected=str(target),
+            )
+        )
+        if not exists:
+            return checks
+        age = time.time() - target.stat().st_mtime
+        checks.append(
+            Verification(
+                check="it was produced just now, not found",
+                passed=age <= 300.0,
+                observed=f"{age:.0f}s old",
+                expected="under 300s old",
+            )
+        )
+        return checks
+
     def _defect_confirmed(self, outcome: Any) -> bool:
         """Whether a failure has happened often enough to be the code's fault.
 
@@ -613,6 +739,13 @@ class JarvisCore:
                 scope=scope,
             )
             self._answer_conversationally(text, scope)
+            return
+
+        if plan.action == "capability":
+            # A real-world action outside the built-in set. Either something
+            # registered already serves it, or it becomes a mission -- the same
+            # shape as a music gap, without the music.
+            self._answer_by_capability(text, scope, plan)
             return
 
         self.emit(

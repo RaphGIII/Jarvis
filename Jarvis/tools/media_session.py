@@ -32,9 +32,12 @@ two together are what "it is really playing" means here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
+import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -102,6 +105,7 @@ class MediaState:
 #: because Windows PowerShell 5.1 has no ``await`` -- this is the standard
 #: incantation for consuming a WinRT IAsyncOperation from PowerShell.
 _SCRIPT = r"""
+param([string]$App = "", [string]$Command = "status")
 $ErrorActionPreference = "Stop"
 # PowerShell writes using the console's output encoding, which on this machine
 # is a legacy code page. Python decodes as UTF-8, so every non-ASCII character
@@ -175,6 +179,30 @@ def _powershell() -> str | None:
     return shutil.which("powershell") or shutil.which("pwsh")
 
 
+#: Written once per process, next to the module, so PowerShell parses the
+#: script from a file rather than re-parsing it from the command line on every
+#: call. Regenerated when the source changes so an edit here cannot be masked
+#: by a stale copy on disk.
+_SCRIPT_FILE: Path | None = None
+_SCRIPT_LOCK = threading.Lock()
+
+
+def _script_path() -> Path:
+    global _SCRIPT_FILE
+    with _SCRIPT_LOCK:
+        if _SCRIPT_FILE is not None and _SCRIPT_FILE.is_file():
+            return _SCRIPT_FILE
+        digest = hashlib.sha256(_SCRIPT.encode("utf-8")).hexdigest()[:12]
+        path = Path(tempfile.gettempdir()) / f"zeus_media_session_{digest}.ps1"
+        if not path.is_file():
+            # utf-8-sig: PowerShell reads a BOM-less file as the ANSI code page,
+            # which would undo the encoding fix for anything non-ASCII in the
+            # script itself.
+            path.write_text(_SCRIPT, encoding="utf-8-sig")
+        _SCRIPT_FILE = path
+        return path
+
+
 def available() -> bool:
     return _powershell() is not None
 
@@ -183,21 +211,22 @@ def _invoke(command: str, *, app: str = "") -> dict[str, Any]:
     shell = _powershell()
     if shell is None:
         return {"ok": False, "error": "powershell is not on PATH"}
-    # Both values are prepended as assignments rather than passed as
-    # parameters. They used to be: the script declared `param($Command)` and
-    # the invocation ended `-Command <script> -Command <command>`. PowerShell
-    # takes the first -Command as the script and treats everything after it as
-    # arguments to that script, so $Command kept its default of "status" --
-    # every transport call silently read the state and changed nothing, then
-    # returned the unchanged reading as though the command had been refused.
-    # Reads were unaffected, which is why it went unnoticed.
-    safe_app = app.replace("'", "")
-    safe_command = command.replace("'", "")
-    script = f"$App = '{safe_app}'\n$Command = '{safe_command}'\n" + _SCRIPT
+    # Run from a file with real parameters, not from a -Command string.
+    #
+    # Measured: passing this script inline cost 4.4s per call, while the same
+    # work run from a file cost 1.1s including PowerShell's own startup -- and
+    # the WinRT part of it is about a millisecond. PowerShell re-parses a long
+    # -Command string on every invocation, and this script is long. Three
+    # seconds a call, on every music verification.
+    #
+    # Parameters rather than prepended assignments, because that is what a
+    # param() block is for. The earlier defect was not parameters; it was
+    # passing a second -Command, which PowerShell reads as an argument to the
+    # first. -File takes named parameters correctly.
     try:
         completed = subprocess.run(
             [shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-Command", script],
+             "-File", str(_script_path()), "-App", app, "-Command", command],
             capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
             encoding="utf-8", errors="replace",
         )

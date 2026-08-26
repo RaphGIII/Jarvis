@@ -671,10 +671,13 @@ def test_a_transport_command_reaches_powershell(monkeypatch):
     media_session.control("pause", app="spotify")
 
     argv = captured["argv"]
+    # The script now runs from a file, so -Command carries the command itself
+    # and PowerShell binds it to the script's param() block. The original defect
+    # was a SECOND -Command: PowerShell reads that as an argument to the first.
     assert argv.count("-Command") == 1, "a second -Command becomes an argument, not a parameter"
-    script = argv[argv.index("-Command") + 1]
-    assert "$Command = 'pause'" in script
-    assert "$App = 'spotify'" in script
+    assert argv[argv.index("-Command") + 1] == "pause"
+    assert argv[argv.index("-App") + 1] == "spotify"
+    assert "-File" in argv, "a long script re-parsed on every call costs seconds"
 
 
 @pytest.mark.parametrize("command", ["play", "pause", "next", "previous"])
@@ -691,8 +694,8 @@ def test_every_transport_command_is_passed_through(monkeypatch, command):
 
     media_session.control(command, app="")
 
-    script = captured["argv"][captured["argv"].index("-Command") + 1]
-    assert f"$Command = '{command}'" in script
+    argv = captured["argv"]
+    assert argv[argv.index("-Command") + 1] == command
 
 
 def test_an_unsupported_transport_command_is_refused():
@@ -705,7 +708,7 @@ def test_an_unsupported_transport_command_is_refused():
 
 
 def test_a_quote_cannot_escape_the_generated_script(monkeypatch):
-    """Both values are interpolated into PowerShell source."""
+    """Passed as arguments now, so there is no PowerShell syntax to escape into."""
 
     from tools import media_session
 
@@ -719,10 +722,13 @@ def test_a_quote_cannot_escape_the_generated_script(monkeypatch):
 
     media_session.control("status", app="spot'; Remove-Item X -Recurse; '")
 
-    script = captured["argv"][captured["argv"].index("-Command") + 1]
-    assert "Remove-Item" in script, "the text survives, but as one quoted literal"
-    assert script.count("$App = '") == 1
-    assert "'; Remove-Item" not in script.split("$App = '")[1].split("'\n")[0] + "'"
+    argv = captured["argv"]
+    hostile = argv[argv.index("-App") + 1]
+    # It arrives as one argv entry, so no shell ever parses it as syntax. This
+    # is the reason to pass arguments rather than interpolate into source:
+    # there is nothing left to escape.
+    assert hostile == "spot'; Remove-Item X -Recurse; '"
+    assert not any("Remove-Item" in part for part in argv if part is not hostile)
 
 
 def test_a_defect_report_carries_the_state_the_world_was_in(tmp_path):
@@ -820,7 +826,11 @@ def test_powershell_output_is_read_as_utf8(monkeypatch):
 
     media_session.read(app="spotify")
 
-    script = captured["argv"][captured["argv"].index("-Command") + 1]
+    from pathlib import Path
+
+    script = Path(captured["argv"][captured["argv"].index("-File") + 1]).read_text(
+        encoding="utf-8-sig"
+    )
     assert "[Console]::OutputEncoding" in script, "stdout encoding must be pinned"
     assert "$OutputEncoding" in script, "the pipeline encoding must be pinned too"
     assert captured["kwargs"].get("encoding") == "utf-8"
