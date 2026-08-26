@@ -42,3 +42,7 @@ Jarvis/data/tools/
 # Evidence worth keeping is copied into evidence/ deliberately rather than
 # tracked here, where it would churn on every run.
 Jarvis/data/jarvis/
+
+# ZEUS.exe build output
+dist/
+build/

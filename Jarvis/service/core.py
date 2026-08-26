@@ -120,6 +120,11 @@ class JarvisCore:
         #: changes the recogniser hint and the voice, which sounds worse than
         #: occasionally answering in the wrong language.
         self.language = ""
+        #: Readiness, restart and shutdown -- the supervisor's view of this
+        #: process. Constructed here because it must exist before warm().
+        from service.lifecycle import Lifecycle
+
+        self.lifecycle = Lifecycle(self)
 
     # ------------------------------------------------------------------
     # Lazy subsystems
@@ -1069,10 +1074,26 @@ class JarvisCore:
                 from brain.tiers import ModelTier
 
                 provider = self.kernel.provider(ModelTier.FAST_LOCAL)
-                provider.generate("OK", max_tokens=4, temperature=0.0)
+                answer = provider.generate("Reply with the single word: OK", max_tokens=4, temperature=0.0)
+                text = answer if isinstance(answer, str) else "".join(str(piece) for piece in answer)
+                if not text.strip():
+                    raise RuntimeError("the model returned an empty answer")
                 self.emit(EventType.DIAGNOSTIC, {"warming": "conversation model ready"})
+                # READY is earned here and nowhere else: real text came out of
+                # the model that answers the user, in this process.
+                self.lifecycle.mark("fast_local", True, text.strip()[:40])
+                self._health_ok, self._health_checked_at = True, time.time()
             except Exception as exc:
                 self.emit(EventType.DIAGNOSTIC, {"warming": f"conversation model unavailable: {exc}"})
+                self.lifecycle.mark("fast_local", False, f"{type(exc).__name__}: {exc}"[:300])
+
+            # A restart that follows a promotion must resume whatever was in
+            # flight; this is where interrupted missions get their chance.
+            try:
+                restored = self._restore_missions()
+                self.lifecycle.mark("missions", True, f"{restored} resumable")
+            except Exception as exc:
+                self.lifecycle.mark("missions", False, str(exc)[:200])
 
             if speech:
                 try:
@@ -1080,8 +1101,10 @@ class JarvisCore:
                     # it is the cheapest way to pay that cost early.
                     self.voice.engine.synthesize("Bereit.")
                     self.emit(EventType.DIAGNOSTIC, {"warming": "voice ready"})
+                    self.lifecycle.mark("voice", True)
                 except Exception as exc:
                     self.emit(EventType.DIAGNOSTIC, {"warming": f"speech unavailable: {exc}"})
+                    self.lifecycle.mark("voice", False, str(exc)[:200])
 
                 try:
                     # And the recogniser, which is the larger of the two costs:
@@ -1092,10 +1115,13 @@ class JarvisCore:
                     silence = Audio(samples=bytes(32000), sample_rate=16000)
                     self.voice.engine.transcribe(silence)
                     self.emit(EventType.DIAGNOSTIC, {"warming": "recogniser ready"})
+                    self.lifecycle.mark("recogniser", True)
                 except Exception as exc:
                     self.emit(EventType.DIAGNOSTIC, {"warming": f"recogniser unavailable: {exc}"})
+                    self.lifecycle.mark("recogniser", False, str(exc)[:200])
 
             self.emit(EventType.DIAGNOSTIC, {"warming": "done"})
+            self.lifecycle.mark("warm", True)
 
         thread = threading.Thread(target=run, daemon=True, name="jarvis-warm")
         thread.start()
@@ -1216,6 +1242,29 @@ class JarvisCore:
 
     def device_display(self, device_id: str, command: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": self.gateway.send(str(device_id), command, payload)}
+
+    def _restore_missions(self) -> int:
+        """Count the missions a restart left resumable, and say so.
+
+        Acquisition missions checkpoint after every attempt and resume when
+        the same goal is asked again; the count is what the health report and
+        the owner see. Kicking them off unprompted would put a 40-minute
+        BUILD_LOCAL run on the GPU the instant the conversation model loaded,
+        which is the wrong order on one card.
+        """
+
+        from runtime.missions import MissionStore
+
+        store = MissionStore(Path(self.kernel.state_root) / "missions")
+        resumable = 0
+        for checkpoint in store.list():
+            if not checkpoint.acquired and not checkpoint.stale:
+                resumable += 1
+        if resumable:
+            self.emit(EventType.NOTIFICATION, {
+                "text": f"{resumable} mission(s) can be resumed", "kind": "missions",
+            })
+        return resumable
 
     def stop_current(self) -> dict[str, Any]:
         """Interrupt whatever is running.  Used by barge-in and the stop button."""

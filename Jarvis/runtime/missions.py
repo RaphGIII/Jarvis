@@ -184,6 +184,19 @@ class MissionStore:
             tmp.replace(path)
         return path
 
+    def list(self) -> list[MissionCheckpoint]:
+        """Every checkpoint on disk, unreadable ones skipped."""
+
+        if not self.root.is_dir():
+            return []
+        found: list[MissionCheckpoint] = []
+        for path in sorted(self.root.glob("*.json")):
+            try:
+                found.append(MissionCheckpoint.from_dict(json.loads(path.read_text(encoding="utf-8"))))
+            except (OSError, ValueError, TypeError):
+                continue
+        return found
+
     def load(self, capability_id: str) -> MissionCheckpoint | None:
         path = self.path_for(capability_id)
         if not path.is_file():

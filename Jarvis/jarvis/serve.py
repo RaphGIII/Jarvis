@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 import webbrowser
+from pathlib import Path
 
 from service.core import JarvisCore
 from service.http import JarvisHTTPServer
@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1", help="interface to bind (default: loopback only)")
     parser.add_argument("--port", type=int, default=8420, help="port (0 picks a free one)")
     parser.add_argument("--token", default="", help="shared token; generated when omitted")
+    parser.add_argument("--token-file", default="", help="read the shared token from this file (the supervisor's way)")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     # Empty rather than a name: the assistant's identity comes from
     # config/identity.json, and a default here silently overrode it.
@@ -50,8 +51,14 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    token = args.token
+    if args.token_file:
+        token = Path(args.token_file).read_text(encoding="utf-8").strip()
+
     core = JarvisCore(persona_name=args.persona)
-    server = JarvisHTTPServer(core, host=args.host, port=args.port, token=args.token)
+    # A planned restart saved the transcript; a fresh start finds nothing.
+    resumed = core.lifecycle.restore_conversation()
+    server = JarvisHTTPServer(core, host=args.host, port=args.port, token=token)
     url = server.start()
 
     # Start loading models immediately. The page is served either way; this
@@ -67,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
         # wake word and the trained model can differ, and finding that out by
         # talking to something that is not listening is the worst way to learn it.
         print(f"  {note}\n")
+    if resumed:
+        print(f"  Resumed {resumed['turns']} turn(s) from before the restart ({resumed['reason']}).\n")
+    if core.lifecycle.supervised:
+        print("  Running under the ZEUS supervisor.\n")
     print("  Ctrl-C to stop.\n")
 
     if not args.no_browser:
@@ -76,13 +87,17 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     try:
-        while True:
-            time.sleep(3600)
+        # Sleeps until a restart or shutdown is requested through the API;
+        # the exit code tells the supervisor which.
+        while not core.lifecycle.exit_event.wait(timeout=3600):
+            pass
+        if core.lifecycle.exit_reason:
+            print(f"\n  exiting: {core.lifecycle.exit_reason}")
     except KeyboardInterrupt:
         print("\n  stopping…")
     finally:
         server.stop()
-    return 0
+    return core.lifecycle.exit_code
 
 
 if __name__ == "__main__":

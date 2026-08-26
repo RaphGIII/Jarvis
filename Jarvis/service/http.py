@@ -189,6 +189,20 @@ class JarvisHTTPServer:
             "/api/language": lambda body: self.core.set_language(str(body.get("language", ""))),
             "/api/stop": lambda _: self.core.stop_current(),
             "/api/new": lambda _: self.core.new_conversation(),
+            # The supervisor's contract. READY here means the conversation
+            # model produced real text in this process -- the port being open
+            # is what the supervisor already knows.
+            "/api/health": lambda _: self.core.lifecycle.health(),
+            "/api/supervisor": lambda _: self.core.lifecycle.supervisor_status(),
+            "/api/restart": lambda body: self.core.lifecycle.request_restart(
+                str(body.get("reason", "restart requested")),
+                expected_revision=str(body.get("expected_revision", "")),
+                promotion_id=str(body.get("promotion_id", "")),
+                requested_by=str(body.get("requested_by", "api")),
+            ),
+            "/api/shutdown": lambda body: self.core.lifecycle.request_shutdown(
+                str(body.get("reason", "shutdown requested")), requested_by=str(body.get("requested_by", "api"))
+            ),
         }
         handler = routes.get(path)
         if handler is None:
