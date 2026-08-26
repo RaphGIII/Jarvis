@@ -1341,6 +1341,41 @@ class JarvisCore:
 
         threading.Thread(target=work, daemon=True, name=f"selfdev-{mission.mission_id}").start()
 
+    def _selfdev_runner(self, scope: str) -> Any:
+        from service.selfdev import SelfDevRunner
+
+        return SelfDevRunner(
+            repository=Path(self.kernel.state_root).resolve().parents[1],
+            store=self.selfdev_store, kernel=self.kernel, owner=self.owner, lifecycle=self.lifecycle,
+            gateway=self.experts, emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
+            set_state=self.state.set,
+        )
+
+    def resume_selfdev(self, mission_id: str) -> dict[str, Any]:
+        """Pick a failed or interrupted mission up from its candidate."""
+
+        from service.selfdev import describe
+
+        mission = self.selfdev_store.load(mission_id)
+        if mission is None:
+            return {"ok": False, "error": f"no self-development mission {mission_id}"}
+        if mission.phase == "RESTARTING":
+            return {"ok": False, "error": "that mission is waiting for the restart verdict"}
+        active = self.selfdev_store.active()
+        if active is not None and active.mission_id != mission_id:
+            return {"ok": False, "error": f"mission {active.mission_id} is already running"}
+        runner = self._selfdev_runner(mission.scope)
+
+        def work() -> None:
+            finished = runner.resume(mission)
+            if finished.phase == "RESTARTING":
+                return
+            self._deliver(describe(finished, mission.language or self.language), scope=mission.scope, backend="selfdev",
+                          final_state=JarvisState.IDLE if finished.outcome != "failed" else JarvisState.ERROR)
+
+        threading.Thread(target=work, daemon=True, name=f"selfdev-resume-{mission_id}").start()
+        return {"ok": True, "mission_id": mission_id, "resumed_from": mission.phase}
+
     def _settle_selfdev_after_restart(self) -> int:
         from service.selfdev import describe, settle_after_restart
 

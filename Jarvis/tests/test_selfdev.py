@@ -138,6 +138,33 @@ def test_failed_verification_fails_the_mission_without_promotion(repo: Path, tmp
     assert (repo / "service" / "core.py").read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_changed_files_ignores_caches_runtime_state_and_directories(repo: Path, tmp_path: Path) -> None:
+    runner = _runner(repo, tmp_path, build=lambda self, m, s: None)
+    mission = SelfDevMission(request="x")
+    _candidate(runner, mission, {"service/core.py": "VALUE = 5\n", "service/__pycache__/core.cpython-314.pyc": "x",
+                                 "data/jarvis/state.json": "{}", "newdir/keep.txt": "k"})
+    files = runner._changed_files(mission.worktree)
+    assert sorted(files) == ["newdir/keep.txt", "service/core.py"], files
+
+
+def test_resume_reverifies_and_promotes_an_existing_candidate(repo: Path, tmp_path: Path) -> None:
+    def build(self, mission, max_seconds):
+        _candidate(self, mission, {"service/core.py": "VALUE = 2\n"})
+
+    runner = _runner(repo, tmp_path, build=build)
+    mission = SelfDevMission(request="make VALUE bigger in your code")
+    runner.store.save(mission)
+    # Simulate a crash after BUILD: candidate exists, mission marked failed.
+    build(runner, mission, 0)
+    mission.phase, mission.outcome, mission.reason = "FAILED", "failed", "PermissionError: pretend"
+    runner.store.save(mission)
+
+    resumed = runner.resume(mission)
+    assert resumed.phase == "RESTARTING" and resumed.promotion["outcome"] == "PROMOTED", resumed.reason
+    assert [e["phase"] for e in resumed.events][:2] == ["RESUME", "VERIFY"]
+    assert (repo / "service" / "core.py").read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
 def test_disabled_policy_refuses(repo: Path, tmp_path: Path) -> None:
     runner = _runner(repo, tmp_path, build=lambda self, m, s: None,
                      owner=FakeOwner({"self_development": {"enabled": False}}))

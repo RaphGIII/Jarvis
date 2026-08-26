@@ -197,6 +197,7 @@ class JarvisHTTPServer:
             # have, and they exist only here -- no model, capability, expert
             # or ingestion path holds a reference to them.
             "/api/selfdev": lambda _: self.core.list_selfdev(),
+            "/api/selfdev/resume": lambda body: self.core.resume_selfdev(str(body.get("mission_id", ""))),
             "/api/owner": lambda _: self.core.owner_view(),
             "/api/owner/propose": lambda body: self.core.owner_propose(
                 dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui"

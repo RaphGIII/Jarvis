@@ -242,6 +242,45 @@ class SelfDevRunner:
             if mission.phase not in {"RESTARTING"}:
                 self.set_state(JarvisState.IDLE, scope=mission.scope)
 
+    def resume(self, mission: SelfDevMission) -> SelfDevMission:
+        """Continue a mission whose candidate still exists on disk.
+
+        A failure in PROMOTE or RESTARTING does not invalidate a verified
+        worktree; re-verifying it and promoting costs seconds, rebuilding it
+        costs the half hour that was already spent.  Anything earlier than a
+        candidate starts over.
+        """
+
+        if mission.worktree and Path(mission.worktree).is_dir():
+            mission.changed_files = self._changed_files(mission.worktree)
+        if not mission.changed_files:
+            mission.phase, mission.outcome, mission.reason = "UNDERSTAND", "", ""
+            mission.worktree = ""
+            return self.run(mission)
+        policy = self.owner.read("policy").get("self_development", {})
+        mission.outcome, mission.reason = "", ""
+        self._phase(mission, "RESUME", f"resuming with the existing candidate ({len(mission.changed_files)} files)")
+        try:
+            self.set_state(JarvisState.VERIFYING, detail="re-verifying the candidate", scope=mission.scope)
+            if not self._timed(mission, "verify", lambda: self._verify(mission)):
+                return self._fail(mission, f"the candidate no longer verifies: {mission.verification.get('detail', '')[:400]}")
+            if not policy.get("auto_promote", True):
+                mission.outcome = "verified_not_promoted"
+                self._phase(mission, "DONE", "verified; the owner policy does not promote automatically")
+                return mission
+            self._timed(mission, "promote", lambda: self._promote(mission))
+            if mission.outcome == "failed":
+                return mission
+            self._restart(mission)
+            return mission
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            return self._fail(mission, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1500:]}")
+        finally:
+            if mission.phase != "RESTARTING":
+                self.set_state(JarvisState.IDLE, scope=mission.scope)
+
     # -- phases --------------------------------------------------------
 
     def _understand(self, mission: SelfDevMission) -> None:
@@ -305,10 +344,17 @@ class SelfDevRunner:
         from brain.tiers import ModelTier
         from development.repository_engineer import RepositoryEngineer, SelfImprovementGoal
 
+        from development.repository_engineer import ModelRequestBudget
+
         brain = self.kernel.provider(ModelTier.BUILD_LOCAL)
+        # The prompt budget must match the window the provider was configured
+        # with; left at its 8192 default it compacts prompts the model could
+        # have read in full (the tuner measured 24576 here).
+        window = getattr(getattr(brain, "spec", None), "context_window", None)
         engineer = RepositoryEngineer(
             brain=brain, timeout_seconds=600.0, max_cycles=3, max_seconds=max_seconds,
             worktree_root=Path(os.environ.get("TEMP", "/tmp")) / "jarvis_selfdev" / mission.mission_id,
+            context_budget=ModelRequestBudget.from_env(window) if window else None,
         )
         goal = SelfImprovementGoal(objective=self._goal_text(mission), allowed_paths=["."])
         commands = [item["command"] for item in mission.acceptance]
@@ -330,16 +376,27 @@ class SelfDevRunner:
         if not worktree or not Path(worktree).is_dir():
             return []
         try:
-            out = subprocess.run(["git", "status", "--porcelain"], cwd=worktree, capture_output=True, text=True, timeout=60).stdout
+            out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=worktree, capture_output=True, text=True, timeout=60).stdout
         except (OSError, subprocess.SubprocessError):
             return []
         files = []
+        root = Path(worktree)
         for line in out.splitlines():
             if len(line) > 3:
                 name = line[3:].strip().strip('"')
                 if " -> " in name:
                     name = name.split(" -> ", 1)[1]
-                files.append(name.replace("\\", "/"))
+                name = name.replace("\\", "/")
+                # A candidate worktree has no .gitignore at its root, so
+                # bytecode caches and runtime state show up as untracked.
+                # None of that is a change; only files are promoted.
+                if name.endswith("/") or "__pycache__" in name or name.endswith(".pyc"):
+                    continue
+                if name.startswith(("data/", ".pytest_cache/", ".pytest_tmp/", ".agent_tmp/", ".venv")):
+                    continue
+                if (root / name).is_dir():
+                    continue
+                files.append(name)
         return files
 
     def _run(self, command: list[str], cwd: str, timeout: float = 600.0) -> tuple[bool, str]:

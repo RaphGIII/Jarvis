@@ -343,6 +343,33 @@ class Supervisor:
         )
         self.log(f"launched core pid {self.core.pid}: {' '.join(command)}")
 
+    def _kill_stale_listeners(self) -> int:
+        """Listeners from an earlier supervisor hold the microphone; two of
+        them answer every wake twice.  Only ours may run."""
+
+        if sys.platform != "win32":
+            return 0
+        mine = self.listener.pid if self.listener is not None and self.listener.poll() is None else 0
+        script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*speech.listener*' } | "
+                  "ForEach-Object { $_.ProcessId }")
+        try:
+            completed = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
+                                       timeout=30, creationflags=_no_window())
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        killed = 0
+        for line in completed.stdout.split():
+            try:
+                pid = int(line)
+            except ValueError:
+                continue
+            if pid and pid != mine:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=_no_window())
+                killed += 1
+        if killed:
+            self.log(f"killed {killed} stale listener process(es)")
+        return killed
+
     def _launch_listener(self) -> None:
         if not self.config.voice:
             return
@@ -351,6 +378,7 @@ class Supervisor:
             return
         if self.listener is not None and self.listener.poll() is None:
             return
+        self._kill_stale_listeners()
         log_path = self.logs_dir / "listener.log"
         self._rotate(log_path)
         command = [str(python), "-m", "speech.listener", "--url", f"http://{self.config.host}:{self.config.port}",
