@@ -341,18 +341,181 @@ def _with_small_file_hint(error: EditError, context: ToolContext) -> str:
     # hundred: told that during a live repair, the model replaced a 688-line
     # module with a 37-line sketch, and only the edit engine's shrink guard
     # stopped it from destroying a working implementation to fix one number.
-    # The problem is the same -- the model's picture of the file has drifted --
-    # but the remedy is to go and look, not to retype from memory.
-    # Deliberately does not name the rewrite tool, even to say it would refuse.
-    # The advice has to be unambiguous: a model that sees the name tends to
-    # reach for it, which is how a 688-line module came to be replaced by a
-    # 37-line sketch.
+    #
+    # This used to end there, and for a long file it was a dead end with advice
+    # attached: anchors would not land, a rewrite would be refused, and the
+    # attempt ended having changed nothing. Measured on the Spotify latency
+    # repair -- eight consecutive anchor failures on 708 lines, one write_file
+    # refused for shrinking it to 61, a correct diagnosis on every one.
+    #
+    # `replace_definition` is named here, unlike the rewrite tool, because it
+    # cannot do the damage the rewrite tool can: everything outside the named
+    # definition is preserved byte for byte, so a model that reaches for it too
+    # eagerly loses nothing.
     return (
         f"{error.detail}\nThat is {misses[error.path]} failed anchors in {error.path} in a row, "
         f"so the text you are matching against is not what the file contains. {error.path} is "
-        f"{lines} lines -- far too long to retype from memory. Call read_file on the region you "
-        f"want to change, then anchor on a short unique line you have just read."
+        f"{lines} lines -- far too long to retype from memory. If what you want to change is one "
+        f"function or class, call replace_definition with its NAME and the complete new source: "
+        f"it needs no anchor and leaves the rest of the file untouched. Otherwise call read_file "
+        f"on the region you want to change, then anchor on a short unique line you have just read."
     )
+
+
+def replace_definition(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
+    """Replace one named function or class, located by the parser rather than by text.
+
+    Anchored editing has a hole in the middle of it, and every large repair
+    falls in. On a short file a model that cannot land an anchor is told to send
+    the whole file back, and that works. On a long one it cannot: retyping seven
+    hundred lines from memory produces a sketch, and the shrink guard -- rightly
+    -- refuses it. So both doors close. Measured on the Spotify latency repair:
+    eight consecutive anchor failures against a 708-line module, one write_file
+    refused for shrinking it to 61 lines, and the attempt ended having changed
+    nothing, with a correct diagnosis attached to every failure.
+
+    What the model wanted was expressible in one sentence -- *replace what
+    `_powershell` does* -- and there was no way to say it. The name of a
+    definition is a far better handle than a copy of its first line: the parser
+    finds it exactly, it cannot be ambiguous, it cannot drift from what the
+    model remembers, and everything outside it is preserved byte for byte, so
+    nothing else in the file can be lost.
+
+    ``name`` may be dotted for a method: ``ClassName.method``. The replacement
+    is parsed on its own and must define exactly that name, so a model that
+    sends a fragment or the wrong function is refused before anything is
+    written rather than after.
+    """
+
+    import ast
+    import textwrap
+
+    path = str(arguments["path"])
+    name = str(arguments["name"]).strip()
+    source = str(arguments.get("source") or "")
+    target = resolve_readable(context, path)
+
+    if not target.is_file():
+        raise ToolError(
+            f"{path} does not exist, so there is no definition in it to replace. "
+            "Use write_file to create it.",
+            kind="missing_file", retryable=False,
+        )
+    if not name:
+        raise ToolError("replace_definition needs the name of the function or class to replace.",
+                        kind="invalid_arguments", retryable=False)
+    if not source.strip():
+        raise ToolError(
+            f"replace_definition needs the complete new source for {name}, including its "
+            "'def' or 'class' line.",
+            kind="invalid_arguments", retryable=True,
+        )
+
+    text = target.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        raise ToolError(
+            f"{path} does not currently parse ({exc.msg} at line {exc.lineno}), so a definition "
+            "cannot be located in it. Fix the syntax first.",
+            kind="syntax_error", retryable=True,
+        ) from None
+
+    node, container = _locate_definition(tree, name)
+    if node is None:
+        available = ", ".join(_definition_names(tree)[:25]) or "none"
+        raise ToolError(
+            f"{path} has no top-level definition called {name!r}. It defines: {available}. "
+            "Use the exact name, or ClassName.method for a method.",
+            kind="unknown_definition", retryable=True,
+        )
+
+    replacement = textwrap.dedent(source).strip("\n")
+    try:
+        parsed = ast.parse(replacement)
+    except SyntaxError as exc:
+        raise ToolError(
+            f"YOUR REPLACEMENT for {name} is not valid Python: {exc.msg} at line {exc.lineno} "
+            "of the text you sent. NOTHING WAS WRITTEN.",
+            kind="syntax_error", retryable=True,
+        ) from None
+    defined = _definition_names(parsed)
+    wanted = name.split(".")[-1]
+    if defined != [wanted]:
+        raise ToolError(
+            f"the replacement must be exactly one definition called {wanted!r}; what you sent "
+            f"defines {defined or 'nothing'}. NOTHING WAS WRITTEN.",
+            kind="invalid_arguments", retryable=True,
+        )
+
+    lines = text.splitlines(keepends=True)
+    start = min([node.lineno] + [item.lineno for item in getattr(node, "decorator_list", [])]) - 1
+    end = int(node.end_lineno or node.lineno)
+
+    # A method keeps the indentation of the class it lives in; a top-level
+    # definition has none. Taken from the definition being replaced rather than
+    # guessed, so the file's own style survives.
+    indent = text.splitlines()[start][: len(text.splitlines()[start]) - len(text.splitlines()[start].lstrip())]
+    body = "\n".join((indent + item if item.strip() else item) for item in replacement.split("\n"))
+
+    updated = "".join(lines[:start]) + body + "\n" + "".join(lines[end:])
+    if updated == text:
+        raise ToolError(
+            f"{name} in {path} already has exactly that body, so nothing changed. If the "
+            "behaviour is still wrong, the defect is somewhere else.",
+            kind="no_effective_edit", retryable=True,
+        )
+
+    bundle = {
+        "analysis": f"replace_definition {name}",
+        "files": [{"path": path, "content": updated}],
+        _INTERNAL: True,
+    }
+    result = apply_edits(bundle, context)
+    result["definition"] = name
+    result["container"] = container
+    return result
+
+
+def _locate_definition(tree: "Any", name: str) -> tuple["Any", str]:
+    """The node for ``name``, and what it was found inside.
+
+    Only definitions the model can name unambiguously: top level, or one level
+    inside a class. A closure nested in a function has no stable address a
+    caller could write down.
+    """
+
+    import ast
+
+    kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    if "." in name:
+        outer, inner = name.split(".", 1)
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name == outer:
+                for child in node.body:
+                    if isinstance(child, kinds) and child.name == inner:
+                        return child, outer
+        return None, ""
+    for node in tree.body:
+        if isinstance(node, kinds) and node.name == name:
+            return node, ""
+    return None, ""
+
+
+def _definition_names(tree: "Any") -> list[str]:
+    """Every name a module defines at the top level, plus its methods."""
+
+    import ast
+
+    kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    names: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, kinds):
+            continue
+        names.append(node.name)
+        if isinstance(node, ast.ClassDef):
+            names += [f"{node.name}.{child.name}" for child in node.body if isinstance(child, kinds)]
+    return names
 
 
 def write_file(arguments: dict[str, Any], context: ToolContext) -> dict[str, Any]:
@@ -906,6 +1069,29 @@ def builtin_tools() -> list[ToolSpec]:
             risk=RiskLevel.LOW,
             tags=("filesystem", "implement"),
             example='{"name": "apply_edits", "arguments": {"files": [{"path": "a.py", "search": "x = 1", "replace": "x = 2"}]}}',
+        ),
+        ToolSpec(
+            name="replace_definition",
+            purpose=(
+                "Replace one whole function or class by NAME, with no search anchor. "
+                "Use this when an anchored edit keeps missing, or when the file is too long to "
+                "rewrite. Everything outside the named definition is preserved exactly. "
+                "name may be dotted for a method: ClassName.method."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "name": {"type": "string"},
+                    "source": {"type": "string"},
+                },
+                "required": ["path", "name", "source"],
+            },
+            adapter=replace_definition,
+            risk=RiskLevel.MODERATE,
+            tags=("filesystem", "edit"),
+            example=('{"name": "replace_definition", "arguments": {"path": "main.py", '
+                     '"name": "_powershell", "source": "def _powershell(verb):\\n    return {}\\n"}}'),
         ),
         ToolSpec(
             name="write_file",

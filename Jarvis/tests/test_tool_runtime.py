@@ -684,3 +684,157 @@ def test_the_two_remedies_do_not_get_mixed_up(registry, context, workspace):
 
     assert "write_file" in tiny.error and "read_file" not in tiny.error
     assert "read_file" in huge.error and "write_file" not in huge.error
+
+
+# -- replace_definition: the door a large file never had --------------------
+#
+# Anchored editing has a hole in the middle of it and every large repair falls
+# in. On a short file, a model that cannot land an anchor is told to send the
+# whole file back, and that works. On a long one it cannot: retyping seven
+# hundred lines from memory produces a sketch, and the shrink guard rightly
+# refuses it. Both doors close. Measured on the Spotify latency repair -- eight
+# consecutive anchor failures against a 708-line module, one write_file refused
+# for shrinking it to 61 lines, and the attempt ended having changed nothing,
+# with a correct diagnosis attached to every failure.
+
+MODULE = "\n".join([
+    '"""A module longer than anyone will retype."""',
+    "",
+    "import subprocess",
+    "",
+    "",
+    "CONSTANT = 1",
+    "",
+    "",
+    "def _powershell(verb, timeout=60.0):",
+    '    """The old one."""',
+    "    return subprocess.run(['powershell', '-Command', verb], timeout=timeout)",
+    "",
+    "",
+    "class Player:",
+    "    def play(self, track):",
+    "        return _powershell('play ' + track)",
+    "",
+    "    def pause(self):",
+    "        return _powershell('pause')",
+    "",
+    "",
+    "def tail():",
+    "    return CONSTANT",
+    "",
+])
+
+FASTER = "\n".join([
+    "def _powershell(verb, timeout=60.0):",
+    "    script = _script_path()",
+    "    return subprocess.run(['powershell', '-File', str(script)], timeout=timeout)",
+    "",
+])
+
+
+@pytest.fixture
+def module(context):
+    (Path(context.workspace) / "big.py").write_text(MODULE, encoding="utf-8")
+    return Path(context.workspace) / "big.py"
+
+
+def test_a_function_is_replaced_without_any_anchor(registry, context, module):
+    result = call(registry, context, "replace_definition",
+                  path="big.py", name="_powershell", source=FASTER)
+
+    assert result.ok, result.error
+    body = module.read_text(encoding="utf-8")
+    assert "-File" in body
+    assert "The old one." not in body
+
+
+def test_everything_outside_the_definition_survives(registry, context, module):
+    """This is the whole reason the tool is safe to name in the advice: a model
+    that reaches for it too eagerly cannot lose the rest of the file."""
+
+    call(registry, context, "replace_definition",
+         path="big.py", name="_powershell", source=FASTER)
+    body = module.read_text(encoding="utf-8")
+
+    assert "CONSTANT = 1" in body
+    assert "def tail():" in body
+    assert "class Player:" in body
+    assert '"""A module longer than anyone will retype."""' in body
+
+
+def test_a_method_keeps_the_indentation_of_its_class(registry, context, module):
+    result = call(registry, context, "replace_definition", path="big.py", name="Player.pause",
+                  source="def pause(self):\n    return _powershell('stop')\n")
+
+    assert result.ok, result.error
+    body = module.read_text(encoding="utf-8")
+    assert "    def pause(self):" in body
+    assert "        return _powershell('stop')" in body
+    assert "    def play(self, track):" in body
+
+
+def test_a_name_that_is_not_there_lists_the_ones_that_are(registry, context, module):
+    """An error a model can act on names the alternatives; a similarity score
+    cannot be edited into a correct call."""
+
+    result = call(registry, context, "replace_definition",
+                  path="big.py", name="nope", source="def nope():\n    pass\n")
+
+    assert not result.ok
+    assert "_powershell" in result.error and "Player.pause" in result.error
+
+
+def test_a_replacement_defining_something_else_is_refused(registry, context, module):
+    result = call(registry, context, "replace_definition", path="big.py", name="tail",
+                  source="def other():\n    pass\n")
+
+    assert not result.ok
+    assert "NOTHING WAS WRITTEN" in result.error
+    assert module.read_text(encoding="utf-8") == MODULE
+
+
+def test_a_replacement_that_does_not_parse_is_refused_before_writing(registry, context, module):
+    result = call(registry, context, "replace_definition", path="big.py", name="tail",
+                  source="def tail(:\n")
+
+    assert not result.ok
+    assert "NOTHING WAS WRITTEN" in result.error
+    assert module.read_text(encoding="utf-8") == MODULE
+
+
+def test_two_definitions_in_one_replacement_are_refused(registry, context, module):
+    result = call(registry, context, "replace_definition", path="big.py", name="tail",
+                  source="def tail():\n    pass\n\n\ndef extra():\n    pass\n")
+
+    assert not result.ok
+    assert module.read_text(encoding="utf-8") == MODULE
+
+
+def test_replacing_a_definition_with_itself_is_not_silent_success(registry, context, module):
+    """The same reasoning as the edit engine's no-op guard: an edit that changes
+    nothing means the model's picture of the file and the file have diverged,
+    and reporting success would send it looking in the wrong place next."""
+
+    result = call(registry, context, "replace_definition", path="big.py", name="tail",
+                  source="def tail():\n    return CONSTANT\n")
+
+    assert not result.ok
+    assert "already has exactly that body" in result.error
+
+
+def test_a_file_that_does_not_parse_says_so_rather_than_guessing(registry, context):
+    (Path(context.workspace) / "broken.py").write_text("def run(:\n", encoding="utf-8")
+
+    result = call(registry, context, "replace_definition", path="broken.py", name="run",
+                  source="def run():\n    pass\n")
+
+    assert not result.ok
+    assert "does not currently parse" in result.error
+
+
+def test_a_missing_file_is_not_created_by_a_replacement(registry, context):
+    result = call(registry, context, "replace_definition", path="absent.py", name="run",
+                  source="def run():\n    pass\n")
+
+    assert not result.ok
+    assert not (Path(context.workspace) / "absent.py").exists()

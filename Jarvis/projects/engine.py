@@ -1303,9 +1303,18 @@ class ProjectEngine:
     def _anchor_trouble_notice(self, task: Task) -> str:
         if not self._anchor_failed_before(task):
             return ""
+        # Two ways out, because there are two situations and only one used to be
+        # named. Sending the whole file back is right for a short one and
+        # impossible for a long one, where the model produces a sketch and the
+        # shrink guard refuses it -- which is how a repair attempt can end
+        # having changed nothing while diagnosing correctly eight times.
         return (
-            "NOTE: your last attempt could not match its search anchor. apply_edits is not available "
-            "for this attempt. Use write_file and send the complete corrected contents of the file.\n\n"
+            "NOTE: your last attempt could not match its search anchor, so apply_edits is not "
+            "available for this attempt. Two ways to make the change without one:\n"
+            "  - To change ONE function or class: call replace_definition with its NAME and the "
+            "complete new source. No anchor, and the rest of the file is left exactly as it is, "
+            "so this works whatever the file's size.\n"
+            "  - To set the whole contents of a SHORT file: call write_file.\n\n"
         )
 
     #: How many distinct past diagnoses to quote back to the model.  Enough to
