@@ -257,6 +257,16 @@ class AcquisitionMission:
                    + f"; task class {task_class!r}")
 
         # What worked last time, before spending anything finding out again.
+        #
+        # `subject` is what this mission is *about*, kept separate from the
+        # brief the model is handed. A recalled lesson is prepended to the
+        # brief, and the brief used to become the goal -- which was then
+        # recorded as the goal of the *next* lesson. Observed: a lesson whose
+        # goal began "A previous task of this kind (vision) was solved as
+        # follows. Goal: Capture what is currently displayed..." -- a lesson
+        # that had swallowed the lesson before it. Each generation carried the
+        # last one's text, so recall got less specific every time it was used.
+        subject = goal
         remembered = self._recall(goal, task_class, result)
         if remembered:
             goal = remembered + goal
@@ -321,7 +331,10 @@ class AcquisitionMission:
                 result.verification = dict(outcome.verification or {})
                 result.seconds = time.perf_counter() - started
                 self._step(result, "acquired", f"{outcome.capability_id} verified locally")
-                self._remember(goal, task_class, result, provider="build_local")
+                # The subject, not the brief: a lesson recorded against a brief
+                # that already contains a lesson compounds, and every recall
+                # after that is matching against older recalls.
+                self._remember(subject, task_class, result, provider="build_local")
                 self._finish_checkpoint(capability_id, result)
                 return result
 
@@ -339,6 +352,7 @@ class AcquisitionMission:
                         acceptance=expert_acceptance,
                         task_class=task_class,
                         repair_mode=bool(repair),
+                        subject=subject,
                     )
                     result.seconds = time.perf_counter() - started
                     if repair and capability_id and not escalated.acquired:
@@ -429,8 +443,15 @@ class AcquisitionMission:
         acceptance: list[tuple[str, list[str]]] | None,
         task_class: str,
         repair_mode: bool = False,
+        subject: str = "",
     ) -> AcquisitionResult:
-        """Ask an expert, then verify its work here before believing any of it."""
+        """Ask an expert, then verify its work here before believing any of it.
+
+        subject is what this mission is about, without any lesson that was
+        prepended to the brief. A lesson recorded against a brief that already
+        contains a lesson compounds: every later recall then matches against
+        older recalls rather than against the work.
+        """
 
         from experts.contracts import ExpertJob
         from experts.escalation import Attempt
@@ -519,7 +540,7 @@ class AcquisitionMission:
         result.acquired = True
         result.capability_id = installed
         self._step(result, "promote", f"registered {installed} after independent verification")
-        self._remember(goal, task_class, result, provider=result.expert_used or "expert")
+        self._remember(subject or goal, task_class, result, provider=result.expert_used or "expert")
         self._finish_checkpoint(capability_id, result)
         return result
 

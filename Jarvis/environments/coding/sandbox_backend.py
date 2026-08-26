@@ -55,11 +55,23 @@ class DisabledSandboxBackend:
         )
 
 
+#: A budget for running a test file, not for a sandboxed workload. The shared
+#: :class:`SandboxPolicy` default of five seconds is a resource bound written
+#: for the container backend, and ``run`` takes the *smaller* of the two -- so a
+#: caller asking for twenty seconds silently got five. Five seconds does not
+#: cover starting CPython and importing pytest on a loaded machine, which is
+#: what made a v04 acquisition test pass alone and fail under the full suite.
+LOCAL_TEST_TIMEOUT_SECONDS = 60.0
+
+
 class LocalTestSandboxBackend:
     """Explicit test/demo backend. Production code must inject Docker or remain disabled."""
 
     def __init__(self, policy: SandboxPolicy | None = None) -> None:
-        self.policy = policy or SandboxPolicy()
+        # Only the clock is loosened, and only when the caller did not bring a
+        # policy of its own. Every other bound -- network, memory, pids -- is
+        # left exactly as it was.
+        self.policy = policy or SandboxPolicy(timeout_seconds=LOCAL_TEST_TIMEOUT_SECONDS)
 
     def run(
         self,

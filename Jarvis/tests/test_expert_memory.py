@@ -289,3 +289,72 @@ def test_an_explicitly_empty_executable_is_not_auto_detected():
     from experts.codex import CodexExpert
 
     assert CodexExpert(executable="").executable == ""
+
+
+# --------------------------------------------------------------------------
+# A lesson recalled for a task it has nothing to do with
+# --------------------------------------------------------------------------
+#
+# Measured live on 2026-08-26. Recalling for a goal about packaging a folder
+# into a zip returned two lessons, both about capturing the screen, matched on
+# twenty shared terms: absent, absolute, accept, bytes, checked, choose, error,
+# every, exists, fabricate, failure, false, file, int, its, location, merely,
+# must, never, not, optional. Every one contract vocabulary; not one about zips
+# or screens. The screen-capture lesson was prepended to the build brief and
+# the model spent its first cycles diagnosing a test called
+# `test_capture_screen` that had nothing to do with the task.
+#
+# The same substitution the capability registry was repaired for in `e26f723`:
+# term overlap standing in for "is about the same thing".
+
+CONTRACT_TAIL = """
+run(payload) must accept payload['path'] -- optional. If it is absent, choose a
+sensible writable location yourself and report where you put it. Return, on
+success: {'ok': True, 'path': '<absolute path>', 'bytes': <int>}. What is
+checked, from outside: the file exists at the path you reported, it was written
+just now rather than found, it is not merely a name. Never fabricate. Never
+raise for an expected failure.
+"""
+
+SCREEN_GOAL = "Capture what is currently displayed on this computer's screen and save it as a PNG file." + CONTRACT_TAIL
+ZIP_GOAL = "Package a folder into a single .zip archive." + CONTRACT_TAIL
+
+
+def _verified(goal: str, task_class: str) -> Lesson:
+    return Lesson(
+        task_class=task_class,
+        goal=goal,
+        successful_approach="did the thing",
+        verification=[{"criterion": "tests", "passed": True}],
+    )
+
+
+def test_a_lesson_is_not_recalled_for_an_unrelated_task(tmp_path):
+    memory = ExpertMemory(tmp_path / "lessons.jsonl")
+    memory.record(_verified(SCREEN_GOAL, "vision"))
+
+    assert memory.recall(ZIP_GOAL, task_class="debug") == []
+
+
+def test_the_same_task_still_recalls_its_own_lesson(tmp_path):
+    """The filter must not make recall useless: that would trade one failure
+    for the other, which is the whole trap this is about."""
+
+    memory = ExpertMemory(tmp_path / "lessons.jsonl")
+    memory.record(_verified(SCREEN_GOAL, "vision"))
+
+    recalled = memory.recall(
+        "Capture the screen of this computer and write it out as a PNG." + CONTRACT_TAIL,
+        task_class="vision",
+    )
+
+    assert [lesson.goal for lesson in recalled] == [SCREEN_GOAL]
+
+
+def test_contract_vocabulary_alone_is_never_a_match(tmp_path):
+    """Two goals sharing only their contract share nothing that matters."""
+
+    memory = ExpertMemory(tmp_path / "lessons.jsonl")
+    memory.record(_verified("Send a message to a chat room." + CONTRACT_TAIL, "general"))
+
+    assert memory.recall("Read the temperature from a sensor." + CONTRACT_TAIL) == []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import re
 import sys
 from pathlib import Path
@@ -15,6 +16,21 @@ from environments.coding.task import CodingTask
 
 class SandboxViolation(ValueError):
     pass
+
+
+def _as_text(stream: object) -> str:
+    """Whatever a killed process managed to emit, as a string.
+
+    ``TimeoutExpired.stdout`` is bytes when the process was started without
+    text mode and ``None`` when it produced nothing at all, so neither can be
+    assumed.
+    """
+
+    if stream is None:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", "replace")
+    return str(stream)
 
 
 class CodingEnvironment:
@@ -215,13 +231,40 @@ class CodingEnvironment:
         verifier_workspace: Path | None = None,
         expose_output: bool = True,
     ) -> ActionResult:
-        completed = self.backend.run(
-            command,
-            cwd=cwd or self.workspace,
-            timeout_seconds=self.timeout_seconds,
-            env=self._subprocess_env(),
-            verifier_workspace=verifier_workspace,
-        )
+        try:
+            completed = self.backend.run(
+                command,
+                cwd=cwd or self.workspace,
+                timeout_seconds=self.timeout_seconds,
+                env=self._subprocess_env(),
+                verifier_workspace=verifier_workspace,
+            )
+        except subprocess.TimeoutExpired as expired:
+            # A process that was killed for taking too long has said nothing
+            # about whether the code works. `_classify_process_failure` already
+            # separates infrastructure from a real test failure, and it did so
+            # by reading the output for the word "timed out" -- which a killed
+            # process never gets to print, because it is killed rather than
+            # returning. So the one case the classifier most needed to catch was
+            # the one case it could not see.
+            #
+            # `a9968e5` fixed the same confusion in the acceptance cascade: a
+            # 120-second timeout was read as "capability broken" and retired a
+            # verified capability. Here it read as "the hidden verifier failed",
+            # which is a verdict on the model's work delivered by the clock.
+            # Observed as a test that passed alone and failed under a loaded
+            # full suite, where a five-second budget does not cover starting
+            # CPython and importing pytest.
+            seconds = getattr(expired, "timeout", self.timeout_seconds)
+            detail = f"the process was killed after {seconds:.0f}s: it timed out, it did not fail"
+            return ActionResult(
+                False,
+                f"{label} Timed out after {seconds:.0f}s.",
+                stdout=(_as_text(expired.stdout))[-4000:] if expose_output else "",
+                stderr=detail,
+                return_code=None,
+                data={"failure_kind": "infrastructure", "timed_out": True},
+            )
         ok = completed.returncode == 0
         failure_kind = self._classify_process_failure(completed.stdout, completed.stderr, completed.returncode)
         return ActionResult(

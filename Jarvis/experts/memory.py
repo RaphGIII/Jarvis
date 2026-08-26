@@ -251,5 +251,30 @@ _STOPWORDS = frozenset(
 
 
 def _terms(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9_]{3,}", (text or "").lower())
-    return {word for word in words if word not in _STOPWORDS}
+    """The words in a goal that say what it is about.
+
+    A goal here is a sentence of subject followed by a contract -- payload
+    keys, return shapes, "never fabricate", "it is checked from outside". The
+    contract is written in the same house style for every capability, so two
+    goals with nothing in common share most of it.
+
+    Measured live on 2026-08-26, recalling for a goal about packaging a folder
+    into a zip: the two lessons returned were both about capturing the screen,
+    matched on *absent, absolute, accept, bytes, checked, choose, error, every,
+    exists, fabricate, failure, false, file, int, its, location, merely, must,
+    never, not, optional* -- twenty terms, every one of them contract
+    vocabulary and not one about zips or screens. The screen-capture lesson was
+    then prepended to the build brief, and the model spent its first cycles
+    diagnosing a test called ``test_capture_screen`` that had nothing to do
+    with the task.
+
+    That is the same substitution the capability registry was repaired for in
+    ``e26f723``: term overlap standing in for "is about the same thing". So the
+    same two defences apply here -- read the subject sentence rather than the
+    whole brief, and drop the vocabulary every contract contains.
+    """
+
+    from capabilities.registry import BOILERPLATE, _subject_sentence
+
+    words = re.findall(r"[a-z0-9_]{3,}", _subject_sentence(text).lower())
+    return {word for word in words if word not in _STOPWORDS and word not in BOILERPLATE}

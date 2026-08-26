@@ -800,6 +800,14 @@ def _merge_overlapping(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
 # Application
 # --------------------------------------------------------------------------
 
+#: What a generated file says while it is still a skeleton. Written by
+#: :mod:`capabilities.service` into every new capability workspace, and asserted
+#: gone by one of the standard gates, so it is a reliable statement that a file
+#: contains nothing anyone has done yet. Spelled out here rather than imported,
+#: because the edit engine is used by things that have no capabilities at all.
+_PLACEHOLDER_MARKER = "JARVIS_CAPABILITY_NOT_IMPLEMENTED"
+
+
 class EditEngine:
     """Applies :class:`EditPlan` objects atomically to a workspace."""
 
@@ -965,6 +973,14 @@ class EditEngine:
         editing, and an explicit whole-file rewrite of a large file is still
         allowed as long as it is recognisably the same file.
         """
+
+        if _PLACEHOLDER_MARKER in current:
+            # A file that still says it is not implemented has no work in it to
+            # lose, which is the only thing this guard exists to protect.
+            # Observed live: a 13-line capability skeleton, replaced by a
+            # 4-line implementation that was correct, refused for retaining 31%
+            # -- and the model then spent cycles trying to pad it back up.
+            return
 
         current_lines = len([line for line in current.splitlines() if line.strip()])
         if current_lines < self.budget.truncation_floor_lines:

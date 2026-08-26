@@ -863,3 +863,63 @@ def test_a_successful_edit_is_unaffected(tmp_path):
     engine.apply(parse_bundle({"analysis": "fix", "files": [{"path": "main.py", "search": "b = 2", "replace": "b = 20"}]}))
 
     assert (tmp_path / "main.py").read_text(encoding="utf-8") == "a = 1\nb = 20\nc = 3\n"
+
+
+# --------------------------------------------------------------------------
+# A placeholder has no work in it to lose
+# --------------------------------------------------------------------------
+
+SKELETON = "\n".join([
+    '"""Capability implementation. Replace the body of run()."""',
+    "",
+    "from __future__ import annotations",
+    "",
+    "import shutil",
+    "from typing import Any",
+    "",
+    "INPUT_SCHEMA = {\"type\": \"object\", \"properties\": {}, \"required\": []}",
+    "",
+    "",
+    "def run(payload: dict[str, Any]) -> dict[str, Any]:",
+    "    player = shutil.which(\"some-program\")",
+    "    if payload.get(\"dry_run\"):",
+    "        return {\"ok\": bool(player), \"would_use\": player}",
+    "    return {\"ok\": False, \"error\": \"JARVIS_CAPABILITY_NOT_IMPLEMENTED\"}",
+    "",
+])
+
+REAL = "\n".join([
+    "import zipfile",
+    "",
+    "",
+    "def run(payload):",
+    "    return {\"ok\": True}",
+    "",
+])
+
+
+def test_a_skeleton_may_be_replaced_by_something_shorter(tmp_path):
+    """Observed live: a 13-line capability skeleton, replaced by a 4-line
+    implementation that was correct, refused for retaining 31% -- and the model
+    then spent cycles trying to pad it back up. The guard exists to stop a
+    fragment destroying a working file; a placeholder is not a working file."""
+
+    path = _write(tmp_path, "main.py", SKELETON)
+
+    _engine(tmp_path).apply(parse_bundle({"files": [{"path": "main.py", "content": REAL}]}))
+
+    assert path.read_text(encoding="utf-8") == REAL
+
+
+def test_a_real_implementation_is_still_protected(tmp_path):
+    """The exemption is the marker, not the size. Take the marker away and the
+    same edit is refused again."""
+
+    original = SKELETON.replace("JARVIS_CAPABILITY_NOT_IMPLEMENTED", "not ready yet")
+    path = _write(tmp_path, "main.py", original)
+
+    with pytest.raises(EditError) as excinfo:
+        _engine(tmp_path).apply(parse_bundle({"files": [{"path": "main.py", "content": REAL}]}))
+
+    assert excinfo.value.kind == "rewrite_truncates_file"
+    assert path.read_text(encoding="utf-8") == original

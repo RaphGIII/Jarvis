@@ -220,3 +220,101 @@ def lambda_goal_observation_generator(action):
             return [action]
 
     return SingleActionGenerator()
+
+
+# --------------------------------------------------------------------------
+# A clock running out is not a failing test
+# --------------------------------------------------------------------------
+#
+# `_classify_process_failure` already separated infrastructure from a real test
+# failure, and it did so by reading the output for "timed out" -- which a killed
+# process never gets to print, because it is killed rather than returning. The
+# one case the classifier most needed to catch was the one case it could not
+# see, and the exception propagated instead.
+#
+# `a9968e5` fixed the same confusion in the acceptance cascade, where a
+# 120-second timeout was read as "capability broken" and retired a verified
+# capability. Observed here as a v04 acquisition test that passed alone and
+# failed under a loaded full suite, on a five-second budget that does not cover
+# starting CPython and importing pytest.
+
+
+class _TimingOutBackend:
+    """A backend whose every process is killed for taking too long."""
+
+    def __init__(self):
+        from environments.coding.sandbox_backend import SandboxPolicy
+
+        self.policy = SandboxPolicy()
+
+    def run(self, command, cwd, timeout_seconds, env, verifier_workspace=None):
+        import subprocess
+
+        raise subprocess.TimeoutExpired(cmd=command, timeout=timeout_seconds, output=b"partial")
+
+
+def test_a_process_killed_for_time_is_reported_as_infrastructure(tmp_path):
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.task import CodingTask
+
+    task = CodingTask(description="do a thing", workspace=tmp_path)
+    environment = CodingEnvironment(task=task, backend=_TimingOutBackend())
+
+    result = environment._run_process(["python", "-c", "pass"], "tests")
+
+    assert not result.ok
+    assert result.data.get("failure_kind") == "infrastructure"
+    assert result.data.get("timed_out") is True
+
+
+def test_the_reason_says_it_timed_out_rather_than_failed(tmp_path):
+    """What the next step reads decides what it repairs. "The tests failed"
+    sends it into the code; "it timed out" does not."""
+
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.task import CodingTask
+
+    task = CodingTask(description="do a thing", workspace=tmp_path)
+    environment = CodingEnvironment(task=task, backend=_TimingOutBackend())
+
+    result = environment._run_process(["python", "-c", "pass"], "tests")
+
+    assert "timed out, it did not fail" in result.stderr
+
+
+def test_a_timeout_does_not_escape_as_an_exception(tmp_path):
+    """It used to, and nothing above was catching it."""
+
+    import subprocess
+
+    from environments.coding.environment import CodingEnvironment
+    from environments.coding.task import CodingTask
+
+    task = CodingTask(description="do a thing", workspace=tmp_path)
+    environment = CodingEnvironment(task=task, backend=_TimingOutBackend())
+
+    try:
+        environment._run_process(["python", "-c", "pass"], "tests")
+    except subprocess.TimeoutExpired:  # pragma: no cover - the defect
+        raise AssertionError("the timeout escaped instead of being reported")
+
+
+def test_the_local_test_backend_allows_time_to_start_an_interpreter():
+    """Five seconds is a resource bound written for the container backend, and
+    `run` takes the smaller of the two -- so a caller asking for twenty got
+    five, and starting CPython and importing pytest does not fit in it."""
+
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend
+
+    assert LocalTestSandboxBackend().policy.timeout_seconds >= 30
+
+
+def test_an_explicit_policy_is_still_obeyed():
+    """Only the default is loosened. A caller that brought a policy meant it."""
+
+    from environments.coding.sandbox_backend import LocalTestSandboxBackend, SandboxPolicy
+
+    backend = LocalTestSandboxBackend(policy=SandboxPolicy(timeout_seconds=2.0))
+
+    assert backend.policy.timeout_seconds == 2.0
+    assert backend.policy.network_disabled
