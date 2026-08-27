@@ -219,3 +219,7 @@ While the final full suite ran, commit `546d43f` "ZEUS self-development: Erzaehl
 ## Next highest-value task
 
 Feature-level acceptance for SelfDev (a browser check of the element the request names); mission/decision projection into the knowledge graph; a bigger local coder.
+
+---
+
+**Final (2026-08-27 ~16:55 local):** HEAD `133b91d` = `origin/adaptive-brain-v1`; the product runs from `dist/ZEUS/ZEUS.exe` (launcher built by ZEUS at `7ba351b`, fingerprint `489920eb5a974c3b`) with the core at `133b91d`, one core / listener / worker / supervisor / window. Full suite before the last two commits (gate + expert routing fix): 1794 passed, 5 skipped, 1 xpassed, 0 failed in 11:51; the gate and routing suites re-ran green afterwards (138 passed).
