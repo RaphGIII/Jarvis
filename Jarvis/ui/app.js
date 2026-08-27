@@ -427,6 +427,8 @@ function wireInput() {
     ui.panelBody.appendChild(pre);
   };
 
+  $("btnQuit").onclick = () => showExit();
+
   $("btnClose").onclick = () => ui.panel.classList.remove("open");
 
   $("btnProjects").onclick = () => showProjects();
@@ -802,6 +804,86 @@ function openPanel(title, text) {
   ui.panelTitle.textContent = title;
   ui.panelBody.textContent = text;
   ui.panel.classList.add("open");
+}
+
+/* ------------------------------------------------------------------ */
+/* beenden: hiding the window and stopping ZEUS are not the same thing  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The X button on the window closes the window. That is all it has ever done,
+ * and it is the right thing for it to do -- but there was no way to say the
+ * other thing, and no way to tell from the outside which one had happened. So
+ * both are here, named, with their consequence written next to them, plus the
+ * process counts that answer "is anything still running?" without a terminal.
+ */
+
+async function showExit() {
+  openPanel("Beenden", "");
+  ui.panelBody.innerHTML = "";
+
+  const soft = exitChoice(
+    "Fenster schließen",
+    "Blendet nur die Oberfläche aus. Core, Wakeword und Sprachausgabe laufen weiter — " +
+    "ZEUS.exe erneut starten holt dieses Fenster zurück.",
+    false,
+  );
+  soft.onclick = async () => {
+    soft.disabled = true;
+    await api("/api/window", { action: "hide", reason: "the owner closed the window from the interface" });
+  };
+
+  const hard = exitChoice(
+    "ZEUS vollständig beenden",
+    "Beendet Fenster, Core, speech.listener, speech.worker und den Supervisor. " +
+    "Danach läuft nichts mehr; ZEUS.exe startet alles neu.",
+    true,
+  );
+  hard.onclick = async () => {
+    if (hard.dataset.armed !== "1") {
+      hard.dataset.armed = "1";
+      hard.querySelector(".title").textContent = "Wirklich vollständig beenden?";
+      return;
+    }
+    hard.disabled = true;
+    hard.querySelector(".title").textContent = "wird beendet…";
+    await api("/api/quit", { reason: "the owner asked ZEUS to quit", requested_by: "ui" });
+  };
+
+  ui.panelBody.appendChild(soft);
+  ui.panelBody.appendChild(hard);
+
+  const note = document.createElement("div");
+  note.className = "exit-note";
+  note.textContent = "Prozesse werden gezählt…";
+  ui.panelBody.appendChild(note);
+
+  // Counting costs a process listing, so it is asked for once when the panel
+  // opens rather than polled: this is a check, not a readout.
+  try {
+    const data = await api("/api/processes");
+    const c = data.counts || {};
+    note.textContent =
+      `core ${c.core ?? "?"} · speech.listener ${c.listener ?? "?"} · speech.worker ${c.worker ?? "?"}` +
+      (data.duplicates && data.duplicates.length ? `  —  doppelt: ${data.duplicates.join(", ")}` : "  —  keine Doppelungen");
+    note.classList.toggle("bad", !!(data.duplicates && data.duplicates.length));
+  } catch {
+    note.textContent = "Prozessanzahl nicht verfügbar.";
+  }
+}
+
+function exitChoice(title, why, hard) {
+  const button = document.createElement("button");
+  button.className = hard ? "exit-choice hard" : "exit-choice";
+  const head = document.createElement("div");
+  head.className = "title";
+  head.textContent = title;
+  const body = document.createElement("div");
+  body.className = "why";
+  body.textContent = why;
+  button.appendChild(head);
+  button.appendChild(body);
+  return button;
 }
 
 /* ------------------------------------------------------------------ */

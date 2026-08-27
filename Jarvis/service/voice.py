@@ -198,3 +198,26 @@ class VoiceService:
         if speaker is not None:
             speaker.interrupt()
         self.bus.publish(EventType.SPEECH, {"stop": True})
+
+    # -- shutdown ----------------------------------------------------------
+
+    def close(self) -> dict[str, Any]:
+        """Stop the speech worker.
+
+        The worker is a separate interpreter holding whisper and piper on the
+        GPU, spoken to over pipes.  Nothing used to close it, so every exit --
+        including the planned restart of a self-update -- orphaned one, and the
+        next start added another.  Closing it here means a restart costs one
+        model load rather than one leaked process.
+        """
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": True, "detail": "the speech engine was never started"}
+        try:
+            engine.close()
+        except Exception as exc:  # noqa: BLE001 - a shutdown must not fail on the way out
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        finally:
+            self._engine = None
+        return {"ok": True, "detail": "speech worker stopped"}

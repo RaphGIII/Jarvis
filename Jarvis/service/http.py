@@ -240,6 +240,24 @@ class JarvisHTTPServer:
             "/api/shutdown": lambda body: self.core.lifecycle.request_shutdown(
                 str(body.get("reason", "shutdown requested")), requested_by=str(body.get("requested_by", "api"))
             ),
+            # The desktop window, which is a view and not the program: hiding
+            # it leaves the core and the wake word running, and showing it
+            # again reuses the window that is already open rather than adding
+            # a second one.
+            "/api/window": lambda body: self.core.lifecycle.window(
+                str(body.get("action", "show")), reason=str(body.get("reason", ""))
+            ),
+            # "ZEUS vollständig beenden": window, speech worker, listener,
+            # core and supervisor, in that order. Distinct from /api/shutdown,
+            # which stops this process and leaves the children to whoever
+            # started them.
+            "/api/quit": lambda body: self.core.lifecycle.request_quit(
+                str(body.get("reason", "the owner asked ZEUS to quit")),
+                requested_by=str(body.get("requested_by", "api")),
+            ),
+            # How many listeners, workers and cores are actually running --
+            # the owner's own check, answerable from the interface.
+            "/api/processes": lambda _: self.core.lifecycle.process_counts(),
         }
         handler = routes.get(path)
         if handler is None:
