@@ -121,6 +121,35 @@ The honest reading: the candidate was `<div id="missionCount"></div>` and nothin
 - **Doctor** (`service/doctor.py`, `/api/doctor`): 16 deterministic checks (supervisor, core, FAST_LOCAL, BUILD_LOCAL, expert, Ollama, GPU, voice processes, duplicates, window, revision, release, capability registry, mission stores, pending rollback, isolation); never probes a tier (`tests/test_doctor.py` pins it).
 - **"Learn to do X" from the chat** starts a capability-acquisition mission (engine kind `capability`) with a fresh id derived from the goal and the goal's terms as keywords — the registry's term matcher once answered a word-count goal with the Spotify provider, so acquisition never "looks up" what it was asked to build. Live acquisition #1 (`m_c2c7dd3c9e`, 15:26Z) is in BUILD_LOCAL at the time of writing; see the final report line.
 
+## Phase 30 — failure / rollback chaos matrix
+
+| case | how it was exercised | outcome | evidence |
+|---|---|---|---|
+| coding failure (candidate changes files, verifier rejects) | `tests/test_isolation.py::test_a_failing_candidate_leaves_the_live_tree_byte_identical` | live tree byte-identical, candidate released, diff kept | test |
+| candidate writes into the live tree | `test_a_build_that_writes_into_the_live_tree_is_caught_and_undone` | contamination detected by byte identity, restored, mission FAILED "isolation breach" | test |
+| verifier failure on a real mission | live mission `f16dc926c6`'s acceptance was too weak; now shape + goal-inference checks | fixed generically (`c2470d3`) | selfdev record |
+| broken candidate startup (release) | garbage `ZEUS.exe` promoted, watchdog run as the supervisor runs it | previous release restored and started in 4.6 s | `C30_release_chaos_broken_exe.json` |
+| broken commit promoted (core) | bootstrap sprint Gate O; unchanged machinery | supervisor revert to known-good in 0.5 s | `ZEUS_CORE_BOOTSTRAP_PROGRESS.md` |
+| killed child worker (BUILD crashes) | `test_a_crashing_build_still_releases_the_candidate` | FAILED record, candidate released, diff kept | test |
+| cancelled SelfDev | live `c9ed4e1231` cancelled at UNDERSTAND; `test_cancel_stops_the_mission_at_the_next_phase_and_releases_it` | CANCELLED, worktree released, tree clean | `R1_router_selfdev_live.json` |
+| expert unavailable | `tests/test_selfdev.py` (gateway status without expert) + `Doctor._expert` warning | mission fails honestly with "no verified candidate"; startup unaffected | test |
+| interrupted mission (process death mid-phase) | `MissionEngine.mark_interrupted` at warm; SelfDev missions mid-flight marked FAILED "interrupted"; promotion journal `recover_interrupted` | resumable record / restored snapshot | tests `test_mission_engine.py`, `test_promotion.py` |
+| duplicate ZEUS.exe invocation | live cases B/C/D | window focused/reopened, one runtime | `L3_lifecycle_all.json` |
+| half-applied promotion | `deployment/promotion.Journal` + `recover_interrupted` at startup | snapshot restored, journal says `recovered` | code + doctor `rollback` check |
+
+Known-good runtime survived every case; no real user data was used.
+
+## Status of the remaining numbered phases
+
+- **16 ExpertGateway**: already an internal service — `experts/gateway.py` + `experts/claude_code.py` run the subscription CLI as a subprocess with `--permission-mode acceptEdits`, `--add-dir <worktree>` and now `--disallowedTools` for `cd`/shared-git verbs; called by SelfDev after counted local failure and by acquisition through the escalation controller; the gateway re-runs acceptance itself (`gateway.verify`); its status is a cheap check that never blocks startup (doctor `expert`). The owner launched nothing by hand in any live run of this sprint. Not built: a Codex adapter (the provider interface is where it goes).
+- **17 Research**: `ResearchAgent` (queries, sources with authority, findings, contradictions, freshness) existed; the RESEARCH route now runs it as a mission and answers with sources. No per-site scraping.
+- **18 Knowledge graph**: `knowledge/graph.py` (typed nodes/edges, provenance) existed; UI backlinks/forward links/local graph added; the graph is empty on this machine (nothing ingested). Missions/decisions are not yet written into it as nodes — the next step is `MissionEngine` → `KnowledgeGraph` projection (MISSION produced CAPABILITY, DECISION supersedes DECISION).
+- **19 Resource arbitration**: unchanged from the bootstrap sprint (one GPU; BUILD_LOCAL never loaded at startup; diagnostics never probe). Not built: a scheduler that queues a BUILD_LOCAL call behind an interactive FAST_LOCAL turn.
+- **20 Background autonomy**: pause/resume/cancel/inspect for engine missions; cancel/resume for SelfDev; conversation stays open during every mission (live: chat answered while `f16dc926c6` built).
+- **23 Secrets**: `data/jarvis/secrets` (existing store) stays outside backups and out of the expert's environment (`_METERED_CREDENTIALS` scrubbed); Owner UI masks secret-shaped keys. Not done: Windows DPAPI-backed storage; the listener still passes the core token on its command line (visible in the process table) — a token file would fix it.
+- **25 Self-repair**: the repair loop from the acquisition sprint is unchanged; `Doctor._capabilities` flags disabled capabilities; a `RepairMission` that runs on a detected regression (not on an owner sentence) is not built.
+- **26 Owner-only boundaries**: unchanged and re-checked — no paid API, no cloud, no antivirus change (grep of this sprint's diff for `avira|exclusion|Defender` finds only prose).
+
 ## Test status
 
 `tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed. `tests/test_desktop_lifecycle.py tests/test_supervisor.py tests/test_desktop_window.py tests/test_release.py`: 49 passed.
