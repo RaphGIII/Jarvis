@@ -126,6 +126,10 @@ class SupervisorConfig:
     ready_timeout: float = 300.0
     #: Seconds a real preflight generation may take, including model load.
     generation_timeout: float = 180.0
+    #: Whether boot runs its own generation before launching the core.  Off:
+    #: the core's READY is the generation that counts, and the window is on
+    #: screen while the model loads.
+    preflight_generation: bool = False
     #: Seconds to wait for a graceful stop before terminating.
     stop_timeout: float = 25.0
     #: Boot-loop guard: this many failed starts inside the window means hold.
@@ -181,7 +185,7 @@ class SupervisorConfig:
             if isinstance(data, dict):
                 for key in ("port", "host", "ollama_url", "ollama_models_dir", "ready_timeout",
                             "generation_timeout", "stop_timeout", "max_failures", "failure_window",
-                            "voice", "open_browser", "ollama_min_version"):
+                            "voice", "open_browser", "ollama_min_version", "preflight_generation"):
                     if key in data:
                         setattr(config, key, type(getattr(config, key))(data[key]))
                 if isinstance(data.get("ollama_incompatible_versions"), list):

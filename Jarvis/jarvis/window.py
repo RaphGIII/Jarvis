@@ -150,7 +150,7 @@ def window_command(
     """
 
     width, height = size
-    return [
+    command = [
         str(engine),
         f"--app={url}",
         f"--user-data-dir={Path(profile_dir)}",
@@ -161,6 +161,16 @@ def window_command(
         "--no-default-browser-check",
         "--disable-background-mode",
     ]
+    # A TV or a wall panel wants the whole screen and no chrome at all; the
+    # same shell serves both, chosen per device rather than per build.
+    mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower()
+    if mode == "kiosk":
+        command.append("--kiosk")
+    elif mode == "fullscreen":
+        command.append("--start-fullscreen")
+    elif mode == "maximized":
+        command.append("--start-maximized")
+    return command
 
 
 @dataclass

@@ -232,6 +232,15 @@ class JarvisHTTPServer:
                 str(body.get("audit_id", "")), confirm=bool(body.get("confirm", False))
             ),
             "/api/health": lambda _: self.core.lifecycle.health(),
+            "/api/window": lambda body: self.core.lifecycle.window(
+                str(body.get("action", "status")), reason=str(body.get("reason", ""))
+            ),
+            "/api/window/show": lambda body: self.core.lifecycle.window("show", reason=str(body.get("reason", "second launch"))),
+            "/api/window/hide": lambda body: self.core.lifecycle.window("hide", reason=str(body.get("reason", ""))),
+            "/api/processes": lambda _: self.core.lifecycle.process_counts(),
+            "/api/quit": lambda body: self.core.lifecycle.request_quit(
+                str(body.get("reason", "owner asked ZEUS to quit completely")), requested_by=str(body.get("requested_by", "ui"))
+            ),
             "/api/supervisor": lambda _: self.core.lifecycle.supervisor_status(),
             "/api/restart": lambda body: self.core.lifecycle.request_restart(
                 str(body.get("reason", "restart requested")),

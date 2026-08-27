@@ -149,10 +149,7 @@ class Supervisor:
 
     def run(self) -> int:
         if not self.lock.acquire():
-            self.log("another ZEUS supervisor is already running; opening its interface instead")
-            if self.config.open_browser:
-                webbrowser.open(self.url)
-            return 3
+            return self._signal_running_instance()
         try:
             self._install_signal_handlers()
             return self._main_loop()
@@ -160,6 +157,58 @@ class Supervisor:
             self.shutdown_children()
             self.status_page.stop()
             self.lock.release()
+
+    def _signal_running_instance(self) -> int:
+        """A second ZEUS.exe: bring the running one's window back, do not start another.
+
+        The running core is asked over its own API (the token is in the state
+        directory both share).  While it is still booting and the API is not
+        there yet, a beacon file is left where the core's window watcher
+        looks the moment it is up.  Either way exactly one runtime exists.
+        """
+
+        started = time.monotonic()
+        try:
+            answer = self._api("/api/window/show", {"reason": "second ZEUS.exe invocation"}, timeout=8)
+            self.log(f"another ZEUS is running; its window was {answer.get('action', 'shown')} in "
+                     f"{answer.get('seconds', '?')}s ({time.monotonic() - started:.2f}s end to end)")
+            return 0
+        except Exception as exc:  # noqa: BLE001 - not up yet, or not ours
+            self.log(f"another ZEUS supervisor is running and its API did not answer ({exc}); leaving a beacon")
+        try:
+            beacon = self.state_dir / "control" / "window-show"
+            beacon.parent.mkdir(parents=True, exist_ok=True)
+            beacon.write_text(str(time.time()), encoding="utf-8")
+        except OSError as exc:
+            self.log(f"could not leave the beacon: {exc}")
+            if self.config.open_browser:
+                webbrowser.open(self.url)
+            return 3
+        return 0
+
+    def _sweep_processes(self, patterns: tuple[str, ...], *, keep: tuple[int, ...] = ()) -> int:
+        """End every process whose command line matches, except ``keep``."""
+
+        if sys.platform != "win32":
+            return 0
+        clauses = " -or ".join(f"$_.CommandLine -like '*{p}*'" for p in patterns)
+        script = (f"Get-CimInstance Win32_Process | Where-Object {{ ({clauses}) -and $_.Name -ne 'powershell.exe' }} "
+                  f"| ForEach-Object {{ $_.ProcessId }}")
+        try:
+            completed = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
+                                       timeout=30, creationflags=_no_window())
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        killed = 0
+        for line in completed.stdout.split():
+            try:
+                pid = int(line)
+            except ValueError:
+                continue
+            if pid and pid not in keep and pid != os.getpid():
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=_no_window())
+                killed += 1
+        return killed
 
     def _install_signal_handlers(self) -> None:
         def handler(*_: Any) -> None:
@@ -173,8 +222,32 @@ class Supervisor:
                 except (ValueError, OSError):
                     pass
 
+    def _open_window_early(self) -> None:
+        """The window at T0, onto the status page; the core takes it over.
+
+        The status page refreshes itself every three seconds and is replaced
+        by the interface the moment the core binds the port, and the core's
+        window owner finds this window by its title instead of opening a
+        second one.  The owner therefore sees ZEUS within about a second of
+        the launch, with the model still loading behind it.
+        """
+
+        if self.config.open_browser or os.environ.get("ZEUS_UI", "").strip().lower() in {"none", "off", "0", "false", "headless", "browser"}:
+            return
+        try:
+            repo = str(self.config.repository)
+            if repo not in sys.path:
+                sys.path.insert(0, repo)
+            from jarvis.window import open_window
+
+            launch = open_window(self.url, fallback=False)
+            self.log(f"window opened at launch: {launch.describe()}" if launch.ok else f"window not opened at launch: {launch.detail}")
+        except Exception as exc:  # noqa: BLE001 - the window is never a reason not to boot
+            self.log(f"window not opened at launch: {exc}")
+
     def _main_loop(self) -> int:
         self.status_page.start()
+        self._open_window_early()
         self._set("preflight", "checking Python, repository, Ollama and the models")
         if self.config.open_browser and not self._browser_opened:
             # Opened now, at the status page, so the owner sees progress
@@ -186,7 +259,14 @@ class Supervisor:
             except Exception:
                 pass
 
-        report = Preflight(self.config, log=self.log).run()
+        from .preflight import PreflightCache
+
+        # No generation here: the core's READY is a real generation in the
+        # process that will answer, and waiting for a second one first only
+        # delayed the window.  Stable checks come from the fingerprint cache.
+        report = Preflight(self.config, log=self.log, cache=PreflightCache(self.state_dir / "preflight_cache.json")).run(
+            generation=bool(self.config.preflight_generation)
+        )
         self.preflight_report = report
         self.revision = report.revision
         if not report.ok:
@@ -350,8 +430,8 @@ class Supervisor:
         if sys.platform != "win32":
             return 0
         mine = self.listener.pid if self.listener is not None and self.listener.poll() is None else 0
-        script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*speech.listener*' } | "
-                  "ForEach-Object { $_.ProcessId }")
+        script = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*speech.listener*' "
+                  "-and $_.Name -ne 'powershell.exe' } | ForEach-Object { $_.ProcessId }")
         try:
             completed = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
                                        timeout=30, creationflags=_no_window())
@@ -468,6 +548,11 @@ class Supervisor:
                 self.listener.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
+        # Nothing of ours survives a full stop: listeners and speech workers
+        # from this or any earlier runtime, and the window.
+        swept = self._sweep_processes(("speech.listener", "speech.worker"))
+        if swept:
+            self.log(f"swept {swept} speech process(es) on shutdown")
 
     # -- rollback ------------------------------------------------------
 

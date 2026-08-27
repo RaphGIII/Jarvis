@@ -21,7 +21,8 @@ from .config import SupervisorConfig, find_repository
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="zeus", description="Supervise ZEUS.")
-    parser.add_argument("command", nargs="?", default="run", choices=["run", "check", "status", "stop", "restart", "receipts"])
+    parser.add_argument("command", nargs="?", default="run",
+                        choices=["run", "check", "status", "stop", "quit", "restart", "receipts", "show"])
     parser.add_argument("--repo", default=None, help="the Jarvis directory (default: discovered)")
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-browser", action="store_true")
@@ -65,13 +66,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(receipt, sort_keys=True))
         return 0
 
-    if args.command in {"stop", "restart"}:
+    if args.command in {"stop", "quit", "restart", "show"}:
         token_path = config.state_dir / "token"
         if not token_path.is_file():
             print("ZEUS is not running under the supervisor (no token file)", file=sys.stderr)
             return 1
         token = token_path.read_text(encoding="utf-8").strip()
-        url = f"http://{config.host}:{config.port}/api/{'shutdown' if args.command == 'stop' else 'restart'}"
+        endpoint = {"stop": "shutdown", "quit": "quit", "restart": "restart", "show": "window/show"}[args.command]
+        url = f"http://{config.host}:{config.port}/api/{endpoint}"
         request = urllib.request.Request(
             url, data=json.dumps({"reason": f"zeus {args.command} from the command line"}).encode("utf-8"),
             headers={"X-Jarvis-Token": token, "Content-Type": "application/json"},

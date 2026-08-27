@@ -20,7 +20,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>ZEUS</title>
-<meta http-equiv="refresh" content="3">
+<script>
+// Poll rather than meta-refresh: while the supervisor hands the port to the
+// core there is a moment when nothing answers, and a refresh into that gap
+// lands on the browser's error page.  A fetch that fails just tries again;
+// the moment the core answers, this page becomes the interface.
+(function(){
+  var failures = 0;
+  function tick(){
+    fetch('/api/health', {cache: 'no-store'}).then(function(r){ return r.json(); }).then(function(d){
+      if (d && d.supervisor) { location.reload(); return; }
+      location.replace('/');
+    }).catch(function(){ failures++; setTimeout(tick, failures < 40 ? 500 : 2000); });
+  }
+  setTimeout(tick, 1500);
+})();
+</script>
 <style>
 body{margin:0;background:#05080f;color:#c8d6e5;font:15px/1.5 system-ui,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh}
 .card{max-width:640px;padding:32px 40px;border:1px solid #1b2a3d;border-radius:12px;background:#0a1220}

@@ -43,9 +43,46 @@ Tests: `tests/test_isolation.py` (11) — real git repo with ZEUS in a subdirect
 
 Live: startup sweep on the running product removed the 5 stale candidate worktrees (`isolation sweep: 5 stale candidate(s) removed, 0 interrupted promotion(s) restored` in Activity; `git worktree list` shows only the main tree).
 
+## Phase 3 — desktop/supervisor lifecycle — LIVE VERIFIED (all six cases)
+
+`service/desktop.py` (new): the window is a *managed* Chromium `--app` window, found by what it is (a top-level `Chrome_WidgetWin` window titled exactly `ZEUS`; a browser tab of the same page carries the browser's name), never by a remembered pid. `show()` focuses/restores or launches and measures time-to-visible; `hide()` hides without ending the engine; `close()` ends it; `_ensure_single` closes duplicates; a 0.25 s beacon watcher answers a second `ZEUS.exe` while the API is not up yet. `service/processes.py` (new): counts from `Win32_Process` (command line + parent), collapsing the venv launcher pair (`Scripts\python.exe` spawns the real interpreter with an identical command line) and ignoring shells whose command *string* mentions a role. `service/lifecycle.py`: `attach_desktop`, `window(show|hide|close|status)`, `process_counts`, `request_quit` (window → speech worker → listeners/workers → shutdown), `leave(final)` (a restart keeps the window, a shutdown closes it), `readiness()` (UI/CORE/AI/VOICE/FULL). `/api/window`, `/api/window/show`, `/api/window/hide`, `/api/processes`, `/api/quit`. Supervisor: a second instance POSTs `/api/window/show` (beacon fallback) and exits 0; shutdown sweeps `speech.listener`/`speech.worker`; CLI `zeus quit` / `zeus show`. `serve.py` sweeps orphaned workers/listeners before the core starts and closes the speech engine on exit. Tests: `tests/test_desktop_lifecycle.py` (11, fakes for Win32).
+
+Live (2026-08-27 13:44Z, `data/acceptance_evidence/L3_lifecycle_all.json`, counted from the process table by a script outside the product):
+
+| case | result |
+|---|---|
+| A fresh start | core 1, listener 1, worker 1, supervisor 1, window 1 (the 2/2 in the raw file is the venv launcher pair, fixed in the counter afterwards) |
+| B second `ZEUS.exe` (supervisor) with window open | exit 0 in 0.70 s; window focused in 0.029 s (0.16 s end to end); same core pid; no second runtime |
+| C window hidden → second invocation | visible after **1.045 s**, same core pid |
+| D owner presses X | window gone in 1.0 s, core alive and READY; second invocation reopens in 1.10 s, same core |
+| F `/api/restart` (self-update path) | READY in 9.6 s, **same window hwnd before and after**, one of everything |
+| E "ZEUS vollständig beenden" (`/api/quit`) | port 8420 closed after 1.65 s, **zero** core/listener/worker/supervisor/window after 1.22 s |
+
+Defect found on the way: the supervisor's stale-listener sweep matched its own PowerShell (`'*speech.listener*'` is in that process's command line) and reported "killed 1" on every boot; excluded now.
+
+## Phase 4 — the app feels like ZEUS — LIVE VERIFIED
+
+Title `ZEUS`; own `AppUserModelID` (`ZEUS.Desktop`, via `SHGetPropertyStoreForWindow`/`PKEY_AppUserModel_ID` — own taskbar group, not Edge's) and own icon (`ui/zeus.ico`, generated, original synthetic eye; `WM_SETICON`), both applied on the window handle after it appears (`identity: {app_id: true, icon: true}` live); no browser opens; hide/restore 0.038 s; `ZEUS_WINDOW_MODE=kiosk|fullscreen|maximized` for a TV/panel. Frontend unchanged.
+
+## Phase 5 — startup performance — LIVE VERIFIED
+
+Measured before: supervisor preflight ran a *real generation* before launching the core (30 s), then the core loaded the model again (28 s): window at ~33 s, READY at ~63 s. Changes: the boot preflight no longer generates (`preflight_generation: false`; the core's READY *is* a generation in the process that answers); stable checks (python, ollama binary, speech venv) come from a fingerprint cache (`data/jarvis/supervisor/preflight_cache.json`, invalidated by mtime/size of the interpreter, the venv, the config, the ollama binary); the supervisor opens the window at T0 onto its status page, which now polls `/api/health` with JS (a meta-refresh into the port hand-over gap landed on Edge's error page and produced a second window) and the core reuses that window. `/api/health.readiness` separates UI_READY / CORE_READY / AI_READY / VOICE_READY / FULL_READY; `ready` is still only a real generation.
+
+`data/acceptance_evidence/S5_boot_timeline.json`, cold boot after a full quit, FAST_LOCAL still resident in Ollama:
+
+| mark | before | after |
+|---|---|---|
+| T1 window visible | ~33 s | **1.37 s** |
+| T2/T3 core HTTP, deterministic actions | ~35 s | 7.7 s |
+| T4/T5 FAST_LOCAL generation ok (READY) | ~63 s | 8.7 s (+~28 s when Ollama has to load the model) |
+| T6/T7 voice, FULL_READY | ~78 s | 20.3 s |
+| warm reopen (hidden → visible) | n/a | 0.038 s; relaunch after X 1.05–1.10 s |
+
+Not done: the 6 s between core launch and HTTP bind is kernel construction (imports, registries) and is the next startup lever; BUILD_LOCAL is never loaded at startup (unchanged).
+
 ## Test status
 
-`tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed.
+`tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed. `tests/test_desktop_lifecycle.py tests/test_supervisor.py tests/test_desktop_window.py`: 41 passed.
 
 ## Performance
 
@@ -57,4 +94,4 @@ Live: startup sweep on the running product removed the 5 stale candidate worktre
 
 ## Next highest-value task
 
-Phase 3: desktop/supervisor lifecycle (B/C/D/E/F cases), then the self-updating release build.
+Phase 6: the self-updating release build (the supervisor/launcher changes above are only live from source until the exe is rebuilt).

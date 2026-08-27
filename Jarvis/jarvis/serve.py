@@ -26,6 +26,7 @@ import os
 import sys
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 from jarvis.window import open_window
 from service.core import JarvisCore
@@ -74,8 +75,14 @@ def interface_plan(args: argparse.Namespace, environ: dict[str, str] | None = No
     return "window", not no_browser
 
 
-def show_interface(url: str, plan: tuple[str, bool]) -> str:
-    """Open the interface as planned and report what the owner will see."""
+def show_interface(url: str, plan: tuple[str, bool], core: Any = None) -> str:
+    """Open the interface as planned and report what the owner will see.
+
+    With a ``core``, the window is a managed :class:`service.desktop.DesktopWindow`
+    owned by its lifecycle: found again after a restart, hidden and shown on
+    request, given its own Windows identity.  Without one (tests, the bare
+    CLI) it is the plain launch it always was.
+    """
 
     mode, fallback = plan
     if mode == "none":
@@ -85,6 +92,15 @@ def show_interface(url: str, plan: tuple[str, bool]) -> str:
             return "in the default browser" if webbrowser.open(url) else "nowhere -- no browser would open"
         except Exception as exc:  # noqa: BLE001 - a missing browser is not a reason to abort the boot
             return f"nowhere -- the browser would not open: {exc}"
+    if core is not None:
+        desktop = core.lifecycle.attach_desktop(url)
+        if desktop is not None:
+            shown = desktop.show(reason="startup")
+            desktop.start_watcher()
+            if shown.get("ok"):
+                return f"in its own window ({desktop.status().get('engine', 'window')}, {shown.get('action')} in {shown.get('seconds')}s)"
+            if not fallback:
+                return f"{shown.get('detail', 'the window did not open')} -- point ZEUS_WINDOW_BROWSER at one, or open the URL above"
     launch = open_window(url, fallback=fallback)
     if not launch.ok:
         # Said out loud rather than swallowed: the service is up and reachable,
@@ -111,16 +127,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.token_file:
         token = Path(args.token_file).read_text(encoding="utf-8").strip()
 
+    # Process hygiene before anything starts: a worker or listener whose
+    # parent died with the last core would otherwise hold the microphone and
+    # the GPU next to the new ones.
+    try:
+        from service.processes import kill_orphans
+
+        swept = kill_orphans("worker") + kill_orphans("listener")
+    except Exception:  # noqa: BLE001
+        swept = []
+
     core = JarvisCore(persona_name=args.persona)
     # A planned restart saved the transcript; a fresh start finds nothing.
     resumed = core.lifecycle.restore_conversation()
     server = JarvisHTTPServer(core, host=args.host, port=args.port, token=token)
     url = server.start()
+    core.lifecycle.mark("http", True, url)
 
     # Before warming, not after: warming loads a 4B model and the speech stack,
     # and the owner should be looking at the interface while that happens
     # rather than at nothing. The page renders its own loading state.
-    shown = show_interface(url, interface_plan(args))
+    shown = show_interface(url, interface_plan(args), core)
+    if swept:
+        print(f"  Swept {len(swept)} orphaned speech process(es): {swept}\n")
 
     # Start loading models immediately. The page is served either way; this
     # only decides whether the first question takes one second or fifty.
@@ -153,6 +182,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n  stopping…")
     finally:
+        # A restart keeps the window (the page reconnects on its own); a
+        # shutdown ends everything this process owns: window, speech worker.
+        core.lifecycle.leave(final=core.lifecycle.exit_code == 0)
         server.stop()
     return core.lifecycle.exit_code
 

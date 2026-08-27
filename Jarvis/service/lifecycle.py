@@ -46,6 +46,8 @@ class Lifecycle:
         self._lock = threading.Lock()
         self._revision = ""
         self.resumed: dict[str, Any] = {}
+        #: The managed desktop window, once ``attach_desktop`` ran (serve.py).
+        self.desktop: Any = None
 
     # -- readiness -----------------------------------------------------
 
@@ -88,7 +90,116 @@ class Lifecycle:
             "recogniser": recogniser,
             "state": self.core.state.snapshot.to_dict(),
             "resumed": self.resumed,
+            "window": self.desktop.status() if self.desktop is not None else None,
+            "readiness": self.readiness(),
         }
+
+    def readiness(self) -> dict[str, Any]:
+        """The separate readiness levels, each earned by its own evidence."""
+
+        stages = self.stages
+        ui = bool(stages.get("http", {}).get("ok"))
+        ai = bool(stages.get("fast_local", {}).get("ok"))
+        voice = bool(stages.get("voice", {}).get("ok")) and bool(stages.get("recogniser", {}).get("ok"))
+        return {"UI_READY": ui, "CORE_READY": ui, "AI_READY": ai, "VOICE_READY": voice,
+                "FULL_READY": ui and ai and voice}
+
+    # -- the desktop window ------------------------------------------
+
+    def attach_desktop(self, url: str) -> Any:
+        """Own the window.  Returns the DesktopWindow, or None where there is no engine."""
+
+        try:
+            from service.desktop import DesktopWindow
+        except Exception:  # noqa: BLE001
+            return None
+        root = Path(__file__).resolve().parents[1]
+        icon = root / "ui" / "zeus.ico"
+        title = str(getattr(self.core.identity, "product_name", "") or "ZEUS")
+        desktop = DesktopWindow(
+            url=url, title=title, state_root=Path(self.core.kernel.state_root), icon=icon if icon.is_file() else None,
+            emit=lambda kind, payload: self.core.emit(EventType(kind), payload),
+        )
+        if not desktop.status().get("available"):
+            return None
+        self.desktop = desktop
+        return desktop
+
+    def window(self, action: str = "status", *, reason: str = "") -> dict[str, Any]:
+        """``show`` / ``hide`` / ``close`` / ``status`` for the desktop window."""
+
+        if self.desktop is None:
+            return {"ok": False, "error": "no desktop window is managed by this core", "action": action}
+        if action == "show":
+            return self.desktop.show(reason=reason or "api")
+        if action == "hide":
+            return self.desktop.hide(reason=reason or "api")
+        if action == "close":
+            return self.desktop.close(reason=reason or "api")
+        return {"ok": True, "action": "status", **self.desktop.status()}
+
+    def process_counts(self) -> dict[str, Any]:
+        """Real counts from the process table: core, listener, worker, supervisor, window."""
+
+        from service.processes import zeus_processes
+
+        by_role = zeus_processes()
+        out: dict[str, Any] = {role: [p.to_dict() for p in rows] for role, rows in by_role.items()}
+        out["counts"] = {role: len(rows) for role, rows in by_role.items()}
+        out["counts"]["window"] = int(self.desktop.status().get("windows", 0)) if self.desktop is not None else 0
+        out["pid"] = os.getpid()
+        return out
+
+    def request_quit(self, reason: str = "owner asked ZEUS to quit completely", *, requested_by: str = "core") -> dict[str, Any]:
+        """"ZEUS vollständig beenden": window, speech, listener, core, supervisor.
+
+        Everything this process can end is ended here, before the exit code
+        tells the supervisor to end the rest and itself.
+        """
+
+        report: dict[str, Any] = {"reason": reason}
+        try:
+            report["window"] = self.desktop.close(reason=reason) if self.desktop is not None else {"ok": True, "action": "absent"}
+        except Exception as exc:  # noqa: BLE001
+            report["window"] = {"ok": False, "error": str(exc)}
+        report["speech"] = self._close_speech()
+        try:
+            from service.processes import kill_role
+
+            report["listeners_killed"] = kill_role("listener")
+            report["workers_killed"] = kill_role("worker")
+        except Exception as exc:  # noqa: BLE001
+            report["processes_error"] = str(exc)
+        report.update(self.request_shutdown(reason, requested_by=requested_by))
+        report["quit"] = True
+        return report
+
+    def _close_speech(self) -> dict[str, Any]:
+        voice = getattr(self.core, "_voice", None)
+        engine = getattr(voice, "_engine", None) if voice is not None else None
+        if engine is None:
+            return {"ok": True, "closed": False}
+        try:
+            engine.close()
+            return {"ok": True, "closed": True}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+    def leave(self, *, final: bool) -> dict[str, Any]:
+        """Called by serve.py on the way out.  ``final`` is a shutdown (the
+        window and the worker go); a restart keeps the window for the next
+        core to find."""
+
+        report: dict[str, Any] = {"final": final}
+        if self.desktop is not None:
+            try:
+                self.desktop.stop_watcher()
+                if final:
+                    report["window"] = self.desktop.close(reason=self.exit_reason or "shutdown")
+            except Exception as exc:  # noqa: BLE001
+                report["window_error"] = str(exc)
+        report["speech"] = self._close_speech()
+        return report
 
     def revision(self) -> str:
         if self._revision:

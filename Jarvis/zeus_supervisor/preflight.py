@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import json
 import subprocess
 import sys
 import time
@@ -103,12 +104,76 @@ def _no_window() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
 
+#: Checks whose answer cannot change while their inputs do not: the Python
+#: interpreter, the Ollama binary, the speech venv.  Cached under a
+#: fingerprint of those inputs, so a boot does not spawn a Python and read
+#: a version string to learn what it learned yesterday.
+STABLE_CHECKS = ("python", "ollama.binary", "speech")
+
+
+class PreflightCache:
+    """Stable check results, keyed by a fingerprint of what they depend on."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+
+    def fingerprint(self, config: SupervisorConfig) -> str:
+        parts = []
+        for candidate in (config.python, str(config.speech_python or ""), str(config.repository / "config" / "supervisor.json")):
+            try:
+                stat = Path(candidate).stat()
+                parts.append(f"{candidate}:{stat.st_mtime_ns}:{stat.st_size}")
+            except OSError:
+                parts.append(f"{candidate}:absent")
+        import shutil as _shutil
+
+        ollama = _shutil.which("ollama") or ""
+        try:
+            stat = Path(ollama).stat() if ollama else None
+            parts.append(f"{ollama}:{stat.st_mtime_ns if stat else 'absent'}")
+        except OSError:
+            parts.append(f"{ollama}:unreadable")
+        return "|".join(parts)
+
+    def load(self, fingerprint: str) -> dict[str, Check]:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if data.get("fingerprint") != fingerprint:
+            return {}
+        out = {}
+        for row in data.get("checks", []):
+            if row.get("name") in STABLE_CHECKS and row.get("ok"):
+                out[row["name"]] = Check(row["name"], True, str(row.get("detail", "")), "", required=bool(row.get("required", True)))
+        return out
+
+    def save(self, fingerprint: str, checks: list[Check]) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"fingerprint": fingerprint, "saved_at": time.time(),
+                       "checks": [c.to_dict() for c in checks if c.name in STABLE_CHECKS and c.ok]}
+            self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+
 class Preflight:
-    def __init__(self, config: SupervisorConfig, *, log=print) -> None:
+    def __init__(self, config: SupervisorConfig, *, log=print, cache: PreflightCache | None = None) -> None:
         self.config = config
         self.log = log
+        self.cache = cache
 
     def run(self, *, generation: bool = True) -> PreflightReport:
+        """The checks, in dependency order.
+
+        ``generation`` (a real answer out of FAST_LOCAL) is the expensive one,
+        and it is exactly what the core proves again when it reports READY;
+        at boot the supervisor therefore skips it and lets the core's own
+        generation be the evidence, which is what puts the window on screen
+        30 seconds earlier.  ``zeus check`` still runs it.
+        """
+
         report = PreflightReport()
         steps = [
             self._check_python,
@@ -121,14 +186,26 @@ class Preflight:
         ]
         if generation:
             steps.append(self._check_generation)
+        cached: dict[str, Check] = {}
+        fingerprint = ""
+        if self.cache is not None:
+            fingerprint = self.cache.fingerprint(self.config)
+            cached = self.cache.load(fingerprint)
         for step in steps:
             started = time.monotonic()
-            check = step(report)
+            name = step.__name__.removeprefix("_check_").replace("_", ".", 1) if step.__name__ != "_check_ollama_binary" else "ollama.binary"
+            check = cached.get(name)
+            if check is not None:
+                check = Check(check.name, True, check.detail + " (cached)", "", required=check.required)
+            else:
+                check = step(report)
             check.seconds = round(time.monotonic() - started, 2)
             report.checks.append(check)
             self.log(f"  [{'ok' if check.ok else ('..' if not check.required else 'FAIL')}] {check.name}: {check.detail}")
             if check.required and not check.ok:
                 break
+        if self.cache is not None and report.ok:
+            self.cache.save(fingerprint, report.checks)
         return report
 
     # -- checks --------------------------------------------------------

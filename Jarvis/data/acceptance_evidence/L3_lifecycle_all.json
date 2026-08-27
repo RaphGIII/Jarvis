@@ -1,0 +1,126 @@
+{
+  "cases": {
+    "A_fresh_start": {
+      "health_ready": true,
+      "readiness": {
+        "UI_READY": true,
+        "CORE_READY": true,
+        "AI_READY": true,
+        "VOICE_READY": false,
+        "FULL_READY": false
+      },
+      "window": {
+        "available": true,
+        "engine": "msedge.exe",
+        "exists": true,
+        "visible": true,
+        "minimized": false,
+        "hwnd": 267208,
+        "pid": 16928,
+        "windows": 1,
+        "last_show_seconds": 0.018,
+        "identity": {},
+        "app_id": "ZEUS.Desktop"
+      },
+      "counts": {
+        "core": 1,
+        "listener": 2,
+        "worker": 2,
+        "supervisor": 2,
+        "window": 1,
+        "window_any": 1
+      }
+    },
+    "B_second_invocation_window_open": {
+      "exit": 0,
+      "seconds": 0.703,
+      "stdout": "another ZEUS is running; its window was focused in 0.029s (0.16s end to end)\n",
+      "counts": {
+        "core": 1,
+        "listener": 2,
+        "worker": 2,
+        "supervisor": 2,
+        "window": 1,
+        "window_any": 1
+      },
+      "same_core_pid": true
+    },
+    "C_hidden_then_exe": {
+      "exit": 0,
+      "seconds_to_visible": 1.045,
+      "seconds_total": 1.558,
+      "stdout": "another ZEUS is running; its window was restored in 0.034s (0.16s end to end)\n",
+      "counts": {
+        "core": 1,
+        "listener": 2,
+        "worker": 2,
+        "supervisor": 2,
+        "window": 1,
+        "window_any": 1
+      },
+      "same_core_pid": true
+    },
+    "D_close_with_x": {
+      "window_gone_after": 0.996,
+      "core_alive": true,
+      "counts_after_x": {
+        "core": 1,
+        "listener": 2,
+        "worker": 2,
+        "supervisor": 2,
+        "window": 0,
+        "window_any": 0
+      },
+      "reopen_exit": 0,
+      "reopen_seconds_to_visible": 1.101,
+      "reopen_total": 2.782,
+      "counts_after_reopen": {
+        "core": 1,
+        "listener": 2,
+        "worker": 2,
+        "supervisor": 2,
+        "window": 1,
+        "window_any": 1
+      },
+      "same_core_pid": true
+    },
+    "F_restart": {
+      "seconds_to_ready": 9.6,
+      "counts": {
+        "core": 1,
+        "listener": 2,
+        "worker": 2,
+        "supervisor": 2,
+        "window": 1,
+        "window_any": 1
+      },
+      "window_hwnd_before": [
+        201576
+      ],
+      "window_hwnd_after": [
+        201576
+      ],
+      "new_pid": 26132,
+      "resumed": {
+        "turns": 3,
+        "reason": "acceptance F",
+        "age_seconds": 8.5,
+        "previous_revision": "9953d81b9ab3b07f760a74ae6b51f9f438a730e3"
+      }
+    },
+    "E_full_quit": {
+      "port_closed_after": 1.652,
+      "zero_after": 1.22,
+      "counts": {
+        "core": 0,
+        "listener": 0,
+        "worker": 0,
+        "supervisor": 0,
+        "window": 0,
+        "window_any": 0
+      },
+      "seconds": 9.6
+    }
+  },
+  "at": "2026-08-27T13:42:01Z"
+}
