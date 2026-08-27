@@ -388,6 +388,8 @@ class MissionEngine:
 
         out = []
         for m in self.resumable():
+            if m.phase == "BLOCKED":
+                continue  # waiting for the owner, not interrupted
             m.history.append({"at": _now(), "event": "interrupted", "detail": f"the process ended during {m.phase}"})
             m.next_action = m.next_action or f"resume from {m.phase}"
             self.store.save(m)

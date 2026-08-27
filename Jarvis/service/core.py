@@ -525,7 +525,16 @@ class JarvisCore:
                 self.missions.transition(mission, "EXECUTE", "local build")
                 acq = AcquisitionMission(service=self.capabilities, kernel=self.kernel,
                                          emit=lambda kind, payload: self.emit(kind, payload, scope=scope))
-                result = acq.run(goal)
+                # "Learn X" names a thing to build, never a thing to look up:
+                # the registry's term matcher once answered a word-count goal
+                # with the Spotify provider.  A fresh id and the goal's own
+                # terms as keywords make the build the only outcome, and let
+                # the next request find what was built.
+                from development.experience import terms as goal_terms
+
+                words = [w for w in goal_terms(goal) if w not in {"lerne", "lern", "learn", "wie", "man", "how", "to"}]
+                cid = "learned." + "_".join(words[:3])[:48] if words else f"learned.{mission.mission_id}"
+                result = acq.run(goal, capability_id=cid, keywords=words[:12])
                 for step in getattr(result, "steps", [])[-12:]:
                     self.missions.add_evidence(mission, inference(f"{getattr(step, 'phase', '')}: {getattr(step, 'summary', '')}"[:200],
                                                                   tier="BUILD_LOCAL", confidence=0.5))
