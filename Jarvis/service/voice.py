@@ -190,6 +190,8 @@ class UtteranceGate:
             reason = "nothing heard"
         elif len(words) < self.settings.min_utterance_words and not self._is_complete_short_request(text):
             reason = f"fragment: {len(words)} word(s) is not a request"
+        elif len({w.lower() for w in words}) == 1 and len(words) > 1:
+            reason = "fragment: one word repeated"
         elif text.endswith("...") or text.endswith("…"):
             reason = "incomplete: the transcript trails off"
         elif 0.0 < confidence < self.settings.min_utterance_confidence:

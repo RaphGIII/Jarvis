@@ -101,7 +101,7 @@ def test_a_failed_required_step_stops_the_rest_unless_a_replan_takes_over():
 
     Composer().execute(plan, run, replan=replan)
     assert calls == ["file.write", "note.create", "say"]
-    assert [s.status for s in plan.steps] == ["failed", "skipped", "done", "done"] and plan.replans == 1
+    assert [s.status for s in plan.steps] == ["replanned", "skipped", "done", "done"] and plan.replans == 1
 
 
 def test_questions_are_answering_and_compound_detection():

@@ -64,6 +64,11 @@ _QUOTA_MARKERS = (
     "insufficient credit",
     "upgrade to continue",
     "limit will reset",
+    "session limit",
+    "too many requests",
+    "429",
+    "hit your limit",
+    "reached your limit",
 )
 
 
@@ -121,9 +126,13 @@ class ClaudeCodeExpert:
             return ProviderAvailability(False, f"could not run the claude CLI: {exc}")
 
         if completed.returncode != 0:
-            return ProviderAvailability(False, (completed.stderr or completed.stdout).strip()[:300])
+            text = (completed.stderr or completed.stdout).strip()[:300]
+            lowered = text.lower()
+            state = "NOT_AUTHENTICATED" if any(m in lowered for m in ("log in", "login", "sign in", "not authenticated", "unauthorized")) else "ERROR"
+            return ProviderAvailability(False, text, state=state)
 
-        return ProviderAvailability(True, "subscription CLI available", version=completed.stdout.strip()[:80])
+        return ProviderAvailability(True, "subscription CLI available (installed, version answered; quota unknown until a call)",
+                                    version=completed.stdout.strip()[:80], state="AVAILABLE")
 
     # -- execution -------------------------------------------------------
 

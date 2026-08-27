@@ -1,6 +1,10 @@
-/* Activity: the owner's transparent operation log. Human-readable rows from
-   the durable log; every row expands to the recorded facts (executor,
-   target, receipt, verifier, evidence). Nothing is recomputed in the browser. */
+/* Activity: the owner's transparent operation log, request-centric. Rows
+   come from the durable log unchanged; the browser only *groups* them: every
+   `request` row opens a group that holds what ZEUS did for it (routing, plan,
+   actions, failures, replan, the final goal verdict) until the next request.
+   Identical consecutive requests (a mis-heard "Toys." five times) collapse
+   into one group with a repeat count. Expand a group for the technical view:
+   timestamps, receipt ids, executor, duration, targets, evidence. */
 
 import { $, el, clear, clockOf, dateOf, kv, section, button } from "../core/dom.js";
 import { api } from "../core/api.js";
@@ -24,6 +28,8 @@ const KINDS = {
   "error": { label: "ERROR", cls: "bad", icon: "✗" },
   "progress": { label: "PROGRESS", cls: "tool", icon: "⚙" },
   "notification": { label: "NOTE", cls: "tool", icon: "•" },
+  "diagnostic": { label: "DIAG", cls: "tool", icon: "•" },
+  "knowledge": { label: "KNOWLEDGE", cls: "tool", icon: "◆" },
 };
 
 let live = null;
@@ -36,27 +42,32 @@ export const view = {
     const search = el("input", { placeholder: "Filter…", value: params.q || "" });
     const kind = el("select", {}, el("option", { value: "", text: "all kinds" }),
       ...Object.entries(KINDS).map(([k, m]) => el("option", { value: k, text: m.label.toLowerCase() })));
+    const grouped = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } },
+      el("input", { type: "checkbox", checked: state.ui.groupActivity !== false, onChange: (e) => { setPref("groupActivity", e.target.checked); render(); } }),
+      " group by request");
     const echo = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } },
       el("input", { type: "checkbox", checked: state.ui.echoActions, onChange: (e) => setPref("echoActions", e.target.checked) }),
       " echo actions into the conversation");
-    toolbar.append(search, kind, echo);
+    toolbar.append(search, kind, grouped, echo);
     const list = el("div", { class: "activity" });
     pane.append(toolbar, list);
 
-    const data = await api("/api/activity", { limit: 400 });
-    let entries = (data.activity || []).slice().reverse();
+    const data = await api("/api/activity", { limit: 600 });
+    let entries = (data.activity || []).slice();
     const render = () => {
       clear(list);
       const q = search.value.toLowerCase();
-      const shown = entries.filter((e) => (!kind.value || e.kind === kind.value) &&
-        (!q || `${e.summary} ${e.kind} ${e.receipt_id}`.toLowerCase().includes(q)));
       if (data.error) { list.append(el("div", { class: "empty", text: `The activity log could not be read: ${data.error}` })); return; }
-      if (!shown.length) { list.append(el("div", { class: "empty", text: "Nothing recorded yet. Every request, action and verification appears here." })); return; }
+      const matches = (e) => (!kind.value || e.kind === kind.value) && (!q || `${e.summary} ${e.kind} ${e.receipt_id}`.toLowerCase().includes(q));
+      const useGroups = state.ui.groupActivity !== false && !kind.value;
+      const items = useGroups ? groups(entries).filter((g) => g.rows.some(matches)) : entries.filter(matches).map((e) => ({ head: e, rows: [e], repeats: 1 }));
+      items.reverse();
+      if (!items.length) { list.append(el("div", { class: "empty", text: "Nothing recorded yet. Every request, action and verification appears here." })); return; }
       let day = "";
-      for (const entry of shown.slice(0, 400)) {
-        const d = dateOf(entry.at);
+      for (const g of items.slice(0, 400)) {
+        const d = dateOf(g.head.at);
         if (d !== day) { day = d; list.append(el("h4", { class: "day", text: d, style: { margin: "14px 0 6px", fontSize: "10px", letterSpacing: ".2em", color: "var(--faint)" } })); }
-        list.append(row(entry, params.receipt && entry.receipt_id === params.receipt));
+        list.append(useGroups && g.rows.length > 1 ? group(g, params) : row(g.head, params.receipt && g.head.receipt_id === params.receipt));
       }
     };
     search.oninput = render;
@@ -64,8 +75,8 @@ export const view = {
     render();
     live = bus.on("*", () => {});
     view._refresh = async () => {
-      const fresh = await api("/api/activity", { limit: 400 });
-      entries = (fresh.activity || []).slice().reverse();
+      const fresh = await api("/api/activity", { limit: 600 });
+      entries = (fresh.activity || []).slice();
       render();
     };
     view._sub = bus.on("tool", () => view._refresh());
@@ -75,6 +86,61 @@ export const view = {
     live?.();
   },
 };
+
+/* Chronological rows -> groups. A `request` row starts a group; everything
+   until the next request belongs to it. Consecutive groups with the same
+   request text and the same answer shape collapse into one with `repeats`. */
+function groups(entries) {
+  const out = [];
+  let current = null;
+  for (const e of entries) {
+    if (e.kind === "request" || !current) {
+      current = { head: e, rows: [e], repeats: 1, key: e.kind === "request" ? norm(e.summary) : "" };
+      out.push(current);
+    } else {
+      current.rows.push(e);
+    }
+  }
+  const merged = [];
+  for (const g of out) {
+    const last = merged[merged.length - 1];
+    if (last && g.key && g.key === last.key && shape(g) === shape(last)) { last.repeats += 1; last.last = g.head.at; continue; }
+    merged.push(g);
+  }
+  return merged;
+}
+const norm = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const shape = (g) => g.rows.map((r) => r.kind).join(",");
+
+function verdict(g) {
+  const goal = g.rows.find((r) => r.kind === "tool" && /^goal:/.test(r.summary || ""));
+  if (goal) return /SATISFIED/.test(goal.summary) && !/NOT satisfied/.test(goal.summary) ? ["GOAL SATISFIED", "ok"] : ["GOAL NOT MET", "bad"];
+  if (g.rows.some((r) => r.kind === "action.failed" || r.kind === "state.error" || r.kind === "error")) return ["FAILED", "bad"];
+  if (g.rows.some((r) => r.kind === "action.verified")) return ["VERIFIED", "ok"];
+  if (g.rows.some((r) => r.kind === "answer")) return ["ANSWERED", "ans"];
+  return ["", ""];
+}
+
+function group(g, params) {
+  const [label, cls] = verdict(g);
+  const route = g.rows.find((r) => r.kind === "tool" && /^routed:/.test(r.summary || ""));
+  const node = el("div", { class: "act req" });
+  const body = el("div", { class: "act-body" });
+  body.hidden = true;
+  const head = el("div", { class: "act-head expandable" },
+    el("span", { class: "act-tag", text: "› REQUEST" + (g.repeats > 1 ? ` ×${g.repeats}` : "") }),
+    el("span", { class: "act-sum", text: g.head.summary || "(no detail recorded)" }),
+    label ? el("span", { class: `act-tag ${cls}`, text: label }) : null,
+    el("span", { class: "act-when", text: clockOf(g.head.at) }));
+  head.onclick = () => { body.hidden = !body.hidden; };
+  const summary = el("div", { class: "empty", style: { padding: "2px 0 4px 18px" } });
+  const steps = g.rows.slice(1).filter((r) => r.kind !== "state.working" && r.kind !== "state.verifying" && r.kind !== "state.coding");
+  const short = steps.map((r) => (KINDS[r.kind] || { icon: "•" }).icon + " " + String(r.summary || r.kind).slice(0, 70));
+  summary.textContent = (route ? route.summary.replace(/^routed:\s*/, "→ ") + " · " : "") + short.slice(0, 4).join("  ·  ") + (short.length > 4 ? `  ·  +${short.length - 4} more` : "");
+  for (const r of g.rows.slice(1)) body.append(row(r, params.receipt && r.receipt_id === params.receipt));
+  node.append(head, summary, body);
+  return node;
+}
 
 function row(entry, highlight) {
   const meta = KINDS[entry.kind] || { label: entry.kind.toUpperCase(), cls: "tool", icon: "•" };
@@ -88,7 +154,7 @@ function row(entry, highlight) {
   if (detail) {
     head.classList.add("expandable");
     detail.hidden = !highlight;
-    head.onclick = () => { detail.hidden = !detail.hidden; inspect(entry); };
+    head.onclick = (e) => { e.stopPropagation(); detail.hidden = !detail.hidden; inspect(entry); };
     node.append(detail);
   }
   if (highlight) node.style.outline = "1px solid var(--blue-deep)";
@@ -108,7 +174,7 @@ function technical(entry) {
     const ev = receipt.evidence || {};
     line("action", receipt.kind);
     line("executor", receipt.executor);
-    line("target", ev.path || ev.project_id || ev.title || ev.track || ev.query || "");
+    line("target", ev.path || ev.project_id || ev.title || ev.track || ev.query || ev.node_id || "");
     line("result", receipt.verified ? "verified" : receipt.ok ? "ran, not verified" : "failed");
     line("duration", receipt.duration_seconds !== undefined ? `${receipt.duration_seconds}s` : "");
     if (!receipt.ok) line("failure", receipt.detail);
@@ -124,6 +190,8 @@ function technical(entry) {
   }
   if (d.mission_id) line("mission", d.mission_id);
   if (d.phase) line("phase", d.phase);
+  if (d.goal) { line("ACTION_EXECUTED", d.goal.ACTION_EXECUTED); line("EXECUTION_VERIFIED", d.goal.EXECUTION_VERIFIED); line("GOAL_SATISFIED", d.goal.GOAL_SATISFIED); line("reasons", (d.goal.reasons || []).join("; ")); }
+  if (d.forbidden) line("forbidden steps", d.forbidden.join(", "));
   if (d.routing) {
     line("route", `${d.routing.top_level} (${d.routing.confidence})`);
     line("reason", d.routing.reason);
@@ -131,7 +199,7 @@ function technical(entry) {
     if ((d.routing.corrections || []).length) line("corrections", d.routing.corrections.join(", "));
   }
   for (const [k, v] of Object.entries(d)) {
-    if (["summary", "routing", "mission_id", "phase", "receipt", "text"].includes(k)) continue;
+    if (["summary", "routing", "mission_id", "phase", "receipt", "text", "goal", "forbidden", "plan"].includes(k)) continue;
     if (v === null || v === "" || typeof v === "object") continue;
     line(k, v);
   }
@@ -147,6 +215,8 @@ function inspect(entry) {
       kv("self / world", `${d.routing.reading?.self_score} / ${d.routing.reading?.world_score}`),
       kv("overruled", (d.routing.conflicts || []).join("\n")), kv("corrections", (d.routing.corrections || []).join(", "))));
   }
+  if (d.plan) children.push(section("Plan", kv("steps", (d.plan.steps || []).map((s) => `${s.status === "forbidden" ? "⛔ " : ""}${s.step} [${s.role || "required"}]`).join("\n")),
+    kv("constraints", JSON.stringify(d.plan.constraints || {}, null, 1), "mono")));
   if (entry.receipt_id && d.evidence) children.push(section("Evidence", kv("json", JSON.stringify(d.evidence, null, 1), "mono")));
   if (d.mission_id) children.push(el("div", { class: "toolbar" }, button("Open mission", () => views.open("missions", { mission: d.mission_id }))));
   views.inspect(entry.summary ? entry.summary.slice(0, 60) : entry.kind, ...children);

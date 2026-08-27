@@ -255,6 +255,7 @@ class JarvisHTTPServer:
                                                                    types=[t for t in str(body.get("types", "")).split(",") if t]),
             "/api/selfdev/diff": lambda body: self.core.selfdev_diff(str(body.get("mission_id", ""))),
             "/api/missions": lambda body: self.core.list_missions(status=str(body.get("status", ""))),
+            "/api/projects/overview": lambda _: self.core.projects_overview(),
             "/api/timers": lambda _: self.core.list_timers(),
             "/api/backup": lambda _: {"backups": self.core.backups.list()},
             "/api/backup/create": lambda body: self.core.backup_create(str(body.get("label", ""))),

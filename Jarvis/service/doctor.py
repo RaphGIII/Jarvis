@@ -9,6 +9,16 @@ minute and nobody would notice.
 Each check returns ``ok`` plus a *level*: ``ok``, ``warn`` (works, but
 something is off), ``error`` (does not work).  ``healthy`` is "no errors".
 Remedies are sentences a person can act on, not codes.
+
+Liveness is not function.  A process that exists is one fact; whether the
+product function behind it works is another, and the doctor reports both:
+every check belongs to a *subsystem* (infrastructure, core, voice, wakeword,
+knowledge, capabilities, expert, projects), each subsystem's health is the
+worst of its checks -- HEALTHY / DEGRADED / FAILING -- and ``overall`` is
+DEGRADED as soon as a product function is, even while every process runs.
+The functional checks (knowledge round trip, wake model + evaluation +
+listener agreement, capability runtime health, cached expert state) read
+files and in-memory state; none of them wakes a model or spawns a CLI.
 """
 
 from __future__ import annotations
@@ -24,6 +34,21 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+#: Which subsystem each check reports on.  Infrastructure checks say a thing
+#: exists; the others say whether a product function works.
+SUBSYSTEMS = {
+    "supervisor": "infrastructure", "ollama": "infrastructure", "gpu": "infrastructure", "duplicates": "infrastructure",
+    "window": "infrastructure", "revision": "infrastructure", "release": "infrastructure", "rollback": "infrastructure",
+    "isolation": "infrastructure", "mission_stores": "infrastructure",
+    "core": "core", "fast_local": "core", "build_local": "core",
+    "voice": "voice", "wakeword": "wakeword", "knowledge": "knowledge",
+    "capabilities": "capabilities", "capability_health": "capabilities", "expert": "expert", "projects": "projects",
+}
+#: Subsystems whose degradation degrades the product as a whole.
+IMPORTANT = ("core", "voice", "wakeword", "knowledge", "capabilities", "projects")
+HEALTH = {"ok": "HEALTHY", "warn": "DEGRADED", "error": "FAILING"}
+
+
 @dataclass
 class Check:
     name: str
@@ -33,9 +58,17 @@ class Check:
     remedy: str = ""
     data: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def subsystem(self) -> str:
+        return SUBSYSTEMS.get(self.name, "infrastructure")
+
+    @property
+    def health(self) -> str:
+        return HEALTH.get(self.level, "FAILING")
+
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "ok": self.ok, "level": self.level, "detail": self.detail[:400],
-                "remedy": self.remedy[:300], "data": self.data}
+                "remedy": self.remedy[:300], "data": self.data, "subsystem": self.subsystem, "health": self.health}
 
 
 def _ok(name: str, detail: str, **data: Any) -> Check:
@@ -70,19 +103,34 @@ class Doctor:
         started = time.perf_counter()
         checks: list[Check] = []
         for step in (self._supervisor, self._core, self._fast_local, self._build_local, self._expert, self._ollama,
-                     self._gpu, self._voice_processes, self._duplicates, self._window, self._revision, self._release,
-                     self._capabilities, self._mission_stores, self._pending_rollback, self._isolation):
+                     self._gpu, self._voice_processes, self._wakeword, self._duplicates, self._window, self._revision, self._release,
+                     self._capabilities, self._capability_health, self._knowledge, self._projects, self._mission_stores,
+                     self._pending_rollback, self._isolation):
             try:
                 checks.append(step())
             except Exception as exc:  # noqa: BLE001 - a broken check is a finding, not a crash
                 checks.append(_error(step.__name__.strip("_"), f"check crashed: {type(exc).__name__}: {exc}"))
         errors = [c for c in checks if c.level == "error"]
         warnings = [c for c in checks if c.level == "warn"]
+        order = {"HEALTHY": 0, "DEGRADED": 1, "FAILING": 2}
+        subsystems: list[dict[str, Any]] = []
+        for name in dict.fromkeys(list(dict.fromkeys(SUBSYSTEMS.values()))):
+            mine = [c for c in checks if c.subsystem == name]
+            if not mine:
+                continue
+            health = max((c.health for c in mine), key=lambda h: order[h])
+            subsystems.append({"name": name, "health": health, "important": name in IMPORTANT,
+                               "checks": [c.name for c in mine], "detail": "; ".join(f"{c.name}: {c.detail[:80]}" for c in mine if c.level != "ok")[:300]})
+        worst_important = max((s["health"] for s in subsystems if s["important"]), key=lambda h: order[h], default="HEALTHY")
+        overall = "FAILING" if errors else ("DEGRADED" if worst_important != "HEALTHY" else "HEALTHY")
+        degraded = [s["name"] for s in subsystems if s["health"] != "HEALTHY"]
         return {
             "healthy": not errors,
-            "summary": ("healthy" if not errors and not warnings else
-                        f"{len(errors)} error(s), {len(warnings)} warning(s)"),
+            "overall": overall,
+            "summary": ("healthy" if overall == "HEALTHY" else
+                        f"{overall.lower()}: {', '.join(degraded)} — {len(errors)} error(s), {len(warnings)} warning(s)"),
             "errors": [c.name for c in errors], "warnings": [c.name for c in warnings],
+            "subsystems": subsystems,
             "checks": [c.to_dict() for c in checks],
             "at": datetime.now(timezone.utc).isoformat(), "seconds": round(time.perf_counter() - started, 3),
         }
@@ -136,16 +184,30 @@ class Doctor:
         return _ok("build_local", f"{model or 'BUILD_LOCAL'} configured (not probed: probing evicts the chat model)", model=model)
 
     def _expert(self) -> Check:
+        """From the gateway's cached state: never a CLI spawn per Diagnostics render."""
+
         try:
             status = self.core.experts.status()
         except Exception as exc:  # noqa: BLE001
             return _warn("expert", f"gateway status unavailable: {exc}")
-        if status.get("quota_exhausted"):
-            return _warn("expert", "expert quota exhausted", "Wait for the subscription window to reset", **{k: status[k] for k in ("provider",) if k in status})
-        if status.get("expert_available"):
-            return _ok("expert", f"available via {status.get('provider', 'subscription')}")
-        return _warn("expert", "no expert available (local only)", "Log in to the subscription CLI if escalation is wanted",
-                     blocker=str(status.get("blocker", ""))[:120])
+        rows = [r for r in status.get("providers", []) if r.get("permitted")]
+        row = rows[0] if rows else {}
+        state = str(status.get("state") or row.get("state") or "UNKNOWN")
+        checked = row.get("checked_at") or 0
+        age = f"{int(time.time() - float(checked))}s ago" if checked else "never checked"
+        name = row.get("name", "expert")
+        evidence = f"{name} {row.get('version', '')}".strip() + f" · {row.get('evidence', '')} · {age}"
+        if state in {"QUOTA_EXHAUSTED", "RATE_LIMITED"}:
+            return _warn("expert", f"{state}: {str(row.get('detail', ''))[:100]}", "Wait for the subscription window to reset; ZEUS stays local until a call succeeds (never PAYG)",
+                         state=state, evidence=evidence)
+        if state == "AVAILABLE":
+            return _ok("expert", f"AVAILABLE via subscription CLI ({evidence})", state=state, evidence=evidence)
+        if state == "NOT_INSTALLED":
+            return _warn("expert", "NOT_INSTALLED: no subscription CLI on PATH (local only)", "Install and sign in to the CLI if escalation is wanted", state=state)
+        if state == "NOT_AUTHENTICATED":
+            return _warn("expert", "NOT_AUTHENTICATED: the CLI needs a sign-in (local only)", "Sign in to the subscription CLI", state=state)
+        return _warn("expert", f"{state}: {str(row.get('detail', status.get('blocker', '')))[:100]} (local only)", "Log in to the subscription CLI if escalation is wanted",
+                     state=state, evidence=evidence)
 
     def _ollama(self) -> Check:
         try:
@@ -192,6 +254,96 @@ class Doctor:
         if not voice_ok:
             return _warn("voice", f"listener {c.get('listener')}, worker {c.get('worker')}; speech stack not yet warm", counts=c)
         return _ok("voice", f"listener {c.get('listener')}, worker {c.get('worker')}, speech warm", counts=c)
+
+    def _wakeword(self) -> Check:
+        """The wake word as a function: a trained owner model, evaluated, and the listener running that exact model/threshold."""
+
+        try:
+            status = self.core.wake_status()
+        except Exception as exc:  # noqa: BLE001
+            return _warn("wakeword", f"wake status unavailable: {exc}")
+        kind = status.get("model_kind", "NONE")
+        threshold = status.get("effective_threshold")
+        if kind == "NONE":
+            return _error("wakeword", "no trained wake model: the listener falls back to 'hey jarvis'", "Voice Studio → record „Zeus“ 15× and train")
+        ev = status.get("evaluation") or {}
+        listener = status.get("listener")
+        data = {"model_kind": kind, "effective_threshold": threshold, "threshold_source": status.get("threshold_source"),
+                "recall": ev.get("positive_recall"), "rejection": ev.get("negative_rejection"), "evaluated_at": ev.get("at"),
+                "listener_match": status.get("listener_match"), "fingerprint": status.get("model_fingerprint")}
+        if kind != "OWNER":
+            return _warn("wakeword", "synthetic-only model: not trained on the owner's voice", "Record owner samples in Voice Studio and train", **data)
+        if not ev:
+            return _warn("wakeword", f"OWNER model, threshold {threshold} ({status.get('threshold_source')}), never evaluated", "Voice Studio → Calibrate", **data)
+        if ev.get("stale"):
+            return _warn("wakeword", "the evaluation is for an older model", "Voice Studio → Calibrate", **data)
+        recall, rejection = ev.get("positive_recall"), ev.get("negative_rejection")
+        if recall is not None and recall < 0.8:
+            return _warn("wakeword", f"owner recall {recall:.0%} at threshold {threshold} (rejection {rejection:.0%})", "Lower the wake threshold or record more samples", **data)
+        if rejection is not None and rejection < 1.0:
+            return _warn("wakeword", f"false activations on owner negatives: rejection {rejection:.0%} at {threshold}", "Raise the wake threshold", **data)
+        if listener is None:
+            return _warn("wakeword", f"OWNER model, recall {recall:.0%}, rejection {rejection:.0%} at {threshold}; no listener report in the last 30 s",
+                         "The listener reports every 5 s; check listener.log", **data)
+        if not status.get("listener_match"):
+            return _warn("wakeword", f"the listener runs model {listener.get('fingerprint')} at {listener.get('threshold')}, the product expects {status.get('model_fingerprint')} at {threshold}",
+                         "The listener reloads within seconds; if not, restart ZEUS", **data)
+        return _ok("wakeword", f"OWNER model, recall {recall:.0%}, rejection {rejection:.0%} at threshold {threshold} ({status.get('threshold_source')}); listener runs the same model and threshold", **data)
+
+    def _knowledge(self) -> Check:
+        """The graph as a function: one file, readable, non-empty, and a write path that exists."""
+
+        try:
+            stats = self.core.knowledge_stats()
+        except Exception as exc:  # noqa: BLE001
+            return _error("knowledge", f"graph unreadable: {exc}", "Check data/jarvis/knowledge/palace.sqlite")
+        if not stats.get("ok"):
+            return _error("knowledge", f"graph unreadable: {stats.get('error')}", "Check data/jarvis/knowledge/palace.sqlite", path=stats.get("path"))
+        nodes = int(stats.get("nodes", 0) or 0)
+        edges = int(stats.get("edges", 0) or 0)
+        legacy = Path(str(stats.get("path", ""))).with_name("graph.db")
+        if legacy.is_file():
+            return _warn("knowledge", f"{nodes} nodes, {edges} edges, but a legacy graph.db still exists beside the graph", "It is migrated on the next start", path=stats.get("path"))
+        if nodes == 0:
+            return _warn("knowledge", "the graph is empty", "Store a finding (knowledge.create) or ingest a document", path=stats.get("path"))
+        return _ok("knowledge", f"{nodes} nodes, {edges} edges in one graph; typed create/link/read/search/backlinks available", path=stats.get("path"), nodes=nodes, edges=edges)
+
+    def _capability_health(self) -> Check:
+        """Runtime health, separate from installation: a capability that failed its last real calls is not healthy."""
+
+        try:
+            manifests = self.core.capabilities.registry.all()
+        except Exception as exc:  # noqa: BLE001
+            return _warn("capability_health", f"registry unreadable: {exc}")
+        failing, degraded, unverified = [], [], []
+        for m in manifests:
+            if getattr(m, "status", "") != "active":
+                continue
+            health = m.health_view() if hasattr(m, "health_view") else {}
+            state = health.get("state", "unverified")
+            (failing if state == "failing" else degraded if state == "degraded" else unverified if state == "unverified" else []).append(
+                f"{m.capability_id} ({health.get('last_error', '')[:60]})" if state in {"failing", "degraded"} else m.capability_id)
+        if failing:
+            return _error("capability_health", f"FAILING: {', '.join(failing[:3])}", "Repair from the Capability Center; the resolver demotes them meanwhile",
+                          failing=failing, degraded=degraded)
+        if degraded:
+            return _warn("capability_health", f"DEGRADED: {', '.join(degraded[:3])}", "One more failure marks them FAILING; a repair restores them", degraded=degraded)
+        healthy = len([m for m in manifests if getattr(m, "status", "") == "active"]) - len(unverified)
+        return _ok("capability_health", f"{healthy} healthy, {len(unverified)} never called since health tracking began", unverified=unverified[:12])
+
+    def _projects(self) -> Check:
+        """Projects as the owner's view: owner projects apart from acquisition jobs."""
+
+        try:
+            rows = self.core.list_projects()
+        except Exception as exc:  # noqa: BLE001
+            return _warn("projects", f"project store unreadable: {exc}")
+        owner = [r for r in rows if r.get("origin", "owner") == "owner"]
+        internal = [r for r in rows if r.get("origin") == "acquisition"]
+        unclassified = [r for r in rows if r.get("origin") not in {"owner", "acquisition"}]
+        if unclassified:
+            return _warn("projects", f"{len(unclassified)} project(s) of unknown origin", "Classify them (kind / capability_id)", unclassified=[r.get("id") for r in unclassified][:6])
+        return _ok("projects", f"{len(owner)} owner project(s); {len(internal)} internal acquisition job(s) kept apart", owner=len(owner), internal=len(internal))
 
     def _duplicates(self) -> Check:
         from service.processes import counts

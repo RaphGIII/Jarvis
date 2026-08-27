@@ -644,6 +644,49 @@ class JarvisCore:
             )
         return self._missions_engine
 
+    @staticmethod
+    def mission_title(goal: str) -> str:
+        """A durable, concise title from the owner's sentence; the prompt itself stays in the record."""
+
+        text = " ".join(str(goal or "").split())
+        text = re.sub(r"^(?:hey\s+|ok\s+)?(?:zeus|jarvis)\s*[,:!.-]?\s*", "", text, flags=re.I)
+        first = re.split(r"(?<=[.!?])\s|\s(?:und dann|danach|and then)\s", text, maxsplit=1)[0].strip().rstrip(".!?,;:")
+        if len(first) > 64:
+            cut = first[:64]
+            first = cut[: cut.rfind(" ")] if " " in cut[20:] else cut
+            first = first.rstrip(",;:") + "…"
+        return (first[:1].upper() + first[1:]) if first else (text[:64] or "(no goal recorded)")
+
+    @staticmethod
+    def mission_family(goal: str) -> str:
+        """Attempts at the same request share a family: the normalised sentence."""
+
+        import hashlib
+
+        normalised = re.sub(r"[^\w\s]", "", str(goal or "").lower())
+        normalised = " ".join(normalised.split())
+        return hashlib.sha1(normalised.encode("utf-8")).hexdigest()[:12] if normalised else ""
+
+    @staticmethod
+    def mission_state(row: dict[str, Any]) -> str:
+        """One state word for filters: active | waiting | blocked | paused | failed | cancelled | completed."""
+
+        phase = str(row.get("phase", "")).upper()
+        outcome = str(row.get("outcome", "")).lower()
+        if outcome in {"cancelled", "canceled"} or phase == "CANCELLED":
+            return "cancelled"
+        if outcome in {"failed", "rolled_back"} or phase == "FAILED":
+            return "failed"
+        if outcome in {"complete", "completed", "promoted", "acquired"} or phase in {"DONE", "COMPLETE"}:
+            return "completed"
+        if phase == "PAUSED":
+            return "paused"
+        if phase == "BLOCKED":
+            return "blocked"
+        if row.get("owner_input_required") or phase == "WAITING":
+            return "waiting"
+        return "active"
+
     def list_missions(self, *, status: str = "") -> dict[str, Any]:
         """Every long-running job, whichever system runs it, in one shape."""
 
@@ -673,12 +716,22 @@ class JarvisCore:
                              "tasks": {"done": 0, "total": 0}, "evidence": len(getattr(c, "attempts", []) or [])})
         except Exception:  # noqa: BLE001
             pass
+        for r in rows:
+            r["title"] = self.mission_title(r.get("goal", ""))
+            r["family"] = self.mission_family(r.get("goal", ""))
+            r["state"] = self.mission_state(r)
+            r["deployment"] = "promoted" if r.get("outcome") == "promoted" else ("rolled back" if r.get("outcome") == "rolled_back" else "")
+        families: dict[str, int] = {}
+        for r in rows:
+            families[r["family"]] = families.get(r["family"], 0) + 1
+        for r in rows:
+            r["attempts"] = families.get(r["family"], 1)
         if status == "active":
-            rows = [r for r in rows if not r["finished"]]
+            rows = [r for r in rows if r["state"] in {"active", "waiting"}]
         elif status == "blocked":
-            rows = [r for r in rows if r["phase"] == "BLOCKED" or r["owner_input_required"]]
-        elif status in {"completed", "failed"}:
-            rows = [r for r in rows if r["finished"] and ((r["outcome"] in {"complete", "promoted", "acquired"}) == (status == "completed"))]
+            rows = [r for r in rows if r["state"] == "blocked"]
+        elif status in {"completed", "failed", "cancelled", "paused", "waiting"}:
+            rows = [r for r in rows if r["state"] == status]
         rows.sort(key=lambda r: str(r.get("updated", "")), reverse=True)
         return {"missions": rows, "count": len(rows)}
 
@@ -924,11 +977,11 @@ class JarvisCore:
 
         def replan(current: Any, failed_step: Step) -> Any:
             self.missions.fail_approach(mission, f"step {failed_step.step}", failed_step.detail)
-            self.missions.transition(mission, "DIAGNOSE", f"{failed_step.step} failed: {failed_step.detail[:100]}; replanning")
             fresh = composer.replan(current, failed_step, provider, guidance=guidance)
             if fresh is None:
                 self.emit(EventType.TOOL, {"summary": f"no replan for {failed_step.step}; the remainder stops", "source": "composer"}, scope=scope)
                 return None
+            self.missions.transition(mission, "DIAGNOSE", f"{failed_step.step} failed: {failed_step.detail[:100]}; replanned")
             self.emit(EventType.TOOL, {"summary": f"replan after {failed_step.step}: {', '.join(s.step for s in fresh.steps)}",
                                        "plan": fresh.to_dict(), "source": "composer"}, scope=scope)
             for s in fresh.steps:
@@ -957,7 +1010,7 @@ class JarvisCore:
             self.missions.transition(mission, "DIAGNOSE", "steps ran but the mission holds no proof")
         lines = []
         for s in plan.steps:
-            mark = {"done": "✓", "failed": "✗", "forbidden": "⛔", "skipped": "·"}.get(s.status, "·")
+            mark = {"done": "✓", "failed": "✗", "replanned": "↻", "forbidden": "⛔", "skipped": "·"}.get(s.status, "·")
             role = "" if s.role == "required" else f" [{s.role}]"
             lines.append(f"{mark} {s.step}{role}" + (f" — {s.detail[:90]}" if s.detail else ""))
         if goal.goal_satisfied:
@@ -2822,25 +2875,71 @@ class JarvisCore:
     # Projects
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def project_origin(project: Any) -> str:
+        """owner | acquisition | unclassified -- from fields the store already persists.
+
+        A capability-acquisition project (``kind == "capability"`` or a
+        ``capability_id`` in its metadata) is ZEUS's internal work: it is
+        shown *under* the capability, never as an owner project.  Nothing is
+        deleted; a legacy record that fits neither rule is reported as such.
+        """
+
+        kind = str(getattr(getattr(project, "kind", ""), "value", getattr(project, "kind", "")) or "").lower()
+        metadata = dict(getattr(project, "metadata", {}) or {})
+        if kind == "capability" or metadata.get("capability_id"):
+            return "acquisition"
+        if kind in {"software", "owner", "research", "project", "generic", ""}:
+            return "owner"
+        return "unclassified"
+
     def list_projects(self) -> list[dict[str, Any]]:
         try:
             projects = self.kernel.projects.list_projects()
         except Exception:
             return []
-        return [
-            {
+        rows = []
+        for project in projects:
+            metadata = dict(getattr(project, "metadata", {}) or {})
+            rows.append({
                 "id": project.id,
                 # The title is what a user names a project and what they will
                 # look for in the panel; the goal can be a paragraph.
                 "title": getattr(project, "title", "") or "",
                 "goal": project.goal,
                 "state": getattr(project.state, "value", str(project.state)),
+                "kind": str(getattr(getattr(project, "kind", ""), "value", getattr(project, "kind", "")) or ""),
+                "capability_id": str(metadata.get("capability_id", "") or ""),
+                "origin": self.project_origin(project),
                 "tasks": len(getattr(project, "tasks", [])),
                 "steps": len(getattr(project, "steps", [])),
+                "created_at": getattr(project, "created_at", ""),
                 "updated_at": getattr(project, "updated_at", ""),
-            }
-            for project in projects
-        ]
+            })
+        return rows
+
+    def projects_overview(self) -> dict[str, Any]:
+        """Owner projects first; internal acquisition attempts grouped per capability (attempt families)."""
+
+        rows = self.list_projects()
+        owner = [r for r in rows if r["origin"] == "owner"]
+        families: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if r["origin"] != "acquisition":
+                continue
+            key = r["capability_id"] or r["title"] or r["id"]
+            fam = families.setdefault(key, {"capability_id": key, "attempts": [], "latest_state": "", "updated_at": ""})
+            fam["attempts"].append({k: r[k] for k in ("id", "state", "tasks", "steps", "created_at", "updated_at", "title")})
+            if str(r["updated_at"]) >= str(fam["updated_at"]):
+                fam["updated_at"], fam["latest_state"] = r["updated_at"], r["state"]
+        for fam in families.values():
+            fam["attempts"].sort(key=lambda a: str(a.get("created_at", "")))
+            fam["count"] = len(fam["attempts"])
+        missions = self.list_missions().get("missions", [])
+        return {"projects": owner, "internal": sorted(families.values(), key=lambda f: str(f["updated_at"]), reverse=True),
+                "unclassified": [r for r in rows if r["origin"] == "unclassified"],
+                "missions": missions[:40], "counts": {"owner": len(owner), "internal_attempts": sum(f["count"] for f in families.values()),
+                                                      "families": len(families), "unclassified": len([r for r in rows if r["origin"] == "unclassified"])}}
 
     def project_detail(self, reference: str) -> dict[str, Any]:
         project = self.kernel.resolve_project(reference) if reference else None

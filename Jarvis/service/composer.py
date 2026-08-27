@@ -115,6 +115,10 @@ class Step:
         return asdict(self)
 
 
+#: Primitives that leave something behind -- the ones a "no fallback" rule
+#: is about.  Observations (search, read, say) are never a substitute.
+PRODUCING = frozenset({"file.write", "note.create", "project.create", "timer.start", "music.play", "music.resume", "window.hide"})
+
 #: Which primitives an object word in a prohibition names.  "keine Datei"
 #: forbids every file-producing primitive, "keine Notiz" the note, and so on.
 _OBJECT_PRIMITIVES: dict[str, tuple[str, ...]] = {
@@ -171,7 +175,13 @@ class PlanConstraints:
         if step_name in self.forbidden_actions:
             return True
         family = step_name.split(".", 1)[0]
-        return family in self.forbidden_effects
+        if family in self.forbidden_effects:
+            return True
+        # "No fallback": when the owner named what must exist afterwards and
+        # ruled out substitutes, nothing else may be produced in its place.
+        if self.fallbacks_forbidden and self.required_outcome and step_name in PRODUCING and step_name not in self.required_outcome:
+            return True
+        return False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -247,11 +257,11 @@ class GoalEvaluation:
 def evaluate_goal(plan: "Plan", receipts: list[Any]) -> GoalEvaluation:
     """Did the owner's goal hold afterwards -- not merely "did the steps run"."""
 
-    ran = [s for s in plan.steps if s.status in {"done", "failed"}]
+    ran = [s for s in plan.steps if s.status in {"done", "failed", "replanned"}]
     executed = bool(ran)
     by_id = {str(getattr(r, "id", "")): r for r in receipts}
     verified_steps = [s for s in plan.steps if s.status == "done" and getattr(by_id.get(s.receipt_id), "verified", False)]
-    required = [s for s in plan.steps if s.required and s.status not in {"forbidden", "skipped", "missing"}]
+    required = [s for s in plan.steps if s.required and s.status not in {"forbidden", "skipped", "missing", "replanned"}]
     reasons: list[str] = []
     execution_verified = bool(required) and all(s in verified_steps for s in required)
     if not required:
@@ -505,6 +515,7 @@ class Composer:
                     if later.status == "planned":
                         later.status, later.detail = "skipped", f"not run: {step.step} failed first"
                 break
+            step.status = "replanned"  # the failure is on record; the goal is carried by the new steps
             plan.replans = fresh.replans
             plan.missing = list(dict.fromkeys(plan.missing + fresh.missing))
             for later in plan.steps[index:]:
