@@ -21,6 +21,26 @@ import pytest
 from core.identity import BUILTIN_WAKE_MODELS, Identity, current, set_current
 
 
+@pytest.fixture(autouse=True)
+def _no_trained_wake_model(monkeypatch):
+    """These tests describe the shipped state: no model trained for "Zeus".
+
+    On a machine where speech.wake_training has run, data/models/wake/zeus.npz
+    exists and the gap is closed; the tests must not depend on which machine
+    they run on.  The trained case has its own test below.
+    """
+
+    monkeypatch.setattr("core.identity.trained_wake_model_exists", lambda word: False)
+
+
+def test_a_locally_trained_model_closes_the_gap(monkeypatch):
+    monkeypatch.setattr("core.identity.trained_wake_model_exists", lambda word: word == "zeus")
+    identity = Identity(wake_word="Zeus")
+    assert identity.resolved_wake_model == "zeus"
+    assert identity.wake_word_available
+    assert identity.wake_word_note() == ""
+
+
 # --------------------------------------------------------------------------
 # The names
 # --------------------------------------------------------------------------
