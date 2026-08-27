@@ -1,0 +1,203 @@
+{
+  "at": "2026-08-27T15:19:22Z",
+  "mission": {
+    "ok": true,
+    "system": "engine",
+    "mission": {
+      "goal": "Zeus, erstelle die Datei plan.txt mit dem Inhalt Lernplan und starte danach einen Timer auf 1 Minute mit dem Label Lernen.",
+      "kind": "complex",
+      "mission_id": "m_974e85507c",
+      "interpretation": "composed from file.write, timer.start",
+      "constraints": [],
+      "acceptance_criteria": [
+        "file.write",
+        "timer.start"
+      ],
+      "evidence": [
+        {
+          "kind": "owner_statement",
+          "claim": "Zeus, erstelle die Datei plan.txt mit dem Inhalt Lernplan und starte danach einen Timer auf 1 Minute mit dem Label Lernen.",
+          "source": "owner",
+          "verifier": "",
+          "observed": "",
+          "receipt_id": "",
+          "url": "",
+          "fetched_at": "",
+          "confidence": 0.9,
+          "evidence_id": "ev_6cb375ce9d",
+          "at": "2026-08-27T15:18:55.839906+00:00",
+          "data": {},
+          "execution_verified": false
+        },
+        {
+          "kind": "execution_receipt",
+          "claim": "wrote 8 characters to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\workspace\\plan.txt",
+          "source": "tools.write_file",
+          "verifier": "file exists on disk, content matches exactly",
+          "observed": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\workspace\\plan.txt (8 bytes); 'Lernplan'",
+          "receipt_id": "rcpt_95ae8dabce19",
+          "url": "",
+          "fetched_at": "",
+          "confidence": 0.85,
+          "evidence_id": "ev_d442c7b6c7",
+          "at": "2026-08-27T15:18:55.960682+00:00",
+          "data": {
+            "ok": true,
+            "kind": "file.write"
+          },
+          "execution_verified": true
+        },
+        {
+          "kind": "execution_receipt",
+          "claim": "1 min timer (Lernen) started",
+          "source": "timer",
+          "verifier": "timer registered",
+          "observed": "timer_1787843936_0",
+          "receipt_id": "rcpt_44f47fc206c1",
+          "url": "",
+          "fetched_at": "",
+          "confidence": 0.85,
+          "evidence_id": "ev_f7cce0176d",
+          "at": "2026-08-27T15:18:56.028524+00:00",
+          "data": {
+            "ok": true,
+            "kind": "timer.start"
+          },
+          "execution_verified": true
+        }
+      ],
+      "hypotheses": [],
+      "tasks": [
+        {
+          "task_id": "t1",
+          "title": "file.write {\"path\": \"plan.txt\", \"content\": \"Lernplan\"}",
+          "status": "done",
+          "depends_on": [],
+          "result": "wrote 8 characters to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\workspace\\plan.txt",
+          "attempts": 0,
+          "evidence_ids": [
+            "ev_d442c7b6c7"
+          ]
+        },
+        {
+          "task_id": "t2",
+          "title": "timer.start {\"minutes\": 1, \"label\": \"Lernen\"}",
+          "status": "done",
+          "depends_on": [],
+          "result": "1 min timer (Lernen) started",
+          "attempts": 0,
+          "evidence_ids": [
+            "ev_f7cce0176d"
+          ]
+        }
+      ],
+      "completed": [
+        "t1",
+        "t2"
+      ],
+      "failed_approaches": [],
+      "phase": "COMPLETE",
+      "previous_phase": "VERIFY",
+      "next_action": "",
+      "blockers": [],
+      "owner_input_required": "",
+      "outcome": "complete",
+      "reason": "",
+      "scope": "",
+      "created_at": "2026-08-27T15:18:55.811050+00:00",
+      "updated_at": "2026-08-27T15:18:56.256610+00:00",
+      "history": [
+        {
+          "at": "2026-08-27T15:18:55.811071+00:00",
+          "event": "created",
+          "detail": "complex: Zeus, erstelle die Datei plan.txt mit dem Inhalt Lernplan und starte danach einen Timer auf 1 Minute mit dem Label Lerne"
+        },
+        {
+          "at": "2026-08-27T15:18:55.839955+00:00",
+          "event": "evidence",
+          "detail": "owner_statement: Zeus, erstelle die Datei plan.txt mit dem Inhalt Lernplan und starte danach einen Timer auf 1 Minute"
+        },
+        {
+          "at": "2026-08-27T15:18:55.855579+00:00",
+          "event": "PLAN",
+          "detail": "2 typed steps"
+        },
+        {
+          "at": "2026-08-27T15:18:55.887239+00:00",
+          "event": "EXECUTE",
+          "detail": "running the steps in order"
+        },
+        {
+          "at": "2026-08-27T15:18:55.960722+00:00",
+          "event": "evidence",
+          "detail": "execution_receipt: wrote 8 characters to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\workspace\\plan.txt"
+        },
+        {
+          "at": "2026-08-27T15:18:55.965358+00:00",
+          "event": "task",
+          "detail": "t1 done: wrote 8 characters to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\worksp"
+        },
+        {
+          "at": "2026-08-27T15:18:56.028564+00:00",
+          "event": "evidence",
+          "detail": "execution_receipt: 1 min timer (Lernen) started"
+        },
+        {
+          "at": "2026-08-27T15:18:56.034824+00:00",
+          "event": "task",
+          "detail": "t2 done: 1 min timer (Lernen) started"
+        },
+        {
+          "at": "2026-08-27T15:18:56.224235+00:00",
+          "event": "VERIFY",
+          "detail": "2 done, 0 failed"
+        },
+        {
+          "at": "2026-08-27T15:18:56.256597+00:00",
+          "event": "COMPLETE",
+          "detail": "every step ran and verified"
+        }
+      ],
+      "cancel_requested": false,
+      "pause_requested": false,
+      "links": {},
+      "finished": true
+    },
+    "brief": {
+      "mission_id": "m_974e85507c",
+      "kind": "complex",
+      "goal": "Zeus, erstelle die Datei plan.txt mit dem Inhalt Lernplan und starte danach einen Timer auf 1 Minute mit dem Label Lernen.",
+      "interpretation": "composed from file.write, timer.start",
+      "phase": "COMPLETE",
+      "next_action": "",
+      "constraints": [],
+      "acceptance_criteria": [
+        "file.write",
+        "timer.start"
+      ],
+      "established": [
+        "wrote 8 characters to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\jarvis\\workspace\\plan.txt",
+        "1 min timer (Lernen) started"
+      ],
+      "open_hypotheses": [],
+      "tasks": {
+        "done": 2,
+        "total": 2,
+        "next": []
+      },
+      "failed_approaches": [],
+      "blockers": [],
+      "owner_input_required": ""
+    }
+  },
+  "timers": {
+    "timers": [
+      {
+        "id": "timer_1787843936_0",
+        "label": "Lernen",
+        "minutes": 1.0,
+        "remaining_seconds": 34
+      }
+    ]
+  }
+}
