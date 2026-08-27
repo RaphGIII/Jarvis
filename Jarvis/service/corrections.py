@@ -148,7 +148,11 @@ def classify_correction(what_was_wrong: str, *, receipt_ok: bool | None = None, 
     else:
         scope = "INTENT_SPECIFIC"
 
-    if has(_FAILED) or receipt_ok is False and not has(_WRONG_KIND):
+    # The owner's words decide. A failed receipt only tips the balance when
+    # the sentence itself carries no rule -- "künftig immer" is a preference
+    # whatever the last attempt did.
+    states_rule = has(_ALWAYS) or has(_ONCE) or has(_PARAM) or has(_WRONG_KIND) or has(_WRONG_OBJECT)
+    if has(_FAILED) or (receipt_ok is False and not states_rule):
         return "EXECUTION_FAILURE", "THIS_REQUEST", "the owner describes a failure of the tool, not of the reading"
     if has(_WRONG_CHECK):
         return "VERIFICATION_DEFECT", scope, "the owner says the check accepted something false"

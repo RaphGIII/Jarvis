@@ -812,6 +812,24 @@ class JarvisCore:
                 {"summary": f"no executable action: {plan.reason[:160]}", "declined": True},
                 scope=scope,
             )
+            from service.intent import ACTION_OBJECTS, FILENAME
+
+            names_object = any(word in f" {text.lower()} " for word in ACTION_OBJECTS) or bool(FILENAME.search(text))
+            if classification.matched and names_object:
+                # The request names a side effect and the planner could not
+                # turn it into one for want of a detail. Handing that to the
+                # conversation model produced an invented "notes database"
+                # with a fake commit id; one concise question is the honest
+                # answer, and the receipt path resumes when it is answered.
+                de = self.language.startswith("de")
+                self._deliver(
+                    (f"Das kann ich ausführen, aber ein Detail fehlt: {plan.reason[:160]}. "
+                     f"Sag mir zum Beispiel den Dateinamen, dann mache ich es.") if de else
+                    (f"I can do that, but a detail is missing: {plan.reason[:160]}. "
+                     f"Give me the file name, for example, and I will do it."),
+                    scope=scope, backend="planner", final_state=JarvisState.WAITING,
+                )
+                return
             self._answer_conversationally(text, scope)
             return
 
@@ -853,6 +871,16 @@ class JarvisCore:
             context_text=f"[executed {receipt.kind}: "
             f"{'verified' if receipt.verified else 'not verified'}, receipt {receipt.id}]",
         )
+
+    @staticmethod
+    def _planner_wants_detail(reason: str) -> bool:
+        """Whether a decline says "missing detail" rather than "not an action"."""
+
+        lowered = (reason or "").lower()
+        return any(word in lowered for word in (
+            "path", "filename", "file name", "name", "not specified", "no file", "missing", "unspecified",
+            "did not", "didn't", "doesn't specify", "does not specify", "without", "unclear which", "pfad", "dateiname",
+        ))
 
     def _answer_conversationally(self, text: str, scope: str) -> None:
         from brain.tiers import ModelTier
