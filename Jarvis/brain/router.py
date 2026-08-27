@@ -78,7 +78,9 @@ class BrainRouter:
         "patch",
         "baue eine app",
         "baue mir",
-        "entwickle",
+        # Trailing space: "Entwickler" contains "entwickle".  Matched against
+        # f" {message} ", so a sentence-final "entwickle" still hits.
+        "entwickle ",
         "erstelle eine app",
         "erstelle ein programm",
         "schreibe ein programm",

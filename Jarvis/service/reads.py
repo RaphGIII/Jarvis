@@ -30,6 +30,11 @@ def answer(core: Any, text: str, *, language: str = "", acquisition: bool = Fals
     if acquisition:
         return _cannot_acquire(core, german)
 
+    developer_words = ("entwickler", "developer", "selfdev", "self-development",
+                       "selbstentwicklung", "programmier")
+    if any(word in lowered for word in developer_words):
+        return _developer(core, german)
+
     project_words = ("projekt", "project")
     if any(word in lowered for word in project_words):
         return _projects(core, german)
@@ -52,6 +57,41 @@ def _cannot_acquire(core: Any, german: bool) -> str:
         if german
         else "I cannot acquire a new capability from a chat turn. That runs through the "
         "capability-acquisition pipeline, not through conversation. Nothing was started.\n\n"
+    )
+    return head + _capabilities(core, german)
+
+
+def _developer(core: Any, german: bool) -> str:
+    """"What can you do as a developer?" -- the wiring, then the record.
+
+    Counted from the same stores the Activity and Projects panels read, so this
+    answer cannot drift away from them.
+    """
+
+    try:
+        missions = list(core.selfdev_store.list())
+    except Exception:
+        missions = []
+    try:
+        projects = core.list_projects()
+    except Exception:
+        projects = []
+    phases = "UNDERSTAND -> INVESTIGATE -> BUILD_LOCAL -> VERIFY -> ESCALATE -> PROMOTE"
+    head = (
+        "Als Entwickler arbeite ich an mir selbst ueber eine feste Kette:\n\n"
+        f"  {phases}\n\n"
+        "Jede Aenderung entsteht in einem eigenen Worktree, wird durch die "
+        "Akzeptanzkommandos gepruft und erst danach promotet. Ohne bestandene "
+        "Pruefung wird nichts uebernommen.\n\n"
+        f"Im Speicher: {len(missions)} Self-Development-Mission(en), "
+        f"{len(projects)} Projekt(e).\n\n"
+        if german
+        else
+        "As a developer I work on myself through a fixed chain:\n\n"
+        f"  {phases}\n\n"
+        "Every change is built in its own worktree, checked by the acceptance "
+        "commands, and only then promoted. Nothing lands without a passing check.\n\n"
+        f"On record: {len(missions)} self-development mission(s), {len(projects)} project(s).\n\n"
     )
     return head + _capabilities(core, german)
 

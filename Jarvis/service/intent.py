@@ -302,7 +302,10 @@ PROJECT_HINTS = (
     "schreib code",
     "baue eine app",
     "baue mir",
-    "entwickle",
+    # Trailing space: "Entwickler" contains "entwickle", and a question about
+    # ZEUS as a developer is not durable engineering work.  The match runs
+    # against f" {text} ", so a sentence-final "entwickle" still hits.
+    "entwickle ",
     "refactor",
     "refaktor",
     "build an app",
@@ -346,7 +349,7 @@ def classify(text: str, *, corrections: Iterable[Any] = (), capability_names: It
     if not normalized.strip():
         return Classification(Intent.CONVERSATION, "empty message")
 
-    from service.routing import TopLevelIntent, route
+    from service.routing import TopLevelIntent, asks_about_itself, route
 
     top = route(text, corrections=corrections, capability_names=capability_names)
 
@@ -357,6 +360,14 @@ def classify(text: str, *, corrections: Iterable[Any] = (), capability_names: It
             return Classification(
                 Intent.READ, f"asks about this system's own state: {hint!r}", matched=hint, route=top
             )
+
+    # A description of its own abilities is a registry read, not a mission.
+    # The phrase lists below cannot see it: "Entwickler" contains "entwickle".
+    if asks_about_itself(text):
+        return Classification(
+            Intent.READ, "asks this system to describe its own abilities",
+            matched="self-description", route=top,
+        )
 
     # The top level has decided what this is.  Self-modification, acquisition,
     # owner-core changes and corrections are settled here and never reach a

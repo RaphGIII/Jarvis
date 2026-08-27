@@ -161,10 +161,10 @@ _BEHAVIOUR_CHANGE = re.compile(
 #: "ändere", "änderst", "geändert" all count.
 _MODIFY = re.compile(
     r"\b(aender\w*|veraender\w*|umbau\w*|umgestalt\w*|ueberarbeit\w*|repar\w*|behebe?\w*|fix\w*|verbesser\w*"
-    r"|optimier\w*|erweiter\w*|entwickl\w*|implementier\w*|einbau\w*|anpass\w*|ersetz\w*|entfern\w*|streich\w*"
+    r"|optimier\w*|erweiter\w*|entwickl(?!er)\w*|implementier\w*|einbau\w*|anpass\w*|ersetz\w*|entfern\w*|streich\w*"
     r"|ergaenz\w*|hinzufueg\w*|korrigier\w*|beschleunig\w*|refactor\w*|redesign\w*|umschreib\w*|neu\s+schreib\w*"
     r"|change|changes|changing|modify|modif\w*|improve\w*|repair\w*|extend\w*|rewrite|rework\w*|update\w*"
-    r"|upgrade\w*|add|adding|remove|removing|replace|replacing|implement\w*|develop\w*|build\s+in|make\s+(?:it|this|that|yourself|your))\b"
+    r"|upgrade\w*|add|adding|remove|removing|replace|replacing|implement\w*|develop(?!er)\w*|build\s+in|make\s+(?:it|this|that|yourself|your))\b"
 )
 #: "füge ... hinzu", "baue ... ein/um", "passe ... an": separable verbs whose
 #: particle lands at the end of the clause.
@@ -253,6 +253,16 @@ _INTERROGATIVE = re.compile(
     r"|how|what|why|when|where|who|which|can\s+you|could\s+you|do\s+you)\b"
 )
 
+#: "Erzähl mir von ...", "tell me about ...": a request for a description.
+#: It carries no question mark and no interrogative, so nothing above
+#: recognised it as a question, and "Erzähl mir von deinen Fähigkeiten als
+#: Entwickler" became a SelfDev mission on the stem inside "Entwickler".
+_DESCRIBE = re.compile(
+    r"\b(erzaehl\w*|beschreib\w*|schilder\w*|berichte?\s+(?:mir|uns)|sag\s+mir\s+(?:etwas|was|mehr)"
+    r"|tell\s+me\s+(?:about|more)|describe|explain\s+(?:to\s+me|your)"
+    r"|gib\s+mir\s+(?:einen\s+)?(?:ueberblick|einblick))\b"
+)
+
 #: A request that names a whole pipeline of stages is a mission even when it
 #: names no project verb.
 _MISSION_SHAPE = re.compile(r"\b(schritt\s+fuer\s+schritt|step\s+by\s+step|plane?\s+und|plan\s+and|mehrstufig|multi-?step|langfristig|long-?term)\b")
@@ -296,6 +306,12 @@ def read(text: str, *, capability_names: Iterable[str] = ()) -> Reading:
     if placement and _DISPLAY.search(body) and not modify_verbs:
         modify_verbs.append(placement.group(0))
     action_verbs = list(_findall(_ACT, body))
+    # Asking for a description is asking a question, even without a question
+    # mark -- but only when nothing is to be done as well: "beschreibe X und
+    # lege es ab" is still an action.
+    describes = bool(_DESCRIBE.search(body)) and not action_verbs
+    if describes:
+        is_question = True
     core_terms = _findall(_OWNER_CORE, body)
     capability_terms = list(_findall(_CAPABILITY_TERMS, body))
     for name in capability_names:
@@ -323,6 +339,8 @@ def read(text: str, *, capability_names: Iterable[str] = ()) -> Reading:
         operation = "correct"
     elif _LEARN.search(body) and not (self_refs and modify_verbs and _MODIFY.search(body) and "lern" not in body[:30]):
         operation = "learn"
+    elif describes:
+        operation = "ask"
     elif modify_verbs and (self_score > 0 or not action_verbs):
         operation = "modify"
     elif behaviour and self_refs and not is_question:
@@ -359,6 +377,25 @@ def read(text: str, *, capability_names: Iterable[str] = ()) -> Reading:
         action_verbs=tuple(action_verbs), world_objects=world_objects, core_terms=core_terms,
         capability_terms=tuple(capability_terms),
     )
+
+
+#: Nouns that make a question about ZEUS a question about its *abilities*.
+#: "funktion" is deliberately absent: "wie funktioniert dein Router" is a
+#: question for the model, not a registry read.
+_ABILITY_NOUNS = re.compile(
+    r"\b(faehigkeit\w*|capabilit\w*|skill\w*|entwickler\w*|developer\w*|programmier\w*|status)\b"
+)
+
+
+def asks_about_itself(text: str) -> bool:
+    """Whether this asks ZEUS to describe its own abilities."""
+
+    body = _VOCATIVE.sub("", fold(text).strip(), count=1)
+    asking = bool(_DESCRIBE.search(body)) or (
+        (body.rstrip().endswith("?") or bool(_INTERROGATIVE.match(body)))
+        and not _MODIFY.search(body)
+    )
+    return asking and bool(_SELF_REFERENCE.search(body)) and bool(_ABILITY_NOUNS.search(body))
 
 
 #: Owner-correction override values that name a top-level route.
