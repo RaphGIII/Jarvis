@@ -2851,18 +2851,89 @@ class JarvisCore:
             })
         return resumable
 
-    def stop_current(self) -> dict[str, Any]:
-        """Interrupt whatever is running.  Used by barge-in and the stop button."""
+    #: States in which an answer is being produced for the owner (a
+    #: conversation turn), as opposed to long autonomous work.
+    _ANSWERING = (JarvisState.THINKING, JarvisState.SPEAKING, JarvisState.TRANSCRIBING)
 
+    def _running_now(self) -> list[str]:
+        """What a stop could actually stop right now: "speech" and/or "answer"."""
+
+        running: list[str] = []
+        voice = self._voice
+        if voice is not None and getattr(voice, "_speaker", None) is not None:
+            running.append("speech")
+        current = self.state.snapshot.state
+        if current in self._ANSWERING:
+            if "speech" not in running and current is JarvisState.SPEAKING:
+                running.append("speech")
+            running.append("answer")
+        return running
+
+    def stop_current(self, *, reason: str = "owner", session: str = "") -> dict[str, Any]:
+        """The owner's stop (Esc, the stop button): interrupt speech and the current answer.
+
+        Idempotent and reason-coded.  It says what it stopped; when nothing
+        was running it says so as a DIAGNOSTIC and produces no transcript
+        entry -- the literal "stopped" that used to be posted on every wake
+        word is gone.  Long autonomous work (missions) is not touched here;
+        Mission Control cancels those explicitly.
+        """
+
+        stopped = self._running_now()
         self._stop_requested.set()
         if self._voice is not None:
             # Barge-in has to reach the speaker, not just the generator: the
             # audio already synthesised would otherwise keep playing over the
             # user who interrupted it.
             self._voice.interrupt()
-        self.emit(EventType.NOTIFICATION, {"text": "stopped"})
-        self.state.set(JarvisState.IDLE, detail="interrupted")
-        return {"ok": True}
+        if stopped:
+            de = self.language.startswith("de")
+            text = ("Sprachausgabe gestoppt" if de else "speech stopped") if stopped == ["speech"] else ("Antwort abgebrochen" if de else "answer cancelled")
+            self.emit(EventType.NOTIFICATION, {"text": text, "kind": "stop", "stopped": stopped, "reason": reason, "session": session})
+            self.state.set(JarvisState.IDLE, detail="interrupted")
+        else:
+            self.emit(EventType.DIAGNOSTIC, {"stop": "nothing running", "reason": reason, "session": session})
+        return {"ok": True, "stopped": stopped}
+
+    def voice_interrupt(self, *, session: str = "", wake: float = 0.0) -> dict[str, Any]:
+        """Barge-in from the listener: the wake word fired while ZEUS may be talking.
+
+        Interrupts speech and a conversation answer in progress -- and only
+        those.  With nothing running it is a no-op that leaves no trace in
+        the transcript; it never touches the listening session that the same
+        wake word just opened, which stays LISTENING on the device.
+        """
+
+        running = self._running_now()
+        if not running:
+            self.emit(EventType.DIAGNOSTIC, {"voice_interrupt": "nothing to interrupt", "session": session, "wake": wake})
+            return {"ok": True, "interrupted": []}
+        self._stop_requested.set()
+        if self._voice is not None:
+            self._voice.interrupt()
+        de = self.language.startswith("de")
+        self.emit(EventType.NOTIFICATION, {"text": ("Unterbrochen — ich höre zu." if de else "Interrupted — listening."), "kind": "barge_in",
+                                           "stopped": running, "session": session, "wake": wake})
+        self.state.set(JarvisState.LISTENING, detail=f"barge-in {session}".strip())
+        return {"ok": True, "interrupted": running}
+
+    #: The listener's session states, mirrored into the core's state so the
+    #: interface (the eye) shows LISTENING while the device is armed.
+    _SESSION_STATES = {"WAKE_DETECTED", "LISTENING", "CAPTURING", "UTTERANCE_CAPTURED", "SENT", "IDLE"}
+
+    def voice_session_event(self, session: str, state: str, reason: str = "", *, wake: float = 0.0) -> dict[str, Any]:
+        """One reason-coded transition of a listening session on the device."""
+
+        state = str(state or "").upper()
+        if state not in self._SESSION_STATES:
+            return {"ok": False, "error": f"unknown session state {state!r}"}
+        self.emit(EventType.DIAGNOSTIC, {"voice_session": state, "session": session, "reason": reason, "wake": wake})
+        current = self.state.snapshot.state
+        if state in {"WAKE_DETECTED", "LISTENING", "CAPTURING"} and current in (JarvisState.IDLE, JarvisState.LISTENING):
+            self.state.set(JarvisState.LISTENING, detail=f"{state.lower()} {session}")
+        elif state == "IDLE" and current is JarvisState.LISTENING:
+            self.state.set(JarvisState.IDLE, detail=reason[:60])
+        return {"ok": True, "session": session, "state": state}
 
     def new_conversation(self) -> dict[str, Any]:
         """Start fresh: clear the transcript and settle the state.

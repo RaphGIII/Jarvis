@@ -203,7 +203,11 @@ class JarvisHTTPServer:
             "/api/personas": lambda _: self.core.list_personas(),
             "/api/persona": lambda body: self.core.set_persona(str(body.get("name", ""))),
             "/api/language": lambda body: self.core.set_language(str(body.get("language", ""))),
-            "/api/stop": lambda _: self.core.stop_current(),
+            "/api/stop": lambda body: self.core.stop_current(reason=str(body.get("reason", "owner")), session=str(body.get("session", ""))),
+            "/api/voice/interrupt": lambda body: self.core.voice_interrupt(session=str(body.get("session", "")), wake=float(body.get("wake", 0) or 0)),
+            "/api/voice/session": lambda body: self.core.voice_session_event(
+                str(body.get("session", "")), str(body.get("state", "")), str(body.get("reason", "")), wake=float(body.get("wake", 0) or 0)
+            ),
             "/api/new": lambda _: self.core.new_conversation(),
             # The supervisor's contract. READY here means the conversation
             # model produced real text in this process -- the port being open

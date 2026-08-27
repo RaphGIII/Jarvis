@@ -7,23 +7,34 @@ microphone and a speaker, and the brain somewhere else.  On this machine the
 device and the server happen to be the same computer; nothing in this file
 assumes that.
 
-    microphone -> wake word -> record until silence -> POST /api/voice/utterance
+    microphone -> wake word -> listening session -> utterance -> POST /api/voice/utterance
 
 What runs here rather than on the server, and why:
 
 *Wake word.*  Streaming continuous audio to the core would be wasteful and a
 privacy problem -- the box decides locally when Jarvis is being addressed, and
-only then does any audio leave the machine.  openWakeWord's ``hey_jarvis`` model
-costs 3-5 ms per 80 ms frame, so listening is roughly 5% of one core.
+only then does any audio leave the machine.
 
 *Endpointing.*  Deciding when the user stopped talking needs the audio stream,
 not a copy of it after the fact.  Energy-based silence detection is enough here
 and costs nothing; a neural VAD is a drop-in replacement if it proves necessary.
 
-Measured on this machine: the detector scores 0.995 on a correctly pronounced
-"Hey Jarvis" and 0.000 on unrelated speech.  It scores 0.04 when the phrase is
-pronounced the German way ("YAR-vis") -- the model expects the English "JAR-vis",
-which is how the name is said in either language.
+*The listening session is a state machine* (:class:`VoiceSession`), because the
+live product failed exactly where the states were implicit: the detector fired
+as the word ended, the natural pause before the command counted as 0.9 s of
+silence, the session closed with "(too short - ignored)", and every wake also
+posted a generic stop that the interface printed as "stopped".  Now:
+
+    IDLE -> WAKE_DETECTED -> LISTENING (armed, grace) -> CAPTURING (speech heard)
+         -> UTTERANCE_CAPTURED -> SENT -> IDLE
+
+A session ends exactly once, with a reason code (``no_speech_after_wake``,
+``silence``, ``max_length``, ``too_short``); every transition is reported to
+the core with the session id so the event log tells the whole story.
+
+*Barge-in* is a request to the core to interrupt what is *speaking or being
+generated* (``/api/voice/interrupt``); when nothing is, it is a no-op and
+produces no message.  It never touches the session that was just opened.
 """
 
 from __future__ import annotations
@@ -37,7 +48,7 @@ import time
 import urllib.error
 import urllib.request
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 #: openWakeWord's frame size at 16 kHz.
@@ -53,13 +64,21 @@ class ListenerConfig:
     #: is the MODEL, which may differ from the word the user is told to say --
     #: a detector is trained weights, not a string.
     wake_model: str = ""
-    #: Detection threshold.  0.5 is openWakeWord's own default; measured scores
-    #: on this machine were 0.995 for a real utterance and 0.000 for unrelated
-    #: speech, so the gap is wide and the exact value is not delicate.
+    #: Detection threshold for openWakeWord's built-in models.  A trained
+    #: ZEUS detector applies its own (the core's effective) threshold and
+    #: reports 1.0 on the frame it fires, so this only passes that through.
     threshold: float = 0.5
-    #: Silence that ends an utterance.  Shorter feels abrupt mid-sentence;
-    #: longer makes every exchange feel laggy.
+    #: Silence that ends an utterance *after speech was heard*.  Shorter feels
+    #: abrupt mid-sentence; longer makes every exchange feel laggy.
     silence_seconds: float = 0.9
+    #: The post-wake grace: how long the session stays armed for the first
+    #: word of the command.  Derived from the pipeline rather than guessed:
+    #: the detector confirms ~160 ms after "Zeus" ends (two 80 ms frames),
+    #: the pre-roll already holds the previous 640 ms, and people pause
+    #: 0.3-2.0 s between the name and the request.  3.0 s covers that with a
+    #: margin and costs nothing when the owner speaks at once, because the
+    #: session leaves LISTENING the moment speech is heard.
+    arm_seconds: float = 3.0
     #: Refuse to record forever if the room is noisy.
     max_utterance_seconds: float = 20.0
     #: Ignore an utterance shorter than this: usually a cough or a door.
@@ -67,14 +86,14 @@ class ListenerConfig:
     #: Frames of audio kept before the wake word fires, so the first syllable
     #: of the question is not clipped off.
     preroll_frames: int = 8
-    #: How long to ignore the wake word after firing, so one "Hey Jarvis"
-    #: cannot trigger twice.
+    #: How long to ignore the wake word after a session ended, so one
+    #: "Zeus" cannot open two sessions.
     cooldown_seconds: float = 1.5
     #: Multiple of the measured noise floor that counts as speech.
     speech_factor: float = 2.5
     device: int | None = None
     verbose: bool = False
-    #: Stop ZEUS's own speech the moment the wake word fires (barge-in).
+    #: Ask the core to interrupt its speech when the wake word fires.
     barge_in: bool = True
 
 
@@ -147,24 +166,35 @@ class Endpointer:
 
     Extracted from the capture loop so it can be tested without a microphone,
     which is the only way to check the cases that matter: a pause mid-sentence
-    must not end the utterance, and a noisy room must not prevent it from ever
-    ending.
+    must not end the utterance, a noisy room must not prevent it from ever
+    ending, and a cough must not become a question.
 
     The threshold tracks a slow estimate of the room rather than being fixed. A
     fixed value is wrong in both directions -- too high in a quiet room and the
     endpoint never fires; too low next to a fan and recording never stops.
+
+    ``arm_seconds`` is the post-wake grace: until speech has been heard, silence
+    does not end the session -- only the grace running out does (``timed_out``).
+    With the default 0.0 the behaviour is the classic one.
     """
 
-    def __init__(self, config: "ListenerConfig", *, frame_seconds: float) -> None:
+    def __init__(self, config: "ListenerConfig", *, frame_seconds: float, arm_seconds: float = 0.0) -> None:
         self.config = config
         self.frame_seconds = frame_seconds
+        self.arm_seconds = arm_seconds
         self.noise_floor = 0.0
         self.silence_for = 0.0
         self.elapsed = 0.0
+        self.heard_speech = False
+        self.timed_out = False
+        self.lead_silence = 0.0
 
     def reset(self) -> None:
         self.silence_for = 0.0
         self.elapsed = 0.0
+        self.heard_speech = False
+        self.timed_out = False
+        self.lead_silence = 0.0
 
     def track_noise(self, level: float) -> None:
         self.noise_floor = level if self.noise_floor == 0.0 else (
@@ -183,18 +213,166 @@ class Endpointer:
         self.elapsed += self.frame_seconds
         if level < self.threshold:
             self.silence_for += self.frame_seconds
+            if not self.heard_speech:
+                self.lead_silence += self.frame_seconds
         else:
             self.silence_for = 0.0
-        return (
-            self.silence_for >= self.config.silence_seconds
-            or self.elapsed >= self.config.max_utterance_seconds
-        )
+            self.heard_speech = True
+        if self.elapsed >= self.config.max_utterance_seconds:
+            return True
+        if not self.heard_speech and self.arm_seconds > 0:
+            # Armed: waiting for the first word.  Only the grace ends this.
+            if self.elapsed >= self.arm_seconds:
+                self.timed_out = True
+                return True
+            return False
+        return self.silence_for >= self.config.silence_seconds
 
     @property
     def speech_seconds(self) -> float:
-        """How much of the utterance was not trailing silence."""
+        """How much of the utterance was speech: neither the leading pause nor the trailing silence."""
 
-        return max(0.0, self.elapsed - self.silence_for)
+        return max(0.0, self.elapsed - self.lead_silence - self.silence_for)
+
+
+# --------------------------------------------------------------------------
+# The listening session: explicit states, one end, reason codes
+# --------------------------------------------------------------------------
+
+STATES = ("IDLE", "WAKE_DETECTED", "LISTENING", "CAPTURING", "UTTERANCE_CAPTURED", "SENT")
+TRANSITIONS = {
+    "IDLE": {"WAKE_DETECTED"},
+    "WAKE_DETECTED": {"LISTENING", "IDLE"},
+    "LISTENING": {"CAPTURING", "IDLE"},
+    "CAPTURING": {"UTTERANCE_CAPTURED", "IDLE"},
+    "UTTERANCE_CAPTURED": {"SENT", "IDLE"},
+    "SENT": {"IDLE"},
+}
+
+
+@dataclass
+class VoiceSession:
+    """One listening session, from the wake word to idle.  Ends once."""
+
+    session_id: str
+    wake_score: float
+    state: str = "WAKE_DETECTED"
+    opened_at: float = 0.0
+    ended: bool = False
+    end_reason: str = ""
+    history: list[tuple[str, str]] = field(default_factory=list)
+
+    def transition(self, state: str, reason: str = "") -> bool:
+        if state not in TRANSITIONS.get(self.state, set()):
+            return False
+        self.history.append((state, reason))
+        self.state = state
+        return True
+
+    def end(self, reason: str) -> bool:
+        """Close the session; True the first time only."""
+
+        if self.ended:
+            return False
+        self.ended = True
+        self.end_reason = reason
+        self.history.append(("IDLE", reason))
+        self.state = "IDLE"
+        return True
+
+
+class CaptureLoop:
+    """The per-frame logic of the listener, without a microphone.
+
+    ``step(frame, level, wake_score, now)`` returns a list of actions for the
+    process around it: ``("interrupt", session)``, ``("session", session, state,
+    reason)`` for reporting, ``("send", session, pcm_frames)`` when an
+    utterance is ready, ``("log", text)``.  The loop owns the pre-roll, the
+    endpointer and the cooldown; the wake decision is the caller's (it has
+    the detector).
+    """
+
+    def __init__(self, config: ListenerConfig, *, frame_seconds: float = FRAME_SAMPLES / SAMPLE_RATE) -> None:
+        self.config = config
+        self.frame_seconds = frame_seconds
+        self.endpointer = Endpointer(config, frame_seconds=frame_seconds, arm_seconds=config.arm_seconds)
+        self.preroll: collections.deque = collections.deque(maxlen=config.preroll_frames)
+        self.recording: list[Any] = []
+        self.session: VoiceSession | None = None
+        self.muted_until = 0.0
+        self.sessions_opened = 0
+        self.sessions_ended = 0
+
+    @property
+    def state(self) -> str:
+        return self.session.state if self.session is not None and not self.session.ended else "IDLE"
+
+    def step(self, frame: Any, level: float, wake_fired: bool, now: float) -> list[tuple]:
+        actions: list[tuple] = []
+        session = self.session if self.session is not None and not self.session.ended else None
+        if session is None:
+            # IDLE: the noise floor is only updated while nobody is speaking
+            # to ZEUS; letting the utterance itself raise it would make a
+            # long answer progressively harder to end.
+            self.endpointer.track_noise(level)
+            self.preroll.append(frame)
+            if now < self.muted_until or not wake_fired:
+                return actions
+            self.sessions_opened += 1
+            session = self.session = VoiceSession(session_id=f"vs{int(now * 1000):x}{self.sessions_opened}", wake_score=1.0, opened_at=now)
+            actions.append(("session", session, "WAKE_DETECTED", "wake word"))
+            if self.config.barge_in:
+                actions.append(("interrupt", session))
+            session.transition("LISTENING", "armed")
+            actions.append(("session", session, "LISTENING", f"armed for {self.config.arm_seconds:.1f}s"))
+            self.endpointer.reset()
+            # Keep the pre-roll: people run the question straight into the
+            # wake word, so the first syllable is already gone by the time
+            # detection fires.
+            self.recording = list(self.preroll)
+            self.preroll.clear()
+            return actions
+
+        # A session is open: LISTENING or CAPTURING.
+        self.recording.append(frame)
+        over = self.endpointer.feed(level)
+        if session.state == "LISTENING" and self.endpointer.heard_speech:
+            session.transition("CAPTURING", "speech heard")
+            actions.append(("session", session, "CAPTURING", f"speech after {self.endpointer.elapsed:.2f}s"))
+        if not over:
+            return actions
+
+        self.muted_until = now + self.config.cooldown_seconds
+        frames, self.recording = self.recording, []
+        if self.endpointer.timed_out:
+            self._end(session, "no_speech_after_wake", actions)
+            return actions
+        if self.endpointer.elapsed >= self.config.max_utterance_seconds and not self.endpointer.heard_speech:
+            self._end(session, "no_speech_after_wake", actions)
+            return actions
+        if self.endpointer.speech_seconds < self.config.min_utterance_seconds:
+            self._end(session, "too_short", actions)
+            return actions
+        session.transition("UTTERANCE_CAPTURED", "silence" if self.endpointer.elapsed < self.config.max_utterance_seconds else "max_length")
+        actions.append(("session", session, "UTTERANCE_CAPTURED", f"{self.endpointer.speech_seconds:.1f}s of speech"))
+        actions.append(("send", session, frames))
+        return actions
+
+    def sent(self, session: VoiceSession, ok: bool, detail: str = "") -> list[tuple]:
+        """The core answered the POST; the session is over."""
+
+        actions: list[tuple] = []
+        if session.ended:
+            return actions
+        session.transition("SENT", "posted")
+        self._end(session, "sent" if ok else f"rejected: {detail}"[:80], actions)
+        return actions
+
+    def _end(self, session: VoiceSession, reason: str, actions: list[tuple]) -> None:
+        if session.end(reason):
+            self.sessions_ended += 1
+            actions.append(("session", session, "IDLE", reason))
+            actions.append(("reset", session))
 
 
 class WakeListener:
@@ -259,15 +437,7 @@ class WakeListener:
         if self._identity_note:
             self._say(f"  note: {self._identity_note}")
 
-        frame_seconds = FRAME_SAMPLES / SAMPLE_RATE
-        endpointer = Endpointer(self.config, frame_seconds=frame_seconds)
-        preroll: collections.deque = collections.deque(maxlen=self.config.preroll_frames)
-        recording: list[Any] = []
-        listening = False
-        muted_until = 0.0
-        wake_score = 0.0
-        session = ""
-
+        loop = CaptureLoop(self.config)
         with sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME_SAMPLES,
             device=self.config.device,
@@ -277,50 +447,43 @@ class WakeListener:
                 frame = block.reshape(-1)
                 if overflowed and self.config.verbose:
                     self._say("(audio overflow)")
-
                 level = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)) + 1e-9)
-
-                if not listening:
-                    # The noise floor is only updated while nobody is speaking
-                    # to Jarvis. Letting the utterance itself raise it would
-                    # make a long answer progressively harder to end.
-                    endpointer.track_noise(level)
-                    preroll.append(frame.copy())
-                    if time.monotonic() < muted_until:
-                        continue
+                now = time.monotonic()
+                fired = False
+                if loop.state == "IDLE":
                     self._sync_wake()
-                    score = model.predict(frame).get(self.config.wake_model, 0.0)
-                    if score >= self.config.threshold:
-                        wake_score = getattr(model, "score", score) if isinstance(model, _TrainedWake) else score
-                        session = f"{int(time.time() * 1000):x}"
-                        self._say(f"wake ({wake_score:.2f} >= {getattr(getattr(model, 'detector', None), 'threshold', self.config.threshold)})")
-                        # Barge-in: the owner spoke the wake word while ZEUS may
-                        # be talking.  Stop the voice first, then listen -- the
-                        # owner's words must not compete with the speaker.
-                        self._interrupt()
-                        listening = True
-                        endpointer.reset()
-                        # Keep the pre-roll: people run the question straight
-                        # into the wake word, so the first syllable is already
-                        # gone by the time detection fires.
-                        recording = list(preroll)
-                        preroll.clear()
-                    continue
+                    if now >= loop.muted_until:
+                        score = model.predict(frame).get(self.config.wake_model, 0.0)
+                        fired = score >= self.config.threshold
+                        if fired:
+                            wake_score = model.score if isinstance(model, _TrainedWake) else score
+                self._perform(loop.step(frame.copy(), level, fired, now), loop, model, wake_score if fired else 0.0)
 
-                recording.append(frame.copy())
-                if not endpointer.feed(level):
-                    continue
+    def _perform(self, actions: list[tuple], loop: CaptureLoop, model: Any, wake_score: float) -> None:
+        import numpy as np
 
-                listening = False
-                muted_until = time.monotonic() + self.config.cooldown_seconds
+        for action in actions:
+            kind = action[0]
+            if kind == "session":
+                _, session, state, reason = action
+                if state == "WAKE_DETECTED":
+                    session.wake_score = wake_score
+                    self._say(f"[{session.session_id}] wake ({wake_score:.2f}) -> LISTENING")
+                elif state == "IDLE":
+                    self._say(f"[{session.session_id}] -> IDLE ({reason})")
+                elif self.config.verbose or state == "CAPTURING":
+                    self._say(f"[{session.session_id}] -> {state} ({reason})")
+                self._report_session(session, state, reason)
+            elif kind == "interrupt":
+                self._interrupt(action[1])
+            elif kind == "reset":
                 model.reset()
-                audio = np.concatenate(recording) if recording else np.zeros(0, dtype="int16")
-                recording = []
-                if endpointer.speech_seconds < self.config.min_utterance_seconds:
-                    self._say("(too short - ignored)")
-                    continue
-                self._say(f"heard {endpointer.speech_seconds:.1f}s, sending...")
-                self._send(audio.tobytes(), wake=wake_score, session=session)
+            elif kind == "send":
+                _, session, frames = action
+                audio = np.concatenate(frames) if frames else np.zeros(0, dtype="int16")
+                self._say(f"[{session.session_id}] heard {loop.endpointer.speech_seconds:.1f}s, sending...")
+                ok, detail = self._send(audio.tobytes(), wake=session.wake_score, session=session.session_id)
+                self._perform(loop.sent(session, ok, detail), loop, model, wake_score)
 
     # -- helpers ---------------------------------------------------------
 
@@ -346,6 +509,14 @@ class WakeListener:
             if self.config.verbose:
                 self._say(f"(wake sync failed: {exc})")
 
+    def _report_session(self, session: VoiceSession, state: str, reason: str) -> None:
+        try:
+            self._post_json("/api/voice/session", {"session": session.session_id, "state": state, "reason": reason,
+                                                   "wake": round(float(session.wake_score), 4)})
+        except Exception as exc:  # noqa: BLE001 - reporting never blocks listening
+            if self.config.verbose:
+                self._say(f"(session report failed: {exc})")
+
     def _get(self, path: str) -> dict[str, Any]:
         request = urllib.request.Request(f"{self.config.url.rstrip('/')}{path}", method="GET",
                                          headers={"X-Jarvis-Token": self.config.token})
@@ -358,22 +529,26 @@ class WakeListener:
         with urllib.request.urlopen(request, timeout=3) as response:
             return json.loads(response.read().decode())
 
-    def _interrupt(self) -> None:
-        """POST /api/stop: stops speech and any streaming answer at once."""
+    def _interrupt(self, session: VoiceSession | None = None) -> None:
+        """Barge-in: ask the core to interrupt what is speaking or being generated.
+
+        ``/api/voice/interrupt`` is a no-op when nothing is -- it never opens,
+        closes or otherwise touches the listening session, and it never
+        produces a transcript entry by itself.
+        """
 
         if not getattr(self.config, "barge_in", True):
             return
-        request = urllib.request.Request(
-            f"{self.config.url.rstrip('/')}/api/stop", data=b"{}", method="POST",
-            headers={"Content-Type": "application/json", "X-Jarvis-Token": self.config.token},
-        )
         try:
-            urllib.request.urlopen(request, timeout=3).read()
+            result = self._post_json("/api/voice/interrupt", {"session": session.session_id if session else "",
+                                                               "wake": round(float(session.wake_score), 4) if session else 0.0})
+            if result.get("interrupted") and self.config.verbose:
+                self._say(f"(interrupted: {', '.join(result['interrupted'])})")
         except Exception as exc:  # noqa: BLE001 - listening matters more than the interrupt
             if self.config.verbose:
                 self._say(f"(interrupt failed: {exc})")
 
-    def _send(self, pcm: bytes, *, wake: float = 0.0, session: str = "") -> None:
+    def _send(self, pcm: bytes, *, wake: float = 0.0, session: str = "") -> tuple[bool, str]:
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as handle:
             handle.setnchannels(1)
@@ -396,16 +571,18 @@ class WakeListener:
                 payload = json.loads(response.read().decode())
         except urllib.error.HTTPError as exc:
             self._say(f"core refused the utterance: HTTP {exc.code}")
-            return
+            return False, f"HTTP {exc.code}"
         except (urllib.error.URLError, OSError) as exc:
             self._say(f"core unreachable: {exc}")
-            return
+            return False, "core unreachable"
         if payload.get("ok"):
             self._say(f"> {payload.get('text', '')}")
-        elif payload.get("ignored"):
+            return True, ""
+        if payload.get("ignored"):
             self._say(f"(ignored: {payload.get('reason', '')} -- '{payload.get('text', '')}')")
-        else:
-            self._say(f"(nothing recognised: {payload.get('reason', '')})")
+            return False, str(payload.get("reason", "ignored"))
+        self._say(f"(nothing recognised: {payload.get('reason', '')})")
+        return False, str(payload.get("reason", "nothing recognised"))
 
     def _say(self, message: str) -> None:
         print(message, flush=True)
@@ -422,6 +599,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wake-model", default="", help="defaults to the product identity's model")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--silence", type=float, default=0.9, help="seconds of silence that end an utterance")
+    parser.add_argument("--arm", type=float, default=3.0, help="seconds the session waits for the first word after the wake word")
     parser.add_argument("--device", type=int, default=None, help="input device index")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -449,6 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         wake_model=args.wake_model,
         threshold=args.threshold,
         silence_seconds=args.silence,
+        arm_seconds=args.arm,
         device=args.device,
         verbose=args.verbose,
         barge_in=not args.no_barge_in,
