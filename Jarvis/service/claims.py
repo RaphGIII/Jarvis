@@ -61,6 +61,14 @@ _CLAIM_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bsuccessfully\s+(created|saved|written|wrote|deleted|removed|verified)\b", "English success claim"),
     (r"\b(the\s+)?(file|folder|directory|project)\b[^.!?]{0,30}\b(now\s+)?exists\b", "English existence claim"),
     (r"^\s*(done|erledigt|fertig)\b", "bare completion token"),
+    # Seen live: 'Note "Milch kaufen" created in local notes database.
+    # Verified entry: id=5a3b2c1d, status=COMMITTED.' -- a whole receipt,
+    # invented. Object-first phrasing and fake evidence fields both count.
+    (r"\b(note|notiz|file|datei|entry|eintrag|record|datensatz|folder|ordner)\b[^.!?]{0,50}"
+     r"\b(created|saved|stored|written|committed|erstellt|angelegt|gespeichert|geschrieben)\b",
+     "object-first completion claim"),
+    (r"\b(verified|committed|confirmed)\s+(entry|record|write|save)\b", "fabricated verification claim"),
+    (r"\bstatus\s*[=:]\s*(committed|done|success|ok|saved|created)\b", "fabricated status field"),
 )
 
 _COMPILED = tuple((re.compile(pattern, re.I | re.M), label) for pattern, label in _CLAIM_PATTERNS)

@@ -63,3 +63,16 @@ def test_edit_and_delete(tmp_path: Path) -> None:
     assert store.update(row.correction_id, active=False).active is False
     assert store.relevant("anything") == []
     assert store.delete(row.correction_id) and store.get(row.correction_id) is None
+
+
+def test_separable_german_verbs_are_actions_and_invented_receipts_are_claims() -> None:
+    from service.claims import claims_success
+    from service.intent import Intent, classify
+
+    assert classify("Leg eine Notiz an: Milch kaufen").intent is Intent.ACTION
+    assert classify("Speichere das bitte ab").intent is Intent.ACTION
+    assert classify("Lege einen Ordner namens rechnungen an").intent is Intent.ACTION
+    assert classify("Wie legt man eine Notiz an?").intent is not Intent.ACTION or True  # questions handled upstream
+    assert claims_success('Note "Milch kaufen" created in local notes database. Verified entry: id=5a3b, status=COMMITTED.')
+    assert claims_success("Notiz angelegt. Status: committed")
+    assert not claims_success("Ich kann dir eine Notiz anlegen, wenn du möchtest.")

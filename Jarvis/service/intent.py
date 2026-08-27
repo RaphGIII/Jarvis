@@ -196,6 +196,16 @@ ACTION_OBJECTS = (
     "document",
 )
 
+#: German separable verbs: "Leg eine Notiz an", "Speichere das ab", "Lege den
+#: Ordner an". The particle lands at the end of the clause, so a substring
+#: list of verbs never sees it, and "Leg eine Notiz an" read as conversation
+#: -- where the model then invented a "notes database" it had committed to.
+SEPARABLE_ACTION = re.compile(
+    r"\b(leg|lege|legst|legen|speicher|speichere|speichern|schreib|schreibe|schreiben|fueg|fuege|füge|fügen|fuegen)\b"
+    r"[^.!?\n]{0,60}?\b(an|ab|auf|hinzu|ein|rein)\b",
+    re.I,
+)
+
 #: A filename is about as clear a side-effect signal as exists.
 FILENAME = re.compile(r"\b[\w\-. ]{1,60}\.(txt|md|py|json|csv|yaml|yml|log|ini|cfg|html|js|toml)\b", re.I)
 
@@ -346,6 +356,13 @@ def classify(text: str) -> Classification:
             return Classification(Intent.PROJECT, f"describes durable work: {hint!r}", matched=hint)
 
     filename = FILENAME.search(normalized)
+    separable = SEPARABLE_ACTION.search(normalized)
+    if separable:
+        noun = next((word for word in ACTION_OBJECTS if word in normalized), "")
+        return Classification(
+            Intent.ACTION, f"separable side-effect verb {separable.group(0).strip()!r}" + (f" on a {noun}" if noun else ""),
+            matched=separable.group(0).strip(),
+        )
     for verb in ACTION_VERBS:
         if verb in normalized:
             noun = next((word for word in ACTION_OBJECTS if word in normalized), "")
