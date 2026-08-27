@@ -310,6 +310,11 @@ class SelfDevRunner:
             try:
                 for hit in index.find_literal(term, limit=20):
                     rel = index.relative(Path(hit.path)) if hasattr(hit, "path") else str(hit)
+                    # Promotion snapshots and other runtime copies under data/
+                    # are not the code; the second live mission ranked two of
+                    # them above ui/index.html.
+                    if rel.replace("\\", "/").startswith(("data/", ".venv", ".pytest")):
+                        continue
                     files[rel] = files.get(rel, 0) + 1
             except Exception:
                 continue

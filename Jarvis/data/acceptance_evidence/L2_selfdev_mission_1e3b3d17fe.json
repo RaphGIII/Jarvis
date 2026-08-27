@@ -1,0 +1,218 @@
+{
+  "request": "Zeus, show your uptime quietly in the header of your UI, next to the ZEUS brand.",
+  "mission_id": "1e3b3d17fe",
+  "scope": "",
+  "language": "en",
+  "phase": "DONE",
+  "started_at": "2026-08-27T00:17:18.632303+00:00",
+  "updated_at": "2026-08-27T00:39:50.694506+00:00",
+  "acceptance": [
+    {
+      "criterion": "ZEUS still imports and its kernel still assembles",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "-c",
+        "from core.kernel import JarvisKernel; k = JarvisKernel(); assert k.tools.names(); print('JARVIS_HEALTH_OK')"
+      ],
+      "expect": "JARVIS_HEALTH_OK"
+    },
+    {
+      "criterion": "the interface is served whole and its parts are still there",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "jarvis.verify_ui"
+      ],
+      "expect": "UI_OK"
+    }
+  ],
+  "area": "ui",
+  "investigation": {
+    "terms": [
+      "uptime",
+      "quietly",
+      "header",
+      "brand"
+    ],
+    "files": [
+      "service/http.py",
+      "service/core.py",
+      "tests/test_promotion.py",
+      "data/snapshots/d3c535567953_79ee4b14/service__http.py",
+      "data/snapshots/eaef3a043c37_f9f44883/service__http.py",
+      "tests/test_recovery_strategy.py",
+      "brain/ollama.py",
+      "ui/index.html"
+    ]
+  },
+  "worktree": "C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\1e3b3d17fe\\candidate_f4ff82e40f",
+  "changed_files": [
+    "ui/app.js",
+    "ui/index.html"
+  ],
+  "local_attempts": 1,
+  "escalated": true,
+  "expert": {
+    "status": "completed",
+    "verified": true,
+    "seconds": 590.6,
+    "provider": "claude_code",
+    "summary": "The change is in. Two files, no new endpoints, no dependencies.\n\n**`ui/index.html`**\n- Added `<span class=\"uptime\" id=\"uptime\">` directly after the `.brand` span in the header \u2014 between ZEUS and the `connPill` badge.\n- Added a `.uptime` rule: dim, 11px, tabular numerals, no border. It is deliberately *not* a pill so it reads as background rather than competing with the connection/cost badges. `.uptime:empty { display: none }` means it takes no space until the first status arrives, so it never sh"
+  },
+  "verification": {
+    "ok": true,
+    "checks": [
+      {
+        "criterion": "ZEUS still imports and its kernel still assembles",
+        "ok": true,
+        "output": "JARVIS_HEALTH_OK\n\n"
+      },
+      {
+        "criterion": "the interface is served whole and its parts are still there",
+        "ok": true,
+        "output": "  ok   index.html exists -- 22668 bytes\n  ok   eye.js exists -- 23101 bytes\n  ok   app.js exists -- 41907 bytes\n  ok   the page still has its parts -- 11 ids present\n  ok   eye.js is loaded by the page\n  ok   app.js is loaded by the page\n  ok   the token placeholder survives\n  ok   eye.js is structurally intact -- balanced\n  ok   eye.js still defines what the page needs\n  ok   app.js is structurally intact -- balanced\n  ok   app.js still defines what the page needs\n  ok   index.html is served -- 200, 22632 bytes\n  ok   eye.js is served -- 200, 23101 bytes\n  ok   app.js is served -- 200, 41907 bytes\n  ok   the served page carries a usable token\n\nUI_OK\n\n"
+      }
+    ],
+    "tests": [],
+    "detail": "ZEUS still imports and its kernel still assembles: ok; the interface is served whole and its parts are still there: ok"
+  },
+  "promotion": {
+    "outcome": "PROMOTED",
+    "candidate": "C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\1e3b3d17fe\\candidate_f4ff82e40f",
+    "target": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis",
+    "known_good_revision": "8cd633ce156d1244c6261015cec9b2d02802dd0e",
+    "promoted_revision": "35f20a0e7f88e0bfcd91fe7914a493d3aeb0dd89",
+    "snapshot_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\snapshots\\0298157fc3c4_8cd633ce",
+    "changed_files": [
+      "ui/app.js",
+      "ui/index.html"
+    ],
+    "stages": [
+      {
+        "stage": "PREFLIGHT",
+        "ok": true,
+        "detail": "known good 8cd633ce156d, 2 file(s)",
+        "at": "2026-08-27T00:39:01.848191+00:00"
+      },
+      {
+        "stage": "SNAPSHOT",
+        "ok": true,
+        "detail": "2 file(s) saved to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\snapshots\\0298157fc3c4_8cd633ce",
+        "at": "2026-08-27T00:39:01.888378+00:00"
+      },
+      {
+        "stage": "APPLY",
+        "ok": true,
+        "detail": "copied 2 file(s)",
+        "at": "2026-08-27T00:39:01.892400+00:00"
+      },
+      {
+        "stage": "VERIFY",
+        "ok": true,
+        "detail": "acceptance re-run on the live tree",
+        "at": "2026-08-27T00:39:08.622821+00:00"
+      },
+      {
+        "stage": "RESTART",
+        "ok": true,
+        "detail": "no restart hook configured",
+        "at": "2026-08-27T00:39:08.622848+00:00"
+      },
+      {
+        "stage": "HEALTH_CHECK",
+        "ok": true,
+        "detail": "JARVIS_HEALTH_OK\n\n",
+        "at": "2026-08-27T00:39:13.442481+00:00"
+      },
+      {
+        "stage": "COMMIT",
+        "ok": true,
+        "detail": "[adaptive-brain-v1 35f20a0] ZEUS self-development: Zeus, show your uptime quietly in the header of your UI, next to\n 2 files changed, 77 insertions(+), 1 deletion(-)",
+        "at": "2026-08-27T00:39:14.381134+00:00"
+      },
+      {
+        "stage": "DONE",
+        "ok": true,
+        "detail": "35f20a0e7f88e0bfcd91fe7914a493d3aeb0dd89",
+        "at": "2026-08-27T00:39:14.452615+00:00"
+      }
+    ],
+    "reason": "candidate verified, promoted and healthy",
+    "started_at": "2026-08-27T00:39:01.589925+00:00",
+    "finished_at": "2026-08-27T00:39:14.452564+00:00",
+    "promotion_id": "0298157fc3c4",
+    "success": true
+  },
+  "promotion_id": "0298157fc3c4",
+  "expected_revision": "35f20a0e7f88e0bfcd91fe7914a493d3aeb0dd89",
+  "outcome": "promoted",
+  "reason": "restart verified in 34.3s",
+  "timings": {
+    "understand": 0.0,
+    "investigate": 13.1,
+    "build": 691.6,
+    "verify": 7.0,
+    "escalate": 590.7,
+    "promote": 13.2
+  },
+  "model_calls": 0,
+  "events": [
+    {
+      "at": "2026-08-27T00:17:18.723788+00:00",
+      "phase": "UNDERSTAND",
+      "detail": "area=ui, 2 acceptance checks"
+    },
+    {
+      "at": "2026-08-27T00:17:31.800144+00:00",
+      "phase": "INVESTIGATE",
+      "detail": "4 terms, 8 candidate files"
+    },
+    {
+      "at": "2026-08-27T00:17:31.862589+00:00",
+      "phase": "BUILD",
+      "detail": "BUILD_LOCAL, attempt 1, budget 2400s"
+    },
+    {
+      "at": "2026-08-27T00:29:03.498154+00:00",
+      "phase": "BUILD",
+      "detail": "SELF_DEVELOPMENT_CANDIDATE_REJECTED; 0 files: []",
+      "error": "development cycles exhausted before deterministic acceptance",
+      "cycles": 3
+    },
+    {
+      "at": "2026-08-27T00:29:03.513619+00:00",
+      "phase": "VERIFY",
+      "detail": "no changes in the candidate"
+    },
+    {
+      "at": "2026-08-27T00:29:04.006470+00:00",
+      "phase": "ESCALATE",
+      "detail": "submitting to expert"
+    },
+    {
+      "at": "2026-08-27T00:38:54.626932+00:00",
+      "phase": "ESCALATE",
+      "detail": "expert completed in 590.6s; 2 changed files"
+    },
+    {
+      "at": "2026-08-27T00:39:01.250318+00:00",
+      "phase": "VERIFY",
+      "detail": "ZEUS still imports and its kernel still assembles: ok; the interface is served whole and its parts are still there: ok"
+    },
+    {
+      "at": "2026-08-27T00:39:01.558440+00:00",
+      "phase": "PROMOTE",
+      "detail": "2 files into the live tree"
+    },
+    {
+      "at": "2026-08-27T00:39:14.459636+00:00",
+      "phase": "RESTARTING",
+      "detail": "asking the supervisor to restart at 35f20a0e7f88"
+    },
+    {
+      "at": "2026-08-27T00:39:50.694493+00:00",
+      "phase": "DONE",
+      "detail": "restart verified in 34.3s"
+    }
+  ]
+}

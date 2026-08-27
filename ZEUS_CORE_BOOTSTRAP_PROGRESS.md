@@ -79,6 +79,21 @@ Independent verification: `/api/gpu` → `utilization_percent: 2, memory_used_mi
 
 What it says about the local tier: the 7B could not land a single edit on this repository in 12 minutes (same edit-mechanics failures as the earlier acquisitions). The system escalated on its own, re-verified the expert's work, and promoted only after its own checks — the expert's report was never the verdict.
 
+### Phase 12 — SelfDev live acceptance #2 — LIVE VERIFIED (mission `1e3b3d17fe`)
+
+*"Zeus, show your uptime quietly in the header of your UI, next to the ZEUS brand."* → commit `35f20a0`, 2 files (ui/app.js, ui/index.html), restart verified in 34.3 s, header now reads "ZEUS · up 41s" beside the GPU meter from #1 (`data/acceptance_evidence/L2_selfdev_uptime_ui.png`).
+
+| | #1 GPU meter | #2 uptime | change |
+|---|---|---|---|
+| investigate | 12 s | 13 s | — |
+| BUILD_LOCAL | 716 s, 0 files | 692 s, 0 files | none: same edit-mechanics failure |
+| expert | 915 s, 22 paths | 591 s, 2 files | −35 % (smaller task) |
+| verify | 499 s (3 runs, 2 crashes) | 7 s | infrastructure fixed after #1 |
+| promote | 13 s | 13 s | — |
+| **total** | **2155 s** | **1316 s** | **−39 %** |
+
+Honest reading: the wall-time gain came from the infrastructure repairs after #1 and a smaller task, not from learning. The local tier did not get better between the two — it cannot land an anchored edit on this repository, which is the same limit the acquisition sprint measured. Generic improvement made: the investigation no longer ranks `data/snapshots` copies (it put two above `ui/index.html` in #2).
+
 ### Phase 8 — Korrigieren — LIVE VERIFIED (Gate I)
 
 `service/corrections.py` + `/api/correction/*` + a "Korrigieren" link on every receipt (dialog: request, reading, entities, action, result, receipt; "Was war falsch?"; classification and scope shown and overridable; "Korrigieren & lernen"; list/deactivate/delete under "Korrekturen"). Corrections are retrieved before the planner reads a request and their overrides applied after it.
