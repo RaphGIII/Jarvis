@@ -200,6 +200,23 @@ class JarvisHTTPServer:
             # approve and rollback are the only writers the five documents
             # have, and they exist only here -- no model, capability, expert
             # or ingestion path holds a reference to them.
+            # Korrigieren. Saving a correction is an owner act from the live
+            # interface; nothing that reads documents or runs models can reach
+            # these routes.
+            "/api/correction/context": lambda body: self.core.correction_context(str(body.get("receipt_id", ""))),
+            "/api/correction/classify": lambda body: self.core.correction_classify(
+                str(body.get("what_was_wrong", "")), receipt_id=str(body.get("receipt_id", ""))
+            ),
+            "/api/correction/save": lambda body: self.core.correction_save(
+                str(body.get("what_was_wrong", "")), receipt_id=str(body.get("receipt_id", "")),
+                classification=str(body.get("classification", "")), scope=str(body.get("scope", "")),
+                original_request=str(body.get("original_request", "")),
+            ),
+            "/api/corrections": lambda _: self.core.list_corrections(),
+            "/api/correction/update": lambda body: self.core.update_correction(
+                str(body.get("correction_id", "")), dict(body.get("changes") or {})
+            ),
+            "/api/correction/delete": lambda body: self.core.delete_correction(str(body.get("correction_id", ""))),
             "/api/selfdev": lambda _: self.core.list_selfdev(),
             "/api/owner": lambda _: self.core.owner_view(),
             "/api/owner/propose": lambda body: self.core.owner_propose(

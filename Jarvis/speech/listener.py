@@ -76,6 +76,27 @@ class ListenerConfig:
     verbose: bool = False
 
 
+class _TrainedWake:
+    """A locally trained detector behind openWakeWord's predict/reset shape.
+
+    The detector already applies its threshold, consecutive-frame rule and
+    cooldown; ``predict`` reports 1.0 on the frame it fires and the raw score
+    otherwise, so the listener's own ``threshold`` (0.5 by default) passes a
+    detection through and nothing else.
+    """
+
+    def __init__(self, detector: Any, name: str) -> None:
+        self.detector = detector
+        self.name = name
+
+    def predict(self, frame: Any) -> dict[str, float]:
+        fired = self.detector.feed(frame)
+        return {self.name: 1.0 if fired else min(0.49, float(self.detector.last_score))}
+
+    def reset(self) -> None:
+        self.detector.reset()
+
+
 class Endpointer:
     """Decides when the user has stopped talking.
 
@@ -159,6 +180,16 @@ class WakeListener:
                 "openwakeword is not installed in this interpreter.\n"
                 "  .venv-speech\\Scripts\\python -m pip install openwakeword"
             ) from exc
+
+        from core.identity import BUILTIN_WAKE_MODELS, trained_wake_model_exists, trained_wake_model_path
+
+        if self.config.wake_model not in BUILTIN_WAKE_MODELS and trained_wake_model_exists(self.config.wake_model):
+            # A classifier trained here for this word (speech.wake_training),
+            # wrapped so the loop below sees the same predict/reset shape.
+            from speech.wake_zeus import ZeusDetector
+
+            self._model = _TrainedWake(ZeusDetector.load(trained_wake_model_path(self.config.wake_model)), self.config.wake_model)
+            return self._model
 
         try:
             openwakeword.utils.download_models([self.config.wake_model])

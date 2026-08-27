@@ -41,6 +41,16 @@ from typing import Any
 BUILTIN_WAKE_MODELS = ("hey_jarvis", "alexa", "hey_mycroft", "hey_rhasspy", "timer", "weather")
 
 
+def trained_wake_model_path(word: str) -> Path:
+    """Where :mod:`speech.wake_training` writes the classifier for ``word``."""
+
+    return Path(__file__).resolve().parent.parent / "data" / "models" / "wake" / f"{word}.npz"
+
+
+def trained_wake_model_exists(word: str) -> bool:
+    return trained_wake_model_path(word).is_file()
+
+
 @dataclass(frozen=True)
 class Identity:
     """The names the user sees and says."""
@@ -69,6 +79,9 @@ class Identity:
         for name in BUILTIN_WAKE_MODELS:
             if name == candidate or name == f"hey_{candidate}":
                 return name
+        # A model trained here (speech.wake_training) for exactly this word.
+        if trained_wake_model_exists(candidate):
+            return candidate
         # No trained model for this word. hey_jarvis is what exists, and saying
         # so is better than silently listening for nothing.
         return "hey_jarvis"

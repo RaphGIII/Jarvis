@@ -131,12 +131,23 @@ class ActionExecutor:
 
     # -- planning --------------------------------------------------------
 
-    def plan(self, request: str, provider: Any) -> ActionPlan:
-        """Ask the model what to do.  Its answer is a proposal, never a result."""
+    def plan(self, request: str, provider: Any, *, guidance: str = "") -> ActionPlan:
+        """Ask the model what to do.  Its answer is a proposal, never a result.
+
+        ``guidance`` is what the owner has corrected before -- retrieved from
+        the correction store, never from the model -- and it goes ahead of the
+        request so it outranks the model's own reading of it.
+        """
 
         from brain.json_utils import lenient_json_loads
 
         prompt = PLANNER_PROMPT.format(request=request.strip())
+        if guidance.strip():
+            prompt = prompt.replace(
+                "User request:",
+                "The owner has corrected earlier interpretations. These rules outrank your own guess:\n"
+                f"{guidance.strip()}\n\nUser request:",
+            )
         try:
             raw = provider.generate(prompt, max_tokens=400, temperature=0.0)
         except TypeError:

@@ -234,7 +234,120 @@ function addReceipt(receipt) {
   id.className = "check";
   id.textContent = receipt.id;
   el.appendChild(id);
+  // EXECUTION VERIFIED does not mean USER INTENT SATISFIED. Every meaningful
+  // action carries an unobtrusive way to say what was wrong; that sentence
+  // becomes a scoped owner correction the next interpretation reads first.
+  const fix = document.createElement("a");
+  fix.className = "korrigieren";
+  fix.href = "#";
+  fix.textContent = "Korrigieren";
+  fix.onclick = (ev) => { ev.preventDefault(); openCorrection(receipt.id); };
+  el.appendChild(fix);
   scrollDown();
+}
+
+/* ------------------------------------------------------------------ */
+/* Korrigieren                                                          */
+/* ------------------------------------------------------------------ */
+
+async function openCorrection(receiptId) {
+  const ctx = await api("/api/correction/context", { receipt_id: receiptId });
+  if (!ctx.ok) { addTurn("error", "Error", ctx.error || "no context"); return; }
+  const rows = [
+    ["Anfrage", ctx.original_request],
+    ["Gelesen als", `${ctx.parsed_intent} — ${ctx.intent_reason}`],
+    ["Entitäten", Object.keys(ctx.entities || {}).length ? JSON.stringify(ctx.entities) : "—"],
+    ["Ausgeführt", ctx.executed_action],
+    ["Beobachtet", ctx.observed_result],
+    ["Beleg", `${receiptId} · ${ctx.verified ? "verifiziert" : ctx.ok_flag ? "gelaufen, unverifiziert" : "fehlgeschlagen"}`],
+  ];
+  const body = document.createElement("div");
+  body.className = "correction";
+  for (const [k, v] of rows) {
+    const r = document.createElement("div");
+    r.className = "row";
+    const kk = document.createElement("span"); kk.className = "k"; kk.textContent = k;
+    const vv = document.createElement("span"); vv.className = "v"; vv.textContent = v || "—";
+    r.append(kk, vv);
+    body.appendChild(r);
+  }
+  const label = document.createElement("div");
+  label.className = "k";
+  label.textContent = "Was war falsch?";
+  const input = document.createElement("textarea");
+  input.rows = 3;
+  input.placeholder = "z. B. „Ich meinte den Ordner notizen/“ oder „Nur diesmal …“ oder „Künftig immer …“";
+  const guess = document.createElement("div");
+  guess.className = "guess";
+  const classSel = document.createElement("select");
+  const scopeSel = document.createElement("select");
+  let timer = null;
+  input.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const g = await api("/api/correction/classify", { what_was_wrong: input.value, receipt_id: receiptId });
+      if (!g.ok) return;
+      fill(classSel, g.classes, g.classification);
+      fill(scopeSel, g.scopes, g.scope);
+      guess.textContent = g.reason + (g.then && g.then.overrides ? ` · Regel: ${JSON.stringify(g.then.overrides)}` : "");
+    }, 350);
+  };
+  const save = document.createElement("button");
+  save.textContent = "Korrigieren & lernen";
+  save.onclick = async () => {
+    const result = await api("/api/correction/save", {
+      what_was_wrong: input.value, receipt_id: receiptId,
+      classification: classSel.value, scope: scopeSel.value,
+    });
+    if (result.ok) {
+      ui.panel.classList.remove("open");
+      addTurn("note", "", `Gelernt: ${result.correction.classification} · ${result.correction.scope.toLowerCase().replace(/_/g, " ")}`);
+    } else {
+      guess.textContent = result.error || "nicht gespeichert";
+    }
+  };
+  const selects = document.createElement("div");
+  selects.className = "row";
+  selects.append(classSel, scopeSel);
+  body.append(label, input, guess, selects, save);
+  openPanel("Korrigieren", "");
+  $("panelBody").innerHTML = "";
+  $("panelBody").appendChild(body);
+  input.focus();
+}
+
+function fill(select, options, chosen) {
+  const current = select.value;
+  select.innerHTML = "";
+  for (const o of options || []) {
+    const opt = document.createElement("option");
+    opt.value = o; opt.textContent = o.toLowerCase().replace(/_/g, " ");
+    select.appendChild(opt);
+  }
+  select.value = (options || []).includes(current) && current !== "" ? current : chosen;
+}
+
+async function showCorrections() {
+  const data = await api("/api/corrections");
+  openPanel("Korrekturen", "");
+  const body = $("panelBody");
+  body.innerHTML = "";
+  if (!data.corrections || !data.corrections.length) { body.textContent = "Noch keine Korrekturen."; return; }
+  for (const c of data.corrections.slice().reverse()) {
+    const r = document.createElement("div");
+    r.className = "correction" + (c.active ? "" : " off");
+    r.innerHTML = "";
+    const head = document.createElement("div"); head.className = "k";
+    head.textContent = `${c.classification} · ${c.scope.toLowerCase().replace(/_/g, " ")} · ${c.applied_count}× angewendet`;
+    const note = document.createElement("div"); note.className = "v"; note.textContent = c.what_was_wrong;
+    const req = document.createElement("div"); req.className = "guess"; req.textContent = `zu: ${c.original_request}`;
+    const del = document.createElement("button"); del.textContent = "Löschen";
+    del.onclick = async () => { await api("/api/correction/delete", { correction_id: c.correction_id }); showCorrections(); };
+    const tog = document.createElement("button"); tog.textContent = c.active ? "Deaktivieren" : "Aktivieren";
+    tog.onclick = async () => { await api("/api/correction/update", { correction_id: c.correction_id, changes: { active: !c.active } }); showCorrections(); };
+    r.append(head, note, req, tog, del);
+    body.appendChild(r);
+  }
 }
 
 function endStreaming() {
@@ -288,6 +401,7 @@ function wireInput() {
 
   // A conversation with no messages is the hero state, so clearing one returns
   // to it. The eye's own resize observer handles the rest.
+  $("btnCorrections").onclick = () => showCorrections();
   $("btnNew").onclick = async () => {
     ui.log.innerHTML = "";
     streaming = null;

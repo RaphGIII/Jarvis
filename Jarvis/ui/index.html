@@ -264,6 +264,20 @@
     border-left: 2px solid var(--dim); padding: 6px 0 6px 12px;
   }
   .turn.receipt .who { font-size: 11px; letter-spacing: .04em; }
+  /* Korrigieren: present on every receipt, quiet until wanted. */
+  .turn.receipt .korrigieren { display: inline-block; margin-top: 6px; font-size: 11px; letter-spacing: .06em;
+    color: var(--dim); text-decoration: none; opacity: .55; }
+  .turn.receipt .korrigieren:hover { opacity: 1; color: var(--accent); }
+  .correction .row { display: flex; gap: 10px; margin: 6px 0; font-size: 13px; }
+  .correction .k { color: var(--dim); min-width: 92px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .correction .v { color: #c8d6e5; white-space: pre-wrap; word-break: break-word; }
+  .correction textarea { width: 100%; margin: 8px 0; padding: 10px; background: #0a1220; color: #c8d6e5;
+    border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+  .correction select { background: #0a1220; color: #c8d6e5; border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+  .correction .guess { font-size: 12px; color: var(--dim); margin: 6px 0 10px; }
+  .correction button { margin: 8px 8px 12px 0; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: #101b2b; color: #c8d6e5; cursor: pointer; }
+  .correction.off { opacity: .5; }
   .turn.receipt.good .what { border-left-color: #3fb98a; color: #b6cfc4; }
   .turn.receipt.bad  .what { border-left-color: var(--danger); color: #d6b4b4; }
   .turn.receipt .check { margin-top: 4px; opacity: .85; }
@@ -532,6 +546,7 @@
     <button class="ghost" id="btnGraph">Knowledge</button>
     <button class="ghost" id="btnActivity" aria-pressed="false">Activity</button>
     <button class="ghost" id="btnDiag">Diagnostics</button>
+    <button class="ghost" id="btnCorrections" title="What the owner has corrected">Korrekturen</button>
     <button class="ghost" id="btnNew" title="Clear the conversation">New</button>
   </header>
 

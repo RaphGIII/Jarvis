@@ -782,9 +782,21 @@ class JarvisCore:
         from service.actions import compose
 
         self.state.set(JarvisState.WORKING, detail=classification.reason[:120], scope=scope)
+        # Owner corrections are retrieved BEFORE the model interprets the
+        # request, and their overrides are applied AFTER it: the owner's word
+        # outranks the model's guess within the correction's scope.
+        from service.corrections import apply_overrides, guidance_lines
+
+        relevant = self.corrections.relevant(text, intent=classification.intent.value)
         try:
             provider = self.kernel.provider(ModelTier.FAST_LOCAL)
-            plan = self.actions.plan(text, provider)
+            plan = self.actions.plan(text, provider, guidance="\n".join(guidance_lines(relevant)))
+            if relevant and not plan.declined:
+                plan.arguments, applied = apply_overrides(plan.arguments, relevant)
+                if applied:
+                    self.corrections.note_applied(relevant)
+                    self.emit(EventType.TOOL, {"summary": f"owner corrections applied: {', '.join(applied)}",
+                                               "corrections": [c.correction_id for c in relevant]}, scope=scope)
         except Exception as exc:
             self.state.set(JarvisState.ERROR, detail=str(exc)[:200])
             self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
@@ -1052,6 +1064,15 @@ class JarvisCore:
             system += (
                 f"\nThe user is speaking {language_name(self.language)}; reply in that language."
             )
+
+        try:
+            from service.corrections import guidance_lines
+
+            lines = guidance_lines(self.corrections.relevant(text, intent="conversation"))
+            if lines:
+                system += "\nThe owner has said, and it applies here:\n" + "\n".join(lines)
+        except Exception:
+            pass
 
         recent = self.history[-8:]
         transcript = "\n".join(f"{turn.role}: {turn.for_prompt()}" for turn in recent[:-1])
@@ -1353,6 +1374,102 @@ class JarvisCore:
             self._deliver(describe(mission, mission.language or self.language), scope=mission.scope, backend="selfdev",
                           final_state=JarvisState.IDLE if mission.outcome == "promoted" else JarvisState.ERROR)
         return len(settled)
+
+    # ------------------------------------------------------------------
+    # Korrigieren -- owner corrections
+    # ------------------------------------------------------------------
+
+    @property
+    def corrections(self) -> Any:
+        from service.corrections import CorrectionStore
+
+        if getattr(self, "_corrections", None) is None:
+            self._corrections = CorrectionStore(Path(self.kernel.state_root) / "owner" / "corrections.jsonl")
+        return self._corrections
+
+    def correction_context(self, receipt_id: str) -> dict[str, Any]:
+        """What the Korrigieren dialog shows: request, reading, action, result."""
+
+        receipt = self.receipts.get(receipt_id) if hasattr(self.receipts, "get") else None
+        if receipt is None:
+            for item in self._session_receipts:
+                if getattr(item, "id", "") == receipt_id:
+                    receipt = item
+                    break
+        if receipt is None:
+            return {"ok": False, "error": f"no receipt {receipt_id}"}
+        from service.intent import classify
+
+        data = receipt.to_dict() if hasattr(receipt, "to_dict") else dict(receipt)
+        request = str(data.get("request", ""))
+        classification = classify(request)
+        evidence = dict(data.get("evidence") or {})
+        return {
+            "ok": True,
+            "receipt_id": receipt_id,
+            "original_request": request,
+            "parsed_intent": classification.intent.value,
+            "intent_reason": classification.reason,
+            "entities": {k: v for k, v in evidence.items() if isinstance(v, (str, int, float)) and k in {"path", "track", "provider", "query", "name", "artist"}},
+            "executed_action": str(data.get("kind", "")),
+            "observed_result": str(data.get("detail", "")),
+            "verified": bool(data.get("verified", False)),
+            "ok_flag": bool(data.get("ok", False)),
+            "verifications": data.get("verifications", []),
+        }
+
+    def correction_classify(self, what_was_wrong: str, *, receipt_id: str = "") -> dict[str, Any]:
+        from service.corrections import CLASSES, SCOPES, classify_correction, rule_for
+
+        context = self.correction_context(receipt_id) if receipt_id else {}
+        request = str(context.get("original_request", ""))
+        classification, scope, reason = classify_correction(
+            what_was_wrong, receipt_ok=context.get("ok_flag") if context else None, request=request,
+        )
+        when, then = rule_for(what_was_wrong, request=request, classification=classification, scope=scope,
+                              parsed_intent=str(context.get("parsed_intent", "")), entities=dict(context.get("entities") or {}))
+        return {"ok": True, "classification": classification, "scope": scope, "reason": reason, "when": when, "then": then,
+                "classes": list(CLASSES), "scopes": list(SCOPES)}
+
+    def correction_save(self, what_was_wrong: str, *, receipt_id: str = "", classification: str = "",
+                        scope: str = "", original_request: str = "") -> dict[str, Any]:
+        """Store a trusted owner correction.  Reached only from the owner's UI."""
+
+        from service.corrections import CLASSES, SCOPES, OwnerCorrection, rule_for
+
+        if not what_was_wrong.strip():
+            return {"ok": False, "error": "say what was wrong"}
+        context = self.correction_context(receipt_id) if receipt_id else {}
+        request = original_request or str(context.get("original_request", ""))
+        guess = self.correction_classify(what_was_wrong, receipt_id=receipt_id)
+        classification = classification if classification in CLASSES else guess["classification"]
+        scope = scope if scope in SCOPES else guess["scope"]
+        when, then = rule_for(what_was_wrong, request=request, classification=classification, scope=scope,
+                              parsed_intent=str(context.get("parsed_intent", "")))
+        correction = OwnerCorrection(
+            original_request=request, what_was_wrong=what_was_wrong.strip(), classification=classification, scope=scope,
+            parsed_intent=str(context.get("parsed_intent", "")), entities=dict(context.get("entities") or {}),
+            executed_action=str(context.get("executed_action", "")), observed_result=str(context.get("observed_result", ""))[:500],
+            receipt_id=receipt_id, when=when, then=then, provenance="owner-ui",
+        )
+        self.corrections.add(correction)
+        self.emit(EventType.NOTIFICATION, {"text": f"owner correction learned ({classification}, {scope.lower().replace('_', ' ')})",
+                                           "kind": "owner_correction", "correction": correction.to_dict()})
+        # A capability defect is not a memory; it is a repair to schedule.
+        if classification == "CAPABILITY_DEFECT":
+            self._defects[str(context.get("executed_action", "capability"))] = 2
+        return {"ok": True, "correction": correction.to_dict()}
+
+    def list_corrections(self) -> dict[str, Any]:
+        return {"corrections": [c.to_dict() for c in self.corrections.list(include_inactive=True)]}
+
+    def update_correction(self, correction_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        allowed = {k: v for k, v in changes.items() if k in {"what_was_wrong", "classification", "scope", "active", "then", "when"}}
+        row = self.corrections.update(correction_id, **allowed)
+        return {"ok": row is not None, "correction": row.to_dict() if row else None}
+
+    def delete_correction(self, correction_id: str) -> dict[str, Any]:
+        return {"ok": self.corrections.delete(correction_id)}
 
     # ------------------------------------------------------------------
     # Owner core
