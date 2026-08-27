@@ -74,6 +74,8 @@ class ListenerConfig:
     speech_factor: float = 2.5
     device: int | None = None
     verbose: bool = False
+    #: Stop ZEUS's own speech the moment the wake word fires (barge-in).
+    barge_in: bool = True
 
 
 class _TrainedWake:
@@ -241,6 +243,10 @@ class WakeListener:
                     score = model.predict(frame).get(self.config.wake_model, 0.0)
                     if score >= self.config.threshold:
                         self._say(f"wake ({score:.2f})")
+                        # Barge-in: the owner spoke the wake word while ZEUS may
+                        # be talking.  Stop the voice first, then listen -- the
+                        # owner's words must not compete with the speaker.
+                        self._interrupt()
                         listening = True
                         endpointer.reset()
                         # Keep the pre-roll: people run the question straight
@@ -266,6 +272,21 @@ class WakeListener:
                 self._send(audio.tobytes())
 
     # -- helpers ---------------------------------------------------------
+
+    def _interrupt(self) -> None:
+        """POST /api/stop: stops speech and any streaming answer at once."""
+
+        if not getattr(self.config, "barge_in", True):
+            return
+        request = urllib.request.Request(
+            f"{self.config.url.rstrip('/')}/api/stop", data=b"{}", method="POST",
+            headers={"Content-Type": "application/json", "X-Jarvis-Token": self.config.token},
+        )
+        try:
+            urllib.request.urlopen(request, timeout=3).read()
+        except Exception as exc:  # noqa: BLE001 - listening matters more than the interrupt
+            if self.config.verbose:
+                self._say(f"(interrupt failed: {exc})")
 
     def _send(self, pcm: bytes) -> None:
         buffer = io.BytesIO()
@@ -306,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--url", default="http://127.0.0.1:8420", help="Jarvis Core URL")
     parser.add_argument("--token", default="", help="the token printed by jarvis.serve")
+    parser.add_argument("--no-barge-in", action="store_true", help="do not interrupt ZEUS's speech on the wake word")
     parser.add_argument("--wake-model", default="", help="defaults to the product identity's model")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--silence", type=float, default=0.9, help="seconds of silence that end an utterance")
@@ -338,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         silence_seconds=args.silence,
         device=args.device,
         verbose=args.verbose,
+        barge_in=not args.no_barge_in,
     )
     try:
         return WakeListener(config).run()

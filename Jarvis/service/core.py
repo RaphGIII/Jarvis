@@ -473,12 +473,149 @@ class JarvisCore:
         if classification.intent is Intent.CORRECTION:
             self._answer_correction_hint(text, scope)
             return
+        if route is not None and route.intent.value == "research":
+            self._answer_by_research(text, scope)
+            return
         if classification.intent.has_side_effect:
             self._answer_by_executing(text, scope, classification)
             return
         self._answer_conversationally(text, scope)
 
     # -- the three answering paths --------------------------------------
+
+    def _answer_by_research(self, text: str, scope: str) -> None:
+        """A question about the current state of the world: sources, not memory.
+
+        A durable research mission carries the question, the queries, the
+        sources with provenance and freshness, the findings and the
+        contradictions; the answer the owner reads names its sources and its
+        confidence, and says when it could not reach any.
+        """
+
+        from runtime.evidence import external, inference
+
+        mission = self.missions.create(text, kind="research", interpretation="answer from sources with provenance", scope=scope)
+        self.state.set(JarvisState.RESEARCHING, detail=text[:120], scope=scope)
+
+        def work() -> None:
+            de = self.language.startswith("de")
+            try:
+                self.missions.transition(mission, "RESEARCH", "querying sources")
+                report = self.research(text, max_sources=4)
+                if not report.get("ok", True) and report.get("error"):
+                    raise RuntimeError(report["error"])
+                sources = report.get("sources", [])
+                findings = report.get("findings", [])
+                for s in sources[:8]:
+                    self.missions.add_evidence(mission, external(str(s.get("title") or s.get("url", "")), url=str(s.get("url", "")),
+                                                                 fetched_at=str(s.get("fetched_at", "")), authority=int(s.get("authority", 0) or 0)))
+                for f in findings[:8]:
+                    self.missions.add_evidence(mission, inference(str(f.get("claim") or f.get("text", "")), confidence=float(f.get("confidence", 0.4) or 0.4)))
+                contradictions = report.get("contradictions", [])
+                self.missions.transition(mission, "VERIFY", f"{len(sources)} sources, {len(findings)} findings, {len(contradictions)} contradictions")
+                summary = str(report.get("summary", "")).strip()
+                lines = [summary or ("Keine belastbare Antwort aus Quellen." if de else "No sourced answer could be established.")]
+                if sources:
+                    lines.append("")
+                    lines.append("Quellen:" if de else "Sources:")
+                    for s in sources[:6]:
+                        lines.append(f"- {s.get('title') or s.get('url', '')} — {s.get('url', '')}" + (f" ({s.get('fetched_at', '')[:10]})" if s.get("fetched_at") else ""))
+                if contradictions:
+                    lines.append("")
+                    lines.append(("Widersprüche zwischen Quellen: " if de else "Contradictions between sources: ") + str(len(contradictions)))
+                if report.get("offline"):
+                    lines.append("(offline: no source could be fetched; this is from memory and is unverified)" if not de else "(offline: keine Quelle erreichbar; das ist aus dem Gedächtnis und unverifiziert)")
+                if not sources:
+                    self.missions.block(mission, "no source reachable", owner_input="")
+                else:
+                    mission.next_action = "answered; open the mission for sources and contradictions"
+                    self.missions.store.save(mission)
+                self._deliver("\n".join(lines), scope=scope, backend="research",
+                              context_text=f"[research mission {mission.mission_id}: {len(sources)} sources]",
+                              final_state=JarvisState.IDLE)
+            except Exception as exc:  # noqa: BLE001
+                self.missions.settle(mission, exc)
+                self._deliver((f"Recherche fehlgeschlagen: {exc}" if de else f"Research failed: {exc}"), scope=scope, backend="research",
+                              final_state=JarvisState.ERROR)
+
+        threading.Thread(target=work, daemon=True, name=f"research-{mission.mission_id}").start()
+
+    # ------------------------------------------------------------------
+    # The Mission Engine -- one durable record per long job, of every kind
+    # ------------------------------------------------------------------
+
+    @property
+    def missions(self) -> Any:
+        from runtime.mission_engine import MissionEngine, MissionEngineStore
+
+        if getattr(self, "_missions_engine", None) is None:
+            self._missions_engine = MissionEngine(
+                MissionEngineStore(Path(self.kernel.state_root) / "engine"),
+                emit=lambda kind, payload: self.emit(EventType(kind) if kind in {e.value for e in EventType} else EventType.PROGRESS, payload),
+            )
+        return self._missions_engine
+
+    def list_missions(self, *, status: str = "") -> dict[str, Any]:
+        """Every long-running job, whichever system runs it, in one shape."""
+
+        rows: list[dict[str, Any]] = []
+        for m in self.missions.store.list():
+            rows.append({"id": m.mission_id, "kind": m.kind, "goal": m.goal, "phase": m.phase, "outcome": m.outcome or ("running" if not m.finished else ""),
+                         "started": m.created_at, "updated": m.updated_at, "finished": m.finished, "next_action": m.next_action,
+                         "blockers": m.blockers, "owner_input_required": m.owner_input_required, "system": "engine",
+                         "tasks": {"done": len(m.completed), "total": len(m.tasks)}, "evidence": len(m.evidence)})
+        try:
+            for m in self.selfdev_store.list():
+                rows.append({"id": m.mission_id, "kind": "selfdev", "goal": m.request, "phase": m.phase, "outcome": m.outcome or ("running" if not m.finished else ""),
+                             "started": m.started_at, "updated": m.updated_at, "finished": m.finished, "next_action": "",
+                             "blockers": [], "owner_input_required": "", "system": "selfdev",
+                             "tasks": {"done": 0, "total": 0}, "evidence": len(m.isolation) + len(m.verification.get("checks", []))})
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from runtime.missions import MissionStore
+
+            for c in MissionStore(Path(self.kernel.state_root) / "missions").all():
+                d = c.to_dict() if hasattr(c, "to_dict") else {}
+                rows.append({"id": getattr(c, "mission_id", ""), "kind": "capability", "goal": f"{getattr(c, 'capability_id', '')}: {getattr(c, 'defect', '') or 'acquire'}",
+                             "phase": str(getattr(c, "phase", "")).upper(), "outcome": "acquired" if getattr(c, "acquired", False) else "checkpoint",
+                             "started": getattr(c, "started_at", ""), "updated": getattr(c, "updated_at", ""), "finished": bool(getattr(c, "acquired", False)),
+                             "next_action": getattr(c, "next_action", ""), "blockers": [], "owner_input_required": "", "system": "acquisition",
+                             "tasks": {"done": 0, "total": 0}, "evidence": len(getattr(c, "attempts", []) or [])})
+        except Exception:  # noqa: BLE001
+            pass
+        if status == "active":
+            rows = [r for r in rows if not r["finished"]]
+        elif status == "blocked":
+            rows = [r for r in rows if r["phase"] == "BLOCKED" or r["owner_input_required"]]
+        elif status in {"completed", "failed"}:
+            rows = [r for r in rows if r["finished"] and ((r["outcome"] in {"complete", "promoted", "acquired"}) == (status == "completed"))]
+        rows.sort(key=lambda r: str(r.get("updated", "")), reverse=True)
+        return {"missions": rows, "count": len(rows)}
+
+    def mission_detail(self, mission_id: str) -> dict[str, Any]:
+        m = self.missions.store.load(mission_id)
+        if m is not None:
+            return {"ok": True, "system": "engine", "mission": m.to_dict(), "brief": self.missions.brief(m)}
+        sd = self.selfdev_store.load(mission_id)
+        if sd is not None:
+            return {"ok": True, "system": "selfdev", "mission": sd.to_dict()}
+        return {"ok": False, "error": f"no mission {mission_id}"}
+
+    def mission_control(self, mission_id: str, action: str) -> dict[str, Any]:
+        if self.missions.store.load(mission_id) is not None:
+            if action == "cancel":
+                return self.missions.request_cancel(mission_id)
+            if action == "pause":
+                return self.missions.request_pause(mission_id)
+            if action == "resume":
+                return self.missions.resume(mission_id)
+            return {"ok": False, "error": f"unknown action {action}"}
+        if action == "cancel":
+            return self.cancel_selfdev(mission_id)
+        if action == "resume":
+            return self.resume_selfdev(mission_id)
+        return {"ok": False, "error": "self-development missions can be cancelled or resumed"}
 
     def _answer_owner_config(self, text: str, scope: str, classification: Any) -> None:
         """A change to the owner core never happens from a chat sentence.
@@ -607,6 +744,237 @@ class JarvisCore:
             f"receipt {outcome.receipt.id}]",
             final_state=JarvisState.IDLE if outcome.receipt.verified else JarvisState.ERROR,
         )
+
+    # ------------------------------------------------------------------
+    # Composition: a plan over primitives ZEUS already has
+    # ------------------------------------------------------------------
+
+    def _composer(self) -> Any:
+        from service.composer import Composer
+
+        try:
+            manifests = [m.to_dict() for m in self.capabilities.registry.all()]
+        except Exception:  # noqa: BLE001
+            manifests = []
+        context = self.device_context().get("available", ["screen", "speaker", "microphone"])
+        return Composer(capabilities=manifests, context_requirements=context)
+
+    def _answer_by_composition(self, text: str, scope: str, *, guidance: str = "") -> bool:
+        """Plan typed steps over existing primitives and run them as a mission.
+
+        Returns True when the request was handled here (executed, or a gap
+        was named), False when composition found nothing to compose and the
+        ordinary single-action path should take over.
+        """
+
+        from brain.tiers import ModelTier
+        from runtime.evidence import from_receipt, owner_statement
+        from service.composer import Step
+
+        composer = self._composer()
+        plan = composer.plan(text, self.kernel.provider(ModelTier.FAST_LOCAL), guidance=guidance)
+        self.emit(EventType.TOOL, {"summary": f"composition: {plan.mode}, {len(plan.steps)} step(s)" + (f", missing {plan.missing}" if plan.missing else ""),
+                                   "plan": plan.to_dict(), "source": "composer"}, scope=scope)
+        if plan.mode == "answering" or len([s for s in plan.steps if s.status != "missing"]) < 2 and not plan.missing:
+            return False
+        de = self.language.startswith("de")
+        mission = self.missions.create(text, kind="complex", interpretation=f"composed from {', '.join(s.step for s in plan.steps)}",
+                                       acceptance=[s.purpose or s.step for s in plan.steps], scope=scope)
+        self.missions.add_evidence(mission, owner_statement(text))
+        for s in plan.steps:
+            self.missions.add_task(mission, f"{s.step} {json.dumps(s.arguments, ensure_ascii=False)[:80]}")
+        if plan.missing:
+            self.missions.block(mission, f"missing primitive(s): {', '.join(plan.missing)}", owner_input="")
+            self._deliver(
+                (f"Das kann ich zusammensetzen aus: {', '.join(s.step for s in plan.steps if s.status != 'missing')}. "
+                 f"Mir fehlt dafür noch: {', '.join(plan.missing)}. Sag „lerne …“, dann baue ich genau das und führe den Rest dann aus.")
+                if de else
+                (f"I can compose this from: {', '.join(s.step for s in plan.steps if s.status != 'missing')}. "
+                 f"What I still lack: {', '.join(plan.missing)}. Say “learn …” and I will acquire exactly that, then run the rest."),
+                scope=scope, backend="composer", final_state=JarvisState.WAITING,
+                context_text=f"[composition mission {mission.mission_id}: gap {plan.missing}]",
+            )
+            return True
+
+        self.missions.transition(mission, "PLAN", f"{len(plan.steps)} typed steps")
+        self.missions.transition(mission, "EXECUTE", "running the steps in order")
+        task_ids = [t["task_id"] for t in mission.tasks]
+
+        def run_step(step: Step) -> Any:
+            return self._run_primitive(step, text, scope)
+
+        def on_step(step: Step, receipt: Any) -> None:
+            idx = plan.steps.index(step)
+            ev = self.missions.add_evidence(mission, from_receipt(receipt))
+            self.missions.update_task(mission, task_ids[idx], status="done" if step.status == "done" else "failed",
+                                      result=step.detail, evidence_id=ev.evidence_id)
+            self.receipts.record(receipt)
+            self._session_receipts.append(receipt)
+            self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()}, scope=scope)
+
+        receipts = composer.execute(plan, run_step, on_step=on_step)
+        done = [s for s in plan.steps if s.status == "done"]
+        failed = [s for s in plan.steps if s.status == "failed"]
+        self.missions.transition(mission, "VERIFY", f"{len(done)} done, {len(failed)} failed")
+        verified = all(getattr(r, "verified", False) for r in receipts) and receipts and not failed
+        if verified and self.missions.has_proof(mission):
+            self.missions.transition(mission, "COMPLETE", "every step ran and verified")
+        elif failed:
+            self.missions.fail_approach(mission, f"step {failed[0].step}", failed[0].detail)
+            self.missions.transition(mission, "FAILED", f"{failed[0].step}: {failed[0].detail[:120]}")
+        else:
+            self.missions.transition(mission, "DIAGNOSE", "steps ran but not every one verified")
+        lines = []
+        for s in plan.steps:
+            mark = "✓" if s.status == "done" else "✗" if s.status == "failed" else "·"
+            lines.append(f"{mark} {s.step}" + (f" — {s.detail[:90]}" if s.detail else ""))
+        head = ((f"Erledigt ({len(done)}/{len(plan.steps)} Schritte)" if not failed else f"Abgebrochen bei {failed[0].step}") if de
+                else (f"Done ({len(done)}/{len(plan.steps)} steps)" if not failed else f"Stopped at {failed[0].step}"))
+        self._deliver(head + ":\n" + "\n".join(lines), scope=scope, backend="composer",
+                      context_text=f"[composition mission {mission.mission_id}: {mission.phase}]",
+                      final_state=JarvisState.IDLE if not failed else JarvisState.ERROR)
+        return True
+
+    def _run_primitive(self, step: Any, request: str, scope: str) -> Any:
+        """One typed step -> one receipt.  Nothing here runs a shell."""
+
+        from runtime.receipts import Receipt, Verification, failed
+        from service.actions import ActionPlan
+
+        name, args = step.step, dict(step.arguments)
+        if name in {"file.write", "file.read", "project.create"}:
+            return self.actions.execute(ActionPlan(name, arguments=args), request=request)
+        if name.startswith("music."):
+            from service.music import MusicRequest
+
+            outcome = self.music.run(MusicRequest(name.split(".", 1)[1], query=str(args.get("query", ""))))
+            return outcome.receipt
+        if name.startswith("capability:"):
+            cid = name.split(":", 1)[1]
+            execution = self.capabilities.execute(cid, args)
+            receipt = getattr(execution, "receipt", None)
+            if receipt is not None:
+                return receipt
+            ok = bool(getattr(execution, "ok", False))
+            return Receipt(kind=f"capability.{cid}", executor=cid, ok=ok, detail=str(getattr(execution, "detail", ""))[:300],
+                           verifications=[Verification(check="capability reported ok", passed=ok, observed=str(getattr(execution, "output", ""))[:200])],
+                           evidence={"capability_id": cid, "arguments": args})
+        if name == "note.create":
+            title = str(args.get("title", "note")).strip() or "note"
+            safe = "".join(ch for ch in title if ch.isalnum() or ch in " -_").strip().replace(" ", "_")[:60] or "note"
+            return self.actions.execute(ActionPlan("file.write", arguments={"path": f"notizen/{safe}.md", "content": f"# {title}\n\n{args.get('text', '')}\n"}), request=request)
+        if name == "knowledge.search":
+            graph = self.knowledge_graph(query=str(args.get("query", "")), limit=12)
+            nodes = graph.get("nodes", [])
+            return Receipt(kind="knowledge.search", executor="knowledge", ok=True, detail=f"{len(nodes)} node(s): " + ", ".join(str(n.get("title", "")) for n in nodes[:5]),
+                           verifications=[Verification(check="graph queried", passed=True, observed=f"{len(nodes)} nodes")], evidence={"query": args.get("query", "")})
+        if name == "timer.start":
+            return self.start_timer(float(args.get("minutes", 0) or 0), label=str(args.get("label", "")), scope=scope)
+        if name == "file.open":
+            return self.open_path(str(args.get("path", "")))
+        if name == "window.hide":
+            result = self.lifecycle.window("hide", reason="composed step")
+            return Receipt(kind="window.hide", executor="desktop", ok=bool(result.get("ok")), detail=result.get("action", ""),
+                           verifications=[Verification(check="window hidden", passed=bool(result.get("ok")), observed=str(result.get("action", "")))])
+        if name == "say":
+            text = str(args.get("text", ""))
+            self._deliver(text, scope=scope, backend="composer")
+            return Receipt(kind="say", executor="core", ok=True, detail=text[:200], verifications=[Verification(check="delivered", passed=True, observed="message event")])
+        return failed(f"step.{name}", "composer", f"no executor for primitive {name}", request=request)
+
+    # -- small built-in primitives ------------------------------------
+
+    def start_timer(self, minutes: float, *, label: str = "", scope: str = "") -> Any:
+        from runtime.receipts import Receipt, Verification
+
+        if minutes <= 0 or minutes > 24 * 60:
+            return Receipt(kind="timer.start", executor="timer", ok=False, detail=f"{minutes} minutes is not a timer",
+                           verifications=[Verification(check="duration sane", passed=False, observed=str(minutes))])
+        timers = getattr(self, "_timers", None)
+        if timers is None:
+            timers = self._timers = {}
+        timer_id = f"timer_{int(time.time())}_{len(timers)}"
+        de = self.language.startswith("de")
+
+        def fire() -> None:
+            timers.pop(timer_id, None)
+            text = (f"Timer abgelaufen: {label or f'{minutes:g} Minuten'}." if de else f"Timer finished: {label or f'{minutes:g} minutes'}.")
+            self.emit(EventType.NOTIFICATION, {"kind": "timer", "text": text, "timer_id": timer_id}, scope=scope)
+            try:
+                self.voice.speak_stream([text], scope=scope)
+            except Exception:  # noqa: BLE001
+                pass
+
+        t = threading.Timer(minutes * 60, fire)
+        t.daemon = True
+        t.start()
+        timers[timer_id] = {"label": label, "minutes": minutes, "started": time.time(), "timer": t}
+        return Receipt(kind="timer.start", executor="timer", ok=True, detail=f"{minutes:g} min timer{f' ({label})' if label else ''} started",
+                       verifications=[Verification(check="timer registered", passed=timer_id in timers, observed=timer_id)],
+                       evidence={"timer_id": timer_id, "minutes": minutes, "label": label})
+
+    def list_timers(self) -> dict[str, Any]:
+        timers = getattr(self, "_timers", {}) or {}
+        return {"timers": [{"id": k, "label": v["label"], "minutes": v["minutes"], "remaining_seconds": max(0, round(v["started"] + v["minutes"] * 60 - time.time()))}
+                           for k, v in timers.items()]}
+
+    def open_path(self, path: str) -> Any:
+        from runtime.receipts import Receipt, Verification
+
+        root = Path(self.kernel.state_root) / "workspace"
+        target = (root / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
+        try:
+            inside = target.is_relative_to(root.resolve()) or target.is_relative_to(Path.home().resolve())
+        except (OSError, ValueError):
+            inside = False
+        if not target.exists() or not inside:
+            return Receipt(kind="file.open", executor="desktop", ok=False, detail=f"not found or outside the allowed folders: {path}",
+                           verifications=[Verification(check="path exists in workspace/home", passed=False, observed=str(target))])
+        try:
+            os.startfile(str(target))  # type: ignore[attr-defined]
+            ok = True
+        except Exception as exc:  # noqa: BLE001
+            return Receipt(kind="file.open", executor="desktop", ok=False, detail=str(exc)[:200],
+                           verifications=[Verification(check="default program launched", passed=False, observed=str(exc)[:120])])
+        return Receipt(kind="file.open", executor="desktop", ok=ok, detail=f"opened {target.name}",
+                       verifications=[Verification(check="handed to the default program", passed=True, observed=str(target))], evidence={"path": str(target)})
+
+    @property
+    def backups(self) -> Any:
+        from runtime.backup import BackupManager
+
+        if getattr(self, "_backups", None) is None:
+            self._backups = BackupManager(Path(self.kernel.state_root), repository=self.selfdev_repository())
+        return self._backups
+
+    def backup_create(self, label: str = "") -> dict[str, Any]:
+        report = self.backups.create(label=label)
+        self.emit(EventType.TOOL, {"summary": f"backup: {report['files']} files, {report['bytes']} bytes, verified={report['verified']}", "source": "backup"})
+        return report
+
+    def experience_view(self, goal: str = "") -> dict[str, Any]:
+        from development.experience import ExperienceStore
+
+        store = ExperienceStore(Path(self.kernel.state_root) / "experience" / "selfdev.jsonl")
+        rows = store.list()
+        return {"count": len(rows), "entries": [r.to_dict() for r in rows[-30:]],
+                "relevant": [r.to_dict() for r in store.relevant(goal)] if goal else [],
+                "compare": store.compare(goal) if goal else {}}
+
+    def compose_preview(self, goal: str) -> dict[str, Any]:
+        """The plan the composer would make, without running it."""
+
+        from brain.tiers import ModelTier
+
+        plan = self._composer().plan(goal, self.kernel.provider(ModelTier.FAST_LOCAL))
+        return {"ok": True, "plan": plan.to_dict(), "executable": plan.executable, "menu": [p.name for p in self._composer().primitives.values()]}
+
+    def device_context(self) -> dict[str, Any]:
+        """Where ZEUS is running right now: the foundation for "show it here"."""
+
+        from runtime.device_context import current_context
+
+        return current_context(self).to_dict()
 
     def _answer_by_capability(self, text: str, scope: str, plan: Any) -> None:
         """Serve a real-world request from a capability, acquiring one if needed.
@@ -868,6 +1236,18 @@ class JarvisCore:
         from service.corrections import apply_overrides, guidance_lines
 
         relevant = self.corrections.relevant(text, intent=classification.intent.value)
+
+        # Composition before development: a goal that is several things at
+        # once is planned over the primitives ZEUS already has, and only a
+        # primitive it genuinely lacks becomes an acquisition.
+        from service.composer import looks_compound
+
+        if looks_compound(text):
+            try:
+                if self._answer_by_composition(text, scope, guidance="\n".join(guidance_lines(relevant))):
+                    return
+            except Exception as exc:  # noqa: BLE001 - composition is an attempt; the single-action path remains
+                self.emit(EventType.DIAGNOSTIC, {"composition": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
         try:
             provider = self.kernel.provider(ModelTier.FAST_LOCAL)
             plan = self.actions.plan(text, provider, guidance="\n".join(guidance_lines(relevant)))
@@ -1499,6 +1879,12 @@ class JarvisCore:
             self._sweep_selfdev_isolation()
         except Exception as exc:  # noqa: BLE001
             self.emit(EventType.DIAGNOSTIC, {"warming": f"selfdev isolation sweep failed: {exc}"})
+        try:
+            for m in self.missions.mark_interrupted():
+                self.emit(EventType.NOTIFICATION, {"kind": "mission", "text": f"mission {m.mission_id} ({m.kind}) was interrupted during {m.phase}; resumable from its record",
+                                                   "mission_id": m.mission_id})
+        except Exception as exc:  # noqa: BLE001
+            self.emit(EventType.DIAGNOSTIC, {"warming": f"mission engine sweep failed: {exc}"})
         if interrupted:
             self.emit(EventType.NOTIFICATION, {"kind": "selfdev", "text": f"{interrupted} self-development mission(s) were interrupted by the restart"})
         return settled_count + interrupted
