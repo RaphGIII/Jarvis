@@ -843,7 +843,7 @@ class JarvisCore:
         context = self.device_context().get("available", ["screen", "speaker", "microphone"])
         return Composer(capabilities=manifests, context_requirements=context)
 
-    def _answer_by_composition(self, text: str, scope: str, *, guidance: str = "") -> bool:
+    def _answer_by_composition(self, text: str, scope: str, *, guidance: str = "", allow_single: bool = False) -> bool:
         """Plan typed steps over existing primitives and run them as a mission.
 
         Returns True when the request was handled here (executed, or a gap
@@ -859,7 +859,9 @@ class JarvisCore:
         plan = composer.plan(text, self.kernel.provider(ModelTier.FAST_LOCAL), guidance=guidance)
         self.emit(EventType.TOOL, {"summary": f"composition: {plan.mode}, {len(plan.steps)} step(s)" + (f", missing {plan.missing}" if plan.missing else ""),
                                    "plan": plan.to_dict(), "source": "composer"}, scope=scope)
-        if plan.mode == "answering" or len([s for s in plan.steps if s.status != "missing"]) < 2 and not plan.missing:
+        real = [s for s in plan.steps if s.status != "missing"]
+        uses_capability = any(s.step.startswith("capability:") for s in real)
+        if plan.mode == "answering" or (len(real) < 2 and not plan.missing and not (allow_single and uses_capability)):
             return False
         de = self.language.startswith("de")
         mission = self.missions.create(text, kind="complex", interpretation=f"composed from {', '.join(s.step for s in plan.steps)}",
@@ -1326,9 +1328,16 @@ class JarvisCore:
         # primitive it genuinely lacks becomes an acquisition.
         from service.composer import looks_compound
 
-        if looks_compound(text):
+        # Compound goals always; a single-step goal too when a registered
+        # capability's own keywords match it -- "zähle die Wörter in
+        # plan.txt" is the capability learned an hour ago, not file.read.
+        try:
+            hits = self.capabilities.registry.find(text, limit=1)
+        except Exception:  # noqa: BLE001
+            hits = []
+        if looks_compound(text) or hits:
             try:
-                if self._answer_by_composition(text, scope, guidance="\n".join(guidance_lines(relevant))):
+                if self._answer_by_composition(text, scope, guidance="\n".join(guidance_lines(relevant)), allow_single=bool(hits)):
                     return
             except Exception as exc:  # noqa: BLE001 - composition is an attempt; the single-action path remains
                 self.emit(EventType.DIAGNOSTIC, {"composition": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
@@ -1336,7 +1345,7 @@ class JarvisCore:
             provider = self.kernel.provider(ModelTier.FAST_LOCAL)
             plan = self.actions.plan(text, provider, guidance="\n".join(guidance_lines(relevant)))
             if relevant and not plan.declined:
-                plan.arguments, applied = apply_overrides(plan.arguments, relevant)
+                plan.arguments, applied = apply_overrides(plan.arguments, relevant, action=plan.action)
                 if applied:
                     self.corrections.note_applied(relevant)
                     self.emit(EventType.TOOL, {"summary": f"owner corrections applied: {', '.join(applied)}",

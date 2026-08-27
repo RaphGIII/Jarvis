@@ -15,6 +15,22 @@
 <title>__PRODUCT_NAME__</title>
 <link rel="icon" href="zeus.ico" />
 <link rel="stylesheet" href="zeus.css" />
+<style>
+  /* TV / kiosk: the same page, scaled for a room -- kept in the document so
+     ?tv=1 never depends on a second stylesheet arriving. */
+
+body.tv { font-size: 22px; }
+body.tv #app { max-width: 1600px; padding: 0 5vw; }
+body.tv header.top { padding: 2vh 0; font-size: 16px; }
+body.tv .brand { font-size: 18px; letter-spacing: .4em; }
+body.tv nav.views, body.tv .composer, body.tv .hint, body.tv #hud { display: none; }
+body.tv #eye { width: 34vh; height: 34vh; }
+body.tv #app.conversing #eye { width: 18vh; height: 18vh; }
+body.tv #stateLabel { font-size: 15px; letter-spacing: .45em; }
+body.tv #detail { font-size: 18px; }
+body.tv .turn .who { flex-basis: 90px; font-size: 13px; }
+body.tv, body.tv * { cursor: none; }
+</style>
 </head>
 <body>
 

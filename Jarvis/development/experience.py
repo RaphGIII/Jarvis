@@ -39,8 +39,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def terms(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-zA-Zäöüß_]{3,}", (text or "").lower()) if w not in STOP}
+def terms(text: str) -> list[str]:
+    """Distinct terms, in the order they appear (a set lost the order, and a
+    capability id derived from it read 'ausgabe_dateipfad_zeilen')."""
+
+    seen: dict[str, None] = {}
+    for w in re.findall(r"[a-zA-Zäöüß_]{3,}", (text or "").lower()):
+        if w not in STOP:
+            seen.setdefault(w, None)
+    return list(seen)
 
 
 @dataclass
@@ -123,10 +130,10 @@ class ExperienceStore:
     def relevant(self, goal: str, *, subsystem: str = "", limit: int = 3) -> list[Experience]:
         """The most similar earlier missions, verified outcomes first."""
 
-        wanted = terms(goal)
+        wanted = set(terms(goal))
         scored: list[tuple[float, Experience]] = []
         for row in self._rows():
-            overlap = len(wanted & terms(row.goal)) + 0.5 * len(wanted & set(w for f in row.relevant_files for w in terms(f.replace("/", " "))))
+            overlap = len(wanted & set(terms(row.goal))) + 0.5 * len(wanted & set(w for f in row.relevant_files for w in terms(f.replace("/", " "))))
             if subsystem and row.subsystem == subsystem:
                 overlap += 1.0
             if row.outcome == "promoted":
@@ -159,7 +166,7 @@ class ExperienceStore:
     def compare(self, goal: str, *, subsystem: str = "") -> dict[str, Any]:
         """Did similar tasks get cheaper?  Numbers per mission, in time order."""
 
-        wanted = terms(goal)
+        wanted = set(terms(goal))
         rows = [r for r in self._rows() if (subsystem and r.subsystem == subsystem) or len(wanted & terms(r.goal)) >= 2]
         rows.sort(key=lambda r: r.at)
         series = [{"mission_id": r.mission_id, "at": r.at, "outcome": r.outcome, "investigate_s": r.timings.get("investigate", 0.0),

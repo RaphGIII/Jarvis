@@ -344,8 +344,17 @@ def guidance_lines(corrections: Iterable[OwnerCorrection]) -> list[str]:
     return lines
 
 
-def apply_overrides(arguments: dict[str, Any], corrections: Iterable[OwnerCorrection]) -> tuple[dict[str, Any], list[str]]:
-    """Owner overrides applied to a plan's arguments.  Returns (arguments, applied)."""
+WRITE_ACTIONS = {"file.write", "note.create", "project.create", ""}
+
+
+def apply_overrides(arguments: dict[str, Any], corrections: Iterable[OwnerCorrection], *, action: str = "") -> tuple[dict[str, Any], list[str]]:
+    """Owner overrides applied to a plan's arguments.  Returns (arguments, applied).
+
+    ``action`` keeps a correction inside its meaning: "notes go into
+    notizen/" moves the *creation* of a note, not the reading of an unrelated
+    file -- live, a directory override sent ``file.read plan.txt`` to
+    ``notizen/plan.txt`` and failed.
+    """
 
     updated = dict(arguments)
     applied: list[str] = []
@@ -354,7 +363,7 @@ def apply_overrides(arguments: dict[str, Any], corrections: Iterable[OwnerCorrec
         if not overrides:
             continue
         directory = overrides.pop("directory", None)
-        if directory and updated.get("path"):
+        if directory and updated.get("path") and action in WRITE_ACTIONS:
             name = str(updated["path"]).replace("\\", "/").rsplit("/", 1)[-1]
             updated["path"] = f"{directory.strip('/').replace(chr(92), '/')}/{name}"
             applied.append(f"{row.correction_id}: directory={directory}")
