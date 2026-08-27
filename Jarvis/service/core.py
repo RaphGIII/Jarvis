@@ -1069,7 +1069,14 @@ class JarvisCore:
 
         return current_context(self).to_dict()
 
-    def _answer_by_capability(self, text: str, scope: str, plan: Any) -> None:
+    def update_mission_count(self):
+        response = requests.get('/api/missions?status=active')
+        if response.status_code == 200:
+            data = response.json()
+            mission_count = len(data)
+        else:
+            mission_count = 0
+        self.state.set('mission_count', mission_count)
         """Serve a real-world request from a capability, acquiring one if needed.
 
         The generic form of the music path.  A request that no built-in action
