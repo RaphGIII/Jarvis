@@ -66,6 +66,24 @@
     font-size: 12px;
   }
 
+  /* How long this instance has been up. It sits against the brand because it
+     is a fact about the program itself rather than about a connection or a
+     cost, and it is deliberately not a pill: an uptime is background, and
+     giving it a border would make it argue with the badges beside it. Empty
+     until the first status arrives, so it never shows a guess. */
+  .uptime {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    opacity: .6;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    margin-left: -6px;
+    user-select: none;
+    cursor: default;
+  }
+  .uptime:empty { display: none; }
+
   .pill {
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -511,6 +529,7 @@
   body.tv #app { max-width: 1600px; padding: 0 5vw; }
   body.tv header { padding: 2vh 0; font-size: 16px; }
   body.tv .brand { font-size: 18px; letter-spacing: .4em; }
+  body.tv .uptime { font-size: 14px; margin-left: 0; }
   body.tv button.ghost, body.tv .composer, body.tv .hint { display: none; }
   body.tv #eye { width: 30vh; height: 30vh; }
   body.tv #app.conversing #eye { width: 18vh; height: 18vh; }
@@ -539,6 +558,7 @@
 <div id="app">
   <header>
     <span class="brand">__PRODUCT_NAME__</span>
+    <span class="uptime" id="uptime" title="How long this instance has been running"></span>
     <span class="pill" id="connPill">connecting</span>
     <span class="pill" id="costPill" title="No metered channel is enabled">free</span>
     <span class="spacer"></span>

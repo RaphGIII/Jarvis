@@ -11,7 +11,8 @@ const $ = (id) => document.getElementById(id);
 
 const ui = {
   app: null, log: null, input: null, stateLabel: null, detail: null,
-  connPill: null, costPill: null, panel: null, panelBody: null, panelTitle: null,
+  connPill: null, costPill: null, uptime: null,
+  panel: null, panelBody: null, panelTitle: null,
 };
 
 let eye = null;
@@ -30,6 +31,7 @@ function startJarvis() {
   ui.detail = $("detail");
   ui.connPill = $("connPill");
   ui.costPill = $("costPill");
+  ui.uptime = $("uptime");
   ui.panel = $("panel");
   ui.panelBody = $("panelBody");
   ui.panelTitle = $("panelTitle");
@@ -65,6 +67,11 @@ function startJarvis() {
   // extra requests cost a socket and nothing else.
   refreshGpu();
   setInterval(refreshGpu, GPU_POLL_MS);
+
+  // The uptime is read from /api/status every 15 seconds but redrawn every
+  // second from the reading's own age, so it advances between polls instead of
+  // sitting still and then jumping. Drawing costs a string; polling would not.
+  setInterval(drawUptime, 1000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -967,9 +974,58 @@ async function refreshStatus() {
     const conn = status.connection || "OFFLINE";
     const tone = conn === "OFFLINE" ? "bad" : conn === "EXPERT QUOTA EXHAUSTED" ? "warn" : "live";
     setPill(ui.connPill, conn.toLowerCase(), tone);
+    noteUptime(status.uptime_seconds);
   } catch {
     setPill(ui.connPill, "offline", "bad");
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* uptime, beside the brand                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * How long this instance has been running, in the header next to the brand.
+ *
+ * The server is the only thing that knows when it started, so the number comes
+ * from /api/status like everything else -- the client never starts its own
+ * clock, or a reconnect to a core that has been up for days would read "0s".
+ * What is local is only the *ageing* of the last reading, so the readout moves
+ * between the fifteen-second polls.
+ *
+ * A restart therefore shows up on its own: the next poll returns a small
+ * number and the header quietly says so, which is the only reason to show an
+ * uptime at all.
+ */
+
+let uptimeAt = 0;        // performance.now() when the reading was taken
+let uptimeSeconds = -1;  // what the server said then; negative means unknown
+
+function noteUptime(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return;
+  uptimeSeconds = value;
+  uptimeAt = performance.now();
+  drawUptime();
+}
+
+function drawUptime() {
+  if (!ui.uptime || uptimeSeconds < 0) return;
+  const live = uptimeSeconds + (performance.now() - uptimeAt) / 1000;
+  ui.uptime.textContent = "up " + formatUptime(live);
+}
+
+function formatUptime(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  // Two units at most: an uptime is read at a glance, and "2d 4h 11m 09s" is
+  // a measurement rather than a glance.
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m`;
+  return `${total}s`;
 }
 
 function setPill(el, text, tone) {
