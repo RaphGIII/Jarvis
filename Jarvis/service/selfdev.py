@@ -205,6 +205,10 @@ class SelfDevRunner:
         self._guard = LiveTreeGuard(self.repository)
         self._baseline: Any = None
         self.evidence_root = Path(self.store.root) / "evidence"
+        #: Verified experience from earlier missions: read before BUILD, written after the verdict.
+        from development.experience import ExperienceStore
+
+        self.experience = ExperienceStore(Path(self.store.root).parent / "experience" / "selfdev.jsonl")
 
     # -- isolation -----------------------------------------------------
 
@@ -245,6 +249,7 @@ class SelfDevRunner:
     def _finish(self, mission: SelfDevMission) -> None:
         """Release the candidate, keeping its diff; the live tree is never involved."""
 
+        self._remember(mission)
         ws = self._workspace
         if ws is None:
             return
@@ -268,6 +273,23 @@ class SelfDevRunner:
         finally:
             self._workspace = None
             self._engineer = None
+
+    def _remember(self, mission: SelfDevMission) -> None:
+        """What this mission learned, as one compact verified-experience entry."""
+
+        if mission.phase not in {"DONE", "FAILED", "CANCELLED", "RESTARTING"} or getattr(mission, "_remembered", False):
+            return
+        try:
+            from development.experience import from_selfdev_mission
+
+            entry = from_selfdev_mission(mission)
+            if mission.phase == "RESTARTING":
+                entry.outcome = "promoted"
+            self.experience.add(entry)
+            mission.events.append({"at": _now(), "phase": "EXPERIENCE", "detail": f"kept as {entry.experience_id}"})
+            setattr(mission, "_remembered", True)
+        except Exception as exc:  # noqa: BLE001
+            mission.events.append({"at": _now(), "phase": "EXPERIENCE", "detail": f"not kept: {exc}"[:200]})
 
     # -- bookkeeping ---------------------------------------------------
 
@@ -457,6 +479,14 @@ class SelfDevRunner:
             "Never touch these owner-protected paths: " + ", ".join(PROTECTED_PATHS) + ".",
             "Do not add dependencies. Do not print secrets. Small, targeted edits.",
         ]
+        try:
+            guidance = self.experience.guidance(mission.request, subsystem=mission.area)
+        except Exception:  # noqa: BLE001 - experience is help, never a blocker
+            guidance = ""
+        if guidance:
+            lines.append("")
+            lines.append(guidance)
+            mission.events.append({"at": _now(), "phase": "EXPERIENCE", "detail": f"{guidance.count(chr(10))} lines of verified experience retrieved"})
         return "\n".join(line for line in lines if line)
 
     def _build(self, mission: SelfDevMission, max_seconds: float) -> Any:
