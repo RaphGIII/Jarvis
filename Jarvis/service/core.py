@@ -2009,6 +2009,10 @@ class JarvisCore:
             self.language = stable_language(transcript.text, current=self.language)
         if answer:
             self.send_message(transcript.text)
+        else:
+            # Transcribed on request without an answer: the turn is over, the
+            # eye must not stay on TRANSCRIBING.
+            self.state.set(JarvisState.IDLE, detail="transcribed")
         return {"ok": True, **transcript.to_dict()}
 
     # ------------------------------------------------------------------
@@ -2614,6 +2618,64 @@ class JarvisCore:
                                                                     f"at {threshold}, recommended {report.get('recommended_threshold')}"})
         return {"ok": True, "report": {k: v for k, v in report.items() if k != "clips"}, "holdout": manifest_eval or None,
                 "status": self.wake_status()}
+
+    # ------------------------------------------------------------------
+    # Schach Analyse -- a screen-watching chess assistant, its own process
+    # ------------------------------------------------------------------
+
+    def _chess_status_path(self) -> Path:
+        return Path(self.kernel.state_root) / "tools" / "chess_analysis.json"
+
+    def chess_tool_status(self) -> dict[str, Any]:
+        from tools.chess_analysis.engine import default_stockfish_path
+        from tools.chess_analysis.recognize import default_model_path
+
+        proc = getattr(self, "_chess_proc", None)
+        alive = proc is not None and proc.poll() is None
+        status: dict[str, Any] = {}
+        path = self._chess_status_path()
+        try:
+            status = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        except (OSError, ValueError):
+            status = {}
+        return {"ok": True, "running": alive, "pid": proc.pid if alive else None, "stockfish": str(default_stockfish_path() or ""),
+                "model": str(default_model_path() or ""), "status": status if alive or status.get("running") is False else status}
+
+    def chess_tool_start(self) -> dict[str, Any]:
+        """Start the overlay process (system python: it has torch/ultralytics/cv2/mss; CPU inference only)."""
+
+        from tools.chess_analysis.engine import default_stockfish_path
+        from tools.chess_analysis.recognize import default_model_path
+
+        proc = getattr(self, "_chess_proc", None)
+        if proc is not None and proc.poll() is None:
+            return {"ok": True, "running": True, "pid": proc.pid, "already": True}
+        stockfish, model = default_stockfish_path(), default_model_path()
+        if stockfish is None:
+            return {"ok": False, "error": "no local Stockfish found (expected under D:\\stockfish-windows-x86-64-avx2)"}
+        if model is None:
+            return {"ok": False, "error": "no trained piece model found (expected under D:\\Chessaru\\runs\\detect\\...\\best.pt)"}
+        command = [sys.executable, "-m", "tools.chess_analysis", "--stockfish", str(stockfish), "--model", str(model),
+                   "--status", str(self._chess_status_path())]
+        try:
+            self._chess_proc = subprocess.Popen(command, cwd=str(self.selfdev_repository()),
+                                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+        except OSError as exc:
+            return {"ok": False, "error": f"could not start: {exc}"}
+        self.emit(EventType.TOOL, {"summary": f"Schach Analyse started (pid {self._chess_proc.pid})", "source": "chess"})
+        return {"ok": True, "running": True, "pid": self._chess_proc.pid}
+
+    def chess_tool_stop(self) -> dict[str, Any]:
+        proc = getattr(self, "_chess_proc", None)
+        if proc is None or proc.poll() is not None:
+            return {"ok": True, "running": False}
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        self.emit(EventType.TOOL, {"summary": "Schach Analyse stopped", "source": "chess"})
+        return {"ok": True, "running": False}
 
     def doctor(self) -> dict[str, Any]:
         """Deterministic health: never wakes a model (service.doctor)."""
