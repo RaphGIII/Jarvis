@@ -259,6 +259,20 @@ class Lifecycle:
         self._plan_exit(EXIT_RESTART_REQUESTED, reason)
         return {"ok": True, "restarting": True, "reason": reason}
 
+    def request_relaunch(self, reason: str, *, exe: str, previous: str = "", promotion_id: str = "",
+                         requested_by: str = "core") -> dict[str, Any]:
+        """Hand over to a promoted ZEUS.exe: the supervisor exits, a watchdog starts the new one."""
+
+        from zeus_supervisor import EXIT_SHUTDOWN_REQUESTED
+
+        if not self.supervised:
+            return {"ok": False, "error": "not running under the supervisor; start the new ZEUS.exe by hand", "supervised": False}
+        self._control().request("relaunch", reason=reason, exe=exe, previous=previous, promotion_id=promotion_id,
+                                requested_by=requested_by)
+        self.core.emit(EventType.NOTIFICATION, {"text": f"relaunching into the promoted release: {reason}", "kind": "relaunch"})
+        self._plan_exit(EXIT_SHUTDOWN_REQUESTED, reason)
+        return {"ok": True, "relaunching": True, "exe": exe, "reason": reason}
+
     def request_shutdown(self, reason: str, *, requested_by: str = "core") -> dict[str, Any]:
         from zeus_supervisor import EXIT_SHUTDOWN_REQUESTED
 

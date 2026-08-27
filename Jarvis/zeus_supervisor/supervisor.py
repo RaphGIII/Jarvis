@@ -186,6 +186,28 @@ class Supervisor:
             return 3
         return 0
 
+    def _relaunch(self, request: ControlRequest) -> None:
+        exe = Path(request.exe) if request.exe else Path(sys.executable if getattr(sys, "frozen", False) else "")
+        watchdog = [
+            self.config.python, "-m", "zeus_supervisor.relaunch",
+            "--wait-pid", str(os.getpid()), "--exe", str(exe), "--previous", request.previous,
+            "--state", str(self.state_dir), "--port", str(self.config.port), "--timeout", str(int(self.config.ready_timeout)),
+            "--promotion", request.promotion_id,
+        ]
+        flags = _no_window()
+        if sys.platform == "win32":
+            flags |= subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        try:
+            subprocess.Popen(watchdog, cwd=str(self.config.repository), env=self._child_env(), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+            self._set("relaunching", f"handing over to {exe} ({request.reason})")
+            self.known_good.record(DeploymentReceipt(
+                kind="relaunch", revision=self.revision, outcome="handed_over", reason=request.reason,
+                known_good_before=self.known_good.load().revision,
+            ))
+        except OSError as exc:
+            self._set("error", f"could not start the relaunch watchdog: {exc}", "Start ZEUS.exe by hand")
+
     def _sweep_processes(self, patterns: tuple[str, ...], *, keep: tuple[int, ...] = ()) -> int:
         """End every process whose command line matches, except ``keep``."""
 
@@ -295,6 +317,12 @@ class Supervisor:
                 return 0
             if request is not None and request.action == "shutdown":
                 self._set("stopped", f"shutdown requested: {request.reason}")
+                return 0
+            if request is not None and request.action == "relaunch":
+                # A promoted executable: this supervisor steps aside and a
+                # watchdog starts the new one once the instance lock is free,
+                # restoring the previous release if it never gets READY.
+                self._relaunch(request)
                 return 0
             if code == EXIT_RESTART_REQUESTED or (request is not None and request.action == "restart"):
                 pending = request or ControlRequest(action="restart", reason="core exited with the restart code")

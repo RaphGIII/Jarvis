@@ -71,6 +71,9 @@ def _win32() -> Any:
     user32.SendMessageW.argtypes = [wt.HWND, ctypes.c_uint, wt.WPARAM, wt.LPARAM]
     user32.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
     user32.LoadImageW.restype = wt.HANDLE
+    user32.GetWindow.argtypes = [wt.HWND, ctypes.c_uint]
+    user32.GetWindow.restype = wt.HWND
+    user32.GetWindowRect.argtypes = [wt.HWND, ctypes.c_void_p]
     return ctypes, wt, user32
 
 
@@ -111,6 +114,50 @@ def find_windows(title: str, *, class_prefix: str = "Chrome_WidgetWin", include_
         pid = wt.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         found.append(FoundWindow(int(hwnd), int(pid.value), buffer.value, visible, bool(user32.IsIconic(hwnd))))
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return found
+
+
+def find_windows_of(pids: set[int], *, class_prefix: str = "Chrome_WidgetWin", min_width: int = 400) -> list[FoundWindow]:
+    """Top-level main windows of the given processes, whatever their title says.
+
+    A window mid-navigation has no title for a moment; a window that belongs
+    to *our* profile's engine process is ours regardless.  Popups and tool
+    windows are excluded by size and by having an owner.
+    """
+
+    w = _win32()
+    if w is None or not pids:
+        return []
+    ctypes, wt, user32 = w
+    found: list[FoundWindow] = []
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    def visit(hwnd, _lparam):
+        pid = wt.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if int(pid.value) not in pids:
+            return True
+        cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls, 64)
+        if not cls.value.startswith(class_prefix):
+            return True
+        if user32.GetWindow(hwnd, 4):  # GW_OWNER: owned windows are popups
+            return True
+        rect = RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if rect.right - rect.left < min_width:
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        found.append(FoundWindow(int(hwnd), int(pid.value), buffer.value, bool(user32.IsWindowVisible(hwnd)),
+                                 bool(user32.IsIconic(hwnd))))
         return True
 
     user32.EnumWindows(visit, 0)
@@ -257,8 +304,26 @@ class DesktopWindow:
 
     # -- discovery -------------------------------------------------------
 
+    def profile_pids(self) -> set[int]:
+        """Engine processes started with our profile directory."""
+
+        try:
+            from service.processes import list_processes
+
+            marker = str(self.profile_dir).lower()
+            return {p.pid for p in list_processes([marker]) if marker in p.command.lower()
+                    and p.name.lower() in {"msedge.exe", "chrome.exe", "brave.exe", "vivaldi.exe", "chromium.exe"}}
+        except Exception:  # noqa: BLE001
+            return set()
+
     def find(self, *, include_hidden: bool = True) -> FoundWindow | None:
         windows = find_windows(self.title, include_hidden=include_hidden)
+        if not windows:
+            # No window carries the title right now -- it may be navigating
+            # (the status page handing over to the interface).  A *visible*
+            # main window of our own profile's engine process is ours
+            # regardless; the engine's hidden helper windows are not.
+            windows = [w for w in find_windows_of(self.profile_pids()) if w.visible]
         if not windows:
             return None
         # Prefer the one we already know, then a visible one.
@@ -380,8 +445,14 @@ class DesktopWindow:
         from service.processes import kill
 
         removed = []
-        for w in find_windows(self.title):
-            if w.hwnd == keep:
+        seen: dict[int, FoundWindow] = {w.hwnd: w for w in find_windows(self.title)}
+        for w in find_windows_of(self.profile_pids()):
+            # Only visible main windows: the engine's hidden helper windows
+            # belong to the same process, and closing one closes the engine.
+            if w.visible:
+                seen.setdefault(w.hwnd, w)
+        for w in seen.values():
+            if w.hwnd == keep or not w.visible:
                 continue
             w2 = _win32()
             if w2 is not None:

@@ -1,0 +1,246 @@
+{
+  "at": "2026-08-27T14:00:00Z",
+  "build_seconds": 68.5,
+  "candidate": {
+    "id": "7ba351b79acb-20260827T140001Z-6d001a",
+    "path": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+    "version": {
+      "product": "ZEUS",
+      "supervisor_version": "1.0.0",
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+      "python": "3.14.3",
+      "built_at": "2026-08-27T14:00:35.225482+00:00",
+      "launcher_fingerprint": "489920eb5a974c3b",
+      "candidate_id": "7ba351b79acb-20260827T140001Z-6d001a"
+    },
+    "verified": true
+  },
+  "history_build_verify": [
+    {
+      "release_id": "708452e697",
+      "kind": "build",
+      "candidate": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+      "outcome": "built",
+      "reason": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a\\ZEUS\\ZEUS.exe (4880 KB)",
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+      "fingerprint": "489920eb5a974c3b",
+      "seconds": 34.2,
+      "at": "2026-08-27T14:00:01.147169+00:00",
+      "detail": {
+        "exe": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a\\ZEUS\\ZEUS.exe",
+        "version": {
+          "product": "ZEUS",
+          "supervisor_version": "1.0.0",
+          "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+          "python": "3.14.3",
+          "built_at": "2026-08-27T14:00:35.225482+00:00",
+          "launcher_fingerprint": "489920eb5a974c3b",
+          "candidate_id": "7ba351b79acb-20260827T140001Z-6d001a"
+        }
+      }
+    },
+    {
+      "release_id": "3ac0280251",
+      "kind": "verify",
+      "candidate": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+      "outcome": "verified",
+      "reason": "files: ok; fingerprint: ok; size: ok; runs: ok; preflight: ok",
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+      "fingerprint": "489920eb5a974c3b",
+      "seconds": 32.0,
+      "at": "2026-08-27T14:00:35.258796+00:00",
+      "detail": {
+        "checks": [
+          {
+            "name": "files",
+            "ok": true,
+            "detail": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a\\ZEUS\\ZEUS.exe exists"
+          },
+          {
+            "name": "fingerprint",
+            "ok": true,
+            "detail": "built from 489920eb5a974c3b, source is 489920eb5a974c3b"
+          },
+          {
+            "name": "size",
+            "ok": true,
+            "detail": "4997446 bytes"
+          },
+          {
+            "name": "runs",
+            "ok": true,
+            "detail": "ZEUS supervisor 1.0.0"
+          },
+          {
+            "name": "preflight",
+            "ok": true,
+            "detail": "}"
+          }
+        ],
+        "version": {
+          "product": "ZEUS",
+          "supervisor_version": "1.0.0",
+          "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+          "python": "3.14.3",
+          "built_at": "2026-08-27T14:00:35.225482+00:00",
+          "launcher_fingerprint": "489920eb5a974c3b",
+          "candidate_id": "7ba351b79acb-20260827T140001Z-6d001a"
+        }
+      }
+    }
+  ],
+  "promote": {
+    "release_id": "bc2a927559",
+    "kind": "promote",
+    "candidate": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+    "outcome": "promoted",
+    "reason": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS now 489920eb5a974c3b @ 7ba351b79acb; previous kept",
+    "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+    "fingerprint": "489920eb5a974c3b",
+    "seconds": 0.1,
+    "at": "2026-08-27T14:01:09.627972+00:00",
+    "detail": {},
+    "relaunch": {
+      "ok": true,
+      "relaunching": true,
+      "exe": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe",
+      "reason": "release bc2a927559 promoted"
+    }
+  },
+  "relaunch_seconds": 41.9,
+  "counts": {
+    "core": 1,
+    "listener": 1,
+    "worker": 1,
+    "supervisor": 1
+  },
+  "supervisor_processes": [
+    {
+      "pid": 13608,
+      "parent": 25772,
+      "name": "ZEUS.exe",
+      "command": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe"
+    }
+  ],
+  "windows": [
+    71676,
+    333472
+  ],
+  "new_health": {
+    "ready": true,
+    "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+    "pid": 32192,
+    "supervised": true
+  },
+  "relaunch_log_tail": [
+    "2026-08-27T14:01:11.933352+00:00 waiting for supervisor pid 24508 to exit",
+    "2026-08-27T14:01:12.708679+00:00 started D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe as pid 13608 (0.8s after the old supervisor left)",
+    "2026-08-27T14:01:21.944169+00:00   loading the conversation model",
+    "2026-08-27T14:01:51.459656+00:00 READY at revision 7ba351b79acb after 39.5s; relaunch verified"
+  ],
+  "known_good_version": {
+    "product": "ZEUS",
+    "supervisor_version": "1.0.0",
+    "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+    "python": "3.14.3",
+    "built_at": "2026-08-27T14:00:35.225482+00:00",
+    "launcher_fingerprint": "489920eb5a974c3b",
+    "candidate_id": "7ba351b79acb-20260827T140001Z-6d001a"
+  },
+  "previous_exists": true,
+  "releases_receipts": [
+    {
+      "release_id": "708452e697",
+      "kind": "build",
+      "candidate": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+      "outcome": "built",
+      "reason": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a\\ZEUS\\ZEUS.exe (4880 KB)",
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+      "fingerprint": "489920eb5a974c3b",
+      "seconds": 34.2,
+      "at": "2026-08-27T14:00:01.147169+00:00",
+      "detail": {
+        "exe": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a\\ZEUS\\ZEUS.exe",
+        "version": {
+          "product": "ZEUS",
+          "supervisor_version": "1.0.0",
+          "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+          "python": "3.14.3",
+          "built_at": "2026-08-27T14:00:35.225482+00:00",
+          "launcher_fingerprint": "489920eb5a974c3b",
+          "candidate_id": "7ba351b79acb-20260827T140001Z-6d001a"
+        }
+      }
+    },
+    {
+      "release_id": "3ac0280251",
+      "kind": "verify",
+      "candidate": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+      "outcome": "verified",
+      "reason": "files: ok; fingerprint: ok; size: ok; runs: ok; preflight: ok",
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+      "fingerprint": "489920eb5a974c3b",
+      "seconds": 32.0,
+      "at": "2026-08-27T14:00:35.258796+00:00",
+      "detail": {
+        "checks": [
+          {
+            "name": "files",
+            "ok": true,
+            "detail": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a\\ZEUS\\ZEUS.exe exists"
+          },
+          {
+            "name": "fingerprint",
+            "ok": true,
+            "detail": "built from 489920eb5a974c3b, source is 489920eb5a974c3b"
+          },
+          {
+            "name": "size",
+            "ok": true,
+            "detail": "4997446 bytes"
+          },
+          {
+            "name": "runs",
+            "ok": true,
+            "detail": "ZEUS supervisor 1.0.0"
+          },
+          {
+            "name": "preflight",
+            "ok": true,
+            "detail": "}"
+          }
+        ],
+        "version": {
+          "product": "ZEUS",
+          "supervisor_version": "1.0.0",
+          "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+          "python": "3.14.3",
+          "built_at": "2026-08-27T14:00:35.225482+00:00",
+          "launcher_fingerprint": "489920eb5a974c3b",
+          "candidate_id": "7ba351b79acb-20260827T140001Z-6d001a"
+        }
+      }
+    },
+    {
+      "release_id": "bc2a927559",
+      "kind": "promote",
+      "candidate": "D:\\Jarvis_recovery_20260823\\repo\\dist\\candidates\\7ba351b79acb-20260827T140001Z-6d001a",
+      "outcome": "promoted",
+      "reason": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS now 489920eb5a974c3b @ 7ba351b79acb; previous kept",
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4",
+      "fingerprint": "489920eb5a974c3b",
+      "seconds": 0.1,
+      "at": "2026-08-27T14:01:09.627972+00:00",
+      "detail": {}
+    },
+    {
+      "kind": "relaunch",
+      "outcome": "healthy",
+      "at": "2026-08-27T14:01:51.460486+00:00",
+      "exe": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe",
+      "promotion": "bc2a927559",
+      "seconds": 39.5,
+      "revision": "7ba351b79acb23f326b1189d531c08922f3ea0e4"
+    }
+  ]
+}

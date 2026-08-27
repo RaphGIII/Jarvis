@@ -39,12 +39,15 @@ def _now() -> str:
 
 @dataclass
 class ControlRequest:
-    action: str  # restart | shutdown
+    action: str  # restart | shutdown | relaunch
     reason: str = ""
     expected_revision: str = ""
     promotion_id: str = ""
     requested_by: str = ""
     at: str = field(default_factory=_now)
+    #: ``relaunch`` only: the promoted executable and the release to restore.
+    exe: str = ""
+    previous: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,6 +104,8 @@ class ControlChannel:
             promotion_id=str(data.get("promotion_id", "")),
             requested_by=str(data.get("requested_by", "")),
             at=str(data.get("at", "")),
+            exe=str(data.get("exe", "")),
+            previous=str(data.get("previous", "")),
         )
 
     def write_status(self, status: dict[str, Any]) -> None:

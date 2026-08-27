@@ -69,6 +69,8 @@ def win(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_mod, "hide_window", fake.hide)
     monkeypatch.setattr(desktop_mod, "apply_identity", lambda hwnd, **k: {"app_id": True, "icon": True})
     monkeypatch.setattr(desktop_mod, "find_engine", lambda: r"C:\fake\msedge.exe")
+    monkeypatch.setattr(desktop_mod, "find_windows_of", lambda pids, **k: [])
+    monkeypatch.setattr(desktop_mod.DesktopWindow, "profile_pids", lambda self: set())
     import service.processes as processes
 
     monkeypatch.setattr(processes, "kill", fake.kill)
@@ -245,3 +247,20 @@ def test_venv_launcher_pairs_and_shells_are_not_counted(monkeypatch):
     monkeypatch.setattr(processes, "list_processes", lambda patterns: rows)
     assert processes.counts() == {"core": 1, "listener": 1, "worker": 1, "supervisor": 1}
     assert [p.pid for p in processes.zeus_processes()["listener"]] == [102]
+
+
+def test_hidden_helper_windows_of_the_engine_are_never_closed(tmp_path, win, monkeypatch):
+    """Chromium keeps hidden, untitled windows in the same process; closing one closes the engine."""
+
+    dw = _window(tmp_path, win)
+    dw.show()
+    keep = dw.hwnd
+    helper = FoundWindow(9999, win.windows[keep].pid, "", False, False)
+    monkeypatch.setattr(desktop_mod, "find_windows_of", lambda pids, **k: [helper, win.windows[keep]])
+    closed = []
+    monkeypatch.setattr(desktop_mod, "_win32", lambda: None)
+    import service.processes as processes
+
+    monkeypatch.setattr(processes, "kill", lambda pid, tree=False: closed.append(pid) or True)
+    assert dw._ensure_single(keep=keep) == []
+    assert closed == [] and len(win.windows) == 1

@@ -1,0 +1,41 @@
+{
+  "at": "2026-08-27T14:04:37Z",
+  "known_good_before": "7ba351b79acb",
+  "previous_before": "35f20a0e7f88",
+  "quit_counts": {
+    "core": 0,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 0
+  },
+  "watchdog_exit": 1,
+  "watchdog_seconds": 4.6,
+  "ready_after": 71.6,
+  "counts": {
+    "core": 1,
+    "listener": 0,
+    "worker": 1,
+    "supervisor": 1
+  },
+  "known_good_after": "35f20a0e7f88",
+  "failed_parked": [
+    "ZEUS.failed.1787839491"
+  ],
+  "relaunch_log_tail": [
+    "2026-08-27T14:01:51.459656+00:00 READY at revision 7ba351b79acb after 39.5s; relaunch verified",
+    "2026-08-27T14:04:47.445082+00:00 waiting for supervisor pid 0 to exit",
+    "2026-08-27T14:04:47.454470+00:00 could not start D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe: [WinError 216] Die Version von %1 ist mit der ausgef\u00fchrten Windows-Version nicht kompatibel. \u00dcberpr\u00fcfen Sie die Systeminformationen des Computers, und wenden Sie sich anschlie\u00dfend an den Herausgeber der Software",
+    "2026-08-27T14:04:47.455134+00:00 relaunch failed: start failed: [WinError 216] Die Version von %1 ist mit der ausgef\u00fchrten Windows-Version nicht kompatibel. \u00dcberpr\u00fcfen Sie die Systeminformationen des Computers, und wenden Sie sich anschlie\u00dfend an den Herausgeber der Software",
+    "2026-08-27T14:04:51.741444+00:00 restored D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS from D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS.previous; failed release kept at D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS.failed.1787839491",
+    "2026-08-27T14:04:51.746716+00:00 started the restored release as pid 31788"
+  ],
+  "receipt": {
+    "kind": "relaunch",
+    "outcome": "rolled_back",
+    "at": "2026-08-27T14:04:51.747135+00:00",
+    "exe": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe",
+    "promotion": "chaos",
+    "reason": "start failed: [WinError 216] Die Version von %1 ist mit der ausgef\u00fchrten Windows-Version nicht kompatibel. \u00dcberpr\u00fcfen Sie die Systeminformationen des Computers, und wenden Sie sich anschlie\u00dfend an den Herausgeber der Software",
+    "failed_release": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS.failed.1787839491"
+  }
+}

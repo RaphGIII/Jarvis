@@ -46,6 +46,7 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
         "--hidden-import", "zeus_supervisor.supervisor",
         "--hidden-import", "zeus_supervisor.preflight",
         "--hidden-import", "zeus_supervisor.build", "--hidden-import", "zeus_supervisor.__main__",
+        "--hidden-import", "zeus_supervisor.relaunch",
         str(entry),
     ]
     icon = repository / "ui" / "zeus.ico"
@@ -69,9 +70,17 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
         "python": sys.executable,
         "built_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2), encoding="utf-8")
+    fingerprint = ""
+    try:
+        from deployment.release import launcher_fingerprint
+
+        fingerprint = launcher_fingerprint(repository)
+    except Exception:  # noqa: BLE001 - the fingerprint is metadata; a build without it still runs
+        pass
     (out_dir / "VERSION.json").write_text(json.dumps({
         "product": "ZEUS", "supervisor_version": __version__, "revision": revision,
         "python": sys.version.split()[0], "built_at": datetime.now(timezone.utc).isoformat(),
+        "launcher_fingerprint": fingerprint,
     }, indent=2), encoding="utf-8")
     print(f"built {exe} ({exe.stat().st_size // 1024} KB), revision {revision[:12]}")
 

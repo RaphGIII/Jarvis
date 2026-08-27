@@ -1517,6 +1517,66 @@ class JarvisCore:
                                        "source": "isolation", "report": report})
         return report
 
+    # ------------------------------------------------------------------
+    # Releases -- the executable as one more thing with a known-good version
+    # ------------------------------------------------------------------
+
+    @property
+    def releases(self) -> Any:
+        from deployment.release import ReleaseManager
+
+        if getattr(self, "_releases", None) is None:
+            self._releases = ReleaseManager(self.selfdev_repository(), log=lambda m: self.emit(
+                EventType.TOOL, {"summary": m[:200], "source": "release"}))
+        return self._releases
+
+    def release_status(self) -> dict[str, Any]:
+        return self.releases.status()
+
+    def release_build(self, *, verify: bool = True) -> dict[str, Any]:
+        """Build a candidate ZEUS.exe in the background; verify it when asked."""
+
+        if getattr(self, "_release_thread", None) is not None and self._release_thread.is_alive():
+            return {"ok": False, "error": "a release build is already running"}
+
+        def work() -> None:
+            self.state.set(JarvisState.WORKING, detail="building a candidate release")
+            try:
+                record = self.releases.build_candidate()
+                if record.outcome == "built" and verify:
+                    self.state.set(JarvisState.VERIFYING, detail="verifying the candidate release")
+                    self.releases.verify_candidate(record.candidate)
+                self.emit(EventType.NOTIFICATION, {"kind": "release", "text": f"release build {record.outcome}: {record.reason[:160]}",
+                                                   "candidate": record.candidate})
+            finally:
+                self.state.set(JarvisState.IDLE)
+
+        self._release_thread = threading.Thread(target=work, daemon=True, name="release-build")
+        self._release_thread.start()
+        return {"ok": True, "started": True}
+
+    def release_verify(self, candidate: str) -> dict[str, Any]:
+        return self.releases.verify_candidate(candidate).to_dict()
+
+    def release_promote(self, candidate: str, *, relaunch: bool = True) -> dict[str, Any]:
+        """Promote a verified candidate and, under the supervisor, relaunch into it."""
+
+        record = self.releases.promote(candidate)
+        out = record.to_dict()
+        if record.outcome == "promoted" and relaunch:
+            exe = str(self.releases.known_good / "ZEUS.exe")
+            previous = str(self.releases.previous) if (self.releases.previous / "ZEUS.exe").is_file() else ""
+            out["relaunch"] = self.lifecycle.request_relaunch(
+                f"release {record.release_id} promoted", exe=exe, previous=previous, promotion_id=record.release_id,
+                requested_by="release",
+            )
+        return out
+
+    def release_rollback(self, *, confirm: bool = False) -> dict[str, Any]:
+        if not confirm:
+            return {"ok": False, "error": "a release rollback needs confirm=true"}
+        return self.releases.rollback("owner requested").to_dict()
+
     def selfdev_repository(self) -> Path:
         """ZEUS's own directory, from where this code lives -- never from an
         environment variable a mission could have inherited."""

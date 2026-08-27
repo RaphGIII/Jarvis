@@ -238,6 +238,13 @@ class JarvisHTTPServer:
             "/api/window/show": lambda body: self.core.lifecycle.window("show", reason=str(body.get("reason", "second launch"))),
             "/api/window/hide": lambda body: self.core.lifecycle.window("hide", reason=str(body.get("reason", ""))),
             "/api/processes": lambda _: self.core.lifecycle.process_counts(),
+            "/api/release": lambda _: self.core.release_status(),
+            "/api/release/build": lambda body: self.core.release_build(verify=bool(body.get("verify", True))),
+            "/api/release/verify": lambda body: self.core.release_verify(str(body.get("candidate", ""))),
+            "/api/release/promote": lambda body: self.core.release_promote(
+                str(body.get("candidate", "")), relaunch=bool(body.get("relaunch", True))
+            ),
+            "/api/release/rollback": lambda body: self.core.release_rollback(confirm=bool(body.get("confirm", False))),
             "/api/quit": lambda body: self.core.lifecycle.request_quit(
                 str(body.get("reason", "owner asked ZEUS to quit completely")), requested_by=str(body.get("requested_by", "ui"))
             ),

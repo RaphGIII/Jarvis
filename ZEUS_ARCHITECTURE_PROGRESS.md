@@ -80,9 +80,19 @@ Measured before: supervisor preflight ran a *real generation* before launching t
 
 Not done: the 6 s between core launch and HTTP bind is kernel construction (imports, registries) and is the next startup lever; BUILD_LOCAL is never loaded at startup (unchanged).
 
+## Phase 6 — self-updating release build — LIVE VERIFIED, chaos-tested
+
+`deployment/release.py` (new): `ReleaseManager` with `dist/ZEUS` (known-good, the folder the owner excluded from the antivirus — never touched by ZEUS), `dist/ZEUS.previous` (rollback artifact), `dist/candidates/<rev>-<ts>-<id>/ZEUS` (complete onedir builds). `launcher_fingerprint()` hashes `zeus_supervisor/*.py` + icon + Python + PyInstaller versions; `needs_rebuild()` compares it with the fingerprint the known-good exe was built from, so a source-only promotion never rebuilds and a launcher change is never left unbuilt. `build_candidate()` → PyInstaller into the candidate dir with commit + fingerprint in `VERSION.json`; `verify_candidate()` = files, fingerprint = source, size, `ZEUS.exe --version`, `ZEUS.exe check` (the full preflight from inside the frozen program) → `VERIFIED.json`; `promote()` refuses unverified candidates, renames known-good → previous (works while the old exe runs), copies the candidate in, keeps `PROMOTED.json`; `rollback()` explicit; `sign()` documents that no code signing happens (real signing needs an owner-obtained certificate; the `signtool` step is named there). `zeus_supervisor/relaunch.py` (new, stdlib, frozen into the exe): the watchdog the supervisor spawns on a `relaunch` control request — waits for the old supervisor to exit (the instance mutex), starts the promoted exe detached, watches `/api/health` for READY from a new pid, otherwise restores `ZEUS.previous`, parks the failed release as `dist/ZEUS.failed.<ts>` and starts the restored one; receipts in `data/jarvis/supervisor/releases.jsonl`. `/api/release`, `/api/release/build` (background, then verify), `/api/release/verify`, `/api/release/promote` (+relaunch), `/api/release/rollback` (confirm required). Tests: `tests/test_release.py` (7, fake builder; watchdog rollback and healthy paths).
+
+Live (`data/acceptance_evidence/R6_release_selfupdate_live.json`): through the running product's API, **ZEUS built its own candidate exe and verified it in 68.5 s** (`files ok; fingerprint ok; size ok; runs ok; preflight ok`), promoted it (previous kept), asked for a relaunch; the source-run supervisor stepped aside, the watchdog started `dist/ZEUS/ZEUS.exe` 0.8 s later and saw READY at `7ba351b` after 39.5 s; process table afterwards: supervisor = `ZEUS.exe`, one core/listener/worker. `dist/ZEUS/VERSION.json` now carries revision + `launcher_fingerprint`.
+
+Chaos (`data/acceptance_evidence/C30_release_chaos_broken_exe.json`): the promoted `ZEUS.exe` replaced by garbage bytes, the watchdog run exactly as the supervisor runs it → `WinError 216` on start → previous release restored and started within **4.6 s**, failed release parked, ZEUS READY again (71.6 s, the old exe still ran the preflight generation), known-good = the previous revision. The launcher cannot be bricked by a failed build.
+
+Found and fixed on the way: after a relaunch the core opened a second window because the early window was mid-navigation (title momentarily empty); `DesktopWindow.find` now falls back to *visible* main windows of our own profile's engine process. First version of that fallback sent WM_CLOSE to Chromium's hidden helper windows and closed the engine — only visible windows are ever acted on now (test pinned). The product now runs from the frozen `dist/ZEUS/ZEUS.exe` built by ZEUS.
+
 ## Test status
 
-`tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed. `tests/test_desktop_lifecycle.py tests/test_supervisor.py tests/test_desktop_window.py`: 41 passed.
+`tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed. `tests/test_desktop_lifecycle.py tests/test_supervisor.py tests/test_desktop_window.py tests/test_release.py`: 49 passed.
 
 ## Performance
 
@@ -94,4 +104,4 @@ Not done: the 6 s between core launch and HTTP bind is kernel construction (impo
 
 ## Next highest-value task
 
-Phase 6: the self-updating release build (the supervisor/launcher changes above are only live from source until the exe is rebuilt).
+Phase 7: UI architecture (modular subsystems, hero/compact eye, Activity/Projects/Mission Control, command palette, Owner Settings).
