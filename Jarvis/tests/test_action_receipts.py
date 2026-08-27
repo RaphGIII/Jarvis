@@ -661,17 +661,29 @@ def test_a_capability_question_is_answered_from_the_registry_not_the_model(live,
     assert core.capability_report()["active"] == []
 
 
-def test_asking_it_to_learn_something_gets_an_honest_no_not_a_promise(live):
+def test_asking_it_to_learn_something_starts_a_mission_not_a_claim(live, monkeypatch):
     """A present-tense capability claim slips past a guard that watches for
-    completed actions, so this one is never asked of the model at all.
+    completed actions, so this one is never asked of the model at all: the
+    request becomes a durable acquisition mission, and the only sentence the
+    owner reads promises a report, never an ability.
     """
 
-    _core, client = live(LyingProvider("Ich kann jetzt Musik abspielen."))
+    from service import acquisition as acq
+
+    ran = []
+    monkeypatch.setattr(acq.AcquisitionMission, "run", lambda self, goal, **kw: ran.append(goal) or acq.AcquisitionResult(goal=goal, reason="stub"))
+    core, client = live(LyingProvider("Ich kann jetzt Musik abspielen."))
 
     reply = client.say("Lerne wie man Musik abspielt.")
 
     assert "Ich kann jetzt Musik abspielen" not in reply["text"]
-    assert "Nichts wurde gestartet" in reply["text"]
+    assert "Mission m_" in reply["text"] and "lerne ich jetzt" in reply["text"]
+    deadline = time.time() + 10
+    while time.time() < deadline and not ran:
+        time.sleep(0.05)
+    assert ran == ["Lerne wie man Musik abspielt."]
+    missions = core.missions.store.list()
+    assert missions and missions[-1].kind == "capability"
 
 
 def test_an_unreadable_registry_says_so_instead_of_reporting_none(tmp_path):

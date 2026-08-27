@@ -458,6 +458,9 @@ class JarvisCore:
         # present-tense capability claim, which the claim guard does not catch
         # because nothing was claimed to have been *done*. The registry knows
         # what is actually installed; the model does not.
+        if classification.intent is Intent.CAPABILITY and not text.rstrip().endswith("?"):
+            self._answer_by_acquisition(text, scope)
+            return
         if classification.intent in {Intent.READ, Intent.CAPABILITY}:
             self._answer_from_records(text, scope, classification)
             return
@@ -482,6 +485,78 @@ class JarvisCore:
         self._answer_conversationally(text, scope)
 
     # -- the three answering paths --------------------------------------
+
+    def _answer_by_acquisition(self, text: str, scope: str) -> None:
+        """"Learn to do X": a capability-acquisition mission, started from the chat.
+
+        Runs the same pipeline the music gap uses (local build, verification,
+        escalation only after counted local failure, registration), as a
+        durable engine mission with the acquisition's own steps as evidence.
+        The conversation stays open; the verdict comes back when it is one.
+        """
+
+        from runtime.evidence import from_receipt, inference, owner_statement
+        from service.acquisition import AcquisitionMission
+
+        if self.missions.store.active():
+            active = [m for m in self.missions.store.active() if m.kind == "capability"]
+            if active:
+                de = self.language.startswith("de")
+                self._deliver((f"Ich lerne gerade schon etwas ({active[0].goal[:60]}). Das nächste nehme ich danach." if de else
+                               f"I am already learning something ({active[0].goal[:60]}). I will take the next one after it."),
+                              scope=scope, backend="acquisition")
+                return
+        goal = text.strip()
+        mission = self.missions.create(goal, kind="capability", interpretation="acquire a missing primitive: local build, verify, register",
+                                       acceptance=["the capability is registered and verified", "a second invocation uses it directly"], scope=scope)
+        self.missions.add_evidence(mission, owner_statement(goal))
+        de = self.language.startswith("de")
+        self._deliver(
+            (f"Verstanden, das lerne ich jetzt (Mission {mission.mission_id}): lokaler Build, Verifikation, Registrierung; Experte nur bei "
+             f"nachgewiesenem lokalem Scheitern. Ich melde mich, wenn es verifiziert ist.") if de else
+            (f"Understood, I will learn that now (mission {mission.mission_id}): local build, verification, registration; the expert only after "
+             f"counted local failure. I will report when it is verified."),
+            scope=scope, backend="acquisition", final_state=JarvisState.CODING,
+        )
+
+        def work() -> None:
+            try:
+                self.missions.transition(mission, "PLAN", "acquisition pipeline")
+                self.missions.transition(mission, "EXECUTE", "local build")
+                acq = AcquisitionMission(service=self.capabilities, kernel=self.kernel,
+                                         emit=lambda kind, payload: self.emit(kind, payload, scope=scope))
+                result = acq.run(goal)
+                for step in getattr(result, "steps", [])[-12:]:
+                    self.missions.add_evidence(mission, inference(f"{getattr(step, 'phase', '')}: {getattr(step, 'summary', '')}"[:200],
+                                                                  tier="BUILD_LOCAL", confidence=0.5))
+                if result.escalated:
+                    self.missions.transition(mission, "ESCALATE", f"expert {result.expert_used or 'used'}")
+                self.missions.transition(mission, "VERIFY", f"acquired={result.acquired} {result.reason[:120]}")
+                if result.acquired and result.capability_id:
+                    manifest = self.capabilities.registry.get(result.capability_id)
+                    receipt = {"id": f"cap_{result.capability_id}", "kind": "capability.acquire", "executor": "acquisition", "ok": True,
+                               "verified": bool(manifest is not None), "detail": f"{result.capability_id} registered",
+                               "verifications": [{"check": "registry lists the capability", "passed": manifest is not None,
+                                                  "observed": str(getattr(manifest, "status", "")) if manifest else "absent"}]}
+                    self.missions.add_evidence(mission, from_receipt(receipt))
+                    self.missions.transition(mission, "COMPLETE", f"{result.capability_id} in {result.seconds:.0f}s")
+                    self._deliver(
+                        (f"Gelernt und verifiziert: {result.capability_id} ({result.seconds:.0f}s, {result.local_attempts} lokale Versuche, "
+                         f"{'mit' if result.escalated else 'ohne'} Experten). Ab jetzt nutze ich es direkt.") if de else
+                        (f"Learned and verified: {result.capability_id} ({result.seconds:.0f}s, {result.local_attempts} local attempts, "
+                         f"{'with' if result.escalated else 'without'} an expert). From now on I use it directly."),
+                        scope=scope, backend="acquisition", context_text=f"[capability {result.capability_id} acquired; mission {mission.mission_id}]")
+                else:
+                    self.missions.fail_approach(mission, "acquisition pipeline", result.reason[:300])
+                    self.missions.transition(mission, "FAILED", result.reason[:200] or "not acquired")
+                    self._deliver((f"Nicht gelernt: {result.reason[:200]}" if de else f"Not learned: {result.reason[:200]}"),
+                                  scope=scope, backend="acquisition", final_state=JarvisState.ERROR)
+            except Exception as exc:  # noqa: BLE001
+                self.missions.settle(mission, exc)
+                self._deliver((f"Akquise fehlgeschlagen: {exc}" if de else f"Acquisition failed: {exc}"), scope=scope, backend="acquisition",
+                              final_state=JarvisState.ERROR)
+
+        threading.Thread(target=work, daemon=True, name=f"acquire-{mission.mission_id}").start()
 
     def _answer_by_research(self, text: str, scope: str) -> None:
         """A question about the current state of the world: sources, not memory.
