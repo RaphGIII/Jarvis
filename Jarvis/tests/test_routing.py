@@ -155,3 +155,13 @@ def test_reading_exposes_object_and_operation():
     assert route("Zeus, spiel Lose Yourself von Eminem.").intent is TopLevelIntent.REAL_WORLD_ACTION
     reading = read("Zeus, ändere deinen eigenen Startvorgang.")
     assert reading.operation == "modify" and reading.object == "self" and reading.self_score >= 2
+
+
+def test_nouns_that_contain_lern_are_not_acquisition():
+    """Live: "Lernplan" and "Label Lernen" sent a file+timer request to capability acquisition."""
+
+    decision = classify("Zeus, erstelle die Datei plan.txt mit dem Inhalt Lernplan und starte danach einen Timer auf 1 Minute mit dem Label Lernen.")
+    assert decision.intent is Intent.ACTION and decision.route.intent is TopLevelIntent.REAL_WORLD_ACTION
+    assert classify("Lerne, wie man PDFs zusammenfügt.").intent is Intent.CAPABILITY
+    assert classify("lerne wie man Musik abspielt").intent is Intent.CAPABILITY
+    assert classify("Lern es.").intent is Intent.CAPABILITY

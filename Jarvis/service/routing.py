@@ -182,7 +182,7 @@ _ACT = re.compile(
 #: "learn to", "teach yourself": acquisition.  Checked before self-development
 #: because "bring dir bei" contains "dir".
 _LEARN = re.compile(
-    r"\b(lern\w*|bring\w*\s+dir\s+bei|beibring\w*|eigne\s+dir\s+an|aneign\w*|learn\s+(?:how\s+)?to|teach\s+yourself"
+    r"\b(lerne?(?=\s*[,:]|\s+(?:wie|zu|es|das|was|selbst|neue)|\s*[.!]?\s*$)|lern\s+(?:wie|zu|es|das)|bring\w*\s+dir\s+bei|beibring\w*|eigne\s+dir\s+an|aneign\w*|learn\s+(?:how\s+)?to|teach\s+yourself"
     r"|acquire\s+(?:the\s+)?(?:ability|capability|skill)|new\s+capability|neue\s+faehigkeit)\b"
 )
 

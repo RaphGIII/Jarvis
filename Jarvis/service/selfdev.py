@@ -95,6 +95,8 @@ class SelfDevMission:
     isolation: list[dict[str, Any]] = field(default_factory=list)
     #: Where the candidate's diff was kept after the worktree was released.
     evidence_patch: str = ""
+    #: The goal question, answered separately from execution: {answer, why, kind}.
+    verification_goal: dict[str, Any] = field(default_factory=dict)
 
     @property
     def finished(self) -> bool:
@@ -649,10 +651,71 @@ class SelfDevRunner:
             ok, output = self._run([self.python, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], mission.worktree, timeout=900)
             checks.append({"criterion": f"targeted tests: {', '.join(tests)}", "ok": ok, "output": output[-800:]})
             ok_all &= ok
+
+        # EXECUTION_VERIFIED is not GOAL_SATISFIED.  Live mission f16dc926c6
+        # passed every check above with a candidate that added one empty
+        # <div> and no behaviour: the interface still served, the kernel still
+        # imported, and the request was not implemented.  Two goal checks,
+        # both stated as what they are: a deterministic shape check (data the
+        # request names needs logic, not markup), and a model's reading of
+        # the diff -- recorded as inference, gating escalation, never promotion
+        # on its own.
+        shape_ok, shape_detail = self._goal_shape(mission)
+        checks.append({"criterion": "the change has the shape the request needs", "ok": shape_ok, "output": shape_detail})
+        ok_all &= shape_ok
+        inferred = self._goal_inference(mission)
+        mission.verification_goal = inferred
+        if inferred.get("answer") == "no":
+            checks.append({"criterion": "a reader of the diff sees the request implemented (model inference)", "ok": False,
+                           "output": inferred.get("why", "")[:400]})
+            ok_all = False
         mission.verification = {"ok": ok_all, "checks": checks, "tests": tests,
                                 "detail": "; ".join(f"{c['criterion']}: {'ok' if c['ok'] else 'FAILED'}" for c in checks)}
         self._phase(mission, "VERIFY", mission.verification["detail"])
         return ok_all
+
+    def _goal_shape(self, mission: SelfDevMission) -> tuple[bool, str]:
+        """Deterministic: a request that names data or behaviour cannot be met by markup alone."""
+
+        files = [f.replace("\\", "/") for f in mission.changed_files]
+        text = mission.request.lower()
+        names_data = any(w in text for w in ("/api/", "anzahl", "zahl", "wert", "count", "number", "aus /", "from /", "sekunden", "seconds",
+                                               "status", "aktuell", "current", "live", "wenn ", "when ", "sobald", "nur wenn"))
+        logic = [f for f in files if f.endswith((".js", ".py", ".ts"))]
+        markup = [f for f in files if f.endswith((".html", ".css"))]
+        if mission.area == "ui" and names_data and markup and not logic:
+            return False, f"markup only ({', '.join(markup)}): the request names data or behaviour, which needs ui/app.js or a view module"
+        if not files:
+            return False, "no files changed"
+        return True, f"{len(logic)} logic file(s), {len(markup)} markup file(s)"
+
+    def _goal_inference(self, mission: SelfDevMission) -> dict[str, Any]:
+        """FAST_LOCAL reads the diff against the request.  Inference, labelled as such."""
+
+        try:
+            from brain.tiers import ModelTier
+            from service.isolation import CandidateWorkspace
+
+            ws = self._workspace or CandidateWorkspace.attach(self.repository, mission.mission_id, mission.worktree)
+            diff = ws.diff()[:6000]
+            if not diff.strip():
+                return {"answer": "no", "why": "empty diff", "kind": "model_inference"}
+            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+            prompt = ("You review a code change against a request. Answer with one JSON object: "
+                      '{"implemented": "yes"|"partly"|"no", "why": "<one sentence>"}.\n\n'
+                      f"Request:\n{mission.request[:800]}\n\nDiff:\n{diff}\n\nJSON:")
+            try:
+                raw = provider.generate(prompt, max_tokens=200, temperature=0.0)
+            except TypeError:
+                raw = provider.generate(prompt)
+            from brain.json_utils import lenient_json_loads
+
+            data = lenient_json_loads(str(raw))
+            answer = str((data or {}).get("implemented", "")).lower().strip() if isinstance(data, dict) else ""
+            return {"answer": "yes" if answer.startswith("y") else "no" if answer.startswith("n") else "partly" if answer else "unknown",
+                    "why": str((data or {}).get("why", ""))[:300] if isinstance(data, dict) else str(raw)[:200], "kind": "model_inference"}
+        except Exception as exc:  # noqa: BLE001
+            return {"answer": "unknown", "why": f"{type(exc).__name__}: {exc}"[:200], "kind": "model_inference"}
 
     def _escalate(self, mission: SelfDevMission) -> None:
         from experts.contracts import ExpertJob

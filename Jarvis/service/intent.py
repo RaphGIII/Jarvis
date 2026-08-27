@@ -393,11 +393,15 @@ def classify(text: str, *, corrections: Iterable[Any] = (), capability_names: It
                     Intent.SELF_DEVELOPMENT, f"asks to change this system itself: {hint!r}", matched=hint, route=top
                 )
 
-    for hint in CAPABILITY_HINTS:
-        if hint in normalized:
-            return Classification(
-                Intent.CAPABILITY, f"asks to acquire an ability: {hint!r}", matched=hint
-            , route=top)
+    # Legacy substring hints only when the top level did not see an action:
+    # "Lernplan" contains "lerne", and a file+timer request went to
+    # acquisition on that substring (live).
+    if top.intent is not TopLevelIntent.REAL_WORLD_ACTION:
+        for hint in CAPABILITY_HINTS:
+            if hint in normalized:
+                return Classification(
+                    Intent.CAPABILITY, f"asks to acquire an ability: {hint!r}", matched=hint, route=top,
+                )
 
     for hint in PROJECT_HINTS:
         if hint in normalized:
