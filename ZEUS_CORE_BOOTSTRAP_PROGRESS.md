@@ -17,10 +17,11 @@ Durable state for the core-completion sprint. No secrets in this file.
 
 | | |
 |---|---|
-| CURRENT HEAD | see `git log -1`; last milestone commit named below |
-| KNOWN GOOD | `data/jarvis/supervisor/known_good.json` (written only by the supervisor after a live health check) |
-| CURRENT PHASE | 11 — SelfDev live acceptance #1 |
-| HUMAN ACTION REQUIRED | none yet (wake-word samples will be one; see Phase 4) |
+| CURRENT HEAD | `06c8bed` on `adaptive-brain-v1`, pushed to origin |
+| KNOWN GOOD | `35f20a0` — the revision ZEUS.exe is running (`data/jarvis/supervisor/known_good.json`, written only by the supervisor after a live health check) |
+| CURRENT PHASE | sprint closed at Phase 12 + Gates I/P/Q/T; morning report written |
+| HUMAN ACTION REQUIRED | **one**: wake-word recordings (see Phase 4 below) |
+| TESTS | full suite: 1680 passed / 4 failed at `c41a82a` (the 4 were identity tests pinning "no Zeus model exists"; fixed in `06c8bed`); see the final line of this file for the rerun |
 
 ## Reality found at the start (Rule Zero)
 
@@ -125,12 +126,20 @@ Measured (held-out synthetic clips through the streaming detector): recall 0.94 
 | M (again) ZEUS promoted and restarted itself | receipt `kind=promotion promotion_id=…` 23:57:34Z, 36 s |
 | N (again) conversation resumed after self-update | `resumed: {turns: 7}` |
 
+| I owner correction persists and improves the analogous intent | `milch.txt` → correction → `notizen/brot.txt`; `I_korrigieren_*.json` |
+| P owner-protected config cannot change through ordinary SelfDev | promoter/engineer/verifier refuse (tests); live: filesystem `PermissionError` on `config/owner/policy.json` |
+| Q explicit owner-authorised config change works | propose `9c60973e9f` → approve refused without `confirm` → approved `7e7d2f232b` → file changed, still read-only → rolled back `2c7292fead` |
+| T no paid/PAYG/cloud fallback | `cost_policy`: paid_api/usage_credits/runpod/browser_automation all `False`, `is_free: True`; no `config/cost_policy.json` exists |
+| K capabilities survive restart, reused without rebuilding | registry after 12 restarts: `music.provider.spotify` 1.0.5, `system.screen.capture` 1.0.0, `archive.zip.create` 1.0.0 active; resolution unchanged |
+| B relaunch retains persistent state | ZEUS.exe stopped and relaunched three times; known-good, missions, corrections, capabilities, transcript all present |
+
 ## Open blockers / not yet done
 
-- Phase 11/12 live SelfDev acceptance: not yet run.
-- Phase 4 wake word "Zeus": not started; listener still `hey_jarvis` (honestly reported at startup).
-- Phase 8 Korrigieren: not started.
-- Phases 13–30: existing infrastructure, not extended in this sprint yet.
+- **C/D/E (spoken wake word, voice round trip, barge-in)**: not live-verified — the machine's default output is the HyperX headset and its microphone records silence (RMS 5) during playback, so an acoustic loopback is impossible without a person. The detector is loaded and the listener says "listening for 'zeus'"; the measurements are on synthetic audio only.
+- **G Spotify**: not re-run this sprint (Spotify was not running); capability `music.provider.spotify` 1.0.5 is still registered and active.
+- **S complex mission survives restart**: the mission files survive (selfdev missions resumed from disk after a crash at PROMOTE — twice), but no mission was *deliberately* interrupted mid-BUILD and resumed.
+- The local tier (7B) produced no edit in either live self-development; the expert (`claude_code`, subscription CLI) did. Without it, SelfDev would stop at "no verified candidate" — honestly reported, never promoted.
+- Phases 13–30 beyond what is listed: existing infrastructure (missions, acquisition, escalation, expert memory, knowledge graph, secrets, activity) was connected, not extended.
 
 ## General lessons
 
@@ -150,3 +159,7 @@ Measured (held-out synthetic clips through the streaming detector): recall 0.94 
 ## Next action
 
 Commit owner core + selfdev; restart live ZEUS onto it; send the Phase 11 request through the product and measure.
+
+---
+
+**Final full suite at `06c8bed`:** 1685 passed, 5 skipped, 1 xpassed, 0 failed in 11:07 (2026-08-27 ~03:15 local).
