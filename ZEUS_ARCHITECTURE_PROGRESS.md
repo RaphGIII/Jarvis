@@ -150,6 +150,56 @@ Known-good runtime survived every case; no real user data was used.
 - **25 Self-repair**: the repair loop from the acquisition sprint is unchanged; `Doctor._capabilities` flags disabled capabilities; a `RepairMission` that runs on a detected regression (not on an owner sentence) is not built.
 - **26 Owner-only boundaries**: unchanged and re-checked — no paid API, no cloud, no antivirus change (grep of this sprint's diff for `avira|exclusion|Defender` finds only prose).
 
+## Phase 28 — live SelfDev acceptance #4 — PROMOTED, THEN REVERTED BY REVIEW (a verifier defect found and fixed)
+
+Request (16:05:08Z): the header mission count again, now stated fully (source `/api/missions?status=active`, refresh every 15 s, empty at zero). Mission `10089dfaa4`: BUILD_LOCAL alone, 1062 s build, **the new shape check passed** (`service/core.py` + `ui/index.html`), the diff-reading inference said *"partly"*, targeted tests + acceptance green in 79 s, promoted as `e4c9cbd`, restart READY, total **1176 s (19.6 min)** — cheaper than #3 (988 s) is *not* the reading, because the candidate was **defective**: the coder replaced the line `def _answer_by_capability(...)` with `def update_mission_count(self)` (calling an unimported `requests` against a relative URL), so an existing method vanished and its body hung off the new one; nothing on the acceptance path exercised that method. The change was caught by reading the diff, not by ZEUS, and reverted (`3786f69`); ZEUS is READY at the revert.
+
+Generic fix (`_structure_preserved` in `service/selfdev.py`): from the AST of the baseline (`git show HEAD:./<file>`) and the candidate, every function/class definition that existed must still exist unless the request asks for its removal; syntax errors are named. And the inference gate now treats *"partly"* like *"no"*: such a candidate goes to the expert for completion and is never promoted on the local tier's word. Test: `tests/test_isolation.py::test_a_candidate_that_hijacks_a_definition_is_rejected` (with the removal-asked exception). Verified-experience entries now exist for #4 (the first mission that ended under the new code); the "fewer retries with experience" measurement needs the next mission.
+
+Efficiency across the four live self-developments: 2155 s → 1316 s → 988 s → 1176 s; expert used in #1, #2, not in #3, #4. The local tier can now land edits on this repository (it could not in #1/#2) — what it lands is not yet trustworthy without the stronger verifier above.
+
+## Phase 29 — live capability acquisition — LIVE VERIFIED
+
+Through the chat (16:26Z start): *"Zeus, lerne, wie man die Wörter in einer Textdatei zählt: Eingabe ist ein Dateipfad, Ausgabe die Anzahl der Wörter, Zeilen und Zeichen."* → routed `capability_acquisition (high)` → engine mission `m_c2c7dd3c9e` (kind capability) → acquisition pipeline with a fresh id derived from the goal → INVESTIGATE (4 tool calls) → DECOMPOSE (8 tasks) → EXECUTE task by task on BUILD_LOCAL → VERIFY 2/4 → DIAGNOSE/repair loop thrashing on an edit anchor (the known local-tier limit) → the 1800 s local budget ran out → **expert** → verified → registered as `learned.ausgabe_dateipfad_zeilen` v1.0.0 (active). Total **1906 s (31.8 min)**, 1 local attempt, with expert. The chat received "Gelernt und verifiziert … Ab jetzt nutze ich es direkt."
+
+Second invocation, *"Zeus, zähle die Wörter, Zeilen und Zeichen in der Datei plan.txt."*: the first try exposed two defects, both fixed generically — the single-action planner preferred `file.read` over the learned capability (the composer now runs for a single-step request when a registered capability's keywords match), and the owner's earlier correction "notes go into notizen/" was applied to a *read* (directory overrides now apply to writes only, preventing that over-generalisation); a third defect was in the new capability step executor (it read a field the outcome does not have). After the fixes: composition chose `capability:learned.ausgabe_dateipfad_zeilen`, the workspace-relative path was resolved, the capability ran in 0.15 s and answered `word_count=1, line_count=1, character_count=8` for `plan.txt` (whose content is "Lernplan") — mission COMPLETE, one FAST_LOCAL planner call, no build. Evidence: `data/acceptance_evidence/A29_capability_acquisition_live.json`.
+
+## Phase 31 — performance budgets (measured this session)
+
+| item | measured | budget |
+|---|---|---|
+| desktop reopen (hidden → visible) | 0.038 s | ≤ 2 s |
+| relaunch after X | 1.05–1.10 s | ≤ 2 s |
+| cold window display (exe start → window) | 1.37 s | ≤ 2 s |
+| cold boot → core HTTP | 7.7 s | ≤ 10 s (next lever: kernel construction) |
+| cold boot → AI READY (model resident) | 8.7 s | ≤ 15 s; +~28 s when Ollama loads the model |
+| router latency | 118.9 ms first call (registry read), sub-ms warm | ≤ 200 ms |
+| simple deterministic action (file write, verified) | ~0.4 s incl. planner call | ≤ 2 s |
+| composed 2-step mission | 30 s wall (incl. 25 s polling wait; steps themselves < 1 s) | — |
+| capability reuse (learned capability, second invocation) | 0.15 s execution, ~2 s incl. planner | ≤ 5 s |
+| mission creation after `/api/message` | 0.41 s | ≤ 1 s |
+| BUILD_LOCAL wall time (SelfDev #3) | 946 s | — |
+| SelfDev end to end (#1 / #2 / #3) | 2155 s / 1316 s / 988 s | — |
+| capability acquisition (#1 this sprint) | 1906 s | — |
+| release build + verify (PyInstaller) | 68.5 s | — |
+| relaunch into a promoted exe → READY | 39.5 s | — |
+| full test suite | 1781 passed, 5 skipped, 1 xpassed in 14:32 (one failure fixed afterwards; see final line) | — |
+
+## Human actions still needed
+
+1. **Wake-word recordings**: open Voice Studio → "Say „Zeus“ 15 times" → "10 other phrases" → Train. Everything else is in the product; only the owner's voice is missing. (The synthetic model is loaded and the listener says "listening for 'zeus'", but false activations per hour are too high for all-day use.)
+2. **Acoustic check of barge-in and the voice round trip**: say "Zeus" while ZEUS speaks; the listener now POSTs `/api/stop` on the wake word. The machine's headset microphone records silence during playback, so this cannot be verified without a person.
+3. **Spotify**: not re-run (Spotify was not playing); the provider capability is registered and unchanged.
+4. Optional: a code-signing certificate, if SmartScreen warnings on `ZEUS.exe` matter (`ReleaseManager.sign` documents the step).
+
+## Exact remaining blockers (engineering truth)
+
+- **The local coder cannot yet implement most features alone.** SelfDev #3 was the first promotion by BUILD_LOCAL alone — and its candidate was one empty `<div>`. Acquisition #1 needed the expert after 30 minutes of anchor failures. The expert (subscription CLI) is used automatically and re-verified, so the owner never launches Claude by hand; but without it, self-development stops honestly at "no verified candidate". A larger local coder (the earlier measured lever) remains the single most valuable change.
+- **Goal verification is still shallow.** The new shape check + model inference catches markup-only candidates; it does not prove the feature works. Feature-level acceptance (a browser check of the actual element, a test the mission writes for itself) is the next verifier step.
+- **Knowledge graph is empty** on this machine; missions/decisions are not yet projected into it.
+- **Voice**: owner recordings (above); streaming TTS exists, barge-in exists, neither acoustically verified here.
+- **UI**: the operating-environment skeleton and 12 views exist; visual canvas, document reader, research workspace, decision ledger, memory inspector, notification center, human-action queue, automation view, device map, split view are stubs-by-architecture (registry + inspector), not built.
+
 ## Test status
 
 `tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed. `tests/test_desktop_lifecycle.py tests/test_supervisor.py tests/test_desktop_window.py tests/test_release.py`: 49 passed.
@@ -164,4 +214,4 @@ Known-good runtime survived every case; no real user data was used.
 
 ## Next highest-value task
 
-Live acquisition verdict; then the second SelfDev request (efficiency measurement with experience) and the chaos matrix.
+Feature-level acceptance for SelfDev (a browser check of the element the request names); mission/decision projection into the knowledge graph; a bigger local coder.

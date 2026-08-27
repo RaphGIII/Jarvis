@@ -300,3 +300,32 @@ def test_the_candidate_health_check_cannot_reach_the_live_state_root(layout, tmp
     mission = runner.run(SelfDevMission(request="env"))
     assert not (live_state / "marker").exists(), "the candidate wrote into the live state root"
     assert mission.verification.get("ok") is True, mission.verification
+
+
+def test_a_candidate_that_hijacks_a_definition_is_rejected(layout, tmp_path):
+    """Live mission 10089dfaa4: the coder replaced `def _answer_by_capability` with a new
+    method; import and targeted tests stayed green and a method vanished from the product."""
+
+    top, zeus = layout
+    (zeus / "service" / "core.py").write_text("VALUE = 1\n\n\ndef answer(text):\n    return text\n\n\ndef helper():\n    return 1\n")
+    _git(top, "add", ".")
+    _git(top, "-c", "commit.gpgsign=false", "commit", "-qm", "two defs")
+
+    def build(self, mission, max_seconds):
+        ws = CandidateWorkspace(repository=self.repository, mission_id=mission.mission_id, base=tmp_path / "cand").create()
+        self._workspace = ws
+        mission.worktree = str(ws.root)
+        (ws.root / "service" / "core.py").write_text("VALUE = 1\n\n\ndef update_count():\n    return 2\n    return text\n\n\ndef helper():\n    return 1\n")
+        mission.changed_files = self._changed_files(mission.worktree)
+        return SimpleNamespace(worktree=str(ws.root), status="candidate", error="", cycles=1)
+
+    runner = _runner(zeus, tmp_path, build)
+    mission = runner.run(SelfDevMission(request="add a mission counter"))
+    assert mission.phase == "FAILED"
+    structural = [c for c in mission.verification["checks"] if "definition" in c["criterion"]][0]
+    assert not structural["ok"] and "answer" in structural["output"]
+    # asking for the removal lifts the rule for the named symbol
+    runner2 = _runner(zeus, tmp_path, build)
+    mission2 = runner2.run(SelfDevMission(request="remove the answer function and add update_count"))
+    structural2 = [c for c in mission2.verification["checks"] if "definition" in c["criterion"]][0]
+    assert structural2["ok"]

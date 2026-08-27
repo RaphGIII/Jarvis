@@ -663,11 +663,21 @@ class SelfDevRunner:
         shape_ok, shape_detail = self._goal_shape(mission)
         checks.append({"criterion": "the change has the shape the request needs", "ok": shape_ok, "output": shape_detail})
         ok_all &= shape_ok
+        # Live mission 10089dfaa4 was promoted with a candidate that had
+        # replaced the line `def _answer_by_capability(...)` by a new method:
+        # the old method vanished, its body hung off the new one, import and
+        # targeted tests were green.  Definitions that existed before must
+        # still exist unless the request asks for their removal.
+        structure_ok, structure_detail = self._structure_preserved(mission)
+        checks.append({"criterion": "no existing definition was removed or hijacked", "ok": structure_ok, "output": structure_detail})
+        ok_all &= structure_ok
         inferred = self._goal_inference(mission)
         mission.verification_goal = inferred
-        if inferred.get("answer") == "no":
+        if inferred.get("answer") in {"no", "partly"}:
+            # Inference, labelled as such: it cannot promote, it can only send
+            # the candidate to the expert for completion.
             checks.append({"criterion": "a reader of the diff sees the request implemented (model inference)", "ok": False,
-                           "output": inferred.get("why", "")[:400]})
+                           "output": f"{inferred.get('answer')}: {inferred.get('why', '')[:360]}"})
             ok_all = False
         mission.verification = {"ok": ok_all, "checks": checks, "tests": tests,
                                 "detail": "; ".join(f"{c['criterion']}: {'ok' if c['ok'] else 'FAILED'}" for c in checks)}
@@ -688,6 +698,57 @@ class SelfDevRunner:
         if not files:
             return False, "no files changed"
         return True, f"{len(logic)} logic file(s), {len(markup)} markup file(s)"
+
+    def _structure_preserved(self, mission: SelfDevMission) -> tuple[bool, str]:
+        """Every def/class in a changed Python file that the baseline had is still there.
+
+        Deterministic, from the AST of the baseline (git show HEAD:path) and
+        of the candidate.  A request that names a removal ("entferne",
+        "remove", "lösche") lifts the rule for the named symbols.
+        """
+
+        import ast
+
+        text = mission.request.lower()
+        removal_asked = any(w in text for w in ("entferne", "entfern", "remove", "lösche", "loesche", "delete", "streiche"))
+        lost: list[str] = []
+        broken: list[str] = []
+        root = Path(mission.worktree)
+        for rel in mission.changed_files:
+            if not rel.endswith(".py"):
+                continue
+            candidate_path = root / rel
+            if not candidate_path.is_file():
+                continue  # a deleted file is caught below as every symbol lost
+            try:
+                after = ast.parse(candidate_path.read_text(encoding="utf-8", errors="replace"))
+            except SyntaxError as exc:
+                broken.append(f"{rel}: {exc.msg} at line {exc.lineno}")
+                continue
+            try:
+                baseline_src = subprocess.run(["git", "show", f"HEAD:./{rel}"], cwd=str(self.repository), capture_output=True, text=True,
+                                              encoding="utf-8", errors="replace", timeout=30).stdout
+                before = ast.parse(baseline_src) if baseline_src.strip() else None
+            except (OSError, subprocess.SubprocessError, SyntaxError):
+                before = None
+            if before is None:
+                continue  # a new file, or a baseline git cannot show: nothing to preserve
+
+            def names(tree: ast.AST) -> set[str]:
+                out: set[str] = set()
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        out.add(node.name)
+                return out
+
+            missing = sorted(names(before) - names(after))
+            if missing and not (removal_asked and all(m.lower() in text for m in missing)):
+                lost.append(f"{rel}: {', '.join(missing[:6])}")
+        if broken:
+            return False, "syntax error in " + "; ".join(broken[:3])
+        if lost:
+            return False, "definitions removed: " + "; ".join(lost[:4])
+        return True, "every existing definition is still defined"
 
     def _goal_inference(self, mission: SelfDevMission) -> dict[str, Any]:
         """FAST_LOCAL reads the diff against the request.  Inference, labelled as such."""
