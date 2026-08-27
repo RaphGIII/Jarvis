@@ -85,11 +85,20 @@ class _TrainedWake:
     cooldown; ``predict`` reports 1.0 on the frame it fires and the raw score
     otherwise, so the listener's own ``threshold`` (0.5 by default) passes a
     detection through and nothing else.
+
+    The threshold and the weights are the core's to decide: :meth:`sync`
+    takes ``/api/voice/wake`` (the same status Voice Studio shows) and applies
+    the effective threshold; when the model file changed (a new training) it
+    reloads the weights in place, so the owner never has to restart ZEUS for
+    the listener to hear the model that was just trained.
     """
 
-    def __init__(self, detector: Any, name: str) -> None:
+    def __init__(self, detector: Any, name: str, *, path: Any = None, loader: Any = None) -> None:
         self.detector = detector
         self.name = name
+        self.path = path
+        self._loader = loader
+        self.reloads = 0
 
     def predict(self, frame: Any) -> dict[str, float]:
         fired = self.detector.feed(frame)
@@ -97,6 +106,40 @@ class _TrainedWake:
 
     def reset(self) -> None:
         self.detector.reset()
+
+    @property
+    def score(self) -> float:
+        return float(getattr(self.detector, "last_score", 0.0))
+
+    def report(self) -> dict[str, Any]:
+        import os
+
+        return {"model": str(self.path or ""), "fingerprint": getattr(self.detector, "fingerprint", ""),
+                "threshold": float(self.detector.threshold), "pid": os.getpid(), "last_score": round(self.score, 4)}
+
+    def sync(self, status: dict[str, Any]) -> list[str]:
+        """Apply the core's wake status; returns what changed (for the log)."""
+
+        changed: list[str] = []
+        fingerprint = str(status.get("model_fingerprint") or "")
+        if fingerprint and fingerprint != getattr(self.detector, "fingerprint", "") and self._loader is not None:
+            try:
+                fresh = self._loader()
+            except Exception as exc:  # noqa: BLE001 - keep listening with the old weights
+                changed.append(f"reload failed: {exc}")
+            else:
+                fresh.threshold = self.detector.threshold
+                self.detector = fresh
+                self.reloads += 1
+                changed.append(f"model reloaded ({fingerprint})")
+        try:
+            threshold = float(status.get("effective_threshold"))
+        except (TypeError, ValueError):
+            threshold = None
+        if threshold is not None and abs(threshold - float(self.detector.threshold)) > 1e-9:
+            self.detector.threshold = threshold
+            changed.append(f"threshold {threshold} ({status.get('threshold_source', '?')})")
+        return changed
 
 
 class Endpointer:
@@ -190,7 +233,10 @@ class WakeListener:
             # wrapped so the loop below sees the same predict/reset shape.
             from speech.wake_zeus import ZeusDetector
 
-            self._model = _TrainedWake(ZeusDetector.load(trained_wake_model_path(self.config.wake_model)), self.config.wake_model)
+            path = trained_wake_model_path(self.config.wake_model)
+            self._model = _TrainedWake(ZeusDetector.load(path), self.config.wake_model, path=path,
+                                       loader=lambda: ZeusDetector.load(path))
+            self._sync_wake(force=True)
             return self._model
 
         try:
@@ -219,6 +265,8 @@ class WakeListener:
         recording: list[Any] = []
         listening = False
         muted_until = 0.0
+        wake_score = 0.0
+        session = ""
 
         with sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=FRAME_SAMPLES,
@@ -240,9 +288,12 @@ class WakeListener:
                     preroll.append(frame.copy())
                     if time.monotonic() < muted_until:
                         continue
+                    self._sync_wake()
                     score = model.predict(frame).get(self.config.wake_model, 0.0)
                     if score >= self.config.threshold:
-                        self._say(f"wake ({score:.2f})")
+                        wake_score = getattr(model, "score", score) if isinstance(model, _TrainedWake) else score
+                        session = f"{int(time.time() * 1000):x}"
+                        self._say(f"wake ({wake_score:.2f} >= {getattr(getattr(model, 'detector', None), 'threshold', self.config.threshold)})")
                         # Barge-in: the owner spoke the wake word while ZEUS may
                         # be talking.  Stop the voice first, then listen -- the
                         # owner's words must not compete with the speaker.
@@ -269,9 +320,43 @@ class WakeListener:
                     self._say("(too short - ignored)")
                     continue
                 self._say(f"heard {endpointer.speech_seconds:.1f}s, sending...")
-                self._send(audio.tobytes())
+                self._send(audio.tobytes(), wake=wake_score, session=session)
 
     # -- helpers ---------------------------------------------------------
+
+    #: How often the idle loop asks the core for the wake status.
+    SYNC_SECONDS = 5.0
+
+    def _sync_wake(self, *, force: bool = False) -> None:
+        """Every few seconds: take the effective threshold, reload a retrained model, report what runs."""
+
+        model = self._model
+        if not isinstance(model, _TrainedWake):
+            return
+        now = time.monotonic()
+        if not force and now - getattr(self, "_synced_at", -1e9) < self.SYNC_SECONDS:
+            return
+        self._synced_at = now
+        try:
+            status = self._get("/api/voice/wake")
+            for change in model.sync(status):
+                self._say(f"wake config: {change}")
+            self._post_json("/api/voice/wake/listener", model.report())
+        except Exception as exc:  # noqa: BLE001 - the core may be restarting; keep listening
+            if self.config.verbose:
+                self._say(f"(wake sync failed: {exc})")
+
+    def _get(self, path: str) -> dict[str, Any]:
+        request = urllib.request.Request(f"{self.config.url.rstrip('/')}{path}", method="GET",
+                                         headers={"X-Jarvis-Token": self.config.token})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return json.loads(response.read().decode())
+
+    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        request = urllib.request.Request(f"{self.config.url.rstrip('/')}{path}", data=json.dumps(payload).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "X-Jarvis-Token": self.config.token})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return json.loads(response.read().decode())
 
     def _interrupt(self) -> None:
         """POST /api/stop: stops speech and any streaming answer at once."""
@@ -288,7 +373,7 @@ class WakeListener:
             if self.config.verbose:
                 self._say(f"(interrupt failed: {exc})")
 
-    def _send(self, pcm: bytes) -> None:
+    def _send(self, pcm: bytes, *, wake: float = 0.0, session: str = "") -> None:
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as handle:
             handle.setnchannels(1)
@@ -296,11 +381,15 @@ class WakeListener:
             handle.setframerate(SAMPLE_RATE)
             handle.writeframes(pcm)
 
+        # The wake score that opened this session travels with the audio:
+        # the core acts only on utterances that a wake word (or a press in
+        # the interface) authorised.
         request = urllib.request.Request(
             f"{self.config.url.rstrip('/')}/api/voice/utterance",
             data=buffer.getvalue(),
             method="POST",
-            headers={"Content-Type": "application/octet-stream", "X-Jarvis-Token": self.config.token},
+            headers={"Content-Type": "application/octet-stream", "X-Jarvis-Token": self.config.token,
+                     "X-Jarvis-Wake": f"{float(wake):.4f}", "X-Jarvis-Session": session},
         )
         try:
             with urllib.request.urlopen(request, timeout=300) as response:
@@ -313,6 +402,8 @@ class WakeListener:
             return
         if payload.get("ok"):
             self._say(f"> {payload.get('text', '')}")
+        elif payload.get("ignored"):
+            self._say(f"(ignored: {payload.get('reason', '')} -- '{payload.get('text', '')}')")
         else:
             self._say(f"(nothing recognised: {payload.get('reason', '')})")
 

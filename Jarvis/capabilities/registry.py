@@ -48,6 +48,16 @@ work working thing something anything everything currently what which
 #: The old private name, kept because the module has been imported under it.
 _BOILERPLATE = BOILERPLATE
 
+#: How the owner addresses the assistant.  A goal sentence starts with it,
+#: so it ended up as a stored keyword of a learned capability and matched
+#: every later request that started the same way -- a word counter was put
+#: on the plan for "Zeus, store this in Knowledge" on that word alone.
+ADDRESS_TERMS = frozenset({"zeus", "jarvis", "hey", "ok", "okay", "hallo", "hi", "bitte", "please"})
+
+#: After this many consecutive verified failures a capability is FAILING and
+#: the resolver stops offering it first.
+FAILING_AFTER = 2
+
 #: How many of a capability's *own* subject terms must appear in the query
 #: before it is considered a candidate at all. One is enough when the terms
 #: are distinctive, which is the point of scoring on keywords rather than prose.
@@ -170,9 +180,9 @@ class CapabilityRegistry:
                 term
                 for keyword in (manifest.creation_metadata.get("keywords") or [])
                 for term in self._terms(str(keyword))
-            }
+            } - ADDRESS_TERMS
             subject = self._terms(manifest.capability_id.replace(".", " ")) | keywords
-            subject -= BOILERPLATE
+            subject -= BOILERPLATE | ADDRESS_TERMS
             if not keywords:
                 # Nothing declared. The identifier is then the only thing this
                 # capability says it is for, and an identifier can be a code
@@ -210,7 +220,10 @@ class CapabilityRegistry:
                 continue
             described = self._terms(manifest.description) - BOILERPLATE
             tiebreak = len(query_terms & described) / max(1, len(query_terms))
-            scored.append((hits / max(1, len(query_terms)), tiebreak, manifest))
+            score = hits / max(1, len(query_terms))
+            if manifest.health_view().get("state") == "failing":
+                score *= 0.5  # demoted, not hidden: a repair can restore it
+            scored.append((score, tiebreak, manifest))
         scored.sort(key=lambda item: (item[0], item[1], item[2].capability_id), reverse=True)
         return [manifest for _, _, manifest in scored[:limit]]
 
@@ -222,6 +235,44 @@ class CapabilityRegistry:
         if existing and existing.status == "active" and existing.version == manifest.version:
             raise ValueError(f"Capability already registered at version {manifest.version}: {manifest.capability_id}")
         self._records[manifest.capability_id] = manifest
+        self._save()
+        return manifest
+
+    def note_execution(self, capability_id: str, ok: bool, detail: str = "", *, repair: bool = False) -> CapabilityManifest | None:
+        """Record one real execution outcome on the manifest's runtime health.
+
+        Policy: a failure sets DEGRADED at once and FAILING after
+        ``FAILING_AFTER`` in a row; a success after failures sets DEGRADED
+        (one good call is not a clean bill), a second consecutive success
+        HEALTHY.  Persisted, so the state survives a restart.
+        """
+
+        import time as _time
+
+        manifest = self._records.get(capability_id)
+        if manifest is None:
+            return None
+        health = manifest.health_view()
+        now = _time.strftime("%Y-%m-%dT%H:%M:%S")
+        health["calls"] = int(health.get("calls", 0)) + 1
+        health["last_used"] = now
+        if ok:
+            streak = int(health.get("consecutive_ok", 0)) + 1
+            health["consecutive_ok"] = streak
+            health["consecutive_failures"] = 0
+            health["last_ok_at"] = now
+            health["state"] = "healthy" if streak >= 2 or health.get("state") in {"unverified", "healthy"} else "degraded"
+        else:
+            failures = int(health.get("consecutive_failures", 0)) + 1
+            health["consecutive_failures"] = failures
+            health["consecutive_ok"] = 0
+            health["last_error_at"] = now
+            health["last_error"] = str(detail)[:300]
+            health["state"] = "failing" if failures >= FAILING_AFTER else "degraded"
+        if repair:
+            health.setdefault("repairs", []).append({"at": now, "ok": ok, "detail": str(detail)[:200]})
+            health["repairs"] = health["repairs"][-10:]
+        manifest.health = health
         self._save()
         return manifest
 

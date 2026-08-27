@@ -55,6 +55,12 @@ class NodeType(str, Enum):
     IDEA = "idea"
     EXPERIMENT = "experiment"
     DECISION = "decision"
+    DOCUMENT = "document"
+    MISSION = "mission"
+    OWNER_CORRECTION = "owner_correction"
+    VERIFIED_LESSON = "verified_lesson"
+    DEVICE = "device"
+    TECHNICAL_FINDING = "technical_finding"
 
 
 class EdgeType(str, Enum):
@@ -70,6 +76,9 @@ class EdgeType(str, Enum):
     SUPPORTS = "supports"
     PRODUCED = "produced"
     ABOUT = "about"
+    APPLIES_TO = "applies_to"
+    CONCERNS = "concerns"
+    RESOLVED_BY = "resolved_by"
 
 
 def _now() -> str:

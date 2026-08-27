@@ -1,0 +1,323 @@
+{
+  "what": "wake-word recipe validation: model trained with every 3rd owner recording held out (speech.wake_training --owner-holdout 3); held-out recordings scored through the real detector (speech.wake_eval)",
+  "trained_at": "2026-08-27T20:57:51",
+  "model_fingerprint": "b660eb58e6f32221",
+  "dataset": {
+    "voices": [
+      "de_DE-eva_k-x_low.onnx",
+      "de_DE-thorsten-medium.onnx",
+      "en_US-amy-medium.onnx",
+      "en_US-lessac-medium.onnx"
+    ],
+    "owner_positive": 19,
+    "owner_negative": 7,
+    "owner_holdout": {
+      "positive": [
+        "owner_003.wav",
+        "owner_006.wav",
+        "owner_009.wav",
+        "owner_012.wav",
+        "owner_015.wav",
+        "owner_018.wav",
+        "owner_021.wav",
+        "owner_024.wav",
+        "owner_027.wav",
+        "owner_030.wav"
+      ],
+      "negative": [
+        "owner_003.wav",
+        "owner_006.wav",
+        "owner_009.wav"
+      ]
+    },
+    "owner_skipped_silent": [
+      "owner_016.wav"
+    ]
+  },
+  "synthetic_report": {
+    "0.5": {
+      "recall": 0.9012,
+      "positives": 162,
+      "false_activations": 15,
+      "false_per_hour_negative_audio": 198.5,
+      "negative_audio_seconds": 272.0,
+      "latency_ms_per_frame": 7.49
+    },
+    "0.7": {
+      "recall": 0.8827,
+      "positives": 162,
+      "false_activations": 16,
+      "false_per_hour_negative_audio": 211.8,
+      "negative_audio_seconds": 272.0,
+      "latency_ms_per_frame": 7.91
+    },
+    "0.85": {
+      "recall": 0.8765,
+      "positives": 162,
+      "false_activations": 11,
+      "false_per_hour_negative_audio": 145.6,
+      "negative_audio_seconds": 272.0,
+      "latency_ms_per_frame": 8.15
+    }
+  },
+  "owner_holdout_evaluation": {
+    "evaluated_at": "2026-08-27T20:57:51",
+    "model_fingerprint": "b660eb58e6f32221",
+    "effective_threshold": 0.7,
+    "counts": {
+      "positive": 10,
+      "positive_usable": 10,
+      "negative": 3,
+      "hard_negative": 0
+    },
+    "silent_positives": [],
+    "positive_scores": {
+      "min": 1.0,
+      "median": 1.0,
+      "max": 1.0,
+      "count": 10
+    },
+    "negative_scores": {
+      "min": 0.0,
+      "median": 0.016,
+      "max": 0.072,
+      "count": 3
+    },
+    "at_effective_threshold": {
+      "threshold": 0.7,
+      "recall": 1.0,
+      "positives_detected": 10,
+      "false_activations": 0,
+      "rejection": 1.0
+    },
+    "thresholds": [
+      {
+        "threshold": 0.3,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.4,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.5,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.55,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.6,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.7,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.8,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      },
+      {
+        "threshold": 0.9,
+        "recall": 1.0,
+        "positives_detected": 10,
+        "false_activations": 0,
+        "rejection": 1.0
+      }
+    ],
+    "recommended_threshold": 0.9,
+    "separates": true,
+    "hard_negatives_evaluated": false,
+    "clips": {
+      "positive": [
+        {
+          "file": "owner_003.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            0.72,
+            0.88,
+            1.12
+          ],
+          "seconds": 1.56,
+          "rms": 880.4,
+          "loudest_frame_rms": 2902.6,
+          "silent": false
+        },
+        {
+          "file": "owner_006.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            0.88,
+            1.04,
+            1.2
+          ],
+          "seconds": 1.56,
+          "rms": 975.3,
+          "loudest_frame_rms": 2368.2,
+          "silent": false
+        },
+        {
+          "file": "owner_009.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            1.04,
+            1.2
+          ],
+          "seconds": 1.56,
+          "rms": 1324.4,
+          "loudest_frame_rms": 3863.5,
+          "silent": false
+        },
+        {
+          "file": "owner_012.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            1.44,
+            1.6
+          ],
+          "seconds": 1.56,
+          "rms": 1380.8,
+          "loudest_frame_rms": 4100.9,
+          "silent": false
+        },
+        {
+          "file": "owner_015.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            1.12
+          ],
+          "seconds": 1.56,
+          "rms": 444.7,
+          "loudest_frame_rms": 1206.4,
+          "silent": false
+        },
+        {
+          "file": "owner_018.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            1.68
+          ],
+          "seconds": 1.56,
+          "rms": 1210.0,
+          "loudest_frame_rms": 2853.4,
+          "silent": false
+        },
+        {
+          "file": "owner_021.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            0.64
+          ],
+          "seconds": 1.56,
+          "rms": 761.1,
+          "loudest_frame_rms": 2362.7,
+          "silent": false
+        },
+        {
+          "file": "owner_024.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            1.2,
+            1.36
+          ],
+          "seconds": 1.56,
+          "rms": 1165.3,
+          "loudest_frame_rms": 2463.6,
+          "silent": false
+        },
+        {
+          "file": "owner_027.wav",
+          "score": 0.9999,
+          "detected": true,
+          "fired_at_seconds": [
+            1.36,
+            1.52
+          ],
+          "seconds": 1.56,
+          "rms": 1318.0,
+          "loudest_frame_rms": 3367.2,
+          "silent": false
+        },
+        {
+          "file": "owner_030.wav",
+          "score": 1.0,
+          "detected": true,
+          "fired_at_seconds": [
+            1.76,
+            1.92
+          ],
+          "seconds": 1.56,
+          "rms": 768.2,
+          "loudest_frame_rms": 2515.3,
+          "silent": false
+        }
+      ],
+      "negative": [
+        {
+          "file": "owner_003.wav",
+          "score": 0.0,
+          "detected": false,
+          "fired_at_seconds": [],
+          "seconds": 2.58,
+          "rms": 1698.9,
+          "loudest_frame_rms": 5463.4,
+          "silent": false
+        },
+        {
+          "file": "owner_006.wav",
+          "score": 0.0721,
+          "detected": false,
+          "fired_at_seconds": [],
+          "seconds": 2.58,
+          "rms": 2038.7,
+          "loudest_frame_rms": 7352.8,
+          "silent": false
+        },
+        {
+          "file": "owner_009.wav",
+          "score": 0.0163,
+          "detected": false,
+          "fired_at_seconds": [],
+          "seconds": 2.58,
+          "rms": 1880.9,
+          "loudest_frame_rms": 5164.6,
+          "silent": false
+        }
+      ],
+      "hard_negative": []
+    },
+    "seconds": 2.7,
+    "in_sample": false
+  }
+}

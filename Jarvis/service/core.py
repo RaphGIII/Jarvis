@@ -19,6 +19,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import json
+import re
 import os
 import threading
 import time
@@ -159,7 +160,11 @@ class JarvisCore:
         if self._voice is None:
             from service.voice import VoiceService
 
-            self._voice = VoiceService(self.bus)
+            try:
+                settings_path = Path(self.kernel.state_root) / "voice" / "settings.json"
+            except Exception:  # noqa: BLE001 - a stub kernel without a state root
+                settings_path = None
+            self._voice = VoiceService(self.bus, settings_path=settings_path)
         return self._voice
 
     @property
@@ -201,7 +206,7 @@ class JarvisCore:
             try:
                 from knowledge.graph import KnowledgeGraph
 
-                graph = KnowledgeGraph(self.kernel.state_root / "knowledge" / "palace.sqlite")
+                graph = self.graph
             except Exception:
                 # The graph is what lets "play something" reach a capability
                 # named after a provider. Without it lookup degrades to lexical
@@ -855,17 +860,36 @@ class JarvisCore:
         from runtime.evidence import from_receipt, owner_statement
         from service.composer import Step
 
+        from service.composer import evaluate_goal, extract_constraints
+
         composer = self._composer()
-        plan = composer.plan(text, self.kernel.provider(ModelTier.FAST_LOCAL), guidance=guidance)
-        self.emit(EventType.TOOL, {"summary": f"composition: {plan.mode}, {len(plan.steps)} step(s)" + (f", missing {plan.missing}" if plan.missing else ""),
+        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+        constraints = extract_constraints(text)
+        plan = composer.plan(text, provider, guidance=guidance, constraints=constraints)
+        self.emit(EventType.TOOL, {"summary": f"composition: {plan.mode}, {len(plan.steps)} step(s)" + (f", missing {plan.missing}" if plan.missing else "")
+                                   + (f", forbidden {plan.forbidden}" if plan.forbidden else ""),
                                    "plan": plan.to_dict(), "source": "composer"}, scope=scope)
-        real = [s for s in plan.steps if s.status != "missing"]
+        real = [s for s in plan.steps if s.status not in {"missing", "forbidden"}]
         uses_capability = any(s.step.startswith("capability:") for s in real)
-        if plan.mode == "answering" or (len(real) < 2 and not plan.missing and not (allow_single and uses_capability)):
+        if plan.mode == "answering" or (len(real) < 2 and not plan.missing and not plan.forbidden and not constraints.required_outcome
+                                        and not (allow_single and uses_capability)):
             return False
         de = self.language.startswith("de")
         mission = self.missions.create(text, kind="complex", interpretation=f"composed from {', '.join(s.step for s in plan.steps)}",
-                                       acceptance=[s.purpose or s.step for s in plan.steps], scope=scope)
+                                       constraints=[f"forbidden: {a}" for a in constraints.forbidden_actions]
+                                       + ([f"required outcome: {', '.join(constraints.required_outcome)}"] if constraints.required_outcome else [])
+                                       + (["no fallbacks"] if constraints.fallbacks_forbidden else []),
+                                       acceptance=[s.purpose or s.step for s in plan.steps if s.status != "forbidden"], scope=scope)
+        if plan.forbidden:
+            self.emit(EventType.TOOL, {"summary": f"plan refused {len(plan.forbidden)} forbidden step(s): {', '.join(plan.forbidden)}",
+                                       "forbidden": plan.forbidden, "evidence": constraints.evidence, "source": "composer"}, scope=scope)
+        if not any(s.status == "planned" for s in plan.steps) and not plan.missing:
+            self.missions.block(mission, "every planned step is forbidden by the request", owner_input="")
+            self._deliver((f"Das ginge nur über {', '.join(plan.forbidden)} — und genau das hast du ausgeschlossen. Ich habe nichts angelegt."
+                           if de else f"That would need {', '.join(plan.forbidden)}, which you ruled out. Nothing was created."),
+                          scope=scope, backend="composer", final_state=JarvisState.WAITING,
+                          context_text=f"[composition mission {mission.mission_id}: all steps forbidden]")
+            return True
         self.missions.add_evidence(mission, owner_statement(text))
         for s in plan.steps:
             self.missions.add_task(mission, f"{s.step} {json.dumps(s.arguments, ensure_ascii=False)[:80]}")
@@ -898,27 +922,53 @@ class JarvisCore:
             self._session_receipts.append(receipt)
             self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()}, scope=scope)
 
-        receipts = composer.execute(plan, run_step, on_step=on_step)
+        def replan(current: Any, failed_step: Step) -> Any:
+            self.missions.fail_approach(mission, f"step {failed_step.step}", failed_step.detail)
+            self.missions.transition(mission, "DIAGNOSE", f"{failed_step.step} failed: {failed_step.detail[:100]}; replanning")
+            fresh = composer.replan(current, failed_step, provider, guidance=guidance)
+            if fresh is None:
+                self.emit(EventType.TOOL, {"summary": f"no replan for {failed_step.step}; the remainder stops", "source": "composer"}, scope=scope)
+                return None
+            self.emit(EventType.TOOL, {"summary": f"replan after {failed_step.step}: {', '.join(s.step for s in fresh.steps)}",
+                                       "plan": fresh.to_dict(), "source": "composer"}, scope=scope)
+            for s in fresh.steps:
+                self.missions.add_task(mission, f"{s.step} {json.dumps(s.arguments, ensure_ascii=False)[:80]}")
+            task_ids[:] = [t["task_id"] for t in mission.tasks]
+            self.missions.transition(mission, "EXECUTE", "running the replanned steps")
+            return fresh
+
+        receipts = composer.execute(plan, run_step, on_step=on_step, replan=replan)
         done = [s for s in plan.steps if s.status == "done"]
         failed = [s for s in plan.steps if s.status == "failed"]
-        self.missions.transition(mission, "VERIFY", f"{len(done)} done, {len(failed)} failed")
-        verified = all(getattr(r, "verified", False) for r in receipts) and receipts and not failed
-        if verified and self.missions.has_proof(mission):
-            self.missions.transition(mission, "COMPLETE", "every step ran and verified")
-        elif failed:
-            self.missions.fail_approach(mission, f"step {failed[0].step}", failed[0].detail)
-            self.missions.transition(mission, "FAILED", f"{failed[0].step}: {failed[0].detail[:120]}")
+        required_failed = [s for s in failed if s.required]
+        goal = evaluate_goal(plan, receipts)
+        self.missions.transition(mission, "VERIFY", f"{len(done)} done, {len(failed)} failed; "
+                                 f"EXECUTION_VERIFIED={goal.execution_verified} GOAL_SATISFIED={goal.goal_satisfied}")
+        self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if goal.goal_satisfied else 'NOT satisfied'}"
+                                   + ("" if goal.goal_satisfied else " — " + "; ".join(goal.reasons)[:200]),
+                                   "goal": goal.to_dict(), "mission_id": mission.mission_id, "source": "composer"}, scope=scope)
+        if goal.goal_satisfied and self.missions.has_proof(mission):
+            self.missions.transition(mission, "COMPLETE", "goal satisfied: every required step verified, constraints held")
+        elif required_failed:
+            self.missions.transition(mission, "FAILED", f"{required_failed[-1].step}: {required_failed[-1].detail[:120]}")
+        elif not goal.goal_satisfied:
+            self.missions.block(mission, "; ".join(goal.reasons)[:300], owner_input="")
         else:
-            self.missions.transition(mission, "DIAGNOSE", "steps ran but not every one verified")
+            self.missions.transition(mission, "DIAGNOSE", "steps ran but the mission holds no proof")
         lines = []
         for s in plan.steps:
-            mark = "✓" if s.status == "done" else "✗" if s.status == "failed" else "·"
-            lines.append(f"{mark} {s.step}" + (f" — {s.detail[:90]}" if s.detail else ""))
-        head = ((f"Erledigt ({len(done)}/{len(plan.steps)} Schritte)" if not failed else f"Abgebrochen bei {failed[0].step}") if de
-                else (f"Done ({len(done)}/{len(plan.steps)} steps)" if not failed else f"Stopped at {failed[0].step}"))
+            mark = {"done": "✓", "failed": "✗", "forbidden": "⛔", "skipped": "·"}.get(s.status, "·")
+            role = "" if s.role == "required" else f" [{s.role}]"
+            lines.append(f"{mark} {s.step}{role}" + (f" — {s.detail[:90]}" if s.detail else ""))
+        if goal.goal_satisfied:
+            head = f"Ziel erreicht ({len(done)} Schritte, verifiziert)" if de else f"Goal satisfied ({len(done)} steps, verified)"
+        elif required_failed:
+            head = (f"Nicht geschafft — {required_failed[-1].step} ist fehlgeschlagen" if de else f"Not done — {required_failed[-1].step} failed")
+        else:
+            head = ("Schritte ausgeführt, aber das Ziel ist NICHT erreicht: " if de else "Steps ran, but the goal is NOT met: ") + "; ".join(goal.reasons)[:160]
         self._deliver(head + ":\n" + "\n".join(lines), scope=scope, backend="composer",
-                      context_text=f"[composition mission {mission.mission_id}: {mission.phase}]",
-                      final_state=JarvisState.IDLE if not failed else JarvisState.ERROR)
+                      context_text=f"[composition mission {mission.mission_id}: {mission.phase}; goal_satisfied={goal.goal_satisfied}]",
+                      final_state=JarvisState.IDLE if goal.goal_satisfied else JarvisState.ERROR)
         return True
 
     def _run_primitive(self, step: Any, request: str, scope: str) -> Any:
@@ -936,13 +986,21 @@ class JarvisCore:
             outcome = self.music.run(MusicRequest(name.split(".", 1)[1], query=str(args.get("query", ""))))
             return outcome.receipt
         if name.startswith("capability:"):
+            from runtime.paths import PathError, resolve_workspace_path
+
             cid = name.split(":", 1)[1]
             # A relative file argument means the workspace, as it does for
-            # every built-in action; a capability sees an absolute path.
+            # every built-in action; a capability sees an absolute path.  One
+            # resolver, idempotent, existence-checked for inputs that are read.
             workspace = Path(self.kernel.state_root) / "workspace"
-            for key, value in list(args.items()):
-                if isinstance(value, str) and ("path" in key.lower() or key.lower() in {"file", "source", "folder", "directory"}) and value and not Path(value).is_absolute():
-                    args[key] = str((workspace / value).resolve())
+            try:
+                for key, value in list(args.items()):
+                    if isinstance(value, str) and ("path" in key.lower() or key.lower() in {"file", "source", "folder", "directory"}) and value:
+                        args[key] = str(resolve_workspace_path(workspace, value, must_exist=key.lower() not in {"output", "output_path", "target", "destination"}))
+            except PathError as exc:
+                return Receipt(kind=f"capability.{cid}", executor=cid, ok=False, detail=str(exc)[:300],
+                               verifications=[Verification(check="input path resolves inside the workspace", passed=False, observed=str(exc)[:200])],
+                               evidence={"capability_id": cid, "arguments": args})
             execution = self.capabilities.execute(cid, args)
             ok = bool(getattr(execution, "ok", False))
             output = getattr(execution, "output", {}) or {}
@@ -961,6 +1019,28 @@ class JarvisCore:
             nodes = graph.get("nodes", [])
             return Receipt(kind="knowledge.search", executor="knowledge", ok=True, detail=f"{len(nodes)} node(s): " + ", ".join(str(n.get("title", "")) for n in nodes[:5]),
                            verifications=[Verification(check="graph queried", passed=True, observed=f"{len(nodes)} nodes")], evidence={"query": args.get("query", "")})
+        if name == "knowledge.create":
+            result = self.knowledge_create(str(args.get("title", "")), str(args.get("text", args.get("content", ""))), type=str(args.get("type", "note")),
+                                           tags=args.get("tags") or (), links=args.get("links") or (), provenance="owner request",
+                                           metadata={"request": request[:300]})
+            ok = bool(result.get("ok"))
+            return Receipt(kind="knowledge.create", executor="knowledge", ok=ok,
+                           detail=(f"stored {result.get('type')} '{result.get('title')}' with {len(result.get('relations', []))} relation(s)" if ok else result.get("error", "failed"))[:300],
+                           verifications=[Verification(check="node read back from the graph", passed=bool(result.get("read_back")), observed=str(result.get("node_id", ""))),
+                                          Verification(check="node found by search", passed=bool(result.get("searchable")), observed=str(result.get("title", ""))),
+                                          Verification(check="relations exist", passed=(not args.get("links")) or bool(result.get("relations")),
+                                                       observed=", ".join(f"{r['relation']}->{r['target']}" for r in result.get("relations", [])) or "none")],
+                           evidence={"node_id": result.get("node_id"), "relations": result.get("relations", []), "path": result.get("path")})
+        if name == "knowledge.link":
+            result = self.knowledge_link(str(args.get("source", "")), str(args.get("target", "")), str(args.get("relation", "relates_to")), provenance="owner request")
+            ok = bool(result.get("ok"))
+            return Receipt(kind="knowledge.link", executor="knowledge", ok=ok, detail=(f"{result.get('source')} -{result.get('relation')}-> {result.get('target')}" if ok else result.get("error", "failed"))[:300],
+                           verifications=[Verification(check="edge exists", passed=ok, observed=str(result.get("edge_id", result.get("error", ""))))], evidence=result)
+        if name == "knowledge.read":
+            result = self.knowledge_read(str(args.get("title", args.get("id", ""))))
+            ok = bool(result.get("ok"))
+            return Receipt(kind="knowledge.read", executor="knowledge", ok=ok, detail=(str(result.get("title", result.get("node", {}).get("title", "")))[:100] if ok else result.get("error", ""))[:300],
+                           verifications=[Verification(check="node read", passed=ok, observed=str(result.get("id", result.get("error", ""))))], evidence={"reference": args.get("title", "")})
         if name == "timer.start":
             return self.start_timer(float(args.get("minutes", 0) or 0), label=str(args.get("label", "")), scope=scope)
         if name == "file.open":
@@ -1069,6 +1149,45 @@ class JarvisCore:
 
         return current_context(self).to_dict()
 
+    def _capability_payload(self, manifest: Any, goal: str, text: str) -> tuple[dict[str, Any], list[str]]:
+        """The payload a capability's input schema asks for, from the request.
+
+        Not ``{"goal": goal}``: no learned capability declares a ``goal`` key,
+        so that payload failed every one of them at the first line.  Path-like
+        required inputs come from the file name in the request, resolved by
+        the one workspace path model; other required inputs that the request
+        cannot supply are reported back by name instead of being guessed.
+        """
+
+        from runtime.paths import PathError, resolve_workspace_path
+        from service.intent import FILENAME
+
+        schema = dict(getattr(manifest, "input_schema", {}) or {})
+        properties = dict(schema.get("properties") or {})
+        required = [str(r) for r in (schema.get("required") or [])]
+        payload: dict[str, Any] = {}
+        unmet: list[str] = []
+        workspace = Path(self.kernel.state_root) / "workspace"
+        names = [m.group(0) for m in FILENAME.finditer(text)] if hasattr(FILENAME, "finditer") else []
+        for key in properties:
+            lowered = key.lower()
+            if "path" in lowered or lowered in {"file", "source", "folder", "directory", "filename", "file_name"}:
+                if names:
+                    try:
+                        payload[key] = str(resolve_workspace_path(workspace, names[0], must_exist=True))
+                    except PathError as exc:
+                        payload[key] = str(exc)
+                        unmet.append(f"{key} ({exc})")
+                elif key in required:
+                    unmet.append(key)
+            elif lowered in {"goal", "request", "text", "query", "prompt", "input"}:
+                payload[key] = goal
+            elif key in required:
+                unmet.append(key)
+        if not properties:
+            payload = {"goal": goal}
+        return payload, unmet
+
     def _answer_by_capability(self, text: str, scope: str, plan: Any) -> None:
         """Serve a real-world request from a capability, acquiring one if needed.
 
@@ -1113,8 +1232,18 @@ class JarvisCore:
 
         capability_id = str(manifest.capability_id)
         self.state.set(JarvisState.VERIFYING, detail=capability_id, scope=scope)
+        payload, unmet = self._capability_payload(manifest, goal, text)
+        if unmet:
+            receipt = failed(f"capability.{capability_id}", capability_id,
+                             f"{capability_id} needs {', '.join(unmet)} and the request does not say which", request=text, goal=goal)
+            self.receipts.record(receipt)
+            self._session_receipts.append(receipt)
+            self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()}, scope=scope)
+            self._deliver(f"{receipt.detail}\n\nreceipt {receipt.id}", scope=scope, backend=capability_id,
+                          context_text=f"[capability {capability_id}: missing input {unmet}]", final_state=JarvisState.WAITING)
+            return
         try:
-            execution = self.capabilities.execute(capability_id, {"goal": goal})
+            execution = self.capabilities.execute(capability_id, payload)
         except Exception as exc:
             execution = None
             self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
@@ -1768,16 +1897,36 @@ class JarvisCore:
     # ------------------------------------------------------------------
 
     def voice_settings(self, **changes: Any) -> dict[str, Any]:
-        """Read or update voice settings; returns the full voice status."""
+        """Read or update voice settings; returns the full voice status.
 
-        settings = self.voice.settings
-        for key, value in changes.items():
-            if hasattr(settings, key) and value is not None:
-                setattr(settings, key, value)
-        return self.voice.status()
+        Every field is validated and persisted (``VoiceSettings.apply`` /
+        ``save``); a setting the model does not know is refused by name
+        rather than dropped on the floor, which is how ``wake_sensitivity``
+        and ``volume`` were being lost before.
+        """
 
-    def hear(self, wav: bytes, *, language: str = "", answer: bool = True) -> dict[str, Any]:
-        """Transcribe a posted utterance and, unless told otherwise, reply to it."""
+        refused = self.voice.update_settings({k: v for k, v in changes.items() if v is not None}) if changes else {}
+        status = self.voice.status()
+        if refused:
+            status["refused"] = refused
+            status["ok"] = False
+            status["error"] = "; ".join(f"{k}: {v}" for k, v in refused.items())
+        else:
+            status["ok"] = True
+        if "wake_sensitivity" in changes or "volume" in changes:
+            self.emit(EventType.DIAGNOSTIC, {"voice": "settings saved", "wake_sensitivity": self.voice.settings.wake_sensitivity,
+                                             "volume": self.voice.settings.volume})
+        return status
+
+    def hear(self, wav: bytes, *, language: str = "", answer: bool = True, wake: Any = None,
+             session: str = "", origin: str = "") -> dict[str, Any]:
+        """Transcribe a posted utterance and, unless told otherwise, reply to it.
+
+        ``wake`` is the detector score that opened this listening session
+        (the listener sends it), ``origin`` is ``"ui"`` for the microphone
+        button.  Audio that carries neither is not a request: it is
+        transcribed, reported back, and creates nothing.
+        """
 
         # Speaking to Jarvis is what enters voice mode; it is the least
         # surprising trigger and needs no separate switch.
@@ -1791,6 +1940,13 @@ class JarvisCore:
         if transcript.empty:
             self.state.set(JarvisState.IDLE, detail="nothing heard")
             return {"ok": False, "text": "", "reason": "no speech detected"}
+        authorised = origin == "ui" or self._wake_authorised(wake)
+        accepted, why = self.voice.gate.check(transcript, authorised=authorised)
+        if not accepted:
+            self.state.set(JarvisState.IDLE, detail="utterance ignored")
+            self.emit(EventType.DIAGNOSTIC, {"utterance": "ignored", "reason": why, "text": transcript.text[:80],
+                                             "confidence": round(transcript.confidence, 3), "wake": wake, "session": session})
+            return {"ok": False, "ignored": True, "reason": why, **transcript.to_dict()}
         if transcript.language:
             from persona.language import stable_language
 
@@ -2176,27 +2332,91 @@ class JarvisCore:
     def _wake_dir(self) -> Path:
         return self.selfdev_repository() / "data" / "wake"
 
-    def wake_status(self) -> dict[str, Any]:
-        root = self._wake_dir()
-        model = self.selfdev_repository() / "data" / "models" / "wake" / "zeus.npz"
-        manifest_path = model.with_suffix(".json")
-        manifest: dict[str, Any] = {}
+    def _wake_authorised(self, wake: Any) -> bool:
+        """A listener that heard the wake word says so with the score that fired."""
+
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+            return wake is not None and float(wake) > 0.0
+        except (TypeError, ValueError):
+            return False
+
+    def _wake_model_path(self) -> Path:
+        return self.selfdev_repository() / "data" / "models" / "wake" / "zeus.npz"
+
+    def wake_effective_threshold(self) -> tuple[float, str]:
+        """One number for the listener and the Voice Studio test, and where it came from."""
+
+        from speech.wake_zeus import read_manifest, resolve_threshold
+
+        return resolve_threshold(self.voice.settings.wake_sensitivity, read_manifest(self._wake_model_path()).get("threshold"))
+
+    def wake_status(self) -> dict[str, Any]:
+        """Everything Voice Studio, the doctor and the listener need to agree on the wake word."""
+
+        from speech.wake_zeus import model_fingerprint, read_manifest
+
+        root = self._wake_dir()
+        model = self._wake_model_path()
+        manifest = read_manifest(model)
+        evaluation: dict[str, Any] = {}
+        eval_path = model.with_name("zeus_eval.json")
+        try:
+            evaluation = json.loads(eval_path.read_text(encoding="utf-8")) if eval_path.is_file() else {}
         except (OSError, ValueError):
-            manifest = {}
+            evaluation = {}
         positive = len(list((root / "positive").glob("*.wav"))) if (root / "positive").is_dir() else 0
         negative = len(list((root / "negative").glob("*.wav"))) if (root / "negative").is_dir() else 0
+        hard_negative = len(list((root / "hard_negative").glob("*.wav"))) if (root / "hard_negative").is_dir() else 0
+        trained = model.is_file()
+        owner_trained = bool((manifest.get("dataset") or {}).get("owner_positive"))
+        threshold, source = self.wake_effective_threshold()
+        fingerprint = model_fingerprint(model) if trained else ""
+        listener = dict(getattr(self, "_wake_listener", {}) or {})
+        listener_fresh = bool(listener) and time.time() - float(listener.get("at", 0)) < 30.0
+        match = bool(listener_fresh and listener.get("fingerprint") == fingerprint and abs(float(listener.get("threshold", -1)) - threshold) < 1e-6)
+        owner_eval = manifest.get("owner_holdout_evaluation") or manifest.get("owner_evaluation") or {}
+        at = evaluation.get("at_effective_threshold") or {}
         return {
-            "ok": True, "wake_word": "zeus", "model_trained": model.is_file(), "model": str(model) if model.is_file() else "",
-            "positive": positive, "negative": negative, "owner_samples": positive > 0,
-            "threshold": manifest.get("threshold"), "trained_at": manifest.get("trained_at"),
+            "ok": True, "wake_word": "zeus", "model_trained": trained, "model": str(model) if trained else "",
+            "model_kind": "OWNER" if trained and owner_trained else ("SYNTHETIC" if trained else "NONE"),
+            "model_fingerprint": fingerprint,
+            "positive": positive, "negative": negative, "hard_negative": hard_negative, "owner_samples": owner_trained,
+            "threshold": manifest.get("threshold"), "manifest_threshold": manifest.get("threshold"),
+            "configured_sensitivity": self.voice.settings.wake_sensitivity,
+            "effective_threshold": threshold, "threshold_source": source,
+            "trained_at": manifest.get("trained_at"),
+            "last_score": getattr(self, "_wake_last_test", None),
+            "evaluation": {
+                "at": evaluation.get("evaluated_at"), "in_sample": evaluation.get("in_sample", owner_eval.get("in_sample")),
+                "stale": bool(evaluation) and evaluation.get("model_fingerprint") != fingerprint,
+                "positive_recall": at.get("recall"), "positives_detected": at.get("positives_detected"),
+                "negative_rejection": at.get("rejection"), "false_activations": at.get("false_activations"),
+                "positive_scores": evaluation.get("positive_scores"), "negative_scores": evaluation.get("negative_scores"),
+                "recommended_threshold": evaluation.get("recommended_threshold"), "separates": evaluation.get("separates"),
+                "silent_positives": evaluation.get("silent_positives", []), "thresholds": evaluation.get("thresholds", []),
+                "hard_negatives_evaluated": evaluation.get("hard_negatives_evaluated", False),
+                "counts": evaluation.get("counts"),
+            } if evaluation else None,
+            "owner_holdout": owner_eval if owner_eval and not owner_eval.get("in_sample", True) else None,
+            "listener": listener if listener_fresh else None, "listener_match": match,
             "metrics": manifest.get("metrics") or manifest.get("held_out") or None, "manifest": manifest,
         }
 
+    def wake_listener_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        """The listener says what it loaded; Voice Studio shows whether that is what the test uses."""
+
+        self._wake_listener = {"model": str(report.get("model", "")), "fingerprint": str(report.get("fingerprint", "")),
+                               "threshold": report.get("threshold"), "pid": report.get("pid"), "at": time.time(),
+                               "last_score": report.get("last_score")}
+        threshold, source = self.wake_effective_threshold()
+        from speech.wake_zeus import model_fingerprint
+
+        return {"ok": True, "effective_threshold": threshold, "threshold_source": source,
+                "model_fingerprint": model_fingerprint(self._wake_model_path())}
+
     def wake_record(self, wav: bytes, *, kind: str) -> dict[str, Any]:
-        if kind not in {"positive", "negative"}:
-            return {"ok": False, "error": "kind must be positive or negative"}
+        if kind not in {"positive", "negative", "hard_negative"}:
+            return {"ok": False, "error": "kind must be positive, negative or hard_negative"}
         if len(wav) < 2000 or wav[:4] != b"RIFF":
             return {"ok": False, "error": "not a WAV recording"}
         folder = self._wake_dir() / kind
@@ -2205,7 +2425,8 @@ class JarvisCore:
         (folder / f"owner_{n:03d}.wav").write_bytes(wav)
         self.emit(EventType.TOOL, {"summary": f"wake-word sample recorded ({kind} #{n})", "source": "voice"})
         status = self.wake_status()
-        return {"ok": True, "saved": str(folder / f"owner_{n:03d}.wav"), "positive": status["positive"], "negative": status["negative"]}
+        return {"ok": True, "saved": str(folder / f"owner_{n:03d}.wav"), "positive": status["positive"], "negative": status["negative"],
+                "hard_negative": status["hard_negative"]}
 
     def _speech_python(self) -> str:
         venv = self.selfdev_repository() / ".venv-speech" / "Scripts" / "python.exe"
@@ -2231,36 +2452,53 @@ class JarvisCore:
             lowered = line.lower()
             if "recall" in lowered:
                 metrics.setdefault("lines", []).append(line.strip())
+        if completed.returncode == 0:
+            self.wake_evaluate()
         status = self.wake_status()
-        self.emit(EventType.NOTIFICATION, {"kind": "voice", "text": "wake-word model trained" if completed.returncode == 0 else "wake-word training failed"})
+        self.emit(EventType.NOTIFICATION, {"kind": "voice", "text": "wake-word model trained; the listener reloads it within seconds"
+                                           if completed.returncode == 0 else "wake-word training failed"})
         return {"ok": completed.returncode == 0, "output": output[-3000:], "metrics": {**(status.get("metrics") or {}), **metrics},
-                "trained_at": status.get("trained_at"), "error": "" if completed.returncode == 0 else output[-800:]}
+                "trained_at": status.get("trained_at"), "status": status, "error": "" if completed.returncode == 0 else output[-800:]}
+
+    @staticmethod
+    def wake_test_script(path: str, threshold: float) -> str:
+        """The program the speech venv runs for one test: the shared scorer, the effective threshold.
+
+        The audio goes through :func:`speech.wake_eval.score_wav` -- int16
+        PCM, resampled if needed, the detector fed frame by frame as the
+        listener feeds the microphone.  (The previous version divided the
+        samples by 32768 and then cast to int16, which turned every recording
+        into near-silence; the scores it reported were noise.)
+        """
+
+        return (
+            "import json\n"
+            "from speech.wake_zeus import ZeusDetector\n"
+            "from speech.wake_eval import score_wav\n"
+            f"det = ZeusDetector.load(threshold={float(threshold)!r})\n"
+            f"r = score_wav(det, {path!r})\n"
+            "r['fingerprint'] = det.fingerprint\n"
+            "print(json.dumps(r))\n"
+        )
 
     def wake_test(self, wav: bytes) -> dict[str, Any]:
-        """Score a recording with the trained detector, in the speech venv."""
+        """Score a recording with the trained detector at the effective threshold, in the speech venv."""
 
         python = self._speech_python()
         if not python:
             return {"ok": False, "error": "no .venv-speech; voice is not set up"}
+        if not self._wake_model_path().is_file():
+            return {"ok": False, "error": "no trained wake model; train it first"}
         import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
             fh.write(wav)
             path = fh.name
-        script = (
-            "import sys, json, wave, numpy as np\n"
-            "from speech.wake_zeus import ZeusDetector\n"
-            f"det = ZeusDetector.load()\n"
-            f"w = wave.open(r'{path}', 'rb'); data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0\n"
-            "frame = 1280; best = 0.0; hit = False\n"
-            "for i in range(0, max(1, len(data) - frame), frame):\n"
-            "    if det.feed(data[i:i + frame]): hit = True\n"
-            "    best = max(best, float(getattr(det, 'last_score', 0.0)))\n"
-            "print(json.dumps({'score': best, 'detected': hit, 'threshold': det.threshold}))\n"
-        )
+        threshold, source = self.wake_effective_threshold()
         try:
-            completed = subprocess.run([python, "-c", script], cwd=str(self.selfdev_repository()), capture_output=True, text=True, timeout=120,
-                                       encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+            completed = subprocess.run([python, "-c", self.wake_test_script(path, threshold)], cwd=str(self.selfdev_repository()),
+                                       capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": "the detector did not answer within 120s"}
         finally:
@@ -2271,9 +2509,48 @@ class JarvisCore:
         if completed.returncode != 0:
             return {"ok": False, "error": completed.stderr.strip()[-600:] or "detector failed"}
         try:
-            return {"ok": True, **json.loads(completed.stdout.strip().splitlines()[-1])}
+            result = json.loads(completed.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             return {"ok": False, "error": "unreadable detector output: " + completed.stdout[-300:]}
+        result.pop("frames", None)
+        self._wake_last_test = {"score": result.get("score"), "detected": result.get("detected"), "threshold": threshold,
+                                "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "silent": result.get("silent")}
+        self.emit(EventType.DIAGNOSTIC, {"wake_test": self._wake_last_test})
+        return {"ok": True, "threshold_source": source, **result}
+
+    def wake_evaluate(self) -> dict[str, Any]:
+        """Calibrate: the owner's recordings through the real detector; writes zeus_eval.json."""
+
+        python = self._speech_python()
+        if not python:
+            return {"ok": False, "error": "no .venv-speech; voice is not set up"}
+        if not self._wake_model_path().is_file():
+            return {"ok": False, "error": "no trained wake model; train it first"}
+        threshold, _source = self.wake_effective_threshold()
+        try:
+            completed = subprocess.run([python, "-m", "speech.wake_eval", "--threshold", str(threshold), "--json"],
+                                       cwd=str(self.selfdev_repository()), capture_output=True, text=True, timeout=600,
+                                       encoding="utf-8", errors="replace",
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "the evaluation did not finish within 10 minutes"}
+        if completed.returncode != 0:
+            return {"ok": False, "error": completed.stderr.strip()[-600:] or "evaluation failed"}
+        try:
+            report = json.loads(completed.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return {"ok": False, "error": "unreadable evaluation output: " + completed.stdout[-300:]}
+        manifest_eval = (self.wake_status().get("manifest") or {}).get("owner_evaluation") or {}
+        report["in_sample"] = True  # the recordings on disk are the ones training used (hold-out figures live in the manifest)
+        try:
+            eval_path = self._wake_model_path().with_name("zeus_eval.json")
+            eval_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+        self.emit(EventType.NOTIFICATION, {"kind": "voice", "text": f"wake-word evaluation: recall {report.get('at_effective_threshold', {}).get('recall')} "
+                                                                    f"at {threshold}, recommended {report.get('recommended_threshold')}"})
+        return {"ok": True, "report": {k: v for k, v in report.items() if k != "clips"}, "holdout": manifest_eval or None,
+                "status": self.wake_status()}
 
     def doctor(self) -> dict[str, Any]:
         """Deterministic health: never wakes a model (service.doctor)."""
@@ -2662,14 +2939,195 @@ class JarvisCore:
         found = self.receipts.get(receipt_id)
         return found.to_dict() if found is not None else {"error": f"no receipt {receipt_id!r}"}
 
-    def knowledge_graph(self, *, query: str = "", limit: int = 300) -> dict[str, Any]:
+    #: One file.  The capability service, the experience memory and every
+    #: owner-facing route read and write the same graph.  Before this, the
+    #: routes used ``graph.db`` while the autonomous machinery wrote
+    #: ``palace.sqlite``: the owner asked for a finding to be stored, the
+    #: search honestly reported 0 nodes of an empty file, and a note file was
+    #: written instead.
+    KNOWLEDGE_FILE = ("knowledge", "palace.sqlite")
+    LEGACY_KNOWLEDGE_FILE = ("knowledge", "graph.db")
+
+    @property
+    def graph_path(self) -> Path:
+        return Path(self.kernel.state_root).joinpath(*self.KNOWLEDGE_FILE)
+
+    @property
+    def graph(self) -> Any:
+        """The long-lived graph handle (thread-safe connections inside)."""
+
+        if getattr(self, "_graph", None) is None:
+            from knowledge.graph import KnowledgeGraph
+
+            path = self.graph_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._graph = KnowledgeGraph(path)
+            self._migrate_legacy_graph(self._graph)
+        return self._graph
+
+    def _migrate_legacy_graph(self, graph: Any) -> None:
+        """Fold a non-empty legacy graph.db into the one graph, once, keeping provenance."""
+
+        legacy = Path(self.kernel.state_root).joinpath(*self.LEGACY_KNOWLEDGE_FILE)
+        if not legacy.is_file():
+            return
         try:
             from knowledge.graph import KnowledgeGraph
 
-            graph = KnowledgeGraph(self.kernel.state_root / "knowledge" / "graph.db")
-            return graph.export(query=query, limit=limit)
+            with KnowledgeGraph(legacy) as old:
+                nodes = old.nodes(limit=100000)
+                moved = 0
+                for node in nodes:
+                    if graph.get(node.id) is None:
+                        graph.add_node(node)
+                        moved += 1
+                for node in nodes:
+                    for edge in old.edges_from(node.id):
+                        if graph.get(edge.target) is not None:
+                            graph.link(edge.source, edge.target, edge.type, weight=edge.weight, provenance=edge.provenance or "legacy graph.db")
+            legacy.rename(legacy.with_suffix(".db.migrated"))
+            if moved:
+                self.emit(EventType.KNOWLEDGE, {"migrated": moved, "from": str(legacy)})
+        except Exception as exc:  # noqa: BLE001 - never block startup on a legacy file
+            self.emit(EventType.DIAGNOSTIC, {"knowledge": f"legacy graph not migrated: {exc}"})
+
+    def knowledge_graph(self, *, query: str = "", limit: int = 300) -> dict[str, Any]:
+        try:
+            return self.graph.export(query=query, limit=limit)
         except Exception as exc:
             return {"nodes": [], "edges": [], "error": str(exc)}
+
+    # -- typed primitives ----------------------------------------------
+
+    @staticmethod
+    def _node_type(name: str) -> Any:
+        from knowledge.graph import NodeType
+
+        text = str(name or "note").strip().lower().replace(" ", "_").replace("-", "_")
+        for member in NodeType:
+            if member.value == text or member.name.lower() == text:
+                return member
+        return NodeType.NOTE
+
+    @staticmethod
+    def _edge_type(name: str) -> Any:
+        from knowledge.graph import EdgeType
+
+        text = str(name or "relates_to").strip().lower().replace(" ", "_").replace("-", "_")
+        for member in EdgeType:
+            if member.value == text or member.name.lower() == text:
+                return member
+        return EdgeType.RELATES_TO
+
+    def _resolve_node(self, reference: str, *, create_as: Any = None, provenance: str = "") -> Any:
+        """A node by id, exact title (any type), or best search hit; optionally created."""
+
+        from knowledge.graph import NodeType
+
+        ref = str(reference or "").strip()
+        if not ref:
+            return None
+        graph = self.graph
+        node = graph.get(ref)
+        if node is not None:
+            return node
+        for node_type in NodeType:
+            node = graph.find_by_title(node_type, ref)
+            if node is not None:
+                return node
+        for hit in graph.search_keyword(ref, limit=3):
+            if str(getattr(hit.node, "title", "")).strip().lower() == ref.lower():
+                return hit.node
+        if create_as is not None:
+            return graph.remember(create_as, ref, "", provenance=provenance or "owner request", confidence=0.6,
+                                  metadata={"created_for": "relation target"})
+        return None
+
+    def knowledge_create(self, title: str, text: str = "", *, type: str = "note", tags: Any = (), links: Any = (),
+                         provenance: str = "owner", metadata: dict[str, Any] | None = None, confidence: float = 0.9) -> dict[str, Any]:
+        """Store one typed node and its typed relations; verified by reading it back."""
+
+        from knowledge.graph import EdgeType, NodeType
+
+        title = str(title or "").strip()
+        if not title:
+            return {"ok": False, "error": "a title is required"}
+        try:
+            node = self.graph.remember(self._node_type(type), title, str(text or ""), tags=[str(t) for t in (tags or []) if str(t).strip()],
+                                      provenance=provenance, confidence=float(confidence), metadata=dict(metadata or {}))
+            relations = []
+            for item in self._link_items(links):
+                target_ref, relation = item
+                target = self._resolve_node(target_ref, create_as=NodeType.CONCEPT, provenance=provenance)
+                if target is None or target.id == node.id:
+                    continue
+                edge = self.graph.link(node.id, target.id, self._edge_type(relation) if relation else EdgeType.RELATES_TO, provenance=provenance)
+                relations.append({"edge_id": edge.id, "target": target.title, "target_id": target.id, "relation": edge.type.value if hasattr(edge.type, "value") else str(edge.type)})
+            back = self.graph.get(node.id)
+            found = any(hit.node.id == node.id for hit in self.graph.search(title, limit=10))
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        result = {"ok": back is not None, "node_id": node.id, "title": node.title, "type": node.type.value if hasattr(node.type, "value") else str(node.type),
+                  "relations": relations, "read_back": back is not None, "searchable": found, "path": str(self.graph_path)}
+        self.emit(EventType.KNOWLEDGE, {"created": node.id, "title": title, "relations": len(relations)})
+        return result
+
+    @staticmethod
+    def _link_items(links: Any) -> list[tuple[str, str]]:
+        """"ZEUS, Voice, Wakeword" | ["ZEUS", {"target": "Voice", "relation": "concerns"}] -> [(target, relation)]"""
+
+        items: list[tuple[str, str]] = []
+        if isinstance(links, str):
+            links = [part for part in re.split(r"[,;/|]", links)]
+        for item in links or []:
+            if isinstance(item, dict):
+                target = str(item.get("target") or item.get("title") or item.get("id") or "").strip()
+                items.append((target, str(item.get("relation") or "")))
+            else:
+                items.append((str(item).strip(), ""))
+        return [(t, r) for t, r in items if t]
+
+    def knowledge_link(self, source: str, target: str, relation: str = "relates_to", *, provenance: str = "owner") -> dict[str, Any]:
+        a = self._resolve_node(source)
+        b = self._resolve_node(target)
+        if a is None or b is None:
+            return {"ok": False, "error": f"unknown node: {source if a is None else target}"}
+        try:
+            edge = self.graph.link(a.id, b.id, self._edge_type(relation), provenance=provenance)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        self.emit(EventType.KNOWLEDGE, {"linked": [a.id, b.id], "relation": relation})
+        return {"ok": True, "edge_id": edge.id, "source": a.title, "target": b.title, "relation": edge.type.value if hasattr(edge.type, "value") else str(edge.type)}
+
+    def knowledge_read(self, reference: str) -> dict[str, Any]:
+        node = self._resolve_node(reference)
+        if node is None:
+            return {"ok": False, "error": f"no node {reference!r}"}
+        detail = self.graph.node_detail(node.id)
+        return {"ok": True, **detail}
+
+    def knowledge_backlinks(self, reference: str) -> dict[str, Any]:
+        node = self._resolve_node(reference)
+        if node is None:
+            return {"ok": False, "error": f"no node {reference!r}"}
+        return {"ok": True, "node_id": node.id, "backlinks": [n.to_dict() if hasattr(n, "to_dict") else {"id": n.id, "title": n.title}
+                                                              for n in self.graph.backlinks(node.id)]}
+
+    def knowledge_delete(self, reference: str, *, confirm: bool = False) -> dict[str, Any]:
+        node = self._resolve_node(reference)
+        if node is None:
+            return {"ok": False, "error": f"no node {reference!r}"}
+        if not confirm:
+            return {"ok": False, "error": "deleting is destructive; confirm it", "node_id": node.id, "title": node.title}
+        self.graph.delete_node(node.id)
+        self.emit(EventType.KNOWLEDGE, {"deleted": node.id, "title": node.title})
+        return {"ok": True, "deleted": node.id}
+
+    def knowledge_stats(self) -> dict[str, Any]:
+        try:
+            return {"ok": True, "path": str(self.graph_path), **self.graph.stats()}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "path": str(self.graph_path), "error": str(exc)}
 
     def ingest(self, path: str = "", *, text: str = "", title: str = "", recursive: bool = True, max_files: int = 500) -> dict[str, Any]:
         """Read a file, a folder, or a piece of text into the knowledge graph."""
@@ -2685,10 +3143,9 @@ class JarvisCore:
         if not target and not body:
             return {"ok": False, "error": "give a path or some text"}
 
-        graph_path = self.kernel.state_root / "knowledge" / "graph.db"
-        graph_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with KnowledgeGraph(graph_path) as graph:
+            if True:
+                graph = self.graph
                 ingester = Ingester(graph)
                 if body:
                     node = ingester.ingest_text(title or body[:60], body)
@@ -2717,13 +3174,11 @@ class JarvisCore:
             return {"ok": False, "error": "say what to do"}
 
         from brain.tiers import ModelTier
-        from knowledge.graph import KnowledgeGraph
         from knowledge.operations import GraphOperator
 
-        graph_path = self.kernel.state_root / "knowledge" / "graph.db"
-        graph_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with KnowledgeGraph(graph_path) as graph:
+            if True:
+                graph = self.graph
                 operator = GraphOperator(graph, brain=self.kernel.provider(ModelTier.FAST_LOCAL))
                 result = operator.perform(request, selected=selected, confirm=confirm)
         except Exception as exc:
@@ -2742,14 +3197,12 @@ class JarvisCore:
             return {"ok": False, "error": "question is required"}
 
         from brain.tiers import ModelTier
-        from knowledge.graph import KnowledgeGraph
         from research.agent import ResearchAgent
 
         self.state.set(JarvisState.RESEARCHING, detail=question[:120])
-        graph_path = self.kernel.state_root / "knowledge" / "graph.db"
-        graph_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with KnowledgeGraph(graph_path) as graph:
+            if True:
+                graph = self.graph
                 agent = ResearchAgent(
                     brain=self.kernel.provider(ModelTier.FAST_LOCAL), graph=graph
                 )
@@ -2765,10 +3218,7 @@ class JarvisCore:
 
     def knowledge_node(self, node_id: str) -> dict[str, Any]:
         try:
-            from knowledge.graph import KnowledgeGraph
-
-            graph = KnowledgeGraph(self.kernel.state_root / "knowledge" / "graph.db")
-            return graph.node_detail(node_id)
+            return self.graph.node_detail(node_id)
         except Exception as exc:
             return {"error": str(exc)}
 

@@ -227,7 +227,7 @@ def test_speaking_to_jarvis_enters_voice_mode_and_it_answers_aloud():
     engine = FakeEngine(heard="wie geht es weiter")
     core._voice = VoiceService(core.bus, engine_factory=lambda: engine)
 
-    result = core.hear(wav_bytes())
+    result = core.hear(wav_bytes(), origin="ui")
     _wait_for_reply(core)
 
     assert result["ok"] and result["text"] == "wie geht es weiter"
@@ -319,7 +319,7 @@ def post_audio(server, data, path="/api/voice/utterance"):
 
 
 def test_an_utterance_can_be_posted_as_raw_bytes(server):
-    result = post_audio(server, wav_bytes())
+    result = post_audio(server, wav_bytes(), path="/api/voice/utterance?origin=ui")
 
     assert result["ok"] is True
     assert result["text"] == "hallo jarvis"

@@ -67,9 +67,41 @@ def test_execution_stops_at_the_first_failed_step_and_keeps_receipts():
         return SimpleNamespace(ok=ok, id=f"r_{step.step}", detail="ok" if ok else "no such file")
 
     receipts = Composer().execute(plan, run)
-    assert calls == ["file.write", "file.read"]
-    assert [s.status for s in plan.steps] == ["done", "failed", "planned"]
-    assert plan.steps[1].detail == "no such file" and len(receipts) == 2
+    # file.read is an observation (optional by default): its failure is kept
+    # on record and the plan goes on to the step that carries the goal.
+    assert calls == ["file.write", "file.read", "say"]
+    assert [s.status for s in plan.steps] == ["done", "failed", "done"]
+    assert [s.role for s in plan.steps] == ["required", "optional", "optional"]
+    assert plan.steps[1].detail == "no such file" and len(receipts) == 3
+
+
+def test_a_failed_required_step_stops_the_rest_unless_a_replan_takes_over():
+    plan = Composer().parse("x", json.dumps({"mode": "doing", "steps": [
+        {"step": "file.write", "path": "a.txt", "content": "1"}, {"step": "project.create", "name": "p"}, {"step": "say", "text": "done"}]}))
+    calls = []
+
+    def run(step):
+        calls.append(step.step)
+        ok = step.step != "file.write"
+        return SimpleNamespace(ok=ok, id=f"r_{step.step}", detail="ok" if ok else "disk full")
+
+    Composer().execute(plan, run)
+    assert calls == ["file.write"]
+    assert [s.status for s in plan.steps] == ["failed", "skipped", "skipped"]
+
+    # With a replan the remainder is replaced and executed.
+    plan = Composer().parse("x", json.dumps({"mode": "doing", "steps": [
+        {"step": "file.write", "path": "a.txt", "content": "1"}, {"step": "say", "text": "done"}]}))
+    calls.clear()
+
+    def replan(current, failed):
+        fresh = Composer().parse("x", json.dumps({"mode": "doing", "steps": [{"step": "note.create", "title": "a", "text": "1"}, {"step": "say", "text": "done"}]}))
+        fresh.replans = 1
+        return fresh
+
+    Composer().execute(plan, run, replan=replan)
+    assert calls == ["file.write", "note.create", "say"]
+    assert [s.status for s in plan.steps] == ["failed", "skipped", "done", "done"] and plan.replans == 1
 
 
 def test_questions_are_answering_and_compound_detection():

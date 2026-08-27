@@ -37,9 +37,24 @@ class CapabilityManifest:
     tests_location: str = ""
     creation_metadata: dict[str, Any] = field(default_factory=dict)
     validation_status: dict[str, Any] = field(default_factory=dict)
+    #: RUNTIME HEALTH, kept apart from ``status`` (INSTALLATION STATE).
+    #: ``status == "active"`` says the capability is installed and enabled;
+    #: it says nothing about whether the last real call worked.  ``health``
+    #: is written by every execution: state (healthy | degraded | failing |
+    #: unverified), consecutive failures, last ok/error and its text, call
+    #: count, last_used.  A verified runtime failure changes it at once.
+    health: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["health"] = self.health_view()
+        return data
+
+    def health_view(self) -> dict[str, Any]:
+        base = {"state": "unverified", "consecutive_failures": 0, "calls": 0, "last_ok_at": "", "last_error_at": "", "last_error": "",
+                "last_used": "", "repairs": []}
+        base.update(self.health or {})
+        return base
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CapabilityManifest":
@@ -57,6 +72,7 @@ class CapabilityManifest:
             tests_location=str(data.get("tests_location", "")),
             creation_metadata=dict(data.get("creation_metadata") or {}),
             validation_status=dict(data.get("validation_status") or {}),
+            health=dict(data.get("health") or {}),
         )
 
     def validate(self) -> list[str]:

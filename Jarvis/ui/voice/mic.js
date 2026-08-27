@@ -41,7 +41,9 @@ export async function toggle() {
     eye.setEnergy(0);
     const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
     const wav = await toWav(blob);
-    const result = await postBytes("/api/voice/utterance", wav);
+    // The press is the authorisation: the core acts on this utterance
+    // because a person asked for it, not because a detector fired.
+    const result = await postBytes("/api/voice/utterance?origin=ui", wav);
     if (!result.ok) addTurn("note", "", result.reason || result.error || "nothing was heard");
   };
   recorder.start();

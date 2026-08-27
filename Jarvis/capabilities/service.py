@@ -924,6 +924,16 @@ class CapabilityService:
         manifest = self.registry.get(capability_id)
         if manifest is None or manifest.status != "active":
             return ExecutionOutcome(capability_id=capability_id, ok=False, error=f"no active capability {capability_id!r}")
+        outcome = self._execute(manifest, capability_id, payload)
+        # Runtime health is written by what actually happened, every time.
+        try:
+            self.registry.note_execution(capability_id, bool(outcome.ok), str(outcome.error or ((outcome.output or {}).get("error", "") if isinstance(outcome.output, dict) else ""))[:300])
+        except Exception:  # noqa: BLE001 - health bookkeeping never masks the outcome
+            pass
+        return outcome
+
+    def _execute(self, manifest: Any, capability_id: str, payload: dict[str, Any] | None = None) -> ExecutionOutcome:
+        import time
 
         source = Path(manifest.source_location)
         if not source.exists():

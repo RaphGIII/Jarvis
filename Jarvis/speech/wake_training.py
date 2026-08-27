@@ -57,6 +57,10 @@ WINDOW_FRAMES = 16
 #: A window is positive when the word ended within this many seconds before
 #: the window's end -- the detector should fire as the word finishes.
 POSITIVE_TAIL_SECONDS = 0.40
+#: Noise floor added to every clip (RMS in int16 units): a quiet room's dither.
+DITHER_RMS = 4.0
+#: An owner recording whose loudest 80 ms frame is below this holds no word.
+SILENT_RMS = 25.0
 
 POSITIVE_PHRASES = ("Zeus", "Zeus.", "Zeus!", "Hey Zeus", "Zeus,")
 NEGATIVE_PHRASES = (
@@ -135,10 +139,31 @@ def _place(x: np.ndarray, rng: random.Random, *, noise_db: float, gain: float) -
         noise = np.random.default_rng(rng.randint(0, 1 << 30)).normal(0.0, 1.0, CLIP_SAMPLES).astype(np.float32)
         noise = np.convolve(noise, np.ones(4) / 4, mode="same")
         clip += noise * (10 ** (noise_db / 20)) * 32767.0
+    # A microphone never delivers exact zeros.  Without this floor the model
+    # learnt "sound, then digital silence" as a cue and scored 0.99 on a
+    # silent recording the moment it ran into zero padding.
+    clip += np.random.default_rng(rng.randint(0, 1 << 30)).normal(0.0, DITHER_RMS, CLIP_SAMPLES).astype(np.float32)
     return np.clip(clip, -32767, 32767), end
 
 
-def build_dataset(voices_dir: Path, wake_dir: Path, *, per_voice: int, seed: int, log=print):
+def _loudest_frame_rms(x: np.ndarray) -> float:
+    frames = [x[i:i + FRAME] for i in range(0, max(1, len(x) - FRAME + 1), FRAME)]
+    return max((float(np.sqrt(np.mean(np.square(f)))) for f in frames if len(f)), default=0.0)
+
+
+def owner_split(wake_dir: Path, holdout_every: int) -> dict[str, dict[str, list[Path]]]:
+    """Owner recordings by kind, split into train/holdout (every Nth file held out; 0 = none)."""
+
+    out: dict[str, dict[str, list[Path]]] = {}
+    for kind in ("positive", "negative"):
+        folder = wake_dir / kind
+        files = sorted(folder.glob("*.wav")) if folder.is_dir() else []
+        held = [f for i, f in enumerate(files) if holdout_every and (i % holdout_every) == holdout_every - 1]
+        out[kind] = {"train": [f for f in files if f not in held], "holdout": held}
+    return out
+
+
+def build_dataset(voices_dir: Path, wake_dir: Path, *, per_voice: int, seed: int, log=print, holdout_every: int = 0):
     """Clips with (audio, is_positive, word_end_sample, weight)."""
 
     from piper import PiperVoice
@@ -167,12 +192,21 @@ def build_dataset(voices_dir: Path, wake_dir: Path, *, per_voice: int, seed: int
     for _ in range(max(40, per_voice // 2)):
         clip, _end = _place(np.zeros(1, dtype=np.float32), rng, noise_db=rng.choice((-80, -50, -35, -25)), gain=1.0)
         clips.append((clip, 0, 0, 1.0))
+    split = owner_split(wake_dir, holdout_every)
+    meta["owner_holdout"] = {kind: [p.name for p in split[kind]["holdout"]] for kind in split}
+    meta["owner_skipped_silent"] = []
     for kind, label, weight, copies in (("positive", 1, 3.0, 8), ("negative", 0, 1.0, 3)):
-        folder = wake_dir / kind
-        for path in sorted(folder.glob("*.wav")) if folder.is_dir() else []:
-            x = _trim(_load_wav(path))
+        for path in split[kind]["train"]:
+            raw = _load_wav(path)
+            if label and _loudest_frame_rms(raw) < SILENT_RMS:
+                log(f"  skip {kind}/{path.name}: no speech energy (loudest frame rms {_loudest_frame_rms(raw):.0f})")
+                meta["owner_skipped_silent"].append(path.name)
+                continue
+            x = _trim(raw)
             for _ in range(copies):
-                clip, end = _place(_pitch(x, rng.uniform(0.95, 1.05)), rng, noise_db=rng.choice((-80, -40)), gain=rng.uniform(0.6, 1.0))
+                # Gain, timing and pitch vary a little; nothing that would make
+                # the word something the owner never says.
+                clip, end = _place(_pitch(x, rng.uniform(0.95, 1.05)), rng, noise_db=rng.choice((-80, -50, -40)), gain=rng.uniform(0.5, 1.0))
                 clips.append((clip, label, end, weight))
             meta[f"owner_{kind}"] += 1
     rng.shuffle(clips)
@@ -278,7 +312,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=str(root / "data" / "models" / "wake" / "zeus.npz"))
     parser.add_argument("--per-voice", type=int, default=120)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--threshold", type=float, default=0.7)
+    parser.add_argument("--threshold", type=float, default=None,
+                        help="recommended threshold written to the manifest; default: from the owner evaluation, else 0.7")
+    parser.add_argument("--owner-holdout", type=int, default=0, metavar="N",
+                        help="hold every Nth owner recording out of training and report on them honestly (0 = train on all)")
     args = parser.parse_args(argv)
 
     from openwakeword.utils import AudioFeatures
@@ -286,7 +323,8 @@ def main(argv: list[str] | None = None) -> int:
     af = AudioFeatures(inference_framework="onnx")
     started = time.time()
     print("building the dataset")
-    clips, meta = build_dataset(Path(args.voices), Path(args.wake_dir), per_voice=args.per_voice, seed=args.seed)
+    clips, meta = build_dataset(Path(args.voices), Path(args.wake_dir), per_voice=args.per_voice, seed=args.seed,
+                                holdout_every=args.owner_holdout)
     positives = sum(1 for c in clips if c[1] == 1)
     print(f"  {positives} positive, {len(clips) - positives} negative clips; owner samples: {meta['owner_positive']}+/{meta['owner_negative']}-")
     print("training")
@@ -296,8 +334,37 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out, **weights)
-    manifest = {"model": str(out), "threshold": args.threshold, "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "seconds": round(time.time() - started, 1), "dataset": meta, "report": report,
+
+    # The owner's own recordings through the real detector -- held-out ones
+    # when training held some out (an honest generalisation figure), all of
+    # them otherwise (an in-sample upper bound; labelled as such).
+    from speech import wake_eval
+    from speech.wake_zeus import ZeusDetector, model_fingerprint
+
+    detector = ZeusDetector.from_weights(weights, threshold=0.7, hits=2, cooldown=0.0, features=af, fingerprint=model_fingerprint(out))
+    owner_report = None
+    split = owner_split(Path(args.wake_dir), args.owner_holdout)
+    if any(split[k]["holdout"] for k in split):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for kind in split:
+                (Path(tmp) / kind).mkdir()
+                for path in split[kind]["holdout"]:
+                    (Path(tmp) / kind / path.name).write_bytes(path.read_bytes())
+            print(f"evaluating {sum(len(split[k]['holdout']) for k in split)} held-out owner recordings")
+            owner_report = wake_eval.evaluate(detector, Path(tmp))
+            owner_report["in_sample"] = False
+    elif meta["owner_positive"]:
+        print("evaluating the owner recordings (in-sample: the model trained on them)")
+        owner_report = wake_eval.evaluate(detector, Path(args.wake_dir))
+        owner_report["in_sample"] = True
+    threshold = args.threshold
+    if threshold is None:
+        threshold = (owner_report or {}).get("recommended_threshold") or 0.7
+    manifest = {"model": str(out), "threshold": threshold, "threshold_source": "argument" if args.threshold is not None else "owner evaluation",
+                "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "fingerprint": model_fingerprint(out),
+                "seconds": round(time.time() - started, 1), "dataset": meta, "report": report, "owner_evaluation": owner_report,
                 "clips": {"positive": positives, "negative": len(clips) - positives, "holdout": len(holdout)}}
     out.with_suffix(".json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"wrote {out} and {out.with_suffix('.json')} in {time.time() - started:.0f}s")

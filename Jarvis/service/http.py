@@ -168,6 +168,17 @@ class JarvisHTTPServer:
                 selected=str(body.get("selected", "")),
                 confirm=bool(body.get("confirm", False)),
             ),
+            "/api/knowledge/create": lambda body: self.core.knowledge_create(
+                str(body.get("title", "")), str(body.get("text", body.get("body", ""))), type=str(body.get("type", "note")),
+                tags=list(body.get("tags") or []), links=body.get("links") or [], provenance=str(body.get("provenance", "owner")),
+            ),
+            "/api/knowledge/link": lambda body: self.core.knowledge_link(
+                str(body.get("source", "")), str(body.get("target", "")), str(body.get("relation", "relates_to"))
+            ),
+            "/api/knowledge/read": lambda body: self.core.knowledge_read(str(body.get("id", body.get("title", "")))),
+            "/api/knowledge/backlinks": lambda body: self.core.knowledge_backlinks(str(body.get("id", body.get("title", "")))),
+            "/api/knowledge/delete": lambda body: self.core.knowledge_delete(str(body.get("id", body.get("title", ""))), confirm=bool(body.get("confirm", False))),
+            "/api/knowledge/stats": lambda _: self.core.knowledge_stats(),
             "/api/knowledge/ingest": lambda body: self.core.ingest(
                 str(body.get("path", "")),
                 text=str(body.get("text", "")),
@@ -261,6 +272,8 @@ class JarvisHTTPServer:
             "/api/capabilities/report": lambda _: self.core.capability_report(),
             "/api/voice/wake": lambda _: self.core.wake_status(),
             "/api/voice/wake/train": lambda _: self.core.wake_train(),
+            "/api/voice/wake/evaluate": lambda _: self.core.wake_evaluate(),
+            "/api/voice/wake/listener": lambda body: self.core.wake_listener_report(dict(body or {})),
             "/api/release": lambda _: self.core.release_status(),
             "/api/release/build": lambda body: self.core.release_build(verify=bool(body.get("verify", True))),
             "/api/release/verify": lambda body: self.core.release_verify(str(body.get("candidate", ""))),
@@ -377,8 +390,14 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                 # cost a third more bandwidth and a copy on both sides.
                 answer = (query.get("answer") or ["1"])[0] not in {"0", "false", "no"}
                 language = (query.get("language") or [""])[0]
+                # Who opened this listening session: the listener sends the
+                # wake score that fired, the browser's microphone button says
+                # "ui".  Audio with neither is transcribed but never acted on.
+                wake = (query.get("wake") or [self.headers.get("X-Jarvis-Wake") or ""])[0] or None
+                session = (query.get("session") or [self.headers.get("X-Jarvis-Session") or ""])[0]
+                origin = (query.get("origin") or [self.headers.get("X-Jarvis-Origin") or ""])[0]
                 try:
-                    result = app.core.hear(raw, language=language, answer=answer)
+                    result = app.core.hear(raw, language=language, answer=answer, wake=wake, session=session, origin=origin)
                 except Exception as exc:
                     self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
                     return
