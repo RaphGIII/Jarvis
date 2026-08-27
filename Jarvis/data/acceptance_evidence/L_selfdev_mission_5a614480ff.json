@@ -1,0 +1,277 @@
+{
+  "request": "Zeus, show my current GPU utilization subtly next to your eye.",
+  "mission_id": "5a614480ff",
+  "scope": "",
+  "language": "en",
+  "phase": "DONE",
+  "started_at": "2026-08-26T23:14:22.883752+00:00",
+  "updated_at": "2026-08-26T23:57:33.554078+00:00",
+  "acceptance": [
+    {
+      "criterion": "ZEUS still imports and its kernel still assembles",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "-c",
+        "from core.kernel import JarvisKernel; k = JarvisKernel(); assert k.tools.names(); print('JARVIS_HEALTH_OK')"
+      ],
+      "expect": "JARVIS_HEALTH_OK"
+    },
+    {
+      "criterion": "the interface is served whole and its parts are still there",
+      "command": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "jarvis.verify_ui"
+      ],
+      "expect": "UI_OK"
+    }
+  ],
+  "area": "ui",
+  "investigation": {
+    "terms": [
+      "gpu",
+      "utilization",
+      "eye"
+    ],
+    "files": [
+      "brain/resources.py",
+      "tests/test_resources.py",
+      "runtime/environment.py",
+      "service/selfdev.py",
+      "ui/index.html",
+      "ui/app.js",
+      "ui/eye.js",
+      "service/http.py"
+    ]
+  },
+  "worktree": "C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\5a614480ff\\candidate_c75b729702",
+  "changed_files": [
+    "brain/resources.py",
+    "service/core.py",
+    "service/http.py",
+    "tests/test_resources.py",
+    "ui/app.js",
+    "ui/index.html"
+  ],
+  "local_attempts": 1,
+  "escalated": true,
+  "expert": {
+    "status": "completed",
+    "verified": true,
+    "seconds": 914.8,
+    "provider": "claude_code",
+    "summary": "I implemented the change end to end. Here's what I did and why:\n\n**Backend \u2014 measure it (`brain/resources.py`)**\n- `HostProbe.detect_gpus()` now asks `nvidia-smi` for `utilization.gpu` alongside the memory columns, and `GpuInfo` carries `utilization_percent`. Parsing accepts both the 4-column (old) and 5-column (new) forms, and an unreadable `[N/A]` load degrades to `0` instead of discarding an otherwise good memory reading \u2014 so the existing tests and stubbed runners still parse.\n- New `GpuUsage"
+  },
+  "verification": {
+    "ok": true,
+    "checks": [
+      {
+        "criterion": "ZEUS still imports and its kernel still assembles",
+        "ok": true,
+        "output": "JARVIS_HEALTH_OK\n\n"
+      },
+      {
+        "criterion": "the interface is served whole and its parts are still there",
+        "ok": true,
+        "output": "  ok   index.html exists -- 21180 bytes\n  ok   eye.js exists -- 23101 bytes\n  ok   app.js exists -- 34056 bytes\n  ok   the page still has its parts -- 11 ids present\n  ok   eye.js is loaded by the page\n  ok   app.js is loaded by the page\n  ok   the token placeholder survives\n  ok   eye.js is structurally intact -- balanced\n  ok   eye.js still defines what the page needs\n  ok   app.js is structurally intact -- balanced\n  ok   app.js still defines what the page needs\n  ok   index.html is served -- 200, 21144 bytes\n  ok   eye.js is served -- 200, 23101 bytes\n  ok   app.js is served -- 200, 34056 bytes\n  ok   the served page carries a usable token\n\nUI_OK\n\n"
+      },
+      {
+        "criterion": "targeted tests: tests/test_acceptance.py, tests/test_action_receipts.py, tests/test_build_remote_executor_v1.py, tests/test_capability_acquisition_v04.py, tests/test_code_index.py, tests/test_console.py",
+        "ok": true,
+        "output": "..X..................................................................... [ 34%]\n........................................................................ [ 69%]\n................................................................         [100%]\n207 passed, 1 xpassed in 154.83s (0:02:34)\n\n"
+      }
+    ],
+    "tests": [
+      "tests/test_acceptance.py",
+      "tests/test_action_receipts.py",
+      "tests/test_build_remote_executor_v1.py",
+      "tests/test_capability_acquisition_v04.py",
+      "tests/test_code_index.py",
+      "tests/test_console.py"
+    ],
+    "detail": "ZEUS still imports and its kernel still assembles: ok; the interface is served whole and its parts are still there: ok; targeted tests: tests/test_acceptance.py, tests/test_action_receipts.py, tests/test_build_remote_executor_v1.py, tests/test_capability_acquisition_v04.py, tests/test_code_index.py, tests/test_console.py: ok"
+  },
+  "promotion": {
+    "outcome": "PROMOTED",
+    "candidate": "C:\\Users\\rapha\\AppData\\Local\\Temp\\jarvis_selfdev\\5a614480ff\\candidate_c75b729702",
+    "target": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis",
+    "known_good_revision": "79ee4b149b8467d5d496521b46a6e44271a8e31d",
+    "promoted_revision": "e76be1948c0f8cf23e8b136ee0c6eebef04a0926",
+    "snapshot_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\snapshots\\d3c535567953_79ee4b14",
+    "changed_files": [
+      "brain/resources.py",
+      "service/core.py",
+      "service/http.py",
+      "tests/test_resources.py",
+      "ui/app.js",
+      "ui/index.html"
+    ],
+    "stages": [
+      {
+        "stage": "PREFLIGHT",
+        "ok": true,
+        "detail": "known good 79ee4b149b84, 6 file(s)",
+        "at": "2026-08-26T23:56:45.174993+00:00"
+      },
+      {
+        "stage": "SNAPSHOT",
+        "ok": true,
+        "detail": "6 file(s) saved to D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\snapshots\\d3c535567953_79ee4b14",
+        "at": "2026-08-26T23:56:45.181225+00:00"
+      },
+      {
+        "stage": "APPLY",
+        "ok": true,
+        "detail": "copied 6 file(s)",
+        "at": "2026-08-26T23:56:45.193423+00:00"
+      },
+      {
+        "stage": "VERIFY",
+        "ok": true,
+        "detail": "acceptance re-run on the live tree",
+        "at": "2026-08-26T23:56:51.155229+00:00"
+      },
+      {
+        "stage": "RESTART",
+        "ok": true,
+        "detail": "no restart hook configured",
+        "at": "2026-08-26T23:56:51.155289+00:00"
+      },
+      {
+        "stage": "HEALTH_CHECK",
+        "ok": true,
+        "detail": "JARVIS_HEALTH_OK\n\n",
+        "at": "2026-08-26T23:56:55.598950+00:00"
+      },
+      {
+        "stage": "COMMIT",
+        "ok": true,
+        "detail": "[adaptive-brain-v1 e76be19] ZEUS self-development: Zeus, show my current GPU utilization subtly next to your eye.\n 6 files changed, 333 insertions(+), 40 deletions(-)",
+        "at": "2026-08-26T23:56:56.769551+00:00"
+      },
+      {
+        "stage": "DONE",
+        "ok": true,
+        "detail": "e76be1948c0f8cf23e8b136ee0c6eebef04a0926",
+        "at": "2026-08-26T23:56:56.842731+00:00"
+      }
+    ],
+    "reason": "candidate verified, promoted and healthy",
+    "started_at": "2026-08-26T23:56:44.988929+00:00",
+    "finished_at": "2026-08-26T23:56:56.842714+00:00",
+    "promotion_id": "d3c535567953",
+    "success": true
+  },
+  "promotion_id": "d3c535567953",
+  "expected_revision": "e76be1948c0f8cf23e8b136ee0c6eebef04a0926",
+  "outcome": "promoted",
+  "reason": "running at the promoted revision",
+  "timings": {
+    "understand": 0.0,
+    "investigate": 11.8,
+    "build": 716.4,
+    "verify": 499.0,
+    "escalate": 914.9,
+    "promote": 12.6
+  },
+  "model_calls": 0,
+  "events": [
+    {
+      "at": "2026-08-26T23:14:22.967845+00:00",
+      "phase": "UNDERSTAND",
+      "detail": "area=ui, 2 acceptance checks"
+    },
+    {
+      "at": "2026-08-26T23:14:34.782549+00:00",
+      "phase": "INVESTIGATE",
+      "detail": "3 terms, 8 candidate files"
+    },
+    {
+      "at": "2026-08-26T23:14:34.843775+00:00",
+      "phase": "BUILD",
+      "detail": "BUILD_LOCAL, attempt 1, budget 2400s"
+    },
+    {
+      "at": "2026-08-26T23:26:31.225628+00:00",
+      "phase": "BUILD",
+      "detail": "SELF_DEVELOPMENT_CANDIDATE_REJECTED; 0 files: []",
+      "error": "development cycles exhausted before deterministic acceptance",
+      "cycles": 3
+    },
+    {
+      "at": "2026-08-26T23:26:31.228919+00:00",
+      "phase": "VERIFY",
+      "detail": "no changes in the candidate"
+    },
+    {
+      "at": "2026-08-26T23:26:31.331869+00:00",
+      "phase": "ESCALATE",
+      "detail": "submitting to expert"
+    },
+    {
+      "at": "2026-08-26T23:41:46.216302+00:00",
+      "phase": "ESCALATE",
+      "detail": "expert completed in 914.8s; 22 changed files"
+    },
+    {
+      "at": "2026-08-26T23:44:39.433484+00:00",
+      "phase": "VERIFY",
+      "detail": "ZEUS still imports and its kernel still assembles: ok; the interface is served whole and its parts are still there: ok; targeted tests: tests/test_acceptance.py, tests/test_action_receipts.py, tests/test_build_remote_executor_v1.py, tests/test_capability_acquisition_v04.py, tests/test_code_index.py, tests/test_console.py: ok"
+    },
+    {
+      "at": "2026-08-26T23:44:39.716515+00:00",
+      "phase": "PROMOTE",
+      "detail": "22 files into the live tree"
+    },
+    {
+      "at": "2026-08-26T23:44:40.136238+00:00",
+      "phase": "FAILED",
+      "detail": "PermissionError: [WinError 5] Zugriff verweigert: 'D:\\\\Jarvis_recovery_20260823\\\\repo\\\\Jarvis\\\\__pycache__'\nling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\service\\selfdev.py\", line 232, in run\n    self._timed(mission, \"promote\", lambda: self._promote(mission))\n    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+    },
+    {
+      "at": "2026-08-26T23:50:17.712507+00:00",
+      "phase": "RESUME",
+      "detail": "resuming with the existing candidate (6 files)"
+    },
+    {
+      "at": "2026-08-26T23:53:00.455354+00:00",
+      "phase": "VERIFY",
+      "detail": "ZEUS still imports and its kernel still assembles: ok; the interface is served whole and its parts are still there: ok; targeted tests: tests/test_acceptance.py, tests/test_action_receipts.py, tests/test_build_remote_executor_v1.py, tests/test_capability_acquisition_v04.py, tests/test_code_index.py, tests/test_console.py: ok"
+    },
+    {
+      "at": "2026-08-26T23:53:00.463534+00:00",
+      "phase": "PROMOTE",
+      "detail": "6 files into the live tree"
+    },
+    {
+      "at": "2026-08-26T23:53:00.688965+00:00",
+      "phase": "FAILED",
+      "detail": "promotion REJECTED: refusing to promote onto a dirty working tree -- a rollback would destroy the uncommitted work. Commit or stash it first."
+    },
+    {
+      "at": "2026-08-26T23:54:01.780064+00:00",
+      "phase": "RESUME",
+      "detail": "resuming with the existing candidate (6 files)"
+    },
+    {
+      "at": "2026-08-26T23:56:44.948619+00:00",
+      "phase": "VERIFY",
+      "detail": "ZEUS still imports and its kernel still assembles: ok; the interface is served whole and its parts are still there: ok; targeted tests: tests/test_acceptance.py, tests/test_action_receipts.py, tests/test_build_remote_executor_v1.py, tests/test_capability_acquisition_v04.py, tests/test_code_index.py, tests/test_console.py: ok"
+    },
+    {
+      "at": "2026-08-26T23:56:44.961104+00:00",
+      "phase": "PROMOTE",
+      "detail": "6 files into the live tree"
+    },
+    {
+      "at": "2026-08-26T23:56:56.845058+00:00",
+      "phase": "RESTARTING",
+      "detail": "asking the supervisor to restart at e76be1948c0f"
+    },
+    {
+      "at": "2026-08-26T23:57:33.554065+00:00",
+      "phase": "DONE",
+      "detail": "running at the promoted revision"
+    }
+  ]
+}

@@ -53,6 +53,32 @@ READY is `/api/health.ready`, earned by a generation, never by a port. Preflight
 ### Phase 10 — SelfDev through ZEUS — IMPLEMENTED, TESTED
 `Intent.SELF_DEVELOPMENT` (DE/EN hints, checked before capability/project/action, never for questions) → `service/selfdev.py` `SelfDevMission` (one JSON per mission in `data/jarvis/selfdev/`): UNDERSTAND (acceptance commands) → INVESTIGATE (deterministic code index) → BUILD (RepositoryEngineer, BUILD_LOCAL, isolated worktree) → VERIFY (acceptance re-run + targeted tests chosen from changed modules, protected-path check) → ESCALATE (ExpertGateway, only after local failure, expert work re-verified) → PROMOTE (Promoter: snapshot/copy/static health/commit) → RESTARTING (`lifecycle.request_restart(promotion_id)`) → after restart the verdict is taken from the supervisor's deployment receipt and delivered into the transcript. Runs in its own thread; conversation stays open. Tests: `tests/test_selfdev.py` (5).
 
+### Phase 11 — SelfDev live acceptance #1 — LIVE VERIFIED (mission `5a614480ff`)
+
+Request through the running product (`/api/message`, 23:14:22Z):
+*"Zeus, show my current GPU utilization subtly next to your eye."* Fable wrote none of the feature.
+
+| phase | what happened | time |
+|---|---|---|
+| UNDERSTAND | area=ui; acceptance = kernel import + `verify_ui` | 0 s |
+| INVESTIGATE | code index → ui/index.html, ui/app.js, service/http.py, service/core.py | 12 s |
+| BUILD (BUILD_LOCAL) | 3 cycles, anchor misses + invalid replacement text, **0 files changed** → rejected | 716 s |
+| ESCALATE | `claude_code` expert in the worktree, 22 changed paths | 915 s |
+| VERIFY | kernel import ok, verify_ui ok, 6 targeted test files ok | 173 s |
+| PROMOTE #1 | **crashed**: `git status` listed untracked `__pycache__/` (no .gitignore at the worktree root) → PermissionError | — |
+| fix + resume | `--untracked-files=all`, caches/`data/` excluded; `/api/selfdev/resume` | |
+| PROMOTE #2 | **refused**: dirty tree — the voice registry had rewritten tracked `data/voices/voices.json` | — |
+| fix + resume | promoter ignores runtime state under `data/` | |
+| VERIFY + PROMOTE #3 | verified again (163 s); 6 files copied, health ok, committed `e76be19` | 13 s |
+| RESTARTING | exit 75 → supervisor → READY at `e76be19` in 36 s → known-good | 36 s |
+| DONE | verdict from the deployment receipt, delivered into the transcript | |
+
+Total 2155 s of mission time (35.9 min) + two generic infrastructure repairs by Fable.
+
+Independent verification: `/api/gpu` → `utilization_percent: 2, memory_used_mib: 5189` while `nvidia-smi` read `1–2 %, 5185 MiB` at the same moments; headless Chrome screenshot shows a vertical meter beside the eye reading "6%" (`data/acceptance_evidence/L_selfdev_gpu_meter_ui.png`); second restart → still `e76be19`, `/api/gpu` live, `gpuMeter` served (Gate L, and persistence).
+
+What it says about the local tier: the 7B could not land a single edit on this repository in 12 minutes (same edit-mechanics failures as the earlier acquisitions). The system escalated on its own, re-verified the expert's work, and promoted only after its own checks — the expert's report was never the verdict.
+
 ## Live acceptance passed
 
 | gate | evidence |
@@ -61,6 +87,9 @@ READY is `/api/health.ready`, earned by a generation, never by a port. Preflight
 | M promote + restart under supervisor | restart via `/api/restart`, exit 75, READY 6 s |
 | N conversation resumes after restart | `resumed: {turns: 2, ...}` in `/api/health` |
 | O broken candidate rolls back | receipt `kind=rollback outcome=rolled_back` 2026-08-26T22:45:03Z |
+| L SelfDev request through ZEUS → visible change | mission `5a614480ff`, commit `e76be19`, screenshot in acceptance_evidence |
+| M (again) ZEUS promoted and restarted itself | receipt `kind=promotion promotion_id=…` 23:57:34Z, 36 s |
+| N (again) conversation resumed after self-update | `resumed: {turns: 7}` |
 
 ## Open blockers / not yet done
 
