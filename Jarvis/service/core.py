@@ -1904,6 +1904,19 @@ class JarvisCore:
 
         from service.selfdev import SelfDevMission, SelfDevRunner
 
+        # Only the installed product may develop the installed product.  A
+        # core with a state root elsewhere -- a test's temporary kernel, an
+        # ad-hoc script -- would otherwise build in a worktree of the live
+        # repository, call the expert and promote into it; a unit test did
+        # exactly that on 2026-08-27 (commit 546d43f).
+        allowed, why = self._selfdev_allowed()
+        if not allowed:
+            self.emit(EventType.TOOL, {"summary": f"self-development refused: {why}", "source": "selfdev"}, scope=scope)
+            de = self.language.startswith("de")
+            self._deliver((f"Selbstentwicklung ist hier nicht verfügbar: {why}" if de else f"Self-development is not available here: {why}"),
+                          scope=scope, backend="selfdev", final_state=JarvisState.WAITING)
+            return
+
         active = self.selfdev_store.active()
         if active is not None:
             de = self.language.startswith("de")
@@ -2269,6 +2282,20 @@ class JarvisCore:
 
         return Doctor(self, repository=self.selfdev_repository()).run()
 
+    def _selfdev_allowed(self) -> tuple[bool, str]:
+        """Whether this core is the installed product (state root inside the repository)."""
+
+        try:
+            state = Path(self.kernel.state_root).resolve()
+            repo = self.selfdev_repository().resolve()
+        except OSError as exc:
+            return False, f"paths unreadable: {exc}"
+        if not state.is_relative_to(repo):
+            return False, f"this core's state ({state}) is not the installed product's ({repo}); only the product develops the product"
+        if not (repo / "zeus_supervisor").is_dir():
+            return False, "the repository does not look like ZEUS"
+        return True, ""
+
     def selfdev_repository(self) -> Path:
         """ZEUS's own directory, from where this code lives -- never from an
         environment variable a mission could have inherited."""
@@ -2295,6 +2322,9 @@ class JarvisCore:
         mission = self.selfdev_store.load(mission_id)
         if mission is None:
             return {"ok": False, "error": f"no mission {mission_id}"}
+        allowed, why = self._selfdev_allowed()
+        if not allowed:
+            return {"ok": False, "error": why}
         if self.selfdev_store.active() is not None:
             return {"ok": False, "error": "another self-development mission is active"}
         runner = SelfDevRunner(

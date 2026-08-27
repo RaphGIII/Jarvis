@@ -200,6 +200,10 @@ Second invocation, *"Zeus, zähle die Wörter, Zeilen und Zeichen in der Datei p
 - **Voice**: owner recordings (above); streaming TTS exists, barge-in exists, neither acoustically verified here.
 - **UI**: the operating-environment skeleton and 12 views exist; visual canvas, document reader, research workspace, decision ledger, memory inspector, notification center, human-action queue, automation view, device map, split view are stubs-by-architecture (registry + inspector), not built.
 
+## A self-development nobody asked for — found during the final test run, closed structurally
+
+While the final full suite ran, commit `546d43f` "ZEUS self-development: Erzaehl mir von deinen Faehigkeiten als Entwickler" appeared on the branch. `tests/test_action_receipts.py:610` says that sentence to a *test* core (temporary state root, stub model). The new router read "Entwickler" as the modify stem `entwickl` next to "deinen", started a SelfDev mission, the test core's runner built in a worktree of the **live** repository (`selfdev_repository()` derives from `__file__`), BUILD_LOCAL (the stub) failed, the **real expert** was called, it wrote a correct fix (describe-verbs are questions, `entwickl(?!er)`, a self-description is a registry READ), the verifier passed it and it was promoted into the live tree — all from a unit test. The expert's change is kept (reviewed; the routing tests pass with it). The structural hole is closed: `_selfdev_allowed()` — only a core whose state root lies inside the repository (the installed product) may develop the product; any other core gets "self-development is not available here" and nothing is created (`test_only_the_installed_product_develops_the_product`). Same gate on `resume_selfdev`.
+
 ## Test status
 
 `tests/test_routing.py tests/test_isolation.py tests/test_selfdev.py tests/test_promotion.py tests/test_music.py tests/test_corrections.py tests/test_action_receipts.py`: 262 passed. `tests/test_desktop_lifecycle.py tests/test_supervisor.py tests/test_desktop_window.py tests/test_release.py`: 49 passed.

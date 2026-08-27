@@ -1047,3 +1047,15 @@ def test_umlauts_do_not_hide_a_claim():
 
     assert find_claim("Ich habe die Datei erstellt und geprüft.") is not None
     assert find_claim("Ich habe die Datei erstellt und geprueft.") is not None
+
+
+def test_only_the_installed_product_develops_the_product(live):
+    """A core with a temporary state root (this test's) asked to change ZEUS must not
+    build in a worktree of the live repository. On 2026-08-27 a test's core did, called
+    the real expert and promoted commit 546d43f into the live tree."""
+
+    core, client = live(LyingProvider("done"))
+    reply = client.say("Zeus, aendere dein Auge: mach es im Leerlauf groesser.")
+    assert "not available here" in reply["text"] or "nicht verf" in reply["text"]
+    assert core.selfdev_store.active() is None and core.selfdev_store.list() == []
+    assert core.resume_selfdev("nothing")["ok"] is False
