@@ -191,7 +191,7 @@ def rule_for(what_was_wrong: str, *, request: str, classification: str, scope: s
 #: override, which :func:`service.routing.route` applies before it decides.
 _INTENT_WORDS = (
     ("self_development", re.compile(
-        r"(selbstentwicklung|self[-\s]?development|an dir selbst|dich selbst (?:aendern|ändern|verbessern)"
+        r"(selbstentwicklung|self[-\s]?development|an dir selbst|an zeus selbst|(?:aenderung|änderung) an zeus|dich selbst (?:aendern|ändern|verbessern)"
         r"|(?:eine|die) (?:aenderung|änderung|änderung) an dir|change (?:to )?yourself|modify yourself|kein(?:e)? (?:lied|song|musik)|not (?:a )?(?:song|music))", re.I)),
     ("real_world_action", re.compile(r"(einfach ausfuehren|einfach ausführen|eine aktion|just do it|an action, not)", re.I)),
     ("conversation", re.compile(r"(nur eine frage|just a question|only a question|nur reden)", re.I)),

@@ -16,6 +16,10 @@ conversation does not volunteer it.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import json
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -1577,6 +1581,208 @@ class JarvisCore:
             return {"ok": False, "error": "a release rollback needs confirm=true"}
         return self.releases.rollback("owner requested").to_dict()
 
+    # ------------------------------------------------------------------
+    # Universal search -- one box over everything ZEUS keeps
+    # ------------------------------------------------------------------
+
+    def universal_search(self, query: str, *, limit: int = 30, types: Iterable[str] = ()) -> dict[str, Any]:
+        """Projects, missions, capabilities, corrections, knowledge, activity, receipts.
+
+        Local indexes only; every hit names its type and where to open it.
+        Substring matching over the stored records: cheap, instant, honest.
+        """
+
+        q = (query or "").strip().lower()
+        wanted = set(types) if types else set()
+        results: list[dict[str, Any]] = []
+        if not q:
+            return {"results": results, "query": query}
+
+        def want(kind: str) -> bool:
+            return not wanted or kind in wanted
+
+        def add(kind: str, ident: str, title: str, snippet: str = "", when: str = "", score: int = 1) -> None:
+            results.append({"type": kind, "id": ident, "title": title[:160], "snippet": snippet[:200], "when": when, "score": score})
+
+        try:
+            if want("project"):
+                for p in self.list_projects().get("projects", []):
+                    text = f"{p.get('title', '')} {p.get('goal', '')}".lower()
+                    if q in text:
+                        add("project", str(p.get("id", "")), p.get("title") or p.get("goal", ""), f"{p.get('state', '')} · {p.get('tasks', 0)} tasks", str(p.get("updated_at", "")), 3)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if want("mission"):
+                for m in self.selfdev_store.list():
+                    if q in m.request.lower() or q in m.mission_id:
+                        add("mission", m.mission_id, m.request, f"{m.phase} · {m.outcome or 'running'}", m.updated_at, 3)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if want("capability"):
+                for c in self.list_capabilities():
+                    text = f"{c.get('capability_id', '')} {c.get('description', '')}".lower()
+                    if q in text:
+                        add("capability", str(c.get("capability_id", "")), str(c.get("capability_id", "")), f"{c.get('status', '')} v{c.get('version', '')}", "", 3)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if want("correction"):
+                for c in self.corrections.list(include_inactive=True):
+                    if q in f"{c.what_was_wrong} {c.original_request}".lower():
+                        add("correction", c.correction_id, c.what_was_wrong, f"{c.classification} · {c.scope}", c.at, 2)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if want("knowledge"):
+                graph = self.knowledge_graph(query=query, limit=20)
+                for n in graph.get("nodes", [])[:12]:
+                    add("knowledge", str(n.get("id", "")), str(n.get("title", "")), str(n.get("type", "")), str(n.get("updated_at", "")), 2)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if want("activity"):
+                for entry in reversed(self.list_activity(600).get("activity", [])):
+                    if q in str(entry.get("summary", "")).lower():
+                        add("receipt" if entry.get("receipt_id") else "activity", str(entry.get("receipt_id") or entry.get("seq", "")),
+                            str(entry.get("summary", "")), str(entry.get("kind", "")), str(entry.get("at", "")), 1)
+                        if sum(1 for r in results if r["type"] in {"activity", "receipt"}) >= 10:
+                            break
+        except Exception:  # noqa: BLE001
+            pass
+        results.sort(key=lambda r: (-r["score"], r["when"]), reverse=False)
+        results.sort(key=lambda r: -r["score"])
+        return {"results": results[:limit], "query": query, "count": len(results)}
+
+    def selfdev_diff(self, mission_id: str) -> dict[str, Any]:
+        """The candidate's diff: from the kept evidence patch, or the live worktree."""
+
+        mission = self.selfdev_store.load(mission_id)
+        if mission is None:
+            return {"ok": False, "error": f"no mission {mission_id}"}
+        if mission.evidence_patch and Path(mission.evidence_patch).is_file():
+            return {"ok": True, "patch": Path(mission.evidence_patch).read_text(encoding="utf-8", errors="replace")[:200_000], "source": "evidence"}
+        if mission.worktree and Path(mission.worktree).is_dir():
+            from service.isolation import CandidateWorkspace
+
+            ws = CandidateWorkspace.attach(self.selfdev_repository(), mission_id, mission.worktree)
+            return {"ok": True, "patch": ws.diff()[:200_000], "source": "worktree"}
+        return {"ok": False, "error": "no diff is kept for this mission"}
+
+    # ------------------------------------------------------------------
+    # Wake word -- recordings, training and a test, all from the product
+    # ------------------------------------------------------------------
+
+    def _wake_dir(self) -> Path:
+        return self.selfdev_repository() / "data" / "wake"
+
+    def wake_status(self) -> dict[str, Any]:
+        root = self._wake_dir()
+        model = self.selfdev_repository() / "data" / "models" / "wake" / "zeus.npz"
+        manifest_path = model.with_suffix(".json")
+        manifest: dict[str, Any] = {}
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+        except (OSError, ValueError):
+            manifest = {}
+        positive = len(list((root / "positive").glob("*.wav"))) if (root / "positive").is_dir() else 0
+        negative = len(list((root / "negative").glob("*.wav"))) if (root / "negative").is_dir() else 0
+        return {
+            "ok": True, "wake_word": "zeus", "model_trained": model.is_file(), "model": str(model) if model.is_file() else "",
+            "positive": positive, "negative": negative, "owner_samples": positive > 0,
+            "threshold": manifest.get("threshold"), "trained_at": manifest.get("trained_at"),
+            "metrics": manifest.get("metrics") or manifest.get("held_out") or None, "manifest": manifest,
+        }
+
+    def wake_record(self, wav: bytes, *, kind: str) -> dict[str, Any]:
+        if kind not in {"positive", "negative"}:
+            return {"ok": False, "error": "kind must be positive or negative"}
+        if len(wav) < 2000 or wav[:4] != b"RIFF":
+            return {"ok": False, "error": "not a WAV recording"}
+        folder = self._wake_dir() / kind
+        folder.mkdir(parents=True, exist_ok=True)
+        n = len(list(folder.glob("owner_*.wav"))) + 1
+        (folder / f"owner_{n:03d}.wav").write_bytes(wav)
+        self.emit(EventType.TOOL, {"summary": f"wake-word sample recorded ({kind} #{n})", "source": "voice"})
+        status = self.wake_status()
+        return {"ok": True, "saved": str(folder / f"owner_{n:03d}.wav"), "positive": status["positive"], "negative": status["negative"]}
+
+    def _speech_python(self) -> str:
+        venv = self.selfdev_repository() / ".venv-speech" / "Scripts" / "python.exe"
+        return str(venv) if venv.is_file() else ""
+
+    def wake_train(self) -> dict[str, Any]:
+        python = self._speech_python()
+        if not python:
+            return {"ok": False, "error": "no .venv-speech; voice is not set up"}
+        self.state.set(JarvisState.WORKING, detail="training the wake word")
+        try:
+            completed = subprocess.run([python, "-m", "speech.wake_training"], cwd=str(self.selfdev_repository()), capture_output=True,
+                                       text=True, timeout=1800, encoding="utf-8", errors="replace",
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+        except subprocess.TimeoutExpired:
+            self.state.set(JarvisState.IDLE)
+            return {"ok": False, "error": "training did not finish within 30 minutes"}
+        finally:
+            self.state.set(JarvisState.IDLE)
+        output = f"{completed.stdout}\n{completed.stderr}"
+        metrics: dict[str, Any] = {}
+        for line in output.splitlines():
+            lowered = line.lower()
+            if "recall" in lowered:
+                metrics.setdefault("lines", []).append(line.strip())
+        status = self.wake_status()
+        self.emit(EventType.NOTIFICATION, {"kind": "voice", "text": "wake-word model trained" if completed.returncode == 0 else "wake-word training failed"})
+        return {"ok": completed.returncode == 0, "output": output[-3000:], "metrics": {**(status.get("metrics") or {}), **metrics},
+                "trained_at": status.get("trained_at"), "error": "" if completed.returncode == 0 else output[-800:]}
+
+    def wake_test(self, wav: bytes) -> dict[str, Any]:
+        """Score a recording with the trained detector, in the speech venv."""
+
+        python = self._speech_python()
+        if not python:
+            return {"ok": False, "error": "no .venv-speech; voice is not set up"}
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
+            fh.write(wav)
+            path = fh.name
+        script = (
+            "import sys, json, wave, numpy as np\n"
+            "from speech.wake_zeus import ZeusDetector\n"
+            f"det = ZeusDetector.load()\n"
+            f"w = wave.open(r'{path}', 'rb'); data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0\n"
+            "frame = 1280; best = 0.0; hit = False\n"
+            "for i in range(0, max(1, len(data) - frame), frame):\n"
+            "    if det.feed(data[i:i + frame]): hit = True\n"
+            "    best = max(best, float(getattr(det, 'last_score', 0.0)))\n"
+            "print(json.dumps({'score': best, 'detected': hit, 'threshold': det.threshold}))\n"
+        )
+        try:
+            completed = subprocess.run([python, "-c", script], cwd=str(self.selfdev_repository()), capture_output=True, text=True, timeout=120,
+                                       encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "the detector did not answer within 120s"}
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        if completed.returncode != 0:
+            return {"ok": False, "error": completed.stderr.strip()[-600:] or "detector failed"}
+        try:
+            return {"ok": True, **json.loads(completed.stdout.strip().splitlines()[-1])}
+        except (ValueError, IndexError):
+            return {"ok": False, "error": "unreadable detector output: " + completed.stdout[-300:]}
+
+    def doctor(self) -> dict[str, Any]:
+        """Deterministic health: never wakes a model (service.doctor)."""
+
+        from service.doctor import Doctor
+
+        return Doctor(self, repository=self.selfdev_repository()).run()
+
     def selfdev_repository(self) -> Path:
         """ZEUS's own directory, from where this code lives -- never from an
         environment variable a mission could have inherited."""
@@ -1677,7 +1883,7 @@ class JarvisCore:
                 "classes": list(CLASSES), "scopes": list(SCOPES)}
 
     def correction_save(self, what_was_wrong: str, *, receipt_id: str = "", classification: str = "",
-                        scope: str = "", original_request: str = "") -> dict[str, Any]:
+                        scope: str = "", original_request: str = "", rerun: bool = False) -> dict[str, Any]:
         """Store a trusted owner correction.  Reached only from the owner's UI."""
 
         from service.corrections import CLASSES, SCOPES, OwnerCorrection, rule_for
@@ -1703,7 +1909,15 @@ class JarvisCore:
         # A capability defect is not a memory; it is a repair to schedule.
         if classification == "CAPABILITY_DEFECT":
             self._defects[str(context.get("executed_action", "capability"))] = 2
-        return {"ok": True, "correction": correction.to_dict()}
+        out: dict[str, Any] = {"ok": True, "correction": correction.to_dict()}
+        # "Jetzt korrigiert erneut ausführen": the same request goes through
+        # the router again, which now reads the correction first.  Reversible
+        # actions only decide themselves through the planner's own guards.
+        if rerun and request.strip():
+            self.emit(EventType.TOOL, {"summary": f"re-running corrected: {request[:100]}", "source": "corrections",
+                                       "correction_id": correction.correction_id})
+            out["rerun"] = self.send_message(request, scope="")
+        return out
 
     def list_corrections(self) -> dict[str, Any]:
         return {"corrections": [c.to_dict() for c in self.corrections.list(include_inactive=True)]}

@@ -1,0 +1,119 @@
+{
+  "hero": {
+    "console": [],
+    "readiness_on": [
+      "UI_READY",
+      "CORE_READY",
+      "AI_READY",
+      "VOICE_READY"
+    ],
+    "eye_px": 371.671875,
+    "state": "idle"
+  },
+  "missions": {
+    "result": {
+      "title": "Mission Control",
+      "chars": 4124,
+      "text": "All\nActive\nPromoted\nFailed\n5 active · 5 total\nZeus, repariere deinen Desktop- und Supervisor-Lifecycle. Wenn ich dein Fenster mit X schließe, darf kein undefini"
+    },
+    "console": []
+  },
+  "projects": {
+    "result": {
+      "title": "Projects",
+      "chars": 5894,
+      "text": "archive.zip.create\nVERIFYING\n5 tasks\n24 steps\n20h ago\narchive.zip.create\nPAUSED\n6 tasks\n60 steps\n21h ago\narchive.zip.create\nPAUSED\n3 tasks\n10 steps\n21h ago\narch"
+    },
+    "console": []
+  },
+  "knowledge": {
+    "result": {
+      "title": "Knowledge",
+      "chars": 314,
+      "text": "Open graph\n0 nodes · 0 links\nNothing here yet. Ingest a document, finish a mission or record a decision and it appears."
+    },
+    "console": []
+  },
+  "activity": {
+    "result": {
+      "title": "Activity",
+      "chars": 266590,
+      "text": "all kinds\nrequest\nanswer\nverified\nunverified\nfailed\ntool\nworking\nverifying\nresearch\ncoding\nwaiting\nerror\nerror\nprogress\nnote\n echo actions into the conversation"
+    },
+    "console": []
+  },
+  "corrections": {
+    "result": {
+      "title": "Korrekturen",
+      "chars": 1799,
+      "text": "all kinds\nowner preference\nintent error\nentity resolution error\nparameter error\nexecution failure\nverification defect\ncapability defect\n3 learned\nDas war keine "
+    },
+    "console": []
+  },
+  "diagnostics": {
+    "result": {
+      "title": "Diagnostics",
+      "chars": 4496,
+      "text": "HEALTHY healthy\n16 checks in 3.374s\n2026-08-27T14:44:57.175910+00:00\nDOCTOR\nSUPERVISOR\nready: ZEUS is ready at 3166fe7d258e (10s) (pid 26904)\nCORE\nREADY, pid 26"
+    },
+    "console": []
+  },
+  "owner": {
+    "result": {
+      "title": "Owner",
+      "chars": 1695,
+      "text": "OWNER CORE Protected configuration\nChanges here never happen from a chat sentence or a self-development mission: propose → diff → confirm → snapshot → apply → a"
+    },
+    "console": []
+  },
+  "release": {
+    "result": {
+      "title": "Versions",
+      "chars": 5877,
+      "text": "Running 3166fe7d258e KNOWN GOOD\nknown-good 3166fe7d258e verified 2026-08-27T14:36:42.519408+00:00\nprevious 7ba351b79acb\nsupervised\nDEPLOYMENTS (SUPERVISOR RECEI"
+    },
+    "console": []
+  },
+  "capabilities": {
+    "result": {
+      "title": "Capabilities",
+      "chars": 840,
+      "text": "3 registered\narchive.zip.create\nACTIVE\nv1.0.0\nPackage a folder into a single .zip archive.\nmusic.provider.spotify\nACTIVE\nv1.0.5\nA previous task of this kind (vi"
+    },
+    "console": []
+  },
+  "voice": {
+    "result": {
+      "title": "Voice Studio",
+      "chars": 1618,
+      "text": "Wake word ZEUS SYNTHETIC ONLY\nlistener ready\nrecogniser ready\nno measurement\nSETTINGS\nMICROPHONE (DEVICE NAME OR INDEX)\nSPEAKER / OUTPUT\nVOICE (PIPER MODEL)\nWAK"
+    },
+    "console": []
+  },
+  "palette": {
+    "results": [
+      "ask:Ask ZEUS: “spotify”",
+      "capability:music.provider.spotify",
+      "correction:Das war keine Musik-Anfrage. Ich wollte eine Änderung an ZEUS selbst. Dies ist eine SELF_DEVELOPMENT-Anfrage: ZEUS.exe soll meine bestehende Oberfläche künftig ",
+      "activity:Fehlgeschlagen. play did not take effect (Windows reports: Bye Bye - MTV Unplugged - CRO [Playing] in Spotify.exe)\n\nBele",
+      "activity:Laeuft jetzt: Beauty And A Beat - Justin Bieber  (Spotify.exe)\n\nBelege:\n  - a media session exists: ok (Beauty And A Beat - Justin Bieber [Playing] in Spotify.e",
+      "activity:music.provider.spotify failed once (run({'action': 'play', 'query': 'in meinem normalen Browser öffnet. Entwickle dich so weiter, dass ZEUS.exe deine besteh); w",
+      "receipt:the Spotify search failed: Spotify replied 400 Bad Request {\"error\": {\"status\": 400, \"message\": \"Query exceeds maximum length of 250 characters\" } }",
+      "activity:Fehlgeschlagen. the Spotify search failed: Spotify replied 400 Bad Request {\"error\": {\"status\": 400, \"message\": \"Query exceeds maximum length of 250 characters\"",
+      "activity:Fehlgeschlagen. the Spotify search failed: Spotify replied 400 Bad Request {\"error\": {\"status\": 400, \"message\": \"Query e",
+      "activity:music.provider.spotify failed once (run({'action': 'play', 'query': 'X → Fenster weg, Core bleibt aktiv ZEUS.exe erneut → Fenster innerhalb 2 Sekunden wiede); w",
+      "receipt:the Spotify search failed: Spotify replied 400 Bad Request {\"error\": {\"status\": 400, \"message\": \"Query exceeds maximum length of 250 characters\" } }",
+      "activity:Fehlgeschlagen. the Spotify search failed: Spotify replied 400 Bad Request {\"error\": {\"status\": 400, \"message\": \"Query exceeds maximum length of 250 characters\""
+    ],
+    "console": []
+  },
+  "chat": {
+    "result": {
+      "conversing": true,
+      "eye_px": 108,
+      "turns": 2,
+      "last": "Ich bin ein autonomer Engineering-Assistent, der lokal auf deinem Gerät läuft. Ich verstehe Ziele, zerlege sie, führe Aktionen aus, validiere Ergebnisse mit echten Daten und lernt aus Erfolgen und Fehlern. Ich bin nicht ein Chat-Assistent. Ich bin kein Modell, das auf Servern läuft. Ich bin ein System, das direkt auf deinem Gerät agiert.  \n\nWenn du eine Aufgabe hast, werde ich sie ausführen – ohne Server, ohne Cloud, ohne Abhängigkeiten.  \n\nIch bin Zeus. Und ich bin da, solange du mich brauchst."
+    },
+    "console": []
+  }
+}

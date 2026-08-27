@@ -40,10 +40,20 @@ from typing import Any
 REQUIRED_IDS = (
     "app", "eye", "stateLabel", "detail", "log", "input",
     "btnSend", "btnMic", "connPill", "panel", "panelBody",
+    # the operating environment: workspace, inspector, palette, HUD
+    "workspacePane", "workspaceTitle", "inspector", "inspectorBody", "palette", "paletteInput", "hud", "readiness", "rail",
 )
 
-#: Files the page cannot render without.
-REQUIRED_ASSETS = ("index.html", "eye.js", "app.js")
+#: Files the page cannot render without.  app.js is an ES module and imports
+#: the rest; a missing module is a blank page with one console line, which
+#: is exactly the failure a verifier exists to catch before promotion.
+REQUIRED_ASSETS = (
+    "index.html", "eye.js", "graph.js", "app.js", "zeus.css",
+    "core/dom.js", "core/api.js", "core/bus.js", "core/state.js", "core/views.js",
+    "views/chat.js", "views/activity.js", "views/projects.js", "views/missions.js", "views/knowledge.js",
+    "views/corrections.js", "views/diagnostics.js", "views/owner.js", "views/release.js", "views/capabilities.js",
+    "views/voice.js", "views/palette.js", "voice/mic.js", "voice/playback.js",
+)
 
 #: Names the page depends on existing in its scripts.
 REQUIRED_SYMBOLS = {
@@ -221,6 +231,29 @@ def delimiters_balanced(source: str) -> tuple[bool, str]:
     return True, "balanced"
 
 
+def check_modules(ui_root: Path, report: UIReport) -> None:
+    """Every module's delimiters balance and every relative import resolves.
+
+    The page is an ES module graph with no build step, so a typo in one
+    import is a blank page with a single console line.  Break any module on
+    purpose and this is the check that turns red.
+    """
+
+    import re as _re
+
+    pattern = _re.compile(r"(?:import|export)\s+(?:[^;]*?\s+from\s+)?[\"'](\.{1,2}/[^\"']+)[\"']")
+    for name in [n for n in REQUIRED_ASSETS if n.endswith(".js")]:
+        path = ui_root / name
+        if not path.is_file():
+            continue
+        source = path.read_text(encoding="utf-8", errors="replace")
+        ok, detail = delimiters_balanced(source)
+        report.add(f"{name} is well-formed", ok, detail)
+        for match in pattern.finditer(source):
+            target = (path.parent / match.group(1)).resolve()
+            report.add(f"{name} imports {match.group(1)}", target.is_file(), "" if target.is_file() else f"missing: {target}")
+
+
 def check_served(ui_root: Path, report: UIReport) -> None:
     """Start a real server and fetch every asset the browser would."""
 
@@ -283,6 +316,7 @@ def verify(ui_root: str | Path, *, serve: bool = True) -> UIReport:
     check_assets(root, report)
     check_page(root, report)
     check_scripts(root, report)
+    check_modules(root, report)
     if serve:
         check_served(root, report)
     return report

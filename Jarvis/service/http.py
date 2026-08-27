@@ -184,7 +184,8 @@ class JarvisHTTPServer:
             "/api/voice": lambda body: self.core.voice_settings(
                 **{
                     key: body[key]
-                    for key in ("enabled", "language", "voice_id", "speak_replies")
+                    for key in ("enabled", "language", "voice_id", "speak_replies", "microphone", "output", "voice",
+                                "wake_sensitivity", "volume")
                     if key in body
                 }
             ),
@@ -210,7 +211,7 @@ class JarvisHTTPServer:
             "/api/correction/save": lambda body: self.core.correction_save(
                 str(body.get("what_was_wrong", "")), receipt_id=str(body.get("receipt_id", "")),
                 classification=str(body.get("classification", "")), scope=str(body.get("scope", "")),
-                original_request=str(body.get("original_request", "")),
+                original_request=str(body.get("original_request", "")), rerun=bool(body.get("rerun", False)),
             ),
             "/api/corrections": lambda _: self.core.list_corrections(),
             "/api/correction/update": lambda body: self.core.update_correction(
@@ -238,6 +239,13 @@ class JarvisHTTPServer:
             "/api/window/show": lambda body: self.core.lifecycle.window("show", reason=str(body.get("reason", "second launch"))),
             "/api/window/hide": lambda body: self.core.lifecycle.window("hide", reason=str(body.get("reason", ""))),
             "/api/processes": lambda _: self.core.lifecycle.process_counts(),
+            "/api/doctor": lambda _: self.core.doctor(),
+            "/api/search": lambda body: self.core.universal_search(str(body.get("q", body.get("query", ""))), limit=int(body.get("limit", 30) or 30),
+                                                                   types=[t for t in str(body.get("types", "")).split(",") if t]),
+            "/api/selfdev/diff": lambda body: self.core.selfdev_diff(str(body.get("mission_id", ""))),
+            "/api/capabilities/report": lambda _: self.core.capability_report(),
+            "/api/voice/wake": lambda _: self.core.wake_status(),
+            "/api/voice/wake/train": lambda _: self.core.wake_train(),
             "/api/release": lambda _: self.core.release_status(),
             "/api/release/build": lambda body: self.core.release_build(verify=bool(body.get("verify", True))),
             "/api/release/verify": lambda body: self.core.release_verify(str(body.get("candidate", ""))),
@@ -335,6 +343,18 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
             except ValueError:
                 length = 0
             raw = self.rfile.read(length) if length else b"{}"
+
+            if parsed.path in {"/api/voice/wake/record", "/api/voice/wake/test"}:
+                try:
+                    if parsed.path.endswith("record"):
+                        result = app.core.wake_record(raw, kind=(query.get("kind") or ["positive"])[0])
+                    else:
+                        result = app.core.wake_test(raw)
+                except Exception as exc:
+                    self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                self._send_json(200, result)
+                return
 
             if parsed.path == "/api/voice/utterance":
                 # Audio is posted as bytes rather than base64 in JSON: a 30

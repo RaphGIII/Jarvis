@@ -1,1006 +1,249 @@
 /*
- * The client. Subscribes to the event stream, renders it, and posts input back.
+ * The client entry point. Subscribes to the event stream, keeps the shared
+ * state, drives the eye, and registers the views. Everything else lives in
+ * its own module (ui/core, ui/views, ui/voice) so that ZEUS can change one
+ * area of its interface without rewriting the whole of it.
  *
- * All state comes from the server. The UI never guesses what Jarvis is doing --
- * it renders the state event and nothing else. That is what keeps the browser,
- * a future TV view and a portable device showing the same thing, and it is why
- * "start thinking" is not something the send button does locally.
+ * All state comes from the server. The UI never guesses what ZEUS is doing --
+ * it renders the state event and nothing else. "Start thinking" is not
+ * something the send button does locally.
  */
 
-const $ = (id) => document.getElementById(id);
+import { $, el } from "./core/dom.js";
+import { api } from "./core/api.js";
+import * as bus from "./core/bus.js";
+import { state, set, setPref, category } from "./core/state.js";
+import * as views from "./core/views.js";
 
-const ui = {
-  app: null, log: null, input: null, stateLabel: null, detail: null,
-  connPill: null, costPill: null, uptime: null,
-  panel: null, panelBody: null, panelTitle: null,
-};
+import * as chat from "./views/chat.js";
+import * as activity from "./views/activity.js";
+import * as projects from "./views/projects.js";
+import * as missions from "./views/missions.js";
+import * as knowledge from "./views/knowledge.js";
+import * as corrections from "./views/corrections.js";
+import * as diagnostics from "./views/diagnostics.js";
+import * as owner from "./views/owner.js";
+import * as release from "./views/release.js";
+import * as capabilities from "./views/capabilities.js";
+import * as voiceStudio from "./views/voice.js";
+import * as palette from "./views/palette.js";
+import * as mic from "./voice/mic.js";
+import * as playback from "./voice/playback.js";
 
 let eye = null;
 let stream = null;
 let lastSeq = 0;
-let streaming = null;   // the live assistant turn being appended to
-let activityOn = false;
 let reconnectDelay = 500;
 
-function startJarvis() {
-  for (const key of Object.keys(ui)) ui[key] = $(key === "app" ? "app" : key);
-  ui.app = $("app");
-  ui.log = $("log");
-  ui.input = $("input");
-  ui.stateLabel = $("stateLabel");
-  ui.detail = $("detail");
-  ui.connPill = $("connPill");
-  ui.costPill = $("costPill");
-  ui.uptime = $("uptime");
-  ui.panel = $("panel");
-  ui.panelBody = $("panelBody");
-  ui.panelTitle = $("panelTitle");
+const VIEW_MODULES = [missions, projects, knowledge, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio];
 
-  // TV/kiosk mode is a URL flag rather than a build: the same page, scaled up
-  // with the pointer affordances removed. ?tv=1 on the Jarvis URL.
+function startJarvis() {
   if (new URLSearchParams(location.search).has("tv")) {
     document.body.classList.add("tv");
     document.documentElement.requestFullscreen?.().catch(() => {});
   }
+  if (state.ui.reducedMotion) document.body.classList.add("reduced-motion");
 
   eye = new JarvisEye($("eye"));
   eye.start();
+  if (window.ResizeObserver) new ResizeObserver(() => eye.resize()).observe($("eye"));
+  else window.addEventListener("resize", () => eye.resize());
 
-  // The eye is a canvas: CSS changes the element's size, but the backing store
-  // has to be re-cut or the hero eye is a 108px drawing stretched to 420. An
-  // observer rather than a transitionend handler, because it also has to fire
-  // while the transition is running and on an ordinary window resize.
-  if (window.ResizeObserver) {
-    new ResizeObserver(() => eye.resize()).observe($("eye"));
-  } else {
-    window.addEventListener("resize", () => eye.resize());
-  }
-
-  wireInput();
+  for (const mod of VIEW_MODULES) views.register(mod.view);
+  chat.init({ eye });
+  mic.init({ eye });
+  playback.init({ eye });
+  palette.init();
+  wireShell();
+  buildRail();
   connect();
   refreshStatus();
+  refreshHealth();
   setInterval(refreshStatus, 15000);
-
-  // The GPU readout is polled on its own, faster clock: status is a badge that
-  // rarely changes, this is a live measurement and is worthless at 15 seconds.
-  // It is answered from a cached background reading on the server, so the
-  // extra requests cost a socket and nothing else.
+  setInterval(refreshHealth, 5000);
   refreshGpu();
-  setInterval(refreshGpu, GPU_POLL_MS);
-
-  // The uptime is read from /api/status every 15 seconds but redrawn every
-  // second from the reading's own age, so it advances between polls instead of
-  // sitting still and then jumping. Drawing costs a string; polling would not.
+  setInterval(refreshGpu, 3000);
   setInterval(drawUptime, 1000);
+
+  const target = views.fromHash();
+  if (target) views.open(target.id, target.params, { push: false });
 }
 
 /* ------------------------------------------------------------------ */
 /* transport                                                           */
 /* ------------------------------------------------------------------ */
 
-function api(path, body) {
-  return fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json", "X-Jarvis-Token": window.JARVIS_TOKEN },
-    body: body === undefined ? undefined : JSON.stringify(body || {}),
-  }).then((r) => r.json());
-}
-
 function connect() {
   if (stream) stream.close();
   stream = new EventSource(`/events?token=${encodeURIComponent(window.JARVIS_TOKEN)}&since=${lastSeq}`);
-
   stream.onopen = () => {
     reconnectDelay = 500;
-    setPill(ui.connPill, "connected", "live");
+    setPill("connected", "live");
     refreshStatus();
   };
-
   stream.onerror = () => {
-    setPill(ui.connPill, "reconnecting", "warn");
-    // EventSource retries on its own, but only while the server is reachable.
-    // An explicit backoff covers the case where the core has actually stopped.
+    setPill("reconnecting", "warn");
     stream.close();
     reconnectDelay = Math.min(10000, reconnectDelay * 2);
     setTimeout(connect, reconnectDelay);
   };
-
-  for (const type of ["state", "token", "message", "user_message", "transcript",
-                      "tool", "progress", "notification", "error", "speech", "diagnostic"]) {
+  for (const type of ["state", "token", "message", "user_message", "transcript", "tool", "progress",
+                      "notification", "error", "speech", "diagnostic", "knowledge"]) {
     stream.addEventListener(type, (e) => {
       let event;
       try { event = JSON.parse(e.data); } catch { return; }
       if (event.seq) lastSeq = Math.max(lastSeq, event.seq);
-      handle(type, event.payload || {});
+      bus.emit(type, event.payload || {});
     });
   }
 }
 
 /* ------------------------------------------------------------------ */
-/* rendering                                                           */
+/* state -> eye, label, HUD                                            */
 /* ------------------------------------------------------------------ */
 
-function handle(type, payload) {
-  switch (type) {
-    case "state":
-      eye.setState(payload.state || "idle");
-      ui.stateLabel.textContent = payload.state || "idle";
-      ui.detail.textContent = payload.detail || "";
-      // A finished answer closes the streaming turn, so a later token cannot
-      // append to a message the user has already seen completed.
-      if (payload.state !== "thinking" && payload.state !== "speaking") endStreaming();
-      break;
+bus.on("state", (payload) => {
+  const name = payload.state || "idle";
+  set("eye", payload);
+  eye.setState(name);
+  const label = $("stateLabel");
+  label.textContent = name;
+  label.dataset.cat = category(name);
+  $("detail").textContent = payload.detail || "";
+});
 
-    case "user_message":
-      addTurn("user", "You", payload.text);
-      ui.app.classList.add("conversing");
-      break;
+bus.on("speech", (payload) => {
+  if (typeof payload.energy === "number") eye.setEnergy(payload.energy);
+});
 
-    case "token":
-      appendToken(payload.text || "");
-      break;
-
-    case "message":
-      finishStreaming(payload.text || "");
-      break;
-
-    case "transcript":
-      showInterim(payload.text || "");
-      break;
-
-    case "error":
-      endStreaming();
-      addTurn("error", "Error", payload.error || "something went wrong");
-      break;
-
-    case "notification":
-      if (payload.text) addTurn("note", "", payload.text);
-      break;
-
-    case "speech":
-      if (payload.stop) { stopSpeech(); break; }
-      if (payload.url) enqueueSpeech(payload);
-      if (typeof payload.energy === "number") eye.setEnergy(payload.energy);
-      break;
-
-    case "tool":
-    case "progress":
-      // A receipt is shown whether or not Activity is on. It is the evidence
-      // that something really happened, and hiding it behind a toggle would
-      // put the claim on screen while the proof stayed off it.
-      if (payload.receipt) { addReceipt(payload.receipt); break; }
-      if (activityOn && payload.summary) addTurn("note", "", payload.summary);
-      break;
+/* The mission HUD: real progress events only. */
+bus.on("progress", (payload) => {
+  if (payload.kind !== "selfdev" && payload.kind !== "capability" && payload.kind !== "mission") return;
+  const phase = String(payload.phase || "");
+  const finished = ["DONE", "FAILED", "CANCELLED"].includes(phase);
+  if (finished) {
+    set("mission", null);
+    $("hud").hidden = true;
+    return;
   }
-}
-
-function addTurn(kind, who, text) {
-  if (!text) return null;
-  const el = document.createElement("div");
-  el.className = `turn ${kind}`;
-  const w = document.createElement("div");
-  w.className = "who";
-  w.textContent = who;
-  const c = document.createElement("div");
-  c.className = "what";
-  c.textContent = text;
-  el.append(w, c);
-  ui.log.appendChild(el);
-  scrollDown();
-  return c;
-}
-
-function appendToken(text) {
-  if (!streaming) {
-    streaming = addTurn("jarvis", window.ASSISTANT_NAME || "Jarvis", "​");
-    if (streaming) streaming.textContent = "";
-    const cursor = document.createElement("span");
-    cursor.className = "cursor";
-    streaming?.appendChild(cursor);
+  const mission = { ...(state.mission || {}), ...payload, started: state.mission?.started || Date.now() };
+  set("mission", mission);
+  $("hud").hidden = false;
+  $("hudKind").textContent = payload.kind;
+  $("hudGoal").textContent = payload.summary || payload.request || mission.request || "";
+  $("hudPhase").textContent = phase;
+  const stages = ["UNDERSTAND", "INVESTIGATE", "BUILD", "VERIFY", "ESCALATE", "PROMOTE", "RESTARTING"];
+  const idx = stages.indexOf(phase);
+  $("hudBar").style.width = (idx >= 0 ? ((idx + 1) / stages.length) * 100 : 10) + "%";
+});
+bus.on("notification", (payload) => {
+  if (payload.kind === "selfdev" && /cancelled|failed|done|promoted/i.test(payload.text || "")) {
+    set("mission", null);
+    $("hud").hidden = true;
   }
-  if (!streaming) return;
-  const cursor = streaming.querySelector(".cursor");
-  const node = document.createTextNode(text);
-  streaming.insertBefore(node, cursor);
-  scrollDown();
-}
+  if (payload.text && (payload.kind || "").match(/selfdev|release|relaunch|restart|owner_config|correction|isolation/)) toast(payload.text, "note");
+});
+setInterval(() => {
+  if (!state.mission) return;
+  const s = Math.floor((Date.now() - state.mission.started) / 1000);
+  $("hudTime").textContent = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}, 1000);
 
-function finishStreaming(finalText) {
-  if (streaming) {
-    // Trust the final message over the accumulated tokens: they can differ if
-    // the client reconnected mid-answer and missed a chunk.
-    streaming.textContent = finalText;
-    streaming = null;
-  } else if (finalText) {
-    addTurn("jarvis", window.ASSISTANT_NAME || "Jarvis", finalText);
-  }
-  ui.app.classList.add("conversing");
-  scrollDown();
-}
-
-/* A receipt, rendered as evidence rather than as prose. The verdict word comes
-   from the receipt's own `verified` flag, never from any text the model wrote. */
-function addReceipt(receipt) {
-  const verdict = receipt.verified ? "verified"
-                : receipt.ok ? "ran, unverified"
-                : "failed";
-  // A fallback for the text, because addTurn drops an empty turn — and a
-  // receipt with a terse detail must still show its checks.
-  const el = addTurn(`receipt ${receipt.verified ? "good" : "bad"}`,
-                     `${receipt.kind} · ${verdict}`,
-                     receipt.detail || receipt.kind || "action");
-  if (!el) return;
-  for (const check of receipt.verifications || []) {
-    const row = document.createElement("div");
-    row.className = "check" + (check.passed ? "" : " bad");
-    row.textContent = `${check.passed ? "✓" : "✗"} ${check.check}` +
-                      (check.observed ? ` — ${check.observed}` : "");
-    el.appendChild(row);
-  }
-  const id = document.createElement("div");
-  id.className = "check";
-  id.textContent = receipt.id;
-  el.appendChild(id);
-  // EXECUTION VERIFIED does not mean USER INTENT SATISFIED. Every meaningful
-  // action carries an unobtrusive way to say what was wrong; that sentence
-  // becomes a scoped owner correction the next interpretation reads first.
-  const fix = document.createElement("a");
-  fix.className = "korrigieren";
-  fix.href = "#";
-  fix.textContent = "Korrigieren";
-  fix.onclick = (ev) => { ev.preventDefault(); openCorrection(receipt.id); };
-  el.appendChild(fix);
-  scrollDown();
+export function toast(text, tone = "") {
+  const node = el("div", { class: "toast " + tone, text });
+  $("toasts").append(node);
+  setTimeout(() => node.remove(), 6000);
 }
 
 /* ------------------------------------------------------------------ */
-/* Korrigieren                                                          */
+/* shell wiring                                                        */
 /* ------------------------------------------------------------------ */
 
-async function openCorrection(receiptId) {
-  const ctx = await api("/api/correction/context", { receipt_id: receiptId });
-  if (!ctx.ok) { addTurn("error", "Error", ctx.error || "no context"); return; }
-  const rows = [
-    ["Anfrage", ctx.original_request],
-    ["Gelesen als", `${ctx.parsed_intent} — ${ctx.intent_reason}`],
-    ["Entitäten", Object.keys(ctx.entities || {}).length ? JSON.stringify(ctx.entities) : "—"],
-    ["Ausgeführt", ctx.executed_action],
-    ["Beobachtet", ctx.observed_result],
-    ["Beleg", `${receiptId} · ${ctx.verified ? "verifiziert" : ctx.ok_flag ? "gelaufen, unverifiziert" : "fehlgeschlagen"}`],
-  ];
-  const body = document.createElement("div");
-  body.className = "correction";
-  for (const [k, v] of rows) {
-    const r = document.createElement("div");
-    r.className = "row";
-    const kk = document.createElement("span"); kk.className = "k"; kk.textContent = k;
-    const vv = document.createElement("span"); vv.className = "v"; vv.textContent = v || "—";
-    r.append(kk, vv);
-    body.appendChild(r);
+function wireShell() {
+  $("brand").onclick = () => views.close();
+  $("btnWorkspaceClose").onclick = () => views.close();
+  $("btnInspectorClose").onclick = () => views.closeInspector();
+  $("hud").onclick = () => views.open("missions");
+  $("btnPalette").onclick = () => palette.open();
+  for (const button of document.querySelectorAll("[data-view-button]")) {
+    button.onclick = () => {
+      const id = button.dataset.viewButton;
+      if (views.currentView()?.id === id) views.close(); else views.open(id);
+    };
   }
-  const label = document.createElement("div");
-  label.className = "k";
-  label.textContent = "Was war falsch?";
-  const input = document.createElement("textarea");
-  input.rows = 3;
-  input.placeholder = "z. B. „Ich meinte den Ordner notizen/“ oder „Nur diesmal …“ oder „Künftig immer …“";
-  const guess = document.createElement("div");
-  guess.className = "guess";
-  const classSel = document.createElement("select");
-  const scopeSel = document.createElement("select");
-  let timer = null;
-  input.oninput = () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      const g = await api("/api/correction/classify", { what_was_wrong: input.value, receipt_id: receiptId });
-      if (!g.ok) return;
-      fill(classSel, g.classes, g.classification);
-      fill(scopeSel, g.scopes, g.scope);
-      guess.textContent = g.reason + (g.then && g.then.overrides ? ` · Regel: ${JSON.stringify(g.then.overrides)}` : "");
-    }, 350);
-  };
-  const save = document.createElement("button");
-  save.textContent = "Korrigieren & lernen";
-  save.onclick = async () => {
-    const result = await api("/api/correction/save", {
-      what_was_wrong: input.value, receipt_id: receiptId,
-      classification: classSel.value, scope: scopeSel.value,
-    });
-    if (result.ok) {
-      ui.panel.classList.remove("open");
-      addTurn("note", "", `Gelernt: ${result.correction.classification} · ${result.correction.scope.toLowerCase().replace(/_/g, " ")}`);
-    } else {
-      guess.textContent = result.error || "nicht gespeichert";
-    }
-  };
-  const selects = document.createElement("div");
-  selects.className = "row";
-  selects.append(classSel, scopeSel);
-  body.append(label, input, guess, selects, save);
-  openPanel("Korrigieren", "");
-  $("panelBody").innerHTML = "";
-  $("panelBody").appendChild(body);
-  input.focus();
-}
-
-function fill(select, options, chosen) {
-  const current = select.value;
-  select.innerHTML = "";
-  for (const o of options || []) {
-    const opt = document.createElement("option");
-    opt.value = o; opt.textContent = o.toLowerCase().replace(/_/g, " ");
-    select.appendChild(opt);
-  }
-  select.value = (options || []).includes(current) && current !== "" ? current : chosen;
-}
-
-async function showCorrections() {
-  const data = await api("/api/corrections");
-  openPanel("Korrekturen", "");
-  const body = $("panelBody");
-  body.innerHTML = "";
-  if (!data.corrections || !data.corrections.length) { body.textContent = "Noch keine Korrekturen."; return; }
-  for (const c of data.corrections.slice().reverse()) {
-    const r = document.createElement("div");
-    r.className = "correction" + (c.active ? "" : " off");
-    r.innerHTML = "";
-    const head = document.createElement("div"); head.className = "k";
-    head.textContent = `${c.classification} · ${c.scope.toLowerCase().replace(/_/g, " ")} · ${c.applied_count}× angewendet`;
-    const note = document.createElement("div"); note.className = "v"; note.textContent = c.what_was_wrong;
-    const req = document.createElement("div"); req.className = "guess"; req.textContent = `zu: ${c.original_request}`;
-    const del = document.createElement("button"); del.textContent = "Löschen";
-    del.onclick = async () => { await api("/api/correction/delete", { correction_id: c.correction_id }); showCorrections(); };
-    const tog = document.createElement("button"); tog.textContent = c.active ? "Deaktivieren" : "Aktivieren";
-    tog.onclick = async () => { await api("/api/correction/update", { correction_id: c.correction_id, changes: { active: !c.active } }); showCorrections(); };
-    r.append(head, note, req, tog, del);
-    body.appendChild(r);
-  }
-}
-
-function endStreaming() {
-  if (!streaming) return;
-  streaming.querySelector(".cursor")?.remove();
-  streaming = null;
-}
-
-function showInterim(text) {
-  let el = ui.log.querySelector(".turn.interim .what");
-  if (!el) el = addTurn("note interim", "", text);
-  if (el) el.textContent = text;
-}
-
-function scrollDown() {
-  ui.log.scrollTop = ui.log.scrollHeight;
-}
-
-/* ------------------------------------------------------------------ */
-/* input                                                               */
-/* ------------------------------------------------------------------ */
-
-function wireInput() {
-  const send = () => {
-    const text = ui.input.value.trim();
-    if (!text) return;
-    ui.input.value = "";
-    ui.input.style.height = "auto";
-    document.querySelector(".turn.interim")?.remove();
-    api("/api/message", { text });
-  };
-
-  $("btnSend").onclick = send;
-
-  ui.input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-  });
-
-  ui.input.addEventListener("input", () => {
-    ui.input.style.height = "auto";
-    ui.input.style.height = Math.min(150, ui.input.scrollHeight) + "px";
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { api("/api/stop", {}); endStreaming(); }
-  });
-
-  $("btnMic").onclick = () => toggleMic();
-
-  $("btnActivity").onclick = () => showActivity();
-
-  // A conversation with no messages is the hero state, so clearing one returns
-  // to it. The eye's own resize observer handles the rest.
-  $("btnCorrections").onclick = () => showCorrections();
   $("btnNew").onclick = async () => {
-    ui.log.innerHTML = "";
-    streaming = null;
-    ui.app.classList.remove("conversing");
-    // The server forgets the transcript too, so the next prompt starts clean
-    // rather than carrying context the user believes they cleared.
+    chat.reset();
     await api("/api/new", {});
   };
 
-  $("btnDiag").onclick = async () => {
-    openPanel("Diagnostics", "loading…");
-    const data = await api("/api/diagnostics");
-    ui.panelBody.innerHTML = "";
-    const pre = document.createElement("pre");
-    pre.textContent = JSON.stringify(data, null, 2);
-    ui.panelBody.appendChild(pre);
-  };
-
-  $("btnClose").onclick = () => ui.panel.classList.remove("open");
-
-  $("btnProjects").onclick = () => showProjects();
-  $("btnGraph").onclick = () => openGraph();
-  $("btnGraphClose").onclick = () => closeGraph();
-  $("graphSearch").addEventListener("input", (e) => graph?.setFilter(e.target.value));
-}
-
-/* ------------------------------------------------------------------ */
-/* activity                                                            */
-/* ------------------------------------------------------------------ */
-
-/* How each entry kind is labelled and coloured. The class decides the colour,
-   so a row's appearance is a function of what the backend recorded and never
-   of anything a model wrote. */
-const ACTIVITY_KINDS = {
-  "request":          { label: "REQUEST",   cls: "req" },
-  "answer":           { label: "ANSWER",    cls: "ans" },
-  "action.verified":  { label: "VERIFIED",  cls: "ok" },
-  "action.ran":       { label: "UNVERIFIED",cls: "warn" },
-  "action.failed":    { label: "FAILED",    cls: "bad" },
-  "tool":             { label: "TOOL",      cls: "tool" },
-  "state.working":    { label: "WORKING",   cls: "work" },
-  "state.verifying":  { label: "VERIFYING", cls: "work" },
-  "state.researching":{ label: "RESEARCH",  cls: "tool" },
-  "state.coding":     { label: "CODING",    cls: "tool" },
-  "state.waiting":    { label: "WAITING",   cls: "warn" },
-  "state.error":      { label: "ERROR",     cls: "bad" },
-  "error":            { label: "ERROR",     cls: "bad" },
-  "progress":         { label: "PROGRESS",  cls: "tool" },
-  "notification":     { label: "NOTE",      cls: "tool" },
-};
-
-function clockOf(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return isNaN(d) ? iso.slice(11, 19) : d.toLocaleTimeString();
-}
-
-async function showActivity() {
-  openPanel("Activity", "loading…");
-  const data = await api("/api/activity", { limit: 300 });
-  ui.panelBody.innerHTML = "";
-
-  const entries = data.activity || [];
-
-  // The live-echo toggle lives here rather than in the header: it is a
-  // preference about the chat transcript, not a second Activity view.
-  const controls = document.createElement("label");
-  controls.className = "activity-controls";
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.checked = activityOn;
-  box.onchange = () => { activityOn = box.checked; };
-  controls.append(box, document.createTextNode(" echo actions into the conversation as they happen"));
-  ui.panelBody.appendChild(controls);
-
-  if (data.error) {
-    const err = document.createElement("div");
-    err.className = "activity-empty";
-    err.textContent = `The activity log could not be read: ${data.error}`;
-    ui.panelBody.appendChild(err);
-    return;
-  }
-  if (!entries.length) {
-    const empty = document.createElement("div");
-    empty.className = "activity-empty";
-    empty.textContent = "Nothing recorded yet. Every request, action and verification appears here.";
-    ui.panelBody.appendChild(empty);
-    return;
-  }
-
-  const list = document.createElement("div");
-  list.className = "activity";
-  for (const entry of entries.slice().reverse()) list.appendChild(activityRow(entry));
-  ui.panelBody.appendChild(list);
-}
-
-function activityRow(entry) {
-  const meta = ACTIVITY_KINDS[entry.kind] || { label: entry.kind.toUpperCase(), cls: "tool" };
-  const row = document.createElement("div");
-  row.className = `act ${meta.cls}`;
-
-  const head = document.createElement("div");
-  head.className = "act-head";
-
-  const tag = document.createElement("span");
-  tag.className = "act-tag";
-  tag.textContent = meta.label;
-
-  const when = document.createElement("span");
-  when.className = "act-when";
-  when.textContent = clockOf(entry.at);
-
-  const text = document.createElement("span");
-  text.className = "act-sum";
-  text.textContent = entry.summary || "(no detail recorded)";
-
-  head.append(tag, text, when);
-  row.appendChild(head);
-
-  const body = activityDetail(entry);
-  if (body) {
-    head.classList.add("expandable");
-    body.hidden = true;
-    head.onclick = () => { body.hidden = !body.hidden; };
-    row.appendChild(body);
-  }
-  return row;
-}
-
-/* The expanded view. Everything here comes from the persisted entry — nothing
-   is recomputed in the browser, so what the user reads is what was recorded. */
-function activityDetail(entry) {
-  const receipt = entry.receipt_id ? entry.detail : null;
-  if (!receipt && !Object.keys(entry.detail || {}).length) return null;
-
-  const body = document.createElement("div");
-  body.className = "act-body";
-
-  const line = (k, v) => {
-    if (v === undefined || v === null || v === "") return;
-    const el = document.createElement("div");
-    el.className = "act-kv";
-    el.innerHTML = "";
-    const key = document.createElement("span");
-    key.className = "act-k";
-    key.textContent = k;
-    const val = document.createElement("span");
-    val.className = "act-v";
-    val.textContent = String(v);
-    el.append(key, val);
-    body.appendChild(el);
-  };
-
-  if (receipt) {
-    line("action", receipt.kind);
-    line("executor", receipt.executor);
-    line("timestamp", entry.at);
-    const ev = receipt.evidence || {};
-    line("target", ev.path || ev.project_id || ev.title || ev.track || ev.query || "");
-    line("result", receipt.verified ? "verified" : receipt.ok ? "ran, not verified" : "failed");
-    line("took", receipt.duration_seconds !== undefined ? `${receipt.duration_seconds}s` : "");
-    if (!receipt.ok) line("failure", receipt.detail);
-    line("receipt", receipt.id);
-
-    const checks = receipt.verifications || [];
-    if (checks.length) {
-      const head = document.createElement("div");
-      head.className = "act-k act-checks-head";
-      head.textContent = "verification evidence";
-      body.appendChild(head);
-      for (const check of checks) {
-        const el = document.createElement("div");
-        el.className = "act-check" + (check.passed ? "" : " bad");
-        el.textContent = `${check.passed ? "✓" : "✗"} ${check.check}` +
-                         (check.observed ? ` — ${check.observed}` : "");
-        body.appendChild(el);
-      }
-    } else {
-      const el = document.createElement("div");
-      el.className = "act-check bad";
-      el.textContent = "✗ no verification was recorded for this action";
-      body.appendChild(el);
+  document.addEventListener("keydown", (e) => {
+    const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); palette.open(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) { e.preventDefault(); palette.open("search: "); return; }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); views.open("projects"); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "m") { e.preventDefault(); views.open("missions"); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === ",") { e.preventDefault(); views.open("owner"); return; }
+    if (e.key === "Escape") {
+      if (palette.isOpen()) { palette.close(); return; }
+      if ($("panel").classList.contains("open")) { $("panel").classList.remove("open"); return; }
+      if ($("graphView").classList.contains("open")) { knowledge.closeGraph(); return; }
+      if (views.inspectorIsOpen()) { views.closeInspector(); return; }
+      if (views.isWorkspace()) { views.close(); return; }
+      if (!inField || document.activeElement === $("input")) { api("/api/stop", {}); chat.endStreaming(); }
     }
-    return body;
-  }
-
-  for (const [key, value] of Object.entries(entry.detail || {})) {
-    if (value === null || value === "" || typeof value === "object") continue;
-    line(key, value);
-  }
-  line("timestamp", entry.at);
-  return body.children.length ? body : null;
-}
-
-/* ------------------------------------------------------------------ */
-/* projects                                                            */
-/* ------------------------------------------------------------------ */
-
-const STATE_CLASS = {
-  active: "active", running: "active", working: "active",
-  blocked: "blocked", failed: "blocked",
-  accepted: "done", complete: "done", completed: "done",
-};
-
-async function showProjects() {
-  openPanel("Projects", "loading…");
-  const data = await api("/api/projects");
-  const projects = data.projects || [];
-  ui.panelBody.innerHTML = "";
-
-  if (!projects.length) {
-    ui.panelBody.textContent = "No projects yet. Describe something to build and Jarvis will open one.";
-    return;
-  }
-
-  for (const project of projects) {
-    const card = document.createElement("div");
-    card.className = "project";
-
-    const goal = document.createElement("div");
-    goal.className = "goal";
-    goal.textContent = project.goal || "(no goal recorded)";
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const badge = document.createElement("span");
-    badge.className = "badge " + (STATE_CLASS[project.state] || "idle");
-    badge.textContent = project.state || "unknown";
-    meta.appendChild(badge);
-    for (const [label, value] of [["tasks", project.tasks], ["steps", project.steps]]) {
-      const span = document.createElement("span");
-      span.textContent = `${value} ${label}`;
-      meta.appendChild(span);
-    }
-
-    card.append(goal, meta);
-    // The id is what "continue the chess project" has to resolve to, so it is
-    // what the card carries rather than the title.
-    card.onclick = () => showProject(project.id);
-    ui.panelBody.appendChild(card);
-  }
-}
-
-async function showProject(id) {
-  openPanel("Project", "loading…");
-  const detail = await api("/api/project", { id });
-  ui.panelBody.innerHTML = "";
-  if (detail.error) { ui.panelBody.textContent = detail.error; return; }
-
-  const goal = document.createElement("div");
-  goal.className = "goal";
-  goal.style.marginBottom = "14px";
-  goal.textContent = detail.goal || "";
-  ui.panelBody.appendChild(goal);
-
-  addSection("Acceptance", (detail.acceptance || []).map((item) =>
-    `${item.satisfied ? "✓" : "·"}  ${item.text}`));
-  addSection("Tasks", (detail.tasks || []).map((task) =>
-    `${task.status}  ${task.title}${task.attempts ? ` (${task.attempts} attempts)` : ""}`));
-
-  const steps = document.createElement("div");
-  steps.className = "steps";
-  const heading = document.createElement("div");
-  heading.className = "node-type";
-  heading.textContent = "Recent activity";
-  steps.appendChild(heading);
-  for (const step of (detail.steps || []).slice(-25).reverse()) {
-    const row = document.createElement("div");
-    row.className = "step" + (step.success ? "" : " bad");
-    const phase = document.createElement("div");
-    phase.className = "phase";
-    phase.textContent = step.phase;
-    const summary = document.createElement("div");
-    summary.className = "sum";
-    summary.textContent = step.summary;
-    row.append(phase, summary);
-    steps.appendChild(row);
-  }
-  ui.panelBody.appendChild(steps);
-
-  const button = document.createElement("button");
-  button.className = "ghost";
-  button.style.marginTop = "14px";
-  button.textContent = "Continue this project";
-  button.onclick = () => {
-    ui.panel.classList.remove("open");
-    api("/api/message", { text: `Continue the project: ${detail.goal}` });
-  };
-  ui.panelBody.appendChild(button);
-}
-
-function addSection(title, lines) {
-  if (!lines.length) return;
-  const heading = document.createElement("div");
-  heading.className = "node-type";
-  heading.style.marginTop = "12px";
-  heading.textContent = title;
-  ui.panelBody.appendChild(heading);
-  for (const line of lines) {
-    const row = document.createElement("div");
-    row.className = "row";
-    row.innerHTML = "";
-    const k = document.createElement("span");
-    k.className = "v";
-    k.style.textAlign = "left";
-    k.textContent = line;
-    row.appendChild(k);
-    ui.panelBody.appendChild(row);
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* knowledge graph                                                     */
-/* ------------------------------------------------------------------ */
-
-let graph = null;
-let graphNode = null;
-
-async function openGraph() {
-  const view = $("graphView");
-  view.classList.add("open");
-
-  if (!graph) {
-    graph = new KnowledgeStarfield($("graphCanvas"), { onSelect: showNode });
-    window.addEventListener("resize", () => graph.resize());
-    wireNodeCard();
-  }
-  graph.resize();
-  graph.start();
-
-  const data = await api("/api/knowledge/graph", { limit: 400 });
-  graph.load(data);
-  $("graphCount").textContent =
-    `${(data.nodes || []).length} nodes · ${(data.edges || []).length} links` +
-    (data.truncated ? " (truncated)" : "");
-}
-
-function closeGraph() {
-  $("graphView").classList.remove("open");
-  // Stop the layout when it is not visible: it is the only thing in the UI
-  // that burns CPU continuously, and a hidden animation is pure waste on a
-  // machine that is also running a local model.
-  graph?.stop();
-}
-
-async function showNode(node) {
-  const card = $("nodeCard");
-  if (!node) { card.hidden = true; graphNode = null; return; }
-
-  graphNode = node;
-  card.hidden = false;
-  $("nodeType").textContent = node.type;
-  $("nodeTitle").textContent = node.title;
-  $("nodeBody").textContent = node.body ? node.body.slice(0, 600) : "(no content)";
-  $("nodeLinks").innerHTML = "";
-
-  const detail = await api("/api/knowledge/node", { id: node.id });
-  const related = [...(detail.outgoing || []), ...(detail.incoming || [])];
-  for (const item of related.slice(0, 12)) {
-    const button = document.createElement("button");
-    button.textContent = `${item.edge.type} → ${item.node.title}`.slice(0, 42);
-    button.onclick = () => {
-      graph.focusOn(item.node.id);
-      const target = graph.byId.get(item.node.id);
-      if (target) showNode(target);
-    };
-    $("nodeLinks").appendChild(button);
-  }
-}
-
-function wireNodeCard() {
-  $("btnAskAbout").onclick = () => {
-    if (!graphNode) return;
-    closeGraph();
-    api("/api/message", { text: `Tell me about "${graphNode.title}" from my knowledge graph.` });
-  };
-  $("btnReadAloud").onclick = () => {
-    if (!graphNode) return;
-    api("/api/voice", { enabled: true, speak_replies: true });
-    api("/api/message", { text: `Read this note aloud: "${graphNode.title}". ${graphNode.body || ""}`.slice(0, 1500) });
-  };
-  $("btnExpand").onclick = async () => {
-    if (!graphNode) return;
-    const data = await api("/api/knowledge/graph", { query: graphNode.title, limit: 400 });
-    graph.load(data);
-    graph.focusOn(graphNode.id);
-  };
-}
-
-function openPanel(title, text) {
-  ui.panelTitle.textContent = title;
-  ui.panelBody.textContent = text;
-  ui.panel.classList.add("open");
-}
-
-/* ------------------------------------------------------------------ */
-/* microphone: capture here, recognise on the server                   */
-/* ------------------------------------------------------------------ */
-
-/*
- * The browser records and uploads; the core transcribes. That split is
- * deliberate -- it is the same shape the future HDMI box and phone client will
- * use, so the browser is the first device client rather than a special case.
- */
-
-let micStream = null;
-let recorder = null;
-let micRaf = 0;
-let audioCtx = null;
-
-async function toggleMic() {
-  const btn = $("btnMic");
-  if (recorder && recorder.state === "recording") {
-    recorder.stop();
-    btn.classList.remove("recording");
-    return;
-  }
-
-  try {
-    micStream = micStream || (await navigator.mediaDevices.getUserMedia({ audio: true }));
-  } catch (err) {
-    addTurn("error", "Error", "microphone unavailable: " + err.message);
-    return;
-  }
-
-  // Barge-in: speaking into a talking Jarvis stops it.
-  stopSpeech();
-  api("/api/stop", {});
-
-  const chunks = [];
-  recorder = new MediaRecorder(micStream);
-  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  recorder.onstop = async () => {
-    cancelAnimationFrame(micRaf);
-    eye.setEnergy(0);
-    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-    const wav = await toWav(blob);
-    const result = await fetch("/api/voice/utterance", {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream", "X-Jarvis-Token": window.JARVIS_TOKEN },
-      body: wav,
-    }).then((r) => r.json()).catch(() => ({ ok: false }));
-    if (!result.ok) addTurn("note", "", result.reason || "nothing was heard");
-  };
-
-  recorder.start();
-  btn.classList.add("recording");
-  meterInto(micStream);
-}
-
-function meterInto(stream) {
-  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-  const analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 512;
-  audioCtx.createMediaStreamSource(stream).connect(analyser);
-  const buffer = new Uint8Array(analyser.frequencyBinCount);
-  const tick = () => {
-    analyser.getByteTimeDomainData(buffer);
-    let peak = 0;
-    for (const v of buffer) peak = Math.max(peak, Math.abs(v - 128) / 128);
-    eye.setEnergy(Math.min(1, peak * 2.2));
-    micRaf = requestAnimationFrame(tick);
-  };
-  tick();
-}
-
-/*
- * MediaRecorder gives webm/opus; whisper wants PCM. Decoding through
- * AudioContext and writing a WAV header here avoids putting a transcoder on
- * the server, and the browser's decoder handles whatever container it chose.
- */
-async function toWav(blob) {
-  const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-  const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
-  const rate = 16000;                       // what whisper works in
-  const length = Math.ceil(decoded.duration * rate);
-  const offline = new OfflineAudioContext(1, length, rate);
-  const source = offline.createBufferSource();
-  source.buffer = decoded;
-  source.connect(offline.destination);
-  source.start();
-  const rendered = await offline.startRendering();
-  const samples = rendered.getChannelData(0);
-
-  const out = new DataView(new ArrayBuffer(44 + samples.length * 2));
-  const ascii = (off, text) => { for (let i = 0; i < text.length; i++) out.setUint8(off + i, text.charCodeAt(i)); };
-  ascii(0, "RIFF"); out.setUint32(4, 36 + samples.length * 2, true); ascii(8, "WAVE");
-  ascii(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
-  out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
-  ascii(36, "data"); out.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, samples[i]));
-    out.setInt16(44 + i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-  }
-  return out.buffer;
-}
-
-/* ------------------------------------------------------------------ */
-/* speech playback                                                     */
-/* ------------------------------------------------------------------ */
-
-/*
- * Phrases arrive as they are synthesised, which is the whole point, but they
- * must be PLAYED strictly in order or the answer comes out scrambled. So audio
- * goes into a queue and one element drains it; arrival order is generation
- * order, and generation order is the order Jarvis meant.
- */
-const speechQueue = [];
-let speechPlaying = false;
-let currentAudio = null;
-
-function enqueueSpeech(payload) {
-  speechQueue.push(payload);
-  if (!speechPlaying) drainSpeech();
-}
-
-async function drainSpeech() {
-  speechPlaying = true;
-  while (speechQueue.length) {
-    const item = speechQueue.shift();
-    try {
-      await playOne(item.url);
-    } catch {
-      /* a phrase that will not play must not stop the rest of the answer */
-    }
-  }
-  speechPlaying = false;
-  currentAudio = null;
-  eye.setEnergy(0);
-}
-
-function playOne(url) {
-  return new Promise((resolve, reject) => {
-    const audio = new Audio(`${url}?token=${encodeURIComponent(window.JARVIS_TOKEN)}`);
-    currentAudio = audio;
-    audio.onended = resolve;
-    audio.onerror = reject;
-    // A crude level so the eye pulses while speaking; the real envelope would
-    // need an AnalyserNode per clip, which is not worth the allocation churn.
-    audio.onplay = () => eye.setEnergy(0.55);
-    audio.play().catch(reject);
   });
+  $("btnClose").onclick = () => $("panel").classList.remove("open");
 }
 
-function stopSpeech() {
-  speechQueue.length = 0;
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.currentTime = 0;
-    currentAudio = null;
+function buildRail() {
+  const rail = $("rail");
+  const groups = [
+    ["Work", ["missions", "projects", "activity"]],
+    ["Mind", ["knowledge", "corrections", "capabilities"]],
+    ["System", ["diagnostics", "release", "owner", "voice"]],
+  ];
+  for (const [title, ids] of groups) {
+    rail.append(el("h5", { text: title }));
+    for (const id of ids) {
+      const view = views.get(id);
+      if (!view) continue;
+      rail.append(el("button", { dataset: { viewButton: id }, onClick: () => views.open(id) }, view.title));
+    }
   }
-  speechPlaying = false;
-  eye.setEnergy(0);
 }
 
 /* ------------------------------------------------------------------ */
-/* status                                                              */
+/* polls: status, health, gpu, uptime                                  */
 /* ------------------------------------------------------------------ */
+
+function setPill(text, tone) {
+  const pill = $("connPill");
+  pill.textContent = text;
+  pill.className = "pill" + (tone ? " " + tone : "");
+  set("connection", text);
+}
 
 async function refreshStatus() {
-  try {
-    const status = await api("/api/status");
-    const conn = status.connection || "OFFLINE";
-    const tone = conn === "OFFLINE" ? "bad" : conn === "EXPERT QUOTA EXHAUSTED" ? "warn" : "live";
-    setPill(ui.connPill, conn.toLowerCase(), tone);
-    noteUptime(status.uptime_seconds);
-  } catch {
-    setPill(ui.connPill, "offline", "bad");
+  const status = await api("/api/status");
+  if (status.ok === false && status.transport) { setPill("offline", "bad"); return; }
+  set("status", status);
+  const conn = status.connection || "OFFLINE";
+  setPill(conn.toLowerCase(), conn === "OFFLINE" ? "bad" : conn === "EXPERT QUOTA EXHAUSTED" ? "warn" : "live");
+  noteUptime(status.uptime_seconds);
+}
+
+async function refreshHealth() {
+  const health = await api("/api/health");
+  if (health.ok === false) return;
+  set("health", health);
+  const rd = health.readiness || {};
+  for (const span of document.querySelectorAll("#readiness span")) {
+    span.classList.toggle("on", Boolean(rd[span.dataset.stage]));
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* uptime, beside the brand                                            */
-/* ------------------------------------------------------------------ */
-
-/*
- * How long this instance has been running, in the header next to the brand.
- *
- * The server is the only thing that knows when it started, so the number comes
- * from /api/status like everything else -- the client never starts its own
- * clock, or a reconnect to a core that has been up for days would read "0s".
- * What is local is only the *ageing* of the last reading, so the readout moves
- * between the fifteen-second polls.
- *
- * A restart therefore shows up on its own: the next poll returns a small
- * number and the header quietly says so, which is the only reason to show an
- * uptime at all.
- */
-
-let uptimeAt = 0;        // performance.now() when the reading was taken
-let uptimeSeconds = -1;  // what the server said then; negative means unknown
-
+let uptimeAt = 0;
+let uptimeSeconds = -1;
 function noteUptime(seconds) {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) return;
@@ -1008,99 +251,34 @@ function noteUptime(seconds) {
   uptimeAt = performance.now();
   drawUptime();
 }
-
 function drawUptime() {
-  if (!ui.uptime || uptimeSeconds < 0) return;
-  const live = uptimeSeconds + (performance.now() - uptimeAt) / 1000;
-  ui.uptime.textContent = "up " + formatUptime(live);
+  if (uptimeSeconds < 0) return;
+  const total = Math.max(0, Math.floor(uptimeSeconds + (performance.now() - uptimeAt) / 1000));
+  const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600), m = Math.floor((total % 3600) / 60);
+  $("uptime").textContent = "up " + (d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${total}s`);
 }
 
-function formatUptime(seconds) {
-  const total = Math.max(0, Math.floor(seconds));
-  const days = Math.floor(total / 86400);
-  const hours = Math.floor((total % 86400) / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  // Two units at most: an uptime is read at a glance, and "2d 4h 11m 09s" is
-  // a measurement rather than a glance.
-  if (days) return `${days}d ${hours}h`;
-  if (hours) return `${hours}h ${minutes}m`;
-  if (minutes) return `${minutes}m`;
-  return `${total}s`;
-}
-
-function setPill(el, text, tone) {
-  if (!el) return;
-  el.textContent = text;
-  el.className = "pill" + (tone ? " " + tone : "");
-}
-
-/* ------------------------------------------------------------------ */
-/* GPU load, beside the eye                                            */
-/* ------------------------------------------------------------------ */
-
-/*
- * A hairline column and a number next to the eye: what the card that is doing
- * the thinking is actually doing. It is deliberately quiet -- no colour of its
- * own until the GPU is genuinely busy -- because it must never compete with the
- * eye, which is the thing that carries meaning here.
- *
- * The whole readout hides itself when there is no GPU to report, rather than
- * showing 0% or "n/a": a machine with no NVIDIA card is an ordinary machine,
- * not a broken one, and a permanently empty gauge is just noise.
- */
-
-const GPU_POLL_MS = 3000;
-// Above this the readout brightens and warms. Below it the card is ticking
-// over, and the number is there only if you look for it.
 const GPU_BUSY_PERCENT = 45;
-
-// The first request only *triggers* the server's first reading, so it comes
-// back unmeasured. Asking again shortly after means the readout appears within
-// a second of the page opening instead of on the next three-second tick. The
-// retry is counted, not conditional on eventually succeeding: a server that
-// never measures must not turn this into an unbounded poll.
-let gpuWarmups = 2;
-
 async function refreshGpu() {
-  // A hidden tab cannot show a live number, and polling from one just keeps a
-  // subprocess warm on a machine that is also holding two models.
   if (document.hidden) return;
-  let data = null;
-  try {
-    data = await api("/api/gpu");
-  } catch {
-    data = null;
-  }
-  renderGpu(data);
-  if (data && !data.measured && gpuWarmups > 0) {
-    gpuWarmups -= 1;
-    setTimeout(refreshGpu, 700);
-  }
-}
-
-function renderGpu(data) {
+  const data = await api("/api/gpu");
+  set("gpu", data);
   const meter = $("gpuMeter");
-  if (!meter) return;
-
   const load = data && data.available ? Number(data.utilization_percent) : NaN;
-  if (!Number.isFinite(load)) {
-    // Not measured yet, no GPU, or the request failed -- all three mean the
-    // same thing to the user: there is nothing honest to show.
-    meter.hidden = true;
-    return;
-  }
-
+  if (!Number.isFinite(load)) { meter.hidden = true; return; }
   const percent = Math.max(0, Math.min(100, Math.round(load)));
   meter.hidden = false;
   meter.classList.toggle("busy", percent >= GPU_BUSY_PERCENT);
   $("gpuFill").style.height = percent + "%";
   $("gpuValue").textContent = percent + "%";
-
-  const memory = Number(data.memory_used_mib);
-  meter.title = `GPU ${data.name || ""} — ${percent}% utilisation` +
-    (Number.isFinite(memory) && data.memory_total_mib
-      ? ` · ${memory} of ${data.memory_total_mib} MiB in use`
-      : "");
+  meter.title = `GPU ${data.name || ""} — ${percent}%` + (data.memory_total_mib ? ` · ${data.memory_used_mib} of ${data.memory_total_mib} MiB` : "");
 }
 
+// A script error is shown, not swallowed: a blank pane with a console line
+// nobody reads is the failure mode this replaces.
+window.addEventListener("error", (e) => toast(`UI error: ${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`, "bad"));
+window.addEventListener("unhandledrejection", (e) => toast(`UI error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`, "bad"));
+
 window.startJarvis = startJarvis;
+window.zeus = { views, bus, state, api, toast };
+startJarvis();
