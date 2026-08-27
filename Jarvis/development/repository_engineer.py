@@ -497,10 +497,19 @@ class RepositoryEngineer:
         full_test_commands: list[list[str]] | None = None,
         benchmark_commands: list[list[str]] | None = None,
         max_cycles: int | None = None,
+        worktree: str | Path | None = None,
     ) -> RepositoryCandidateResult:
         source = Path(repository_path).resolve()
         if not source.exists() or not source.is_dir():
             raise ValueError(f"Repository path does not exist: {source}")
+        # A caller that owns the isolation (service.isolation.CandidateWorkspace)
+        # hands the worktree in; the engineer then never creates, and never
+        # decides where, a candidate lives.
+        prepared = Path(worktree).resolve() if worktree else None
+        if prepared is not None:
+            self._assert_external_candidate_path(source, prepared)
+            if not prepared.is_dir():
+                raise ValueError(f"prepared worktree does not exist: {prepared}")
 
         # Fresh clock per run: an engineer reused across runs must not have the
         # first run's elapsed time counted against the second.
@@ -549,7 +558,7 @@ class RepositoryEngineer:
         }
         self._active_trajectory = trajectory
         try:
-            worktree = Path(saved_worktree).resolve() if resuming else self._create_worktree(source)
+            worktree = Path(saved_worktree).resolve() if resuming else (prepared or self._create_worktree(source))
             trajectory["worktree"] = str(worktree)
             result = RepositoryCandidateResult(RepositoryStage.REJECTED, str(worktree))
             if self.checkpoint and not resuming:

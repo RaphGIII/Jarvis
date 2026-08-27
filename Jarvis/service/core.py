@@ -411,12 +411,42 @@ class JarvisCore:
 
         from service.intent import Intent, classify
 
-        classification = classify(text)
+        # Owner corrections are read BEFORE the route is chosen, so a route the
+        # owner has corrected once is not taken again; the registry's names let
+        # "repair your zip capability" find the thing it names.
+        started = time.perf_counter()
+        try:
+            prior = self.corrections.relevant(text)
+        except Exception:  # noqa: BLE001 - a broken store must not block routing
+            prior = []
+        try:
+            names = [str(m.capability_id) for m in self.capabilities.registry.all()]
+        except Exception:  # noqa: BLE001
+            names = []
+        classification = classify(text, corrections=prior, capability_names=names)
+        route = classification.route
         self.emit(
             EventType.DIAGNOSTIC,
-            {"classified": classification.to_dict(), "text": text[:120]},
+            {"classified": classification.to_dict(), "text": text[:120],
+             "router_ms": round((time.perf_counter() - started) * 1000, 1)},
             scope=scope,
         )
+        if route is not None:
+            # Routing evidence in Activity: what was decided, on what, and what
+            # was overruled.  A wrong route is then correctable rather than
+            # invisible.
+            self.emit(
+                EventType.TOOL,
+                {"summary": f"routed: {route.intent.value} ({route.confidence}) -> {classification.intent.value}",
+                 "routing": route.to_dict(), "intent": classification.intent.value,
+                 "source": "router", "text": text[:160]},
+                scope=scope,
+            )
+            if route.corrections:
+                try:
+                    self.corrections.note_applied([c for c in prior if c.correction_id in route.corrections])
+                except Exception:  # noqa: BLE001
+                    pass
 
         # CAPABILITY joins READ rather than going to the executor, because
         # "learn to do X" cannot be executed from a chat turn in this system.
@@ -431,7 +461,13 @@ class JarvisCore:
             self._answer_musically(text, scope, classification)
             return
         if classification.intent is Intent.SELF_DEVELOPMENT:
-            self._answer_by_self_development(text, scope)
+            self._answer_by_self_development(text, scope, classification=classification)
+            return
+        if classification.intent is Intent.OWNER_CONFIG:
+            self._answer_owner_config(text, scope, classification)
+            return
+        if classification.intent is Intent.CORRECTION:
+            self._answer_correction_hint(text, scope)
             return
         if classification.intent.has_side_effect:
             self._answer_by_executing(text, scope, classification)
@@ -439,6 +475,46 @@ class JarvisCore:
         self._answer_conversationally(text, scope)
 
     # -- the three answering paths --------------------------------------
+
+    def _answer_owner_config(self, text: str, scope: str, classification: Any) -> None:
+        """A change to the owner core never happens from a chat sentence.
+
+        It is prepared as far as it safely can be -- named, pointed at the
+        Owner Settings flow -- and stops there.  The owner approves a diff.
+        """
+
+        de = self.language.startswith("de")
+        terms = ", ".join(classification.route.reading.core_terms[:3]) if classification.route else ""
+        self.emit(EventType.NOTIFICATION, {"kind": "owner_config", "text": f"owner-core change requested: {text[:160]}",
+                                           "terms": terms}, scope=scope)
+        self._deliver(
+            (f"Das betrifft meinen Owner-Kern ({terms or 'Identität/Persönlichkeit/Policy'}). "
+             f"Den ändere ich nicht aus einem Chatsatz heraus: öffne „Owner“ in den Einstellungen, dort schlage ich "
+             f"die Änderung als Diff vor und du bestätigst sie ausdrücklich. Kein Selbst-Update wurde gestartet.")
+            if de else
+            (f"That concerns my owner core ({terms or 'identity/personality/policy'}). I do not change it from a chat "
+             f"sentence: open “Owner” in Settings, where I propose the change as a diff for your explicit approval. "
+             f"No self-update was started."),
+            scope=scope, backend="owner",
+            context_text="[owner-core change requested; deferred to the Owner Settings transaction]",
+        )
+
+    def _answer_correction_hint(self, text: str, scope: str) -> None:
+        """"No, that was wrong": the correction memory is the place for it."""
+
+        de = self.language.startswith("de")
+        last = self._session_receipts[-1] if getattr(self, "_session_receipts", None) else None
+        receipt_id = getattr(last, "id", "") if last is not None else ""
+        self.emit(EventType.NOTIFICATION, {"kind": "correction", "text": text[:160], "receipt_id": receipt_id}, scope=scope)
+        self._deliver(
+            (f"Verstanden – das war falsch. Nutze „Korrigieren“ am letzten Ergebnis"
+             f"{' (' + receipt_id + ')' if receipt_id else ''}, dann lerne ich es dauerhaft und kann es korrigiert erneut ausführen.")
+            if de else
+            (f"Understood – that was wrong. Use “Korrigieren” on the last result"
+             f"{' (' + receipt_id + ')' if receipt_id else ''}; I then learn it durably and can re-run it corrected."),
+            scope=scope, backend="corrections",
+            context_text="[owner correction signalled; handled through the correction memory]",
+        )
 
     def _answer_from_records(self, text: str, scope: str, classification: Any) -> None:
         """A question about this system, answered from its registries."""
@@ -1334,7 +1410,7 @@ class JarvisCore:
     def list_selfdev(self) -> dict[str, Any]:
         return {"missions": [m.to_dict() for m in self.selfdev_store.list()][-20:]}
 
-    def _answer_by_self_development(self, text: str, scope: str) -> None:
+    def _answer_by_self_development(self, text: str, scope: str, classification: Any = None) -> None:
         """"Change something about yourself": a mission, not a conversation.
 
         Acknowledged at once, run in its own thread so the conversation stays
@@ -1357,6 +1433,8 @@ class JarvisCore:
             return
 
         mission = SelfDevMission(request=text, scope=scope, language=self.language)
+        if classification is not None and getattr(classification, "route", None) is not None:
+            mission.routing = classification.route.to_dict()
         self.selfdev_store.save(mission)
         self.emit(EventType.NOTIFICATION, {"text": f"self-development mission {mission.mission_id} started",
                                            "kind": "selfdev", "mission_id": mission.mission_id, "request": text[:200]},
@@ -1372,7 +1450,7 @@ class JarvisCore:
         )
 
         runner = SelfDevRunner(
-            repository=Path(self.kernel.state_root).resolve().parents[1],
+            repository=self.selfdev_repository(),
             store=self.selfdev_store, kernel=self.kernel, owner=self.owner, lifecycle=self.lifecycle,
             gateway=self.experts, emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
             set_state=self.state.set,
@@ -1401,7 +1479,86 @@ class JarvisCore:
         for mission in settled:
             self._deliver(describe(mission, mission.language or self.language), scope=mission.scope, backend="selfdev",
                           final_state=JarvisState.IDLE if mission.outcome == "promoted" else JarvisState.ERROR)
-        return len(settled)
+        settled_count = len(settled)
+        # A mission that was mid-flight when this process last died did not
+        # finish: say so in its record rather than letting it look active for
+        # ever.  Its candidate is released (diff kept) below.
+        interrupted = 0
+        for mission in self.selfdev_store.list():
+            if mission.finished or mission.phase == "RESTARTING":
+                continue
+            mission.outcome, mission.reason, mission.phase = "failed", f"interrupted by a restart during {mission.phase}", "FAILED"
+            mission.events.append({"at": mission.updated_at, "phase": "FAILED", "detail": mission.reason})
+            self.selfdev_store.save(mission)
+            interrupted += 1
+        try:
+            self._sweep_selfdev_isolation()
+        except Exception as exc:  # noqa: BLE001
+            self.emit(EventType.DIAGNOSTIC, {"warming": f"selfdev isolation sweep failed: {exc}"})
+        if interrupted:
+            self.emit(EventType.NOTIFICATION, {"kind": "selfdev", "text": f"{interrupted} self-development mission(s) were interrupted by the restart"})
+        return settled_count + interrupted
+
+    def _sweep_selfdev_isolation(self) -> dict[str, Any]:
+        """At startup: no candidate outlives its mission, and no promotion stays half-applied."""
+
+        from deployment.promotion import recover_interrupted
+        from service.isolation import CandidateWorkspace
+
+        repository = self.selfdev_repository()
+        keep = [m.mission_id for m in self.selfdev_store.list()
+                if m.phase in {"RESTARTING"} or (m.verification.get("ok") and m.outcome == "failed")]
+        removed = CandidateWorkspace.reap(repository, keep=keep)
+        recovered = recover_interrupted(repository)
+        report = {"worktrees_removed": removed, "promotions_recovered": recovered, "kept": keep}
+        if removed or recovered:
+            self.emit(EventType.TOOL, {"summary": f"isolation sweep: {len(removed)} stale candidate(s) removed, "
+                                                  f"{len(recovered)} interrupted promotion(s) restored",
+                                       "source": "isolation", "report": report})
+        return report
+
+    def selfdev_repository(self) -> Path:
+        """ZEUS's own directory, from where this code lives -- never from an
+        environment variable a mission could have inherited."""
+
+        return Path(__file__).resolve().parents[1]
+
+    def cancel_selfdev(self, mission_id: str) -> dict[str, Any]:
+        mission = self.selfdev_store.load(mission_id)
+        if mission is None:
+            return {"ok": False, "error": f"no mission {mission_id}"}
+        if mission.finished:
+            return {"ok": False, "error": f"mission {mission_id} is already {mission.phase}"}
+        mission.cancel_requested = True
+        self.selfdev_store.save(mission)
+        self.emit(EventType.PROGRESS, {"summary": f"selfdev cancel requested: {mission_id}", "kind": "selfdev",
+                                       "mission_id": mission_id, "phase": mission.phase})
+        return {"ok": True, "mission_id": mission_id, "phase": mission.phase}
+
+    def resume_selfdev(self, mission_id: str) -> dict[str, Any]:
+        """Continue a failed mission whose verified candidate is still on disk."""
+
+        from service.selfdev import SelfDevRunner, describe
+
+        mission = self.selfdev_store.load(mission_id)
+        if mission is None:
+            return {"ok": False, "error": f"no mission {mission_id}"}
+        if self.selfdev_store.active() is not None:
+            return {"ok": False, "error": "another self-development mission is active"}
+        runner = SelfDevRunner(
+            repository=self.selfdev_repository(), store=self.selfdev_store, kernel=self.kernel, owner=self.owner,
+            lifecycle=self.lifecycle, gateway=self.experts,
+            emit=lambda kind, payload: self.emit(kind, payload, scope=mission.scope), set_state=self.state.set,
+        )
+
+        def work() -> None:
+            finished = runner.resume(mission)
+            if finished.phase != "RESTARTING":
+                self._deliver(describe(finished, self.language), scope=mission.scope, backend="selfdev",
+                              final_state=JarvisState.IDLE if finished.outcome != "failed" else JarvisState.ERROR)
+
+        threading.Thread(target=work, daemon=True, name=f"selfdev-resume-{mission_id}").start()
+        return {"ok": True, "mission_id": mission_id}
 
     # ------------------------------------------------------------------
     # Korrigieren -- owner corrections

@@ -67,6 +67,18 @@ _QUOTA_MARKERS = (
 )
 
 
+#: Tool patterns the expert may not use.  ``cd`` because the worktree is its
+#: whole world; the git verbs because a worktree's ``.git`` is a pointer into
+#: the live repository's metadata and these would rewrite it.
+CONFINEMENT_DISALLOWED_TOOLS = (
+    "Bash(cd:*)", "Bash(cd *)", "Bash(pushd:*)", "Bash(Set-Location:*)",
+    "Bash(git worktree:*)", "Bash(git stash:*)", "Bash(git reset:*)", "Bash(git checkout:*)",
+    "Bash(git switch:*)", "Bash(git branch:*)", "Bash(git push:*)", "Bash(git gc:*)", "Bash(git config:*)",
+    "Bash(git commit:*)", "Bash(git rebase:*)", "Bash(git merge:*)", "Bash(git clean:*)",
+    "Bash(powershell:*)", "Bash(pwsh:*)", "Bash(cmd:*)",
+)
+
+
 class ClaudeCodeExpert:
     """Runs an :class:`~experts.contracts.ExpertJob` through ``claude -p``."""
 
@@ -137,6 +149,12 @@ class ClaudeCodeExpert:
             self.permission_mode,
             "--add-dir",
             str(workspace),
+            # Edits outside the workspace already need a permission nobody is
+            # there to grant.  The shell is the remaining way out, so the
+            # commands that leave a directory or rewrite shared git state are
+            # withheld -- from the tool menu, not from a sentence in the prompt.
+            "--disallowedTools",
+            *CONFINEMENT_DISALLOWED_TOOLS,
         ]
         if self.model:
             command += ["--model", self.model]

@@ -218,6 +218,8 @@ class JarvisHTTPServer:
             ),
             "/api/correction/delete": lambda body: self.core.delete_correction(str(body.get("correction_id", ""))),
             "/api/selfdev": lambda _: self.core.list_selfdev(),
+            "/api/selfdev/cancel": lambda body: self.core.cancel_selfdev(str(body.get("mission_id", ""))),
+            "/api/selfdev/resume": lambda body: self.core.resume_selfdev(str(body.get("mission_id", ""))),
             "/api/owner": lambda _: self.core.owner_view(),
             "/api/owner/propose": lambda body: self.core.owner_propose(
                 dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui"

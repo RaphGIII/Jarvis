@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from service.events import EventType
+from service.isolation import CandidateWorkspace, LiveTreeGuard, MissionCancelled
 from service.state import JarvisState
 
 UI_TERMS = (
@@ -85,10 +86,19 @@ class SelfDevMission:
     timings: dict[str, float] = field(default_factory=dict)
     model_calls: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
+    #: The top-level routing decision that created this mission (evidence).
+    routing: dict[str, Any] = field(default_factory=dict)
+    #: Set through the API; the runner stops at the next phase boundary.
+    cancel_requested: bool = False
+    #: Live-tree guard reports, one per experimental phase (evidence that the
+    #: active tree stayed untouched -- or what was put back).
+    isolation: list[dict[str, Any]] = field(default_factory=list)
+    #: Where the candidate's diff was kept after the worktree was released.
+    evidence_patch: str = ""
 
     @property
     def finished(self) -> bool:
-        return self.phase in {"DONE", "FAILED"}
+        return self.phase in {"DONE", "FAILED", "CANCELLED"}
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -111,6 +121,14 @@ class SelfDevStore:
         mission.updated_at = _now()
         path = self.path_for(mission.mission_id)
         with self._lock:
+            # A cancel arrives from another thread through this file.  Saving
+            # an in-memory copy must never un-cancel a mission.
+            if not mission.cancel_requested and path.is_file():
+                try:
+                    if json.loads(path.read_text(encoding="utf-8")).get("cancel_requested"):
+                        mission.cancel_requested = True
+                except (OSError, ValueError):
+                    pass
             self.root.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(mission.to_dict(), indent=2, default=str), encoding="utf-8")
@@ -180,15 +198,95 @@ class SelfDevRunner:
             "from core.kernel import JarvisKernel; k = JarvisKernel(); assert k.tools.names(); print('JARVIS_HEALTH_OK')",
         ]
         self.health_marker = "JARVIS_HEALTH_OK"
+        #: The isolation boundary.  Created at BUILD, released at the end of
+        #: the mission whichever way it ends; see :mod:`service.isolation`.
+        self._workspace: Any = None
+        self._engineer: Any = None
+        self._guard = LiveTreeGuard(self.repository)
+        self._baseline: Any = None
+        self.evidence_root = Path(self.store.root) / "evidence"
+
+    # -- isolation -----------------------------------------------------
+
+    def _check_cancel(self, mission: SelfDevMission) -> None:
+        """The owner's cancel arrives through the store, from another thread."""
+
+        latest = self.store.load(mission.mission_id)
+        if (latest is not None and latest.cancel_requested) or mission.cancel_requested:
+            mission.cancel_requested = True
+            if self._engineer is not None:
+                # The engineer's loop checks its deadline before every model
+                # call; an expired budget is the one exit it already has.
+                try:
+                    self._engineer.deadline.budget = 0.0
+                except Exception:  # noqa: BLE001
+                    pass
+            raise MissionCancelled(f"mission {mission.mission_id} cancelled by the owner")
+
+    def _audit(self, mission: SelfDevMission, phase: str) -> None:
+        """After foreign code ran: prove the live tree is what it was.
+
+        Contamination -- a live file byte-identical to the candidate's copy --
+        is restored and the mission fails, because a boundary that was
+        crossed is a defect in the boundary, not a detail of the mission.
+        """
+
+        if self._baseline is None:
+            return
+        report = self._guard.check(self._baseline, self._workspace, phase=phase)
+        mission.isolation.append(report)
+        self.store.save(mission)
+        if report["contamination"]:
+            self.emit(EventType.ERROR, {"error": f"self-development {phase} wrote into the live tree: "
+                                                 f"{report['contamination'][:6]}; restored {report['restored'][:6]}",
+                                        "kind": "selfdev", "mission_id": mission.mission_id, "isolation": report})
+            raise RuntimeError(f"isolation breach in {phase}: {report['contamination'][:6]} (restored: {report['restored'][:6]})")
+
+    def _finish(self, mission: SelfDevMission) -> None:
+        """Release the candidate, keeping its diff; the live tree is never involved."""
+
+        ws = self._workspace
+        if ws is None:
+            return
+        # A verified candidate whose promotion failed is worth keeping: a
+        # resume re-verifies and promotes it in seconds instead of rebuilding
+        # it in half an hour.  Everything else is released, diff first.
+        keep = bool(mission.verification.get("ok")) and mission.outcome == "failed" and mission.phase == "FAILED"
+        if keep:
+            return
+        try:
+            report = ws.release(evidence_root=self.evidence_root, reason=f"{mission.phase}: {mission.reason[:120]}")
+            if report.get("evidence"):
+                mission.evidence_patch = report["evidence"]
+            mission.events.append({"at": _now(), "phase": "RELEASE", "detail": f"worktree removed={report.get('removed')}, evidence={mission.evidence_patch}"})
+            if mission.phase != "RESTARTING":
+                mission.worktree = ""
+            self.store.save(mission)
+        except Exception as exc:  # noqa: BLE001 - releasing must never mask the verdict
+            mission.events.append({"at": _now(), "phase": "RELEASE", "detail": f"release failed: {exc}"[:300]})
+            self.store.save(mission)
+        finally:
+            self._workspace = None
+            self._engineer = None
 
     # -- bookkeeping ---------------------------------------------------
 
     def _phase(self, mission: SelfDevMission, phase: str, detail: str = "") -> None:
+        if phase not in {"FAILED", "CANCELLED", "DONE", "RELEASE"}:
+            self._check_cancel(mission)
         mission.phase = phase
         mission.events.append({"at": _now(), "phase": phase, "detail": detail[:400]})
         self.store.save(mission)
         self.emit(EventType.PROGRESS, {"summary": f"selfdev {phase}: {detail}"[:300], "kind": "selfdev",
                                        "mission_id": mission.mission_id, "phase": phase})
+
+    def _cancel(self, mission: SelfDevMission, reason: str) -> SelfDevMission:
+        mission.outcome = "cancelled"
+        mission.reason = reason[:1000]
+        self._phase(mission, "CANCELLED", reason)
+        self.emit(EventType.NOTIFICATION, {"text": f"self-development {mission.mission_id} cancelled", "kind": "selfdev",
+                                           "mission_id": mission.mission_id})
+        return mission
 
     def _fail(self, mission: SelfDevMission, reason: str) -> SelfDevMission:
         mission.outcome = "failed"
@@ -212,17 +310,22 @@ class SelfDevRunner:
         max_seconds = float(policy.get("max_seconds", 2400))
 
         try:
+            self._baseline = self._guard.fingerprint()
             self._timed(mission, "understand", lambda: self._understand(mission))
             self._timed(mission, "investigate", lambda: self._investigate(mission))
             self.set_state(JarvisState.CODING, detail="developing a change to myself", scope=mission.scope)
             candidate = self._timed(mission, "build", lambda: self._build(mission, max_seconds))
+            self._audit(mission, "BUILD")
             self.set_state(JarvisState.VERIFYING, detail="verifying the candidate", scope=mission.scope)
             verified = self._timed(mission, "verify", lambda: self._verify(mission))
+            self._audit(mission, "VERIFY")
             if not verified and self.gateway is not None:
                 self.set_state(JarvisState.CODING, detail="asking an expert", scope=mission.scope)
                 self._timed(mission, "escalate", lambda: self._escalate(mission))
+                self._audit(mission, "ESCALATE")
                 self.set_state(JarvisState.VERIFYING, detail="verifying the expert's work", scope=mission.scope)
                 verified = self._timed(mission, "verify", lambda: self._verify(mission))
+                self._audit(mission, "VERIFY")
             if not verified:
                 return self._fail(mission, f"no verified candidate: {mission.verification.get('detail', '')[:400]}")
             if not policy.get("auto_promote", True):
@@ -234,11 +337,14 @@ class SelfDevRunner:
                 return mission
             self._restart(mission)
             return mission
+        except MissionCancelled as exc:
+            return self._cancel(mission, str(exc))
         except Exception as exc:  # noqa: BLE001 - the mission file must say what raised
             import traceback
 
             return self._fail(mission, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1500:]}")
         finally:
+            self._finish(mission)
             if mission.phase not in {"RESTARTING"}:
                 self.set_state(JarvisState.IDLE, scope=mission.scope)
 
@@ -252,13 +358,16 @@ class SelfDevRunner:
         """
 
         if mission.worktree and Path(mission.worktree).is_dir():
+            self._workspace = CandidateWorkspace.attach(self.repository, mission.mission_id, mission.worktree)
             mission.changed_files = self._changed_files(mission.worktree)
         if not mission.changed_files:
             mission.phase, mission.outcome, mission.reason = "UNDERSTAND", "", ""
             mission.worktree = ""
+            self._workspace = None
             return self.run(mission)
         policy = self.owner.read("policy").get("self_development", {})
-        mission.outcome, mission.reason = "", ""
+        mission.outcome, mission.reason, mission.cancel_requested = "", "", False
+        self._baseline = self._guard.fingerprint()
         if not mission.acceptance:
             self._understand(mission)
         self._phase(mission, "RESUME", f"resuming with the existing candidate ({len(mission.changed_files)} files)")
@@ -275,11 +384,14 @@ class SelfDevRunner:
                 return mission
             self._restart(mission)
             return mission
+        except MissionCancelled as exc:
+            return self._cancel(mission, str(exc))
         except Exception as exc:  # noqa: BLE001
             import traceback
 
             return self._fail(mission, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1500:]}")
         finally:
+            self._finish(mission)
             if mission.phase != "RESTARTING":
                 self.set_state(JarvisState.IDLE, scope=mission.scope)
 
@@ -358,17 +470,23 @@ class SelfDevRunner:
         # with; left at its 8192 default it compacts prompts the model could
         # have read in full (the tuner measured 24576 here).
         window = getattr(getattr(brain, "spec", None), "context_window", None)
+        # The boundary first.  The candidate is a git worktree outside the
+        # repository; the engineer is handed it and never chooses a path.
+        workspace = CandidateWorkspace(repository=self.repository, mission_id=mission.mission_id).create()
+        self._workspace = workspace
+        mission.worktree = str(workspace.root)
         engineer = RepositoryEngineer(
             brain=brain, timeout_seconds=600.0, max_cycles=3, max_seconds=max_seconds,
-            worktree_root=Path(os.environ.get("TEMP", "/tmp")) / "jarvis_selfdev" / mission.mission_id,
+            worktree_root=workspace.base / mission.mission_id,
             context_budget=ModelRequestBudget.from_env(window) if window else None,
         )
+        self._engineer = engineer
         goal = SelfImprovementGoal(objective=self._goal_text(mission), allowed_paths=["."])
         commands = [item["command"] for item in mission.acceptance]
         mission.local_attempts += 1
-        self._phase(mission, "BUILD", f"BUILD_LOCAL, attempt {mission.local_attempts}, budget {max_seconds:.0f}s")
-        candidate = engineer.improve(self.repository, goal, acceptance_commands=commands, max_cycles=3)
-        mission.worktree = str(getattr(candidate, "worktree", "") or "")
+        self._phase(mission, "BUILD", f"BUILD_LOCAL, attempt {mission.local_attempts}, budget {max_seconds:.0f}s, candidate {workspace.root}")
+        candidate = engineer.improve(self.repository, goal, acceptance_commands=commands, max_cycles=3,
+                                     worktree=workspace.root)
         mission.changed_files = self._changed_files(mission.worktree)
         trajectory = getattr(engineer, "_active_trajectory", {}) or {}
         mission.model_calls += sum(1 for e in trajectory.get("events", []) if "model" in str(e.get("stage", "")).lower()
@@ -384,16 +502,29 @@ class SelfDevRunner:
             return []
         try:
             out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=worktree, capture_output=True, text=True, timeout=60).stdout
+            top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=worktree, capture_output=True, text=True, timeout=60).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return []
         files = []
         root = Path(worktree)
+        # git reports paths from the top of the worktree; ZEUS may live in a
+        # subdirectory of it, and every consumer wants paths relative to ZEUS.
+        prefix = ""
+        try:
+            rel = root.resolve().relative_to(Path(top).resolve()).as_posix() if top else "."
+            prefix = "" if rel == "." else rel + "/"
+        except ValueError:
+            prefix = ""
         for line in out.splitlines():
             if len(line) > 3:
                 name = line[3:].strip().strip('"')
                 if " -> " in name:
                     name = name.split(" -> ", 1)[1]
                 name = name.replace("\\", "/")
+                if prefix:
+                    if not name.startswith(prefix):
+                        continue
+                    name = name[len(prefix):]
                 # A candidate worktree has no .gitignore at its root, so
                 # bytecode caches and runtime state show up as untracked.
                 # None of that is a change; only files are promoted.
@@ -406,13 +537,28 @@ class SelfDevRunner:
                 files.append(name)
         return files
 
-    def _run(self, command: list[str], cwd: str, timeout: float = 600.0) -> tuple[bool, str]:
+    def _env_for(self, cwd: str) -> dict[str, str]:
+        """Inside the candidate: the scrubbed workspace environment, with every
+        ZEUS root pointed into the candidate.  On the live tree (the promoter's
+        re-run): the process environment, with the tree first on the path."""
+
+        ws = self._workspace
+        try:
+            inside = ws is not None and Path(cwd).resolve().is_relative_to(ws.path)
+        except (OSError, ValueError):
+            inside = False
+        if inside:
+            return ws.env()
         env = dict(os.environ)
-        # The workspace must shadow anything else on the path (a stray
-        # top-level `tests` package in user site-packages shadows a candidate's
-        # modules otherwise).
+        for name in ("JARVIS_STATE_ROOT", "JARVIS_CONFIG_ROOT", "ZEUS_CANDIDATE", "ZEUS_CANDIDATE_ROOT"):
+            env.pop(name, None)
         env["PYTHONPATH"] = cwd + os.pathsep + env.get("PYTHONPATH", "")
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        return env
+
+    def _run(self, command: list[str], cwd: str, timeout: float = 600.0) -> tuple[bool, str]:
+        env = self._env_for(cwd)
         try:
             completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
                                        errors="replace", timeout=timeout, env=env,
@@ -605,6 +751,12 @@ def describe(mission: SelfDevMission, language: str = "") -> str:
         return (f"Self-update done: “{mission.request[:80]}”. Changed: {files}. Verified, promoted as "
                 f"{mission.expected_revision[:10]}, restart confirmed ({mission.reason}). {total:.0f}s, "
                 f"{'with' if mission.escalated else 'without'} an expert.")
+    if mission.outcome == "cancelled":
+        if de:
+            return (f"Selbst-Update abgebrochen: „{mission.request[:80]}“. Nichts wurde übernommen; der Arbeitsbaum ist "
+                    f"entfernt{' (Diff aufbewahrt)' if mission.evidence_patch else ''}. Aktiver Code unverändert.")
+        return (f"Self-update cancelled: “{mission.request[:80]}”. Nothing was promoted; the candidate is "
+                f"released{' (diff kept)' if mission.evidence_patch else ''}. Live code unchanged.")
     if mission.outcome == "rolled_back":
         if de:
             return (f"Selbst-Update zurückgerollt: „{mission.request[:80]}“ hat den Neustart nicht überstanden "

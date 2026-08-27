@@ -187,6 +187,17 @@ def rule_for(what_was_wrong: str, *, request: str, classification: str, scope: s
     return when, then
 
 
+#: The owner naming what kind of request it was.  Stored as an ``intent``
+#: override, which :func:`service.routing.route` applies before it decides.
+_INTENT_WORDS = (
+    ("self_development", re.compile(
+        r"(selbstentwicklung|self[-\s]?development|an dir selbst|dich selbst (?:aendern|ändern|verbessern)"
+        r"|(?:eine|die) (?:aenderung|änderung|änderung) an dir|change (?:to )?yourself|modify yourself|kein(?:e)? (?:lied|song|musik)|not (?:a )?(?:song|music))", re.I)),
+    ("real_world_action", re.compile(r"(einfach ausfuehren|einfach ausführen|eine aktion|just do it|an action, not)", re.I)),
+    ("conversation", re.compile(r"(nur eine frage|just a question|only a question|nur reden)", re.I)),
+    ("capability_acquisition", re.compile(r"(neue faehigkeit|neue fähigkeit|new capability|lernen sollst|should learn)", re.I)),
+)
+
 _OVERRIDE_PATTERNS = (
     (("path", "directory", "folder"), re.compile(
         r"(?:ordner|verzeichnis|folder|directory|unter|into|in den ordner|nach)\s+[\"'`]?([\w\-./\\]+?)[\"'`]?(?:[\s,.;]|$)", re.I)),
@@ -197,6 +208,10 @@ _OVERRIDE_PATTERNS = (
 
 def _extract_overrides(text: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
+    for intent, pattern in _INTENT_WORDS:
+        if pattern.search(text or ""):
+            out["intent"] = intent
+            break
     for names, pattern in _OVERRIDE_PATTERNS:
         match = pattern.search(text or "")
         if match:

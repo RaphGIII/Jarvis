@@ -165,6 +165,60 @@ class PromotionAudit:
         return ""
 
 
+class Journal:
+    """What a promotion was doing when the process last wrote to disk."""
+
+    NAME = "JOURNAL.json"
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+
+    def write(self, status: str, **fields: Any) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        payload = {"status": status, "at": datetime.now(timezone.utc).isoformat(), **fields}
+        tmp = self.root / (self.NAME + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(self.root / self.NAME)
+
+    def read(self) -> dict[str, Any]:
+        path = self.root / self.NAME
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        except (OSError, ValueError):
+            return {}
+
+
+def recover_interrupted(repository: Path, snapshot_root: Path | None = None) -> list[dict[str, Any]]:
+    """Undo promotions that died between "applying" and "committed".
+
+    Called at startup.  A journal left at ``applying``/``applied`` means files
+    were copied into the live tree and git never took them: the snapshot is
+    put back and the journal says so.  Nothing else is touched.
+    """
+
+    repository = Path(repository).resolve()
+    root = Path(snapshot_root) if snapshot_root else repository / "data" / "snapshots"
+    recovered: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return recovered
+    for directory in sorted(root.iterdir()):
+        if not directory.is_dir():
+            continue
+        journal = Journal(directory)
+        entry = journal.read()
+        if entry.get("status") not in {"applying", "applied"}:
+            continue
+        try:
+            restored = Snapshot.load(directory).restore(repository)
+            journal.write("recovered", restored=restored, previous=entry.get("status"),
+                          promotion_id=entry.get("promotion_id", ""))
+            recovered.append({"snapshot": str(directory), "restored": restored, "promotion_id": entry.get("promotion_id", "")})
+        except OSError as exc:
+            journal.write("recovery_failed", error=str(exc)[:300])
+            recovered.append({"snapshot": str(directory), "error": str(exc)})
+    return recovered
+
+
 class Snapshot:
     """A restorable copy of the tracked files, taken before a promotion.
 
@@ -272,7 +326,7 @@ class Promoter:
         # rollback resets, so it does not count as uncommitted work.
         dirty = [
             line for line in completed.stdout.splitlines()
-            if line.strip() and not line[3:].strip().strip('"').replace("\\", "/").lstrip("Jarvis/").startswith("data/")
+            if line.strip() and not line[3:].strip().strip('"').replace("\\", "/").removeprefix("Jarvis/").startswith("data/")
         ]
         return (not dirty), "\n".join(dirty[:20])
 
@@ -345,18 +399,28 @@ class Promoter:
         stage(PromotionStage.SNAPSHOT, True, f"{len(snapshot.files)} file(s) saved to {snapshot_dir}")
 
         # ---- apply ----------------------------------------------------
+        # Journaled: the journal says "applying" before the first byte moves
+        # and "committed" only after git has the change.  A process that dies
+        # in between leaves a journal that ``recover_interrupted`` can act on
+        # at the next start, restoring the snapshot -- the tree is then the
+        # old revision, never half of each.
+        journal = Journal(snapshot_dir)
+        journal.write("applying", promotion_id=record.promotion_id, files=files, known_good=known_good)
         try:
             applied = self._copy_files(candidate, files)
         except (OSError, ValueError) as exc:
             stage(PromotionStage.APPLY, False, str(exc))
             snapshot.restore(self.repository)
+            journal.write("restored", reason=str(exc)[:300])
             return refuse(f"could not apply the candidate: {exc}")
         record.changed_files = applied
+        journal.write("applied", promotion_id=record.promotion_id, files=applied, known_good=known_good)
         stage(PromotionStage.APPLY, True, f"copied {len(applied)} file(s)")
 
         # From here on every failure must undo the change.
         def rollback(reason: str, outcome_on_success: PromotionOutcome = PromotionOutcome.ROLLED_BACK) -> PromotionRecord:
             ok, detail = self._rollback(snapshot, known_good)
+            journal.write("rolled_back" if ok else "rollback_failed", reason=reason[:300])
             stage(PromotionStage.ROLLBACK, ok, detail)
             record.outcome = outcome_on_success if ok else PromotionOutcome.ROLLBACK_FAILED
             record.reason = reason if ok else f"{reason}; AND THE ROLLBACK FAILED: {detail}"
@@ -391,6 +455,7 @@ class Promoter:
                 return rollback(f"could not commit the promoted change: {detail[:400]}")
             record.promoted_revision = self.current_revision()
 
+        journal.write("committed", promotion_id=record.promotion_id, revision=record.promoted_revision)
         record.outcome = PromotionOutcome.PROMOTED
         record.reason = "candidate verified, promoted and healthy"
         record.finished_at = datetime.now(timezone.utc).isoformat()
@@ -431,7 +496,10 @@ class Promoter:
                     applied.append(relative)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(source.read_bytes())
+            # Atomic per file: the live tree never holds a half-written file.
+            staging = target.with_name(target.name + ".zeus-promote")
+            staging.write_bytes(source.read_bytes())
+            staging.replace(target)
             applied.append(relative)
         return applied
 

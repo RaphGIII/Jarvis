@@ -1,0 +1,200 @@
+{
+  "at": "2026-08-27T13:30:37Z",
+  "request": "Zeus, repariere deinen Desktop- und Supervisor-Lifecycle. Wenn ich dein Fenster mit X schließe, darf kein undefinierter Zustand entstehen. Ich möchte langfristig, dass das Schließen des Fensters nur deine Oberfläche ausblendet, während Core und Wakeword weiterlaufen. Wenn ich ZEUS.exe danach erneut starte, soll innerhalb von höchstens zwei Sekunden wieder dein vorhandenes Fenster erscheinen und dieselbe Core-Instanz verwenden. Es dürfen niemals unnötig doppelte Core-, speech.listener- oder speech.worker-Prozesse entstehen. Füge außerdem eine klare Möglichkeit „ZEUS vollständig beenden“ hinzu, die Supervisor, Core, Listener und Worker sauber beendet. Teste Fenster schließen → erneut öffnen, vollständiges Beenden, Self-Update → Restart und Prozessanzahlen real. Entwickle, verifiziere und übernimm die Änderung selbst.",
+  "mission_id": "c9ed4e1231",
+  "routed_events": [
+    {
+      "summary": "routed: self_development (high) -> self_development",
+      "routing": {
+        "top_level": "self_development",
+        "confidence": "high",
+        "reason": "asks to change ZEUS itself: repariere, update on deinen, dein",
+        "reading": {
+          "operation": "modify",
+          "object": "self",
+          "self_score": 11,
+          "world_score": 0,
+          "is_question": false,
+          "self_refs": [
+            "deinen",
+            "dein",
+            "deine",
+            "zeus.exe"
+          ],
+          "modify_verbs": [
+            "repariere",
+            "update",
+            "entwickle",
+            "aenderung",
+            "fuege ausserdem eine klare moeglichkeit „zeus vollstaendig beenden“ hinzu"
+          ],
+          "action_verbs": [
+            "starte",
+            "oeffnen"
+          ],
+          "world_objects": [],
+          "core_terms": [],
+          "capability_terms": []
+        },
+        "conflicts": [],
+        "corrections": [],
+        "forced_by_owner": false
+      },
+      "intent": "self_development",
+      "source": "router",
+      "text": "Zeus, repariere deinen Desktop- und Supervisor-Lifecycle. Wenn ich dein Fenster mit X schließe, darf kein undefinierter Zustand entstehen. Ich möchte langfristi"
+    }
+  ],
+  "music_events": [],
+  "router_ms": [
+    118.9
+  ],
+  "classified": [
+    {
+      "intent": "self_development",
+      "reason": "asks to change ZEUS itself: repariere, update on deinen, dein",
+      "matched": "self_development",
+      "route": {
+        "top_level": "self_development",
+        "confidence": "high",
+        "reason": "asks to change ZEUS itself: repariere, update on deinen, dein",
+        "reading": {
+          "operation": "modify",
+          "object": "self",
+          "self_score": 11,
+          "world_score": 0,
+          "is_question": false,
+          "self_refs": [
+            "deinen",
+            "dein",
+            "deine",
+            "zeus.exe"
+          ],
+          "modify_verbs": [
+            "repariere",
+            "update",
+            "entwickle",
+            "aenderung",
+            "fuege ausserdem eine klare moeglichkeit „zeus vollstaendig beenden“ hinzu"
+          ],
+          "action_verbs": [
+            "starte",
+            "oeffnen"
+          ],
+          "world_objects": [],
+          "core_terms": [],
+          "capability_terms": []
+        },
+        "conflicts": [],
+        "corrections": [],
+        "forced_by_owner": false
+      }
+    }
+  ],
+  "mission_final": {
+    "phase": "CANCELLED",
+    "outcome": "cancelled",
+    "reason": "mission c9ed4e1231 cancelled by the owner",
+    "worktree": "",
+    "evidence_patch": "",
+    "isolation": [],
+    "routing": {
+      "top_level": "self_development",
+      "confidence": "high",
+      "reason": "asks to change ZEUS itself: repariere, update on deinen, dein",
+      "reading": {
+        "operation": "modify",
+        "object": "self",
+        "self_score": 11,
+        "world_score": 0,
+        "is_question": false,
+        "self_refs": [
+          "deinen",
+          "dein",
+          "deine",
+          "zeus.exe"
+        ],
+        "modify_verbs": [
+          "repariere",
+          "update",
+          "entwickle",
+          "aenderung",
+          "fuege ausserdem eine klare moeglichkeit „zeus vollstaendig beenden“ hinzu"
+        ],
+        "action_verbs": [
+          "starte",
+          "oeffnen"
+        ],
+        "world_objects": [],
+        "core_terms": [],
+        "capability_terms": []
+      },
+      "conflicts": [],
+      "corrections": [],
+      "forced_by_owner": false
+    },
+    "events": [
+      {
+        "at": "2026-08-27T13:30:19.352765+00:00",
+        "phase": "UNDERSTAND",
+        "detail": "area=ui, 2 acceptance checks"
+      },
+      {
+        "at": "2026-08-27T13:30:37.190392+00:00",
+        "phase": "CANCELLED",
+        "detail": "mission c9ed4e1231 cancelled by the owner"
+      }
+    ]
+  },
+  "git_head_before": "259d673a56b020e5c7ad64ba54203cb97487f37b",
+  "git_head_after": "259d673a56b020e5c7ad64ba54203cb97487f37b",
+  "git_status_before": " M Jarvis/deployment/promotion.py\n M Jarvis/development/repository_engineer.py\n M Jarvis/experts/claude_code.py\n M Jarvis/service/core.py\n M Jarvis/service/corrections.py\n M Jarvis/service/http.py\n M Jarvis/service/intent.py\n M Jarvis/service/music.py\n M Jarvis/service/selfdev.py\n?? Jarvis/service/isolation.py\n?? Jarvis/service/routing.py\n?? Jarvis/tests/test_isolation.py\n?? Jarvis/tests/test_routing.py\n",
+  "git_status_after": " M Jarvis/deployment/promotion.py\n M Jarvis/development/repository_engineer.py\n M Jarvis/experts/claude_code.py\n M Jarvis/service/core.py\n M Jarvis/service/corrections.py\n M Jarvis/service/http.py\n M Jarvis/service/intent.py\n M Jarvis/service/music.py\n M Jarvis/service/selfdev.py\n?? Jarvis/service/isolation.py\n?? Jarvis/service/routing.py\n?? Jarvis/tests/test_isolation.py\n?? Jarvis/tests/test_routing.py\n",
+  "worktrees": "D:/Jarvis_recovery_20260823/repo 259d673 [adaptive-brain-v1]\n",
+  "health": {
+    "ready": true,
+    "detail": "ready",
+    "revision": "259d673a56b020e5c7ad64ba54203cb97487f37b",
+    "supervised": true,
+    "pid": 29804,
+    "uptime_seconds": 187.6,
+    "stages": {
+      "fast_local": {
+        "ok": true,
+        "detail": "OK",
+        "at": 1787837282.9608576
+      },
+      "missions": {
+        "ok": true,
+        "detail": "0 resumable",
+        "at": 1787837282.9643579
+      },
+      "voice": {
+        "ok": true,
+        "detail": "",
+        "at": 1787837297.9397354
+      },
+      "recogniser": {
+        "ok": true,
+        "detail": "",
+        "at": 1787837302.5877984
+      },
+      "warm": {
+        "ok": true,
+        "detail": "",
+        "at": 1787837302.5878248
+      }
+    },
+    "voice": true,
+    "recogniser": true,
+    "state": {
+      "state": "idle",
+      "detail": "",
+      "since": "2026-08-27T13:30:37.253576+00:00",
+      "scope": "",
+      "progress": null,
+      "busy": false
+    },
+    "resumed": {}
+  }
+}

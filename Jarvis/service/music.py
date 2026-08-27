@@ -93,8 +93,15 @@ CONTEXT = (
 
 _PLAY = re.compile(
     r"\b(spiel|spiele|spiel[ae]?\s*mir|spielt|abspielen|leg\s+auf|mach\s+.{0,12}\s*an"
-    r"|play|put\s+on|start)\b"
+    r"|play|put\s+on|start|starte|starten)\b"
 )
+#: Verbs that only mean "play" next to a music word.  "Wenn ich ZEUS.exe
+#: starte" and "mach das Licht an" are not requests for a song; observed live,
+#: where the first sent a paragraph about the desktop lifecycle to Spotify.
+_PLAY_NEEDS_CONTEXT = re.compile(r"^(start|starte|starten|mach\b.*)$")
+#: The longest thing anyone has ever asked to hear by name.  Beyond this a
+#: "query" is prose, whatever verb list let it through.
+MAX_QUERY_WORDS = 12
 _PAUSE = re.compile(r"\b(pause|pausiere|pausier|anhalten|halt\s+an|stopp?e?|stop\s+it|pause\s+it)\b")
 _RESUME = re.compile(r"\b(weiter|weiterspielen|fortsetzen|resume|continue|unpause|play\s+on)\b")
 _NEXT = re.compile(
@@ -176,14 +183,26 @@ def understand(text: str) -> MusicRequest | None:
         if pattern.search(folded) and commanding:
             return MusicRequest(action, reason=f"transport command: {action}")
 
-    if _PLAY.search(folded):
+    play = _PLAY.search(folded)
+    if play and (has_context or not _PLAY_NEEDS_CONTEXT.match(play.group(1))):
         query = extract_query(text)
+        if query and prose_reason(query):
+            # A paragraph is not a track name, whichever verb matched.
+            return None
         if query:
             return MusicRequest("play", query=query, reason="names something to play")
         if has_context:
             # "Mach Musik an" -- a play with no particular track.
             return MusicRequest("resume", reason="asks for music with no track named")
     return None
+
+
+def prose_reason(query: str) -> str:
+    """Why ``query`` must not go to a provider as a search, or ``""``."""
+
+    from service.routing import looks_like_prose
+
+    return looks_like_prose(query, max_words=MAX_QUERY_WORDS)
 
 
 def extract_query(text: str) -> str:
@@ -453,6 +472,18 @@ class MusicService:
         # action rather than up front.
         requirement = None
         if request.action in {"play", "search"}:
+            # Provider-level guard, independent of whatever routed the request
+            # here: prose is never submitted to a media provider as a search.
+            why = prose_reason(request.query)
+            if why:
+                return MusicOutcome(
+                    receipt=failed(
+                        f"music.{request.action}", capability_id,
+                        f"refused to search {self.provider}: {why}",
+                        request=request.query[:200], provider=self.provider, guard="prose",
+                    ),
+                    capability_id=capability_id,
+                )
             values, requirement = self.credentials()
             if requirement is not None:
                 return MusicOutcome(

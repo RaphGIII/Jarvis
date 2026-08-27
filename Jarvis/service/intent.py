@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Iterable
 
 
 class Intent(str, Enum):
@@ -59,12 +60,18 @@ class Intent(str, Enum):
     #: "Change something about yourself."  Becomes a persistent self-development
     #: mission: worktree, BUILD_LOCAL, verification, promotion, restart.
     SELF_DEVELOPMENT = "self_development"
+    #: A change to the owner core (identity, personality, policy).  Never a
+    #: SelfDev mission: a protected owner transaction with explicit approval.
+    OWNER_CONFIG = "owner_config"
+    #: The owner says a previous reading was wrong.  Handled through the
+    #: correction memory, not by acting on the sentence.
+    CORRECTION = "correction"
 
     @property
     def has_side_effect(self) -> bool:
         """Whether answering this may change the world."""
 
-        return self in {Intent.ACTION, Intent.PROJECT, Intent.CAPABILITY, Intent.MUSIC, Intent.SELF_DEVELOPMENT}
+        return self in {Intent.ACTION, Intent.PROJECT, Intent.CAPABILITY, Intent.MUSIC, Intent.SELF_DEVELOPMENT, Intent.OWNER_CONFIG}
 
     @property
     def needs_receipt(self) -> bool:
@@ -79,9 +86,22 @@ class Classification:
     reason: str
     #: The phrase that decided it, for diagnostics and for tuning.
     matched: str = ""
+    #: The top-level route (:mod:`service.routing`) this was derived from.
+    route: Any = None
 
-    def to_dict(self) -> dict[str, str]:
-        return {"intent": self.intent.value, "reason": self.reason, "matched": self.matched}
+    @property
+    def top_level(self) -> str:
+        return self.route.intent.value if self.route is not None else ""
+
+    @property
+    def confidence(self) -> str:
+        return self.route.confidence if self.route is not None else ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"intent": self.intent.value, "reason": self.reason, "matched": self.matched}
+        if self.route is not None:
+            out["route"] = self.route.to_dict()
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -301,8 +321,16 @@ PROJECT_HINTS = (
 )
 
 
-def classify(text: str) -> Classification:
+def classify(text: str, *, corrections: Iterable[Any] = (), capability_names: Iterable[str] = ()) -> Classification:
     """Decide what kind of request this is.
+
+    Two stages, in a fixed order.  First :func:`service.routing.route` decides
+    the *top-level* intent from the request's operation and object -- whether
+    it acts on the world, changes ZEUS itself, acquires an ability, and so on
+    -- with owner corrections consulted before that choice.  Only when the top
+    level says the request is a real-world action or conversation is any
+    domain parser (music first) allowed to claim it.  Spotify's verb list never
+    gets to decide whether a paragraph is self-development.
 
     Order matters and is not arbitrary:
 
@@ -318,42 +346,62 @@ def classify(text: str) -> Classification:
     if not normalized.strip():
         return Classification(Intent.CONVERSATION, "empty message")
 
-    # Music first, and asked of the music module rather than answered with a
-    # keyword list here. "Pause." and "Weiter." are transport commands that
-    # every later rule would either miss or mistake for something else, and the
-    # test for whether a sentence is about music belongs next to the code that
-    # then has to parse it.
-    from service.music import understand
+    from service.routing import TopLevelIntent, route
 
-    heard = understand(text)
-    if heard is not None:
-        return Classification(Intent.MUSIC, heard.reason, matched=heard.action)
+    top = route(text, corrections=corrections, capability_names=capability_names)
 
+    # Questions about the system's own state are answered from the registries
+    # whatever the top level made of them ("was kannst du" is not acquisition).
     for hint in READ_HINTS:
         if hint in normalized:
             return Classification(
-                Intent.READ, f"asks about this system's own state: {hint!r}", matched=hint
+                Intent.READ, f"asks about this system's own state: {hint!r}", matched=hint, route=top
             )
 
-    # A question about itself is READ (handled above); a request to change
-    # itself is self-development, and it beats the capability, project and
-    # action rules because all three can be phrased about ZEUS's own code.
-    if not normalized.rstrip().endswith("?"):
+    # The top level has decided what this is.  Self-modification, acquisition,
+    # owner-core changes and corrections are settled here and never reach a
+    # domain parser.
+    if top.intent in {TopLevelIntent.SELF_DEVELOPMENT, TopLevelIntent.CAPABILITY_REPAIR}:
+        return Classification(Intent.SELF_DEVELOPMENT, top.reason, matched=top.intent.value, route=top)
+    if top.intent is TopLevelIntent.OWNER_CONFIG_CHANGE:
+        return Classification(Intent.OWNER_CONFIG, top.reason, matched=top.intent.value, route=top)
+    if top.intent is TopLevelIntent.CAPABILITY_ACQUISITION:
+        return Classification(Intent.CAPABILITY, top.reason, matched=top.intent.value, route=top)
+    if top.intent is TopLevelIntent.OWNER_CORRECTION:
+        return Classification(Intent.CORRECTION, top.reason, matched=top.intent.value, route=top)
+    if top.intent is TopLevelIntent.RESEARCH:
+        return Classification(Intent.CONVERSATION, top.reason, matched=top.intent.value, route=top)
+
+    # Only now may a domain parser look.  Music is asked of the music module
+    # rather than answered with a keyword list here: "Pause." and "Weiter." are
+    # transport commands every later rule would miss or mistake for something
+    # else, and the test for whether a sentence is about music belongs next to
+    # the code that then has to parse it.
+    if top.intent.domain_eligible:
+        from service.music import understand
+
+        heard = understand(text)
+        if heard is not None:
+            return Classification(Intent.MUSIC, heard.reason, matched=heard.action, route=top)
+
+    # Legacy phrase hints, kept as a second opinion for self-development only
+    # when the top level found no world object to compete with.
+    if not normalized.rstrip().endswith("?") and top.intent is not TopLevelIntent.REAL_WORLD_ACTION:
         for hint in SELF_DEVELOPMENT_HINTS:
             if hint in normalized:
                 return Classification(
-                    Intent.SELF_DEVELOPMENT, f"asks to change this system itself: {hint!r}", matched=hint
+                    Intent.SELF_DEVELOPMENT, f"asks to change this system itself: {hint!r}", matched=hint, route=top
                 )
 
     for hint in CAPABILITY_HINTS:
         if hint in normalized:
             return Classification(
                 Intent.CAPABILITY, f"asks to acquire an ability: {hint!r}", matched=hint
-            )
+            , route=top)
 
     for hint in PROJECT_HINTS:
         if hint in normalized:
-            return Classification(Intent.PROJECT, f"describes durable work: {hint!r}", matched=hint)
+            return Classification(Intent.PROJECT, f"describes durable work: {hint!r}", matched=hint, route=top)
 
     filename = FILENAME.search(normalized)
     separable = SEPARABLE_ACTION.search(normalized)
@@ -361,7 +409,7 @@ def classify(text: str) -> Classification:
         noun = next((word for word in ACTION_OBJECTS if word in normalized), "")
         return Classification(
             Intent.ACTION, f"separable side-effect verb {separable.group(0).strip()!r}" + (f" on a {noun}" if noun else ""),
-            matched=separable.group(0).strip(),
+            matched=separable.group(0).strip(), route=top,
         )
     for verb in ACTION_VERBS:
         if verb in normalized:
@@ -369,13 +417,19 @@ def classify(text: str) -> Classification:
             detail = f" on a {noun}" if noun else (f" naming {filename.group(0).strip()}" if filename else "")
             return Classification(
                 Intent.ACTION, f"side-effect verb {verb.strip()!r}{detail}", matched=verb.strip()
-            )
+            , route=top)
+
+    if top.intent is TopLevelIntent.REAL_WORLD_ACTION and top.reading.action_verbs:
+        # The top level saw an imperative on the world that no legacy phrase
+        # list covers ("take a screenshot", "open Activity").  The planner can
+        # still decline and fall back to conversation; a missed action cannot.
+        return Classification(Intent.ACTION, top.reason, matched=top.reading.action_verbs[0], route=top)
 
     if filename:
         # A bare filename with no verb ("zeus_test.txt bitte mit Inhalt X") is
         # still far more likely to want a file than to want a conversation.
         return Classification(
             Intent.ACTION, f"names a file: {filename.group(0).strip()!r}", matched=filename.group(0).strip()
-        )
+        , route=top)
 
-    return Classification(Intent.CONVERSATION, "no side effect and no system-state question")
+    return Classification(Intent.CONVERSATION, "no side effect and no system-state question", route=top)
