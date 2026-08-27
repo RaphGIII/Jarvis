@@ -2440,7 +2440,7 @@ class JarvisCore:
             "trained_at": manifest.get("trained_at"),
             "last_score": getattr(self, "_wake_last_test", None),
             "evaluation": {
-                "at": evaluation.get("evaluated_at"), "in_sample": evaluation.get("in_sample", owner_eval.get("in_sample")),
+                "at": evaluation.get("evaluated_at"), "in_sample": evaluation.get("in_sample", True),
                 "stale": bool(evaluation) and evaluation.get("model_fingerprint") != fingerprint,
                 "positive_recall": at.get("recall"), "positives_detected": at.get("positives_detected"),
                 "negative_rejection": at.get("rejection"), "false_activations": at.get("false_activations"),
@@ -2450,10 +2450,20 @@ class JarvisCore:
                 "hard_negatives_evaluated": evaluation.get("hard_negatives_evaluated", False),
                 "counts": evaluation.get("counts"),
             } if evaluation else None,
-            "owner_holdout": owner_eval if owner_eval and not owner_eval.get("in_sample", True) else None,
+            "owner_holdout": self._holdout_view(owner_eval, threshold),
             "listener": listener if listener_fresh else None, "listener_match": match,
             "metrics": manifest.get("metrics") or manifest.get("held_out") or None, "manifest": manifest,
         }
+
+    @staticmethod
+    def _holdout_view(owner_eval: dict[str, Any], threshold: float) -> dict[str, Any] | None:
+        """The hold-out figures at the *current* effective threshold, or None when nothing was held out."""
+
+        if not owner_eval or owner_eval.get("in_sample", True):
+            return None
+        rows = owner_eval.get("thresholds") or []
+        at = next((r for r in rows if abs(float(r.get("threshold", -1)) - float(threshold)) < 1e-9), None) or owner_eval.get("at_effective_threshold")
+        return {**owner_eval, "at_effective_threshold": at, "effective_threshold": threshold}
 
     def wake_listener_report(self, report: dict[str, Any]) -> dict[str, Any]:
         """The listener says what it loaded; Voice Studio shows whether that is what the test uses."""

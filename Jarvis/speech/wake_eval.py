@@ -228,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
 
     detector = ZeusDetector.load(args.model or DEFAULT_MODEL, threshold=args.threshold)
     report = evaluate(detector, Path(args.wake_dir), threshold=args.threshold, log=(lambda *_: None) if args.json else print)
+    # The recordings on disk are the ones training used; held-out figures live in the manifest.
+    report["in_sample"] = True
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
