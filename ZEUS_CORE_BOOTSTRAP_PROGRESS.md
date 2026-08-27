@@ -79,6 +79,25 @@ Independent verification: `/api/gpu` → `utilization_percent: 2, memory_used_mi
 
 What it says about the local tier: the 7B could not land a single edit on this repository in 12 minutes (same edit-mechanics failures as the earlier acquisitions). The system escalated on its own, re-verified the expert's work, and promoted only after its own checks — the expert's report was never the verdict.
 
+### Phase 8 — Korrigieren — LIVE VERIFIED (Gate I)
+
+`service/corrections.py` + `/api/correction/*` + a "Korrigieren" link on every receipt (dialog: request, reading, entities, action, result, receipt; "Was war falsch?"; classification and scope shown and overridable; "Korrigieren & lernen"; list/deactivate/delete under "Korrekturen"). Corrections are retrieved before the planner reads a request and their overrides applied after it.
+
+Live, through the API on commit `37d8214`:
+1. "Leg eine Notiz an in milch.txt: Milch kaufen" → `workspace/milch.txt` (receipt `rcpt_f18ca39d860d`)
+2. Correction on that receipt: "Notizen gehören künftig immer in den Ordner notizen" → OWNER_PREFERENCE, DOMAIN_SPECIFIC (files), override `directory=notizen`
+3. "Leg eine Notiz an in brot.txt: Brot kaufen" → **`workspace/notizen/brot.txt`** (receipt `rcpt_999f170f4d95`); Activity: "owner corrections applied: corr_c4078bf7ab: directory=notizen"
+
+Found on the way and fixed: "Leg eine Notiz an" (separable verb) was conversation and the 4B **invented a receipt** ('Note … created in local notes database. Verified entry: id=…, status=COMMITTED') that the claim guard's vocabulary missed — both fixed (`a0aa1d4`); a planner decline on a request that names a file now asks one question instead of chatting (`37d8214`).
+
+### Phase 4 — wake word "Zeus" — IMPLEMENTED, measured on synthetic audio, HUMAN ACTION pending
+
+`speech/wake_training.py` trains a classifier over openWakeWord's frozen embedding backbone from piper-synthesised "Zeus" (4 voices × speeds × pitches × noise) against near-neighbour words, sentences, silence and every pre-word window of the positives; `speech/wake_zeus.py` scores frames in numpy; the listener loads it when `data/models/wake/zeus.npz` exists (it does; the listener log says "listening for 'zeus'"). `hey_jarvis` scored 0.0003 on a spoken "Zeus" — the gap was real, and the fallback is gone.
+
+Measured (held-out synthetic clips through the streaming detector): recall 0.94 @0.7, 0.92 @0.85; false activations 79/h @0.7, 47/h @0.85 on *adversarial* negatives (50 % near-neighbour words); 6.8 ms per 80 ms frame. Not yet acceptable on false positives for all-day use; the honest limit: no owner recordings.
+
+**HUMAN_ACTION_REQUIRED**: record ~15 wavs of you saying "Zeus" into `Jarvis/data/wake/positive/` and ~10 of other words/sentences into `Jarvis/data/wake/negative/` (16 kHz mono is ideal, anything works), then run `.venv-speech\Scripts\python -m speech.wake_training` and restart ZEUS. Then say "Zeus" and check the listener log for "wake".
+
 ## Live acceptance passed
 
 | gate | evidence |
