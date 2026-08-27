@@ -1,0 +1,4 @@
+{
+  "_why": "The owner asked for ZEUS to appear in its own desktop window, not in their normal browser. The supervisor opens a browser at the status page when open_browser is true; turning it off leaves the interface to jarvis.serve, which opens an application window (jarvis/window.py) as soon as the HTTP server is bound. Set open_browser back to true to get the old browser tab.",
+  "open_browser": false
+}

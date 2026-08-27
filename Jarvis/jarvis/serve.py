@@ -1,22 +1,33 @@
 """Start Jarvis: ``python -m jarvis.serve``.
 
-One command, as the brief requires.  Prints the URL with its token, opens a
-browser unless told not to, and stays in the foreground so Ctrl-C stops it.
+One command, as the brief requires.  Prints the URL with its token, opens the
+interface in its own desktop window unless told not to, and stays in the
+foreground so Ctrl-C stops it.
 
 Deliberately thin.  Everything it does is available programmatically through
 :class:`~service.core.JarvisCore` and :class:`~service.http.JarvisHTTPServer`,
 because a future Windows service, a login task or a headless server deployment
 must be able to start Jarvis without going through an entry point designed for
 a terminal.
+
+The interface is an application window rather than a browser tab (see
+:mod:`jarvis.window`), because that is what the owner asked for and because the
+supervisor -- which starts this process for ``ZEUS.exe`` -- passes
+``--no-browser`` and therefore has to be able to say "no browser" without also
+saying "no interface".  Hence two independent switches: ``--no-browser``
+declines the browser, ``--no-window`` declines the window, and only both
+together mean nothing is opened.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import webbrowser
 from pathlib import Path
 
+from jarvis.window import open_window
 from service.core import JarvisCore
 from service.http import JarvisHTTPServer
 
@@ -29,13 +40,58 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8420, help="port (0 picks a free one)")
     parser.add_argument("--token", default="", help="shared token; generated when omitted")
     parser.add_argument("--token-file", default="", help="read the shared token from this file (the supervisor's way)")
-    parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="do not use a web browser (the desktop window still opens)")
+    parser.add_argument("--no-window", action="store_true",
+                        help="do not open the desktop window (falls back to a browser unless --no-browser)")
+    parser.add_argument("--browser", action="store_true",
+                        help="use the ordinary web browser instead of a desktop window")
     # Empty rather than a name: the assistant's identity comes from
     # config/identity.json, and a default here silently overrode it.
     parser.add_argument("--persona", default="", help="persona name (default: the configured identity)")
     parser.add_argument("--no-warm", action="store_true", help="do not preload models at startup")
     parser.add_argument("--no-speech", action="store_true", help="do not preload the speech stack")
     return parser
+
+
+def interface_plan(args: argparse.Namespace, environ: dict[str, str] | None = None) -> tuple[str, bool]:
+    """What to open -- ``("window"|"browser"|"none", fall back to a browser)``.
+
+    ``ZEUS_UI`` (``window``, ``browser`` or ``none``) decides the same thing
+    from the environment, for the callers that cannot pass arguments: a login
+    task, a service wrapper, or a headless box where opening anything at all
+    would be wrong.  An explicit flag still wins over it.
+    """
+
+    env = str((environ if environ is not None else os.environ).get("ZEUS_UI", "")).strip().lower()
+    if env in {"none", "off", "0", "false", "headless"}:
+        return "none", False
+
+    no_window = bool(args.no_window or args.browser or env == "browser")
+    no_browser = bool(args.no_browser or env == "window")
+    if no_window:
+        return ("none", False) if no_browser else ("browser", False)
+    return "window", not no_browser
+
+
+def show_interface(url: str, plan: tuple[str, bool]) -> str:
+    """Open the interface as planned and report what the owner will see."""
+
+    mode, fallback = plan
+    if mode == "none":
+        return ""
+    if mode == "browser":
+        try:
+            return "in the default browser" if webbrowser.open(url) else "nowhere -- no browser would open"
+        except Exception as exc:  # noqa: BLE001 - a missing browser is not a reason to abort the boot
+            return f"nowhere -- the browser would not open: {exc}"
+    launch = open_window(url, fallback=fallback)
+    if not launch.ok:
+        # Said out loud rather than swallowed: the service is up and reachable,
+        # so this is a "nothing appeared" the owner would otherwise diagnose as
+        # "ZEUS is down".
+        return f"{launch.detail} -- point ZEUS_WINDOW_BROWSER at one, or open the URL above"
+    return launch.describe()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
     server = JarvisHTTPServer(core, host=args.host, port=args.port, token=token)
     url = server.start()
 
+    # Before warming, not after: warming loads a 4B model and the speech stack,
+    # and the owner should be looking at the interface while that happens
+    # rather than at nothing. The page renders its own loading state.
+    shown = show_interface(url, interface_plan(args))
+
     # Start loading models immediately. The page is served either way; this
     # only decides whether the first question takes one second or fifty.
     if not args.no_warm:
@@ -68,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
 
     identity = core.identity
     print(f"\n  {identity.product_name} is running.\n\n    {url}\n")
+    if shown:
+        print(f"  Interface: {shown}\n")
     note = identity.wake_word_note()
     if note:
         # Said at startup rather than discovered at the microphone: the spoken
@@ -79,12 +142,6 @@ def main(argv: list[str] | None = None) -> int:
     if core.lifecycle.supervised:
         print("  Running under the ZEUS supervisor.\n")
     print("  Ctrl-C to stop.\n")
-
-    if not args.no_browser:
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
 
     try:
         # Sleeps until a restart or shutdown is requested through the API;
