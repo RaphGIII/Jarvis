@@ -937,14 +937,21 @@ class JarvisCore:
             return outcome.receipt
         if name.startswith("capability:"):
             cid = name.split(":", 1)[1]
+            # A relative file argument means the workspace, as it does for
+            # every built-in action; a capability sees an absolute path.
+            workspace = Path(self.kernel.state_root) / "workspace"
+            for key, value in list(args.items()):
+                if isinstance(value, str) and ("path" in key.lower() or key.lower() in {"file", "source", "folder", "directory"}) and value and not Path(value).is_absolute():
+                    args[key] = str((workspace / value).resolve())
             execution = self.capabilities.execute(cid, args)
-            receipt = getattr(execution, "receipt", None)
-            if receipt is not None:
-                return receipt
             ok = bool(getattr(execution, "ok", False))
-            return Receipt(kind=f"capability.{cid}", executor=cid, ok=ok, detail=str(getattr(execution, "detail", ""))[:300],
-                           verifications=[Verification(check="capability reported ok", passed=ok, observed=str(getattr(execution, "output", ""))[:200])],
-                           evidence={"capability_id": cid, "arguments": args})
+            output = getattr(execution, "output", {}) or {}
+            error = str(getattr(execution, "error", "") or (output.get("error", "") if isinstance(output, dict) else ""))
+            summary = ", ".join(f"{k}={v}" for k, v in output.items() if k not in {"ok", "error"} and not isinstance(v, (dict, list)))[:240] if isinstance(output, dict) else str(output)[:240]
+            return Receipt(kind=f"capability.{cid}", executor=cid, ok=ok, detail=summary if ok else (error or "the capability reported a failure")[:300],
+                           verifications=[Verification(check="capability reported ok", passed=ok, observed=summary or error[:200]),
+                                          Verification(check="capability duration", passed=True, observed=f"{getattr(execution, 'duration_seconds', 0.0):.2f}s")],
+                           evidence={"capability_id": cid, "arguments": args, "output": output if isinstance(output, dict) else {}})
         if name == "note.create":
             title = str(args.get("title", "note")).strip() or "note"
             safe = "".join(ch for ch in title if ch.isalnum() or ch in " -_").strip().replace(" ", "_")[:60] or "note"
