@@ -59,7 +59,7 @@ BUILTIN_PRIMITIVES: tuple[Primitive, ...] = (
     Primitive("music.resume", "resume music", verification="media session reports playing", provider="music", requires=["speaker"]),
     Primitive("knowledge.search", "search the owner's knowledge graph", {"query": "<terms>"}, {"nodes": "matching nodes"}, risk="low"),
     Primitive("timer.start", "start a countdown timer that announces its end", {"minutes": "<number>", "label": "<what for>"},
-              effects=["a timer runs; an announcement at the end"], verification="timer registered", risk="low", requires=["speaker"]),
+              effects=["a timer runs; an announcement at the end"], verification="timer registered", risk="low"),
     Primitive("note.create", "keep a short note in the workspace", {"title": "<title>", "text": "<text>"}, {"path": "note file"}, verification="read back"),
     Primitive("window.hide", "hide the ZEUS window", verification="window not visible", requires=["screen"]),
     Primitive("say", "say something to the owner (speech or text)", {"text": "<what to say>"}, verification="delivered"),

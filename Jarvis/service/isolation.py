@@ -330,6 +330,22 @@ class CandidateWorkspace:
             rows.pop(mission_id, None)
             removed.append(mission_id)
         cls._save_registry(repository, rows)
+        # Directories under the base that belong to no registered mission and
+        # are older than a working day: the copytree candidates of earlier
+        # sprints (148 of them, 9.9 GB, at the time this was written).
+        if base.is_dir():
+            cutoff = time.time() - 6 * 3600
+            registered = {Path(row.get("path", "")).resolve() for row in rows.values()}
+            for path in base.iterdir():
+                try:
+                    if not path.is_dir() or path.resolve() in registered or path.stat().st_mtime > cutoff:
+                        continue
+                    if any(path.name.endswith(mid) or path.name == f"candidate_{mid}" for mid in keep_ids):
+                        continue
+                    shutil.rmtree(path, onerror=_make_writable_and_retry)
+                    removed.append(path.name)
+                except OSError:
+                    continue
         if top is not None:
             listing = _git(top, "worktree", "list", "--porcelain")
             for line in listing.stdout.splitlines():

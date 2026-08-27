@@ -88,9 +88,11 @@ def current_context(core: Any) -> DeviceContext:
         name=str(override.get("name") or hostname),
         room=str(override.get("room") or ""),
         inputs=list(override.get("inputs") or (["keyboard", "mouse"] + (["microphone"] if recogniser_ok else []))),
-        outputs=list(override.get("outputs") or ((["screen"] if has_window or os.environ.get("SESSIONNAME") else []) + (["speaker"] if voice_ok else []))),
-        screen={"platform": platform.system(), "window": has_window},
-        speaker=bool(override.get("speaker", voice_ok)),
+        # A desktop has a speaker whether or not ZEUS's own voice stack has
+        # warmed yet; "voice_ready" says whether ZEUS can currently speak.
+        outputs=list(override.get("outputs") or ((["screen"] if has_window or os.environ.get("SESSIONNAME") else []) + ["speaker"])),
+        screen={"platform": platform.system(), "window": has_window, "voice_ready": voice_ok},
+        speaker=bool(override.get("speaker", True)),
         microphone=bool(override.get("microphone", recogniser_ok)),
         capabilities=caps,
     )
