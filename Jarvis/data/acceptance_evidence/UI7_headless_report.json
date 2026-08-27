@@ -1,0 +1,104 @@
+{
+  "hero": {
+    "screenshot": "UI7_hero.png",
+    "bytes": 142397,
+    "markers": {
+      "id=\"eye\"": true,
+      "id=\"readiness\"": true
+    },
+    "ui_errors": [],
+    "dom_bytes": 6342
+  },
+  "missions": {
+    "screenshot": "UI7_missions.png",
+    "bytes": 112573,
+    "markers": {
+      "Mission Control": true,
+      "class=\"toolbar\"": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6698
+  },
+  "projects": {
+    "screenshot": "UI7_projects.png",
+    "bytes": 24446,
+    "markers": {
+      "id=\"constellation\"": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6691
+  },
+  "knowledge": {
+    "screenshot": "UI7_knowledge.png",
+    "bytes": 32335,
+    "markers": {
+      "Search knowledge": true
+    },
+    "ui_errors": [],
+    "dom_bytes": 6875
+  },
+  "activity": {
+    "screenshot": "UI7_activity.png",
+    "bytes": 105627,
+    "markers": {
+      "class=\"activity\"": true
+    },
+    "ui_errors": [],
+    "dom_bytes": 7604
+  },
+  "corrections": {
+    "screenshot": "UI7_corrections.png",
+    "bytes": 54781,
+    "markers": {
+      "Search corrections": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6698
+  },
+  "diagnostics": {
+    "screenshot": "UI7_diagnostics.png",
+    "bytes": 27015,
+    "markers": {
+      "check-list": true,
+      "class=\"dot": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6831
+  },
+  "owner": {
+    "screenshot": "UI7_owner.png",
+    "bytes": 62991,
+    "markers": {
+      "OWNER CORE": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6686
+  },
+  "release": {
+    "screenshot": "UI7_release.png",
+    "bytes": 24000,
+    "markers": {
+      "Known-good launcher": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6691
+  },
+  "capabilities": {
+    "screenshot": "UI7_capabilities.png",
+    "bytes": 37577,
+    "markers": {
+      "registered": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6700
+  },
+  "voice": {
+    "screenshot": "UI7_voice.png",
+    "bytes": 45908,
+    "markers": {
+      "Wake word": false
+    },
+    "ui_errors": [],
+    "dom_bytes": 6693
+  }
+}
