@@ -1876,7 +1876,7 @@ class JarvisCore:
 
         try:
             return conversation_prompt(language=self.language, guidance=guidance, task_style=task_style, transcript=transcript,
-                                       text=text, assistant=self.identity.assistant_name)
+                                       text=text, assistant=self.identity.assistant_name, identity=self.identity)
         except Exception:
             # A broken owner document must not silence Zeus.
             base = self.identity.persona_preamble()
