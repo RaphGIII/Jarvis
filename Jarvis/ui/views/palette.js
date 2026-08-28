@@ -15,6 +15,20 @@ let items = [];
 let active = 0;
 let timer = null;
 
+/* A typed phrase that names a graph action: focus / open / connected to / using / untouched in N days. */
+function phraseCommand(q) {
+  const t = String(q || "").trim();
+  let m;
+  if ((m = t.match(/^(?:focus|fokus(?:siere)?)\s+(.+)$/i))) return { type: "graph", label: `Focus ${m[1]}`, sub: "fly to it in the galaxy", run: () => views.open("projects", { focus: m[1] }) };
+  if ((m = t.match(/^(?:open|öffne)\s+(.+)$/i))) return { type: "graph", label: `Open ${m[1]}`, sub: "the project's own system", run: () => views.open("projects", { focus: m[1] }) };
+  if ((m = t.match(/^show (?:everything )?connected to\s+(.+)$/i)) || (m = t.match(/^zeige (?:alles )?(?:was )?mit\s+(.+?)\s+verbunden/i))) return { type: "graph", label: `Everything connected to ${m[1]}`, sub: "local graph", run: () => views.open("projects", { connected: m[1] }) };
+  if ((m = t.match(/^show projects using\s+(.+)$/i))) return { type: "graph", label: `Projects using ${m[1]}`, sub: "by capability", run: () => views.open("projects", { uses: m[1] }) };
+  if ((m = t.match(/(?:haven.?t touched|untouched|not touched) in (\d+) days/i))) return { type: "graph", label: `Projects untouched for ${m[1]} days`, sub: "idle projects", run: () => views.open("projects", { idle_days: m[1] }) };
+  if (/^show blocked projects$/i.test(t)) return { type: "graph", label: "Show blocked projects", run: () => views.open("projects", { filter: "blocked" }) };
+  if (/^hide archived$/i.test(t)) return { type: "graph", label: "Hide archived", run: () => views.open("projects", {}) };
+  return null;
+}
+
 function commands() {
   const current = views.currentView();
   const list = [
@@ -37,6 +51,15 @@ function commands() {
     { type: "action", label: "Build & verify a ZEUS.exe candidate", sub: "release pipeline", run: () => api("/api/release/build", { verify: true }) },
     { type: "action", label: "Back to ZEUS", sub: "presence mode", run: () => views.close(), keys: "Esc" },
   ];
+  list.push(
+    { type: "graph", label: "Show blocked projects", sub: "galaxy filtered to BLOCKED", run: () => views.open("projects", { filter: "blocked" }) },
+    { type: "graph", label: "Hide archived", sub: "the default galaxy: archived and hidden projects stay out", run: () => views.open("projects", {}) },
+    { type: "graph", label: "Show everything", sub: "every project, attempt and artifact", run: () => views.open("projects", { everything: "1" }) },
+    { type: "graph", label: "Projects untouched for 30 days", sub: "idle projects only", run: () => views.open("projects", { idle_days: "30" }) },
+    { type: "graph", label: "Projects using screen capture", sub: "by capability", run: () => views.open("projects", { uses: "screen" }) },
+    { type: "view", label: "Thoughts", sub: "what ZEUS noticed on its own", run: () => views.open("thoughts") },
+    { type: "view", label: "Schach Analyse", sub: "screen chess assistant", run: () => views.open("chess") },
+  );
   if (current?.id === "projects" && current.params?.id) {
     list.unshift({ type: "project", label: "Ask ZEUS about this project", run: () => chat.send("What is the state of this project, what blocks it, and what is next?") });
     list.unshift({ type: "project", label: "Continue this project", run: () => chat.send("Continue the current project.") });
@@ -77,6 +100,8 @@ async function refresh(query) {
   const lowered = q.toLowerCase();
   const local = commands().filter((c) => !q || `${c.label} ${c.sub || ""}`.toLowerCase().includes(lowered.replace(/^search:\s*/, "")));
   items = [];
+  const phrase = phraseCommand(q);
+  if (phrase) items.push(phrase);
   if (q && !q.startsWith("search:")) items.push({ type: "ask", label: `Ask ZEUS: “${q}”`, sub: "send to the conversation", run: () => chat.send(q) });
   items.push(...local.slice(0, q ? 6 : 14));
   active = 0;

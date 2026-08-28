@@ -366,3 +366,12 @@ pre.code { background: #080d15; border: 1px solid var(--line); border-radius: va
 .dial-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--faint); letter-spacing: .06em; }
 .core-lock { margin-top: 14px; padding: 10px 12px; border-left: 2px solid var(--amber, #e0b04a); background: rgba(224,176,74,.04); }
 .prompt-block { margin: 8px 0; }
+
+/* ---- project galaxy ---------------------------------------------------- */
+#constellation.galaxy { height: 52vh; min-height: 320px; background: radial-gradient(ellipse at 50% 45%, #0a1322 0%, #060a12 55%, #03050a 100%); cursor: grab; }
+.focus-panel { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 4px 0 14px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: rgba(10,16,28,.55); }
+.focus-panel h5 { margin: 0 0 6px; font-size: 10px; letter-spacing: .18em; color: var(--faint); font-weight: 600; }
+.focus-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); cursor: pointer; padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.focus-row:hover { color: #fff; }
+.focus-row .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 8px currentColor; }
+@media (max-width: 1100px) { .focus-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

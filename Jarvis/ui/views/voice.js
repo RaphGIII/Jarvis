@@ -84,8 +84,37 @@ export const view = {
     }))));
 
     pane.append(section("Train the wake word", wizard(wake, renderWake)));
+    pane.append(section("Pronunciation (spoken form only — the written text never changes)", await pronunciation()));
   },
 };
+
+async function pronunciation() {
+  const box = el("div");
+  const data = await api("/api/voice/pronunciation");
+  const preview = el("input", { placeholder: "Preview a sentence: ZEUS verwendet die GPU über GitHub.", style: { minWidth: "360px" } });
+  const out = el("div", { class: "empty" });
+  const surface = el("input", { placeholder: "word as written (e.g. Spotify)" });
+  const spoken = el("input", { placeholder: "how to say it (e.g. Spottifai)" });
+  const status = el("div", { class: "empty" });
+  const list = el("div");
+  const render = (d) => {
+    clear(list);
+    const own = d.owner_entries || [];
+    list.append(el("div", { class: "meta" }, el("span", { text: `provider ${d.provider} · ${(d.entries || []).length} entries (${own.length} yours) · ${d.path}` })));
+    for (const e of own) list.append(el("div", { class: "kv" }, el("span", { class: "k", text: e.surface }), el("span", { class: "v" }, `${e.spoken_as[d.provider] || e.spoken_as.generic} (${e.language})`,
+      button("Remove", async () => { await api("/api/voice/pronunciation/remove", { surface: e.surface, language: e.language }); render(await api("/api/voice/pronunciation")); }, "ghost danger"))));
+    for (const r of (d.recent || []).slice(-5)) list.append(el("div", { class: "kv" }, el("span", { class: "k", text: "recently spoken" }), el("span", { class: "v", text: `„${r.displayed}“ → „${r.spoken}“` })));
+  };
+  render(data);
+  box.append(el("div", { class: "toolbar" }, preview, button("Preview", async () => { const r = await api("/api/voice/pronunciation", { text: preview.value }); out.textContent = r.preview ? `spoken as: ${r.preview.spoken}` : ""; })), out,
+    el("div", { class: "toolbar" }, surface, spoken, button("Learn & test", async () => {
+      const r = await api("/api/voice/pronunciation/set", { surface: surface.value, spoken: spoken.value });
+      status.textContent = r.ok ? `learned ${r.entry.surface} → ${r.entry.spoken_as[Object.keys(r.entry.spoken_as)[0]]}; synthesis ${r.test.tried ? (r.test.ok ? `ok (${r.test.seconds}s)` : "failed: " + (r.test.error || "")) : "not tried"}` : (r.error || "failed");
+      if (r.test && r.test.url) new Audio(r.test.url + (location.search.includes("token") ? "" : "")).play().catch(() => {});
+      render(await api("/api/voice/pronunciation"));
+    }, "primary"), status), list);
+  return box;
+}
 
 function wizard(wake, renderWake) {
   const box = el("div");
