@@ -41,7 +41,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+#: "du sprichst X falsch aus, sag Y": stored in the pronunciation lexicon, never in the personality.
+PRONUNCIATION = "PRONUNCIATION"
+
 CLASSES = (
+    PRONUNCIATION,
     "INTENT_ERROR", "ENTITY_RESOLUTION_ERROR", "PARAMETER_ERROR", "OWNER_PREFERENCE",
     "CAPABILITY_DEFECT", "EXECUTION_FAILURE", "VERIFICATION_DEFECT",
 )
@@ -133,11 +137,31 @@ def domain_of(text: str) -> str:
     return "general"
 
 
+_PRONOUNCE = re.compile(r"(ausspr\w*|pronounc\w*|\bsprich\b.*\baus\b|\bsag\b.*\bwie\b|betonst|betonung)", re.I)
+_PRONOUNCE_PAIR = re.compile(
+    r"[\"'„‚«]([^\"'“”‘’»]+)[\"'“”‘’»].{0,40}?(?:wie|as|like|so:?|als)\s*[\"'„‚«]([^\"'“”‘’»]+)[\"'“”‘’»]", re.I | re.S)
+
+
+def pronunciation_pair(text: str) -> tuple[str, str] | None:
+    """('X', 'Y') from "du sprichst 'X' falsch aus. Sprich es wie 'Y' aus." -- None when the sentence is not that."""
+
+    if not _PRONOUNCE.search(text or ""):
+        return None
+    m = _PRONOUNCE_PAIR.search(text or "")
+    if not m:
+        return None
+    surface, spoken = m.group(1).strip(), m.group(2).strip()
+    return (surface, spoken) if surface and spoken else None
+
+
 def classify_correction(what_was_wrong: str, *, receipt_ok: bool | None = None, request: str = "") -> tuple[str, str, str]:
     """(classification, scope, reason) from the owner's words, deterministically."""
 
     text = (what_was_wrong or "").lower()
     has = lambda words: any(w in text for w in words)  # noqa: E731
+
+    if pronunciation_pair(what_was_wrong):
+        return PRONUNCIATION, "GLOBAL_OWNER_PREFERENCE", "a pronunciation correction: stored in the owner lexicon"
 
     if has(_ONCE):
         scope = "THIS_REQUEST"

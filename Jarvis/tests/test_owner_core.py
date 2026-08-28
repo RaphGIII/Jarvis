@@ -35,13 +35,14 @@ def test_defaults_are_read_without_files(tmp_path: Path) -> None:
 
 def test_transaction_shows_diff_then_writes_read_only_and_audits(tmp_path: Path) -> None:
     owner = OwnerCore(tmp_path / "cfg", tmp_path / "state")
-    tx = owner.propose({"personality": {"humour": "none"}}, reason="test", origin="ui")
-    assert tx.diff() == [{"document": "personality", "key": "humour",
-                          "from": DEFAULTS["personality"]["humour"], "to": "none"}]
-    assert owner.read("personality")["humour"] != "none", "proposing writes nothing"
+    tx = owner.propose({"personality": {"preferences": {"humour": 0}}}, reason="test", origin="ui")
+    assert [d["key"] for d in tx.diff()] == ["preferences"]
+    assert tx.diff()[0]["to"]["humour"] == 0 and tx.diff()[0]["from"]["humour"] == DEFAULTS["personality"]["preferences"]["humour"]
+    assert owner.read("personality")["preferences"]["humour"] != 0, "proposing writes nothing"
 
     record = owner.approve(tx.transaction_id)
-    assert owner.read("personality")["humour"] == "none"
+    assert owner.read("personality")["preferences"]["humour"] == 0
+    assert owner.read("personality")["preferences"]["warmth"] == DEFAULTS["personality"]["preferences"]["warmth"], "a dial change keeps the other dials"
     path = owner.path("personality")
     assert not os.access(path, os.W_OK) or not (path.stat().st_mode & stat.S_IWRITE)
     with pytest.raises(PermissionError):
@@ -49,7 +50,7 @@ def test_transaction_shows_diff_then_writes_read_only_and_audits(tmp_path: Path)
     assert owner.history()[-1]["audit_id"] == record["audit_id"]
 
     rolled = owner.rollback(record["audit_id"])
-    assert owner.read("personality")["humour"] == DEFAULTS["personality"]["humour"]
+    assert owner.read("personality")["preferences"]["humour"] == DEFAULTS["personality"]["preferences"]["humour"]
     assert rolled["kind"] == "rollback" and owner.history()[-1]["rolled_back"] == record["audit_id"]
 
 

@@ -17,6 +17,8 @@ PROTECTED_PATHS: tuple[str, ...] = (
     # The owner's domain and the code that enforces it.
     "owner",
     "config/owner",
+    # Who Zeus is in conversation: the persona texts and the prompt order.
+    "persona",
     # The promotion path: a candidate that can edit its own gate has no gate.
     "deployment/promotion.py",
     # The spending policy: the one thing that must never loosen itself.

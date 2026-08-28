@@ -211,7 +211,7 @@ def test_personas_can_be_listed(core):
 def test_the_backend_is_never_the_identity(core):
     """Whatever answered, the user is talking to Jarvis."""
 
-    core.send_message("hallo")
+    core.send_message("Was hältst du von der Farbe Blau?")
     _settle(core)
 
     reply = core.history[-1]

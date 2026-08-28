@@ -238,8 +238,10 @@ class JarvisHTTPServer:
             "/api/selfdev/resume": lambda body: self.core.resume_selfdev(str(body.get("mission_id", ""))),
             "/api/owner": lambda _: self.core.owner_view(),
             "/api/owner/propose": lambda body: self.core.owner_propose(
-                dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui"
+                dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui",
+                unlock_core=bool(body.get("unlock_core", False)),
             ),
+            "/api/owner/personality": lambda _: self.core.owner_personality(),
             "/api/owner/approve": lambda body: self.core.owner_approve(
                 str(body.get("transaction_id", "")), confirm=bool(body.get("confirm", False))
             ),
@@ -278,6 +280,11 @@ class JarvisHTTPServer:
             "/api/tools/chess": lambda _: self.core.chess_tool_status(),
             "/api/tools/chess/start": lambda _: self.core.chess_tool_start(),
             "/api/tools/chess/stop": lambda _: self.core.chess_tool_stop(),
+            "/api/voice/pronunciation": lambda body: self.core.pronunciation(str(body.get("text", "")), language=str(body.get("language", ""))),
+            "/api/voice/pronunciation/set": lambda body: self.core.pronunciation_set(
+                str(body.get("surface", "")), str(body.get("spoken", "")), language=str(body.get("language", "")), note=str(body.get("note", "")),
+                test=bool(body.get("test", True))),
+            "/api/voice/pronunciation/remove": lambda body: self.core.pronunciation_remove(str(body.get("surface", "")), language=str(body.get("language", ""))),
             "/api/voice/wake": lambda _: self.core.wake_status(),
             "/api/voice/wake/train": lambda _: self.core.wake_train(),
             "/api/voice/wake/evaluate": lambda _: self.core.wake_evaluate(),

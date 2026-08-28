@@ -215,6 +215,7 @@ class SpeechEngine:
             language=str(response.get("language", "")),
             confidence=float(response.get("confidence", 0.0)),
             duration_seconds=float(response.get("duration_seconds", 0.0)),
+            words=list(response.get("words") or []),
         )
 
     def transcribe_file(self, path: str | Path, *, language: str = "") -> Transcript:

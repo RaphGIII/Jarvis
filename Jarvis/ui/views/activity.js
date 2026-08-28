@@ -14,6 +14,7 @@ import * as views from "../core/views.js";
 
 const KINDS = {
   "request": { label: "REQUEST", cls: "req", icon: "›" },
+  "wake": { label: "WAKE", cls: "tool", icon: "◉" },
   "answer": { label: "ANSWER", cls: "ans", icon: "‹" },
   "action.verified": { label: "VERIFIED", cls: "ok", icon: "✓" },
   "action.ran": { label: "UNVERIFIED", cls: "warn", icon: "○" },

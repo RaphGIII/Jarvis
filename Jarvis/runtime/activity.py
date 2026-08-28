@@ -83,7 +83,7 @@ NOTABLE_STATES = ("working", "verifying", "error", "researching", "coding", "wai
 #: Event types that become activity.  ``token`` and ``speech`` are excluded:
 #: they are per-chunk streaming frames, thousands per conversation, and the
 #: completed message already records what they added up to.
-RECORDED = ("user_message", "message", "tool", "progress", "error", "notification", "state")
+RECORDED = ("user_message", "message", "tool", "progress", "error", "notification", "state", "diagnostic")
 
 
 class ActivityLog:
@@ -137,7 +137,15 @@ class ActivityLog:
             )
 
         if kind == "user_message":
-            return ActivityEntry(kind="request", summary=str(payload.get("text", ""))[:400], **common)
+            meta = payload.get("meta") or {}
+            return ActivityEntry(kind="request", summary=str(payload.get("text", ""))[:400], detail={"meta": meta} if meta else {}, **common)
+
+        if kind == "diagnostic":
+            # Only the wake event itself is activity; the rest stays diagnostics.
+            if payload.get("wake") and "score" in payload:
+                return ActivityEntry(kind="wake", summary=f"{payload['wake']} · score {float(payload['score']):.3f}",
+                                     detail={"session": payload.get("session", ""), "command": payload.get("command", "")}, **common)
+            return None
 
         if kind == "message":
             return ActivityEntry(

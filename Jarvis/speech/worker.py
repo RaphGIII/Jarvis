@@ -92,12 +92,20 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
             language=language,
             beam_size=int(request.get("beam_size", 1)),
             initial_prompt=request.get("vocabulary") or None,
+            word_timestamps=bool(request.get("word_timestamps", True)),
         )
         pieces = list(segments)
         text = "".join(segment.text for segment in pieces).strip()
+        # Word timings let the core tell a wake-word tail from the command.
+        words = []
+        for segment in pieces:
+            for w in (getattr(segment, "words", None) or []):
+                words.append({"word": str(getattr(w, "word", "")).strip(), "start": round(float(getattr(w, "start", 0.0) or 0.0), 3),
+                              "end": round(float(getattr(w, "end", 0.0) or 0.0), 3), "probability": round(float(getattr(w, "probability", 0.0) or 0.0), 3)})
         return {
             "ok": True,
             "text": text,
+            "words": words,
             "language": getattr(info, "language", "") or "",
             "confidence": float(getattr(info, "language_probability", 0.0) or 0.0),
             "duration_seconds": float(getattr(info, "duration", 0.0) or 0.0),

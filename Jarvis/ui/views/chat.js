@@ -15,7 +15,12 @@ let eye = null;
 export function init(deps) {
   eye = deps.eye;
   wireComposer();
-  bus.on("user_message", (p) => { addTurn("user", "You", p.text); $("app").classList.add("conversing"); });
+  bus.on("user_message", (p) => {
+    const what = addTurn("user", "You", p.text);
+    // a spoken request: the wake word is session metadata, not content
+    if (what && p.meta && p.meta.wake_word) what.append(el("span", { class: "wake-tag", text: ` ${p.meta.wake_word} · ${Number(p.meta.wake_score).toFixed(2)}` }));
+    $("app").classList.add("conversing");
+  });
   bus.on("token", (p) => appendToken(p.text || ""));
   bus.on("message", (p) => finishStreaming(p.text || ""));
   bus.on("transcript", (p) => showInterim(p.text || ""));

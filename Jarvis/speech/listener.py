@@ -83,9 +83,13 @@ class ListenerConfig:
     max_utterance_seconds: float = 20.0
     #: Ignore an utterance shorter than this: usually a cough or a door.
     min_utterance_seconds: float = 0.35
-    #: Frames of audio kept before the wake word fires, so the first syllable
-    #: of the question is not clipped off.
+    #: Frames of audio kept before the wake word fires (for the noise floor
+    #: and the wake tail).  Only ``wake_tail_frames`` of them go into the
+    #: command recording: the detector confirms ~2 frames after the wake
+    #: word ends, so keeping 2 frames starts the command exactly there --
+    #: the wake word itself stays out of what the recogniser hears.
     preroll_frames: int = 8
+    wake_tail_frames: int = 2
     #: How long to ignore the wake word after a session ended, so one
     #: "Zeus" cannot open two sessions.
     cooldown_seconds: float = 1.5
@@ -326,10 +330,10 @@ class CaptureLoop:
             session.transition("LISTENING", "armed")
             actions.append(("session", session, "LISTENING", f"armed for {self.config.arm_seconds:.1f}s"))
             self.endpointer.reset()
-            # Keep the pre-roll: people run the question straight into the
-            # wake word, so the first syllable is already gone by the time
-            # detection fires.
-            self.recording = list(self.preroll)
+            # Keep only the wake tail of the pre-roll: the command may run
+            # straight into the wake word, so the last ~160 ms are kept; the
+            # wake word before them is not command content.
+            self.recording = list(self.preroll)[-max(0, self.config.wake_tail_frames):]
             self.preroll.clear()
             return actions
 

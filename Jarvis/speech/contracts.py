@@ -33,6 +33,8 @@ class Transcript:
     duration_seconds: float = 0.0
     #: False while the user is still speaking; True once the phrase is settled.
     final: bool = True
+    #: Word timings from the recogniser when it gives them: [{word, start, end, probability}].
+    words: list = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -134,7 +136,9 @@ class SpeechToText(Protocol):
 
 @runtime_checkable
 class TextToSpeech(Protocol):
-    def synthesize(self, text: str, *, voice: str = "") -> Audio:
+    """A TTS provider: text (already rendered for this provider) in, audio out."""
+
+    def synthesize(self, text: str, *, voice: str = "", language: str = "") -> Audio:
         ...
 
 

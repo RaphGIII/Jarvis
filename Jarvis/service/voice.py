@@ -272,6 +272,14 @@ class VoiceService:
         self.settings_path = Path(settings_path) if settings_path else None
         self.settings = settings or VoiceSettings.load(self.settings_path)
         self.gate = UtteranceGate(self.settings)
+        # The pronunciation pipeline: what is *spoken* may differ from what is
+        # shown; the owner's lexicon lives beside the voice settings.
+        from speech.pronounce import Lexicon, Pronouncer
+
+        lexicon_path = self.settings_path.with_name("lexicon.json") if self.settings_path else None
+        self.lexicon = Lexicon(lexicon_path)
+        self.pronouncer = Pronouncer(self.lexicon, provider="piper_espeak")
+        self.last_spoken: list[dict[str, Any]] = []
         self.store = AudioStore()
         self._engine: Any = None
         self._engine_factory = engine_factory
@@ -344,10 +352,28 @@ class VoiceService:
 
         from speech.pipeline import StreamingSpeaker
 
+        spoken_forms: dict[str, str] = {}
+
         def synthesize(text: str) -> Audio:
+            # Per phrase, after chunking (so the chunker saw the real text):
+            # normalise + lexicon for this provider; the displayed text is
+            # never touched -- it left through TOKEN/MESSAGE events already.
+            rendered = self.pronouncer.render(text, language=self.settings.language or language_hint())
+            spoken_forms[text] = rendered.spoken
+            if rendered.changed:
+                self.last_spoken.append(rendered.to_dict())
+                del self.last_spoken[:-20]
             return self.engine.synthesize(
-                text, voice=self.settings.voice_id, language=self.settings.language
+                rendered.spoken, voice=self.settings.voice_id, language=self.settings.language
             )
+
+        def language_hint() -> str:
+            from persona.language import stable_language
+
+            try:
+                return stable_language(" ".join(spoken_forms.keys())[-200:], current="", default="de") or "de"
+            except Exception:  # noqa: BLE001
+                return "de"
 
         def publish(audio: Audio, phrase: Phrase) -> None:
             key = self.store.put(audio)
@@ -357,6 +383,7 @@ class VoiceService:
                     "audio_id": key,
                     "url": f"/api/voice/audio/{key}.wav",
                     "text": phrase.text,
+                    "spoken": spoken_forms.get(phrase.text, phrase.text),
                     "first": phrase.first,
                     "seconds": round(audio.seconds, 2),
                 },
