@@ -108,8 +108,8 @@ async function personalityPanel(reload) {
     dials,
     el("div", { class: "toolbar" }, reason, propose, reset, status),
     coreBox, el("div", { class: "toolbar" }, unlock),
-    el("details", {}, el("summary", { text: "Effective prompt (as a model receives it)" }), ...blocks),
-    history.length ? el("details", {}, el("summary", { text: `History (${history.length})` }), ...history) : null);
+    el("details", {}, el("summary", { text: "Effective prompt (as a model receives it)" }), ...blocks));
+  if (history.length) box.append(el("details", {}, el("summary", { text: `History (${history.length})` }), ...history));
   return box;
 }
 

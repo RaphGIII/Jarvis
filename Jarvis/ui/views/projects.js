@@ -161,6 +161,9 @@ class Galaxy {
       projects.forEach((n, i) => { const a = (i / Math.max(1, projects.length)) * Math.PI * 2; place(n, W / 2 + Math.cos(a) * W * 0.32, H / 2 + Math.sin(a) * H * 0.34); });
     }
     if (zeus && this.mode === "GALAXY") { zeus.x = W / 2; zeus.y = H / 2; }
+    // infrastructure without a project: capability families on an outer ring, spaced apart
+    const loose = this.nodes.filter((n) => n.kind === "capability" && n.visible && !n.parent);
+    loose.forEach((n, i) => { const a = Math.PI * 0.15 + (i / Math.max(1, loose.length)) * Math.PI * 1.7; const rx = W * 0.44, ry = H * 0.42; if (!n.placedOnce) { n.x = W / 2 + Math.cos(a) * rx; n.y = H / 2 + Math.sin(a) * ry; n.placedOnce = true; } });
     // children around their parents
     for (const n of this.nodes) {
       if ((n.kind === "mission" || n.kind === "thought" || n.kind === "capability") && n.parent && !n.flow && (initial || !n.placedOnce)) {
