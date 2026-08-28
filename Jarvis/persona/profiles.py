@@ -115,7 +115,7 @@ def builtin_personas() -> dict[str, Persona]:
             # carries task style.  ("an autonomous engineering assistant"
             # used to live here and outranked the owner's document by
             # position -- that sentence is what the owner heard back.)
-            character="",
+            character="You are {assistant}.",
             style="natural, concise; technical when the question is technical",
         ),
         "mentor": Persona(
@@ -136,7 +136,7 @@ def builtin_personas() -> dict[str, Persona]:
         "default_de": Persona(
             name="default_de",
             description="The default persona, always answering in German.",
-            character="",
+            character="Du bist {assistant}.",
             style="natuerlich, knapp; technisch wenn die Frage technisch ist",
             language="German",
         ),

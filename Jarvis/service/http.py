@@ -242,6 +242,9 @@ class JarvisHTTPServer:
                 unlock_core=bool(body.get("unlock_core", False)),
             ),
             "/api/owner/personality": lambda _: self.core.owner_personality(),
+            "/api/thoughts": lambda body: self.core.list_thoughts(status=str(body.get("status", ""))),
+            "/api/thoughts/think": lambda body: self.core.think(str(body.get("trigger", "manual")), force=True, background=False),
+            "/api/thoughts/act": lambda body: self.core.thought_action(str(body.get("id", body.get("thought_id", ""))), str(body.get("action", ""))),
             "/api/owner/approve": lambda body: self.core.owner_approve(
                 str(body.get("transaction_id", "")), confirm=bool(body.get("confirm", False))
             ),
@@ -262,6 +265,11 @@ class JarvisHTTPServer:
             "/api/selfdev/diff": lambda body: self.core.selfdev_diff(str(body.get("mission_id", ""))),
             "/api/missions": lambda body: self.core.list_missions(status=str(body.get("status", ""))),
             "/api/projects/overview": lambda _: self.core.projects_overview(),
+            "/api/projects/graph": lambda body: self.core.project_graph(everything=bool(body.get("everything", False))),
+            "/api/project/update": lambda body: self.core.project_update(
+                str(body.get("id", "")), importance=str(body.get("importance", "")), hidden=body.get("hidden"),
+                layout=dict(body["layout"]) if isinstance(body.get("layout"), dict) else None, note=str(body.get("note", ""))),
+            "/api/project/timeline": lambda body: self.core.project_timeline(str(body.get("id", "")), limit=int(body.get("limit", 200) or 200)),
             "/api/timers": lambda _: self.core.list_timers(),
             "/api/backup": lambda _: {"backups": self.core.backups.list()},
             "/api/backup/create": lambda body: self.core.backup_create(str(body.get("label", ""))),

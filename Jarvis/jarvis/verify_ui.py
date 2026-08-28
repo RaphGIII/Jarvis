@@ -56,6 +56,9 @@ REQUIRED_ASSETS = (
 )
 
 #: Names the page depends on existing in its scripts.
+#: The last statement of an entry script; without it the page boots nothing.
+REQUIRED_TAIL = {"app.js": "startJarvis();"}
+
 REQUIRED_SYMBOLS = {
     "eye.js": ("JarvisEye",),
     "app.js": ("startJarvis",),
@@ -122,6 +125,14 @@ def check_page(ui_root: Path, report: UIReport) -> None:
 
 
 def check_scripts(ui_root: Path, report: UIReport) -> None:
+    # The entry point must still be *called* at the end of the entry script:
+    # a truncation that lands between two top-level blocks keeps every brace
+    # balanced and every definition present, and boots nothing.
+    for name, tail in REQUIRED_TAIL.items():
+        path = ui_root / name
+        source = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+        ok = source.rstrip().endswith(tail)
+        report.add(f"{name} ends with {tail}", ok, "" if ok else "the entry call is missing: truncated?")
     for name, symbols in REQUIRED_SYMBOLS.items():
         path = ui_root / name
         if not path.is_file():

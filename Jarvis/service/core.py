@@ -19,6 +19,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import json
+from datetime import datetime, timezone
 import re
 import os
 import threading
@@ -698,13 +699,13 @@ class JarvisCore:
         rows: list[dict[str, Any]] = []
         for m in self.missions.store.list():
             rows.append({"id": m.mission_id, "kind": m.kind, "goal": m.goal, "phase": m.phase, "outcome": m.outcome or ("running" if not m.finished else ""),
-                         "started": m.created_at, "updated": m.updated_at, "finished": m.finished, "next_action": m.next_action,
+                         "started": m.created_at, "updated": m.updated_at, "finished": m.finished, "next_action": m.next_action, "reason": getattr(m, "reason", ""),
                          "blockers": m.blockers, "owner_input_required": m.owner_input_required, "system": "engine",
                          "tasks": {"done": len(m.completed), "total": len(m.tasks)}, "evidence": len(m.evidence)})
         try:
             for m in self.selfdev_store.list():
                 rows.append({"id": m.mission_id, "kind": "selfdev", "goal": m.request, "phase": m.phase, "outcome": m.outcome or ("running" if not m.finished else ""),
-                             "started": m.started_at, "updated": m.updated_at, "finished": m.finished, "next_action": "",
+                             "started": m.started_at, "updated": m.updated_at, "finished": m.finished, "next_action": "", "reason": getattr(m, "reason", ""),
                              "blockers": [], "owner_input_required": "", "system": "selfdev",
                              "tasks": {"done": 0, "total": 0}, "evidence": len(m.isolation) + len(m.verification.get("checks", []))})
         except Exception:  # noqa: BLE001
@@ -1005,6 +1006,7 @@ class JarvisCore:
         self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if goal.goal_satisfied else 'NOT satisfied'}"
                                    + ("" if goal.goal_satisfied else " — " + "; ".join(goal.reasons)[:200]),
                                    "goal": goal.to_dict(), "mission_id": mission.mission_id, "source": "composer"}, scope=scope)
+        self.think("mission_finished")
         if goal.goal_satisfied and self.missions.has_proof(mission):
             self.missions.transition(mission, "COMPLETE", "goal satisfied: every required step verified, constraints held")
         elif required_failed:
@@ -1662,12 +1664,15 @@ class JarvisCore:
 
         quick = self._small_talk(text)
         if quick:
+            self.state.set(JarvisState.THINKING, detail=text[:120], scope=scope)
             # Zeus's own words, spoken like any other answer.
             if self._voice is not None and self._voice.settings.enabled and self._voice.settings.speak_replies:
                 try:
                     self.voice.speak_stream([quick], scope=scope)
                 except Exception as exc:  # noqa: BLE001 - the text still arrives
                     self.emit(EventType.DIAGNOSTIC, {"speech": f"small talk not spoken: {exc}"})
+            # Clients read answers as a token stream; a short one is one token.
+            self.emit(EventType.TOKEN, {"text": quick, "backend": "personality"}, scope=scope)
             self._deliver(quick, scope=scope, backend="personality", final_state=JarvisState.IDLE)
             return
         self.state.set(JarvisState.THINKING, detail=text[:120], scope=scope)
@@ -1757,6 +1762,7 @@ class JarvisCore:
             # receipt so the user can check rather than take its word.
             answer += "\n\n" + "\n".join(f"receipt {item.id}" for item in supported)
         self._deliver(answer, scope=scope, backend=backend, context_text=context_text)
+        self._say_pending_thought(scope)
 
     def _block_fabrication(self, claim: Any, request: str, scope: str) -> str:
         """Refuse to ship a success the system cannot account for.
@@ -1958,6 +1964,11 @@ class JarvisCore:
 
             self.emit(EventType.DIAGNOSTIC, {"warming": "done"})
             self.lifecycle.mark("warm", True)
+            # Proactive thinking: cheap detectors on an idle timer (no model).
+            try:
+                self._schedule_idle_thinking()
+            except Exception:  # noqa: BLE001
+                pass
 
         thread = threading.Thread(target=run, daemon=True, name="jarvis-warm")
         thread.start()
@@ -2911,6 +2922,7 @@ class JarvisCore:
             receipt_id=receipt_id, when=when, then=then, provenance="owner-ui",
         )
         self.corrections.add(correction)
+        self.think("correction")
         self.emit(EventType.NOTIFICATION, {"text": f"owner correction learned ({classification}, {scope.lower().replace('_', ' ')})",
                                            "kind": "owner_correction", "correction": correction.to_dict()})
         # A capability defect is not a memory; it is a repair to schedule.
@@ -2955,6 +2967,145 @@ class JarvisCore:
             "history": owner.history(limit=20),
             "protected_paths": list(__import__("owner.protected", fromlist=["PROTECTED_PATHS"]).PROTECTED_PATHS),
         }
+
+    # ------------------------------------------------------------------
+    # Proactive thoughts
+    # ------------------------------------------------------------------
+
+    @property
+    def thoughts(self) -> Any:
+        from runtime.thoughts import ThoughtEngine, ThoughtStore
+
+        if getattr(self, "_thoughts", None) is None:
+            store = ThoughtStore(Path(self.kernel.state_root) / "thoughts.json")
+
+            def facts() -> dict[str, Any]:
+                out: dict[str, Any] = {}
+                try:
+                    out["missions"] = self.list_missions()["missions"]
+                except Exception:  # noqa: BLE001
+                    out["missions"] = []
+                try:
+                    out["projects"] = self.list_projects()
+                except Exception:  # noqa: BLE001
+                    out["projects"] = []
+                try:
+                    out["corrections"] = self.list_corrections().get("corrections", [])
+                except Exception:  # noqa: BLE001
+                    out["corrections"] = []
+                try:
+                    out["capabilities"] = self.list_capabilities()
+                except Exception:  # noqa: BLE001
+                    out["capabilities"] = []
+                return out
+
+            def proactivity() -> int:
+                try:
+                    return int(self.owner.read("personality").get("preferences", {}).get("proactivity", 50))
+                except Exception:  # noqa: BLE001
+                    return 50
+
+            def emit(kind: str, payload: dict[str, Any]) -> None:
+                self.emit(EventType.NOTIFICATION if kind == "notification" else EventType.DIAGNOSTIC, payload)
+
+            self._thoughts = ThoughtEngine(store, facts=facts, language=lambda: self.language or "de", proactivity=proactivity, emit=emit)
+        return self._thoughts
+
+    def think(self, trigger: str = "manual", *, force: bool = False, background: bool = True) -> dict[str, Any]:
+        """Run the detectors now (cheap: no model), in the background unless asked otherwise."""
+
+        if not background:
+            return self.thoughts.tick(trigger, force=force)
+        threading.Thread(target=lambda: self.thoughts.tick(trigger, force=force), daemon=True, name="zeus-think").start()
+        return {"scheduled": True, "trigger": trigger}
+
+    def _schedule_idle_thinking(self, minutes: float = 30.0) -> None:
+        def run() -> None:
+            try:
+                self.thoughts.tick("idle")
+            finally:
+                self._schedule_idle_thinking(minutes)
+
+        timer = threading.Timer(minutes * 60, run)
+        timer.daemon = True
+        timer.start()
+        self._idle_think_timer = timer
+
+    def _say_pending_thought(self, scope: str) -> None:
+        """After an answer: one thought worth saying, once, if the owner's dial allows it."""
+
+        try:
+            thought = self.thoughts.next_to_say()
+        except Exception:  # noqa: BLE001
+            return
+        if thought is None:
+            return
+        de = (self.language or "de").startswith("de")
+        text = (f"Eine Sache noch: {thought.title}. {thought.text}" if de else f"One more thing: {thought.title}. {thought.text}")
+        self.thoughts.store.mark_delivered(thought.thought_id, "spoken")
+        if self._voice is not None and self._voice.settings.enabled and self._voice.settings.speak_replies:
+            try:
+                self.voice.speak_stream([text], scope=scope)
+            except Exception:  # noqa: BLE001
+                pass
+        self._deliver(text, scope=scope, backend="thoughts", context_text=f"[thought {thought.thought_id}]")
+
+    def list_thoughts(self, status: str = "") -> dict[str, Any]:
+        store = self.thoughts.store
+        return {"ok": True, "thoughts": [t.to_dict() for t in store.list(status)], "counts": store.counts(),
+                "muted_types": sorted(store.muted_types), "dismissed_by_type": store.dismissed_by_type, "runs": self.thoughts.runs[-5:]}
+
+    def thought_action(self, thought_id: str, action: str) -> dict[str, Any]:
+        store = self.thoughts.store
+        if action == "mute_type":
+            thought = store.get(thought_id)
+            if thought is None:
+                return {"ok": False, "error": f"no thought {thought_id}"}
+            store.mute(thought.type, True)
+            return {"ok": True, "muted": thought.type}
+        thought = store.get(thought_id)
+        if thought is None:
+            return {"ok": False, "error": f"no thought {thought_id}"}
+        if action == "dismiss":
+            store.set_status(thought_id, "DISMISSED")
+            return {"ok": True, "status": "DISMISSED"}
+        if action == "acted":
+            store.set_status(thought_id, "ACTED_ON")
+            return {"ok": True, "status": "ACTED_ON"}
+        if action == "save_knowledge":
+            result = self.knowledge_create(thought.title, f"{thought.text}\n\nWhy it matters: {thought.why_it_matters}",
+                                           type="verified_lesson" if thought.type in {"INSIGHT", "OPTIMIZATION"} else "note",
+                                           tags=[thought.type.lower(), "thought"], links=[{"target": "ZEUS", "relation": "concerns"}],
+                                           provenance="zeus thought", metadata={"thought_id": thought_id, "evidence": thought.evidence})
+            if result.get("ok"):
+                store.set_status(thought_id, "SAVED")
+            return {"ok": bool(result.get("ok")), "knowledge": result}
+        if action == "attach_project":
+            project_id = str(thought.context.get("project_id") or (thought.context.get("project_ids") or [""])[0])
+            if not project_id:
+                return {"ok": False, "error": "this thought names no project"}
+            try:
+                project = self.kernel.projects.load(project_id) if hasattr(self.kernel.projects, "load") else None
+                if project is None:
+                    return {"ok": False, "error": f"no project {project_id}"}
+                notes = list(project.metadata.get("zeus_notes", []))
+                notes.append({"thought_id": thought_id, "title": thought.title, "text": thought.text, "at": thought.generated_at})
+                project.metadata["zeus_notes"] = notes[-20:]
+                self.kernel.projects.save(project)
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": str(exc)}
+            store.set_status(thought_id, "SAVED")
+            return {"ok": True, "project_id": project_id}
+        if action == "create_mission":
+            goal = f"{thought.title}: {thought.suggested_action or thought.text}"
+            mission = self.missions.create(goal, kind="complex", interpretation=f"from thought {thought_id}", links={"thought_id": thought_id})
+            store.set_status(thought_id, "ACTED_ON")
+            return {"ok": True, "mission_id": mission.mission_id}
+        if action == "tell_me_more":
+            self.send_message(f"Erklär mir deinen Gedanken „{thought.title}“ genauer: {thought.text} Belege: " +
+                              "; ".join(e.get("summary", "") for e in thought.evidence[:4]))
+            return {"ok": True, "asked": True}
+        return {"ok": False, "error": f"unknown action {action}"}
 
     def owner_personality(self) -> dict[str, Any]:
         """The effective personality: protected core, owner dials, the prompt blocks in order, and its history."""
@@ -3149,6 +3300,9 @@ class JarvisCore:
         rows = []
         for project in projects:
             metadata = dict(getattr(project, "metadata", {}) or {})
+            tasks = list(getattr(project, "tasks", []))
+            done = sum(1 for t in tasks if str(getattr(getattr(t, "status", ""), "value", getattr(t, "status", ""))).lower() in {"done", "complete", "completed", "accepted"})
+            blocked = sum(1 for t in tasks if str(getattr(getattr(t, "status", ""), "value", getattr(t, "status", ""))).lower() in {"blocked", "failed"})
             rows.append({
                 "id": project.id,
                 # The title is what a user names a project and what they will
@@ -3159,12 +3313,181 @@ class JarvisCore:
                 "kind": str(getattr(getattr(project, "kind", ""), "value", getattr(project, "kind", "")) or ""),
                 "capability_id": str(metadata.get("capability_id", "") or ""),
                 "origin": self.project_origin(project),
-                "tasks": len(getattr(project, "tasks", [])),
+                "tasks": len(tasks), "tasks_done": done, "tasks_blocked": blocked,
                 "steps": len(getattr(project, "steps", [])),
                 "created_at": getattr(project, "created_at", ""),
                 "updated_at": getattr(project, "updated_at", ""),
+                # owner intent about the universe: importance (PINNED FOCUS ACTIVE NORMAL LOW_PRIORITY DORMANT ARCHIVED),
+                # hidden flag, and the owner's own placement of the node
+                "importance": str(metadata.get("importance") or self._default_importance(project, tasks, blocked)),
+                "hidden": bool(metadata.get("hidden", False)),
+                "layout": dict(metadata.get("layout") or {}),
+                "health": self._project_health(project, tasks, blocked, done),
+                "notes": list(metadata.get("zeus_notes") or [])[-3:],
             })
         return rows
+
+    IMPORTANCE_LEVELS = ("PINNED", "FOCUS", "ACTIVE", "NORMAL", "LOW_PRIORITY", "DORMANT", "ARCHIVED")
+
+    @staticmethod
+    def _default_importance(project: Any, tasks: list[Any], blocked: int) -> str:
+        state = str(getattr(project.state, "value", str(project.state))).lower()
+        if state in {"completed", "abandoned"}:
+            return "ARCHIVED" if state == "abandoned" else "DORMANT"
+        try:
+            updated = datetime.fromisoformat(str(getattr(project, "updated_at", "")).replace("Z", "+00:00"))
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            idle_days = (datetime.now(timezone.utc) - updated).days
+        except ValueError:
+            idle_days = 0
+        if state in {"executing", "verifying", "investigating", "planning"}:
+            return "ACTIVE"
+        if idle_days > 14:
+            return "DORMANT"
+        return "NORMAL"
+
+    @staticmethod
+    def _project_health(project: Any, tasks: list[Any], blocked: int, done: int) -> dict[str, Any]:
+        """HEALTHY | AT_RISK | BLOCKED | DORMANT | COMPLETE from the real record, with the reason."""
+
+        state = str(getattr(project.state, "value", str(project.state))).lower()
+        if state == "completed" or (tasks and done == len(tasks)):
+            return {"state": "COMPLETE", "reason": "all tasks done" if tasks else "completed"}
+        if blocked:
+            return {"state": "BLOCKED", "reason": f"{blocked} task(s) blocked or failed"}
+        if state in {"blocked", "waiting_for_owner"}:
+            return {"state": "BLOCKED", "reason": state}
+        try:
+            updated = datetime.fromisoformat(str(getattr(project, "updated_at", "")).replace("Z", "+00:00"))
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            idle_days = (datetime.now(timezone.utc) - updated).days
+        except ValueError:
+            idle_days = 0
+        if idle_days >= 7 and state not in {"draft"}:
+            return {"state": "DORMANT", "reason": f"no activity for {idle_days} days"}
+        if getattr(project, "last_stop_reason", ""):
+            return {"state": "AT_RISK", "reason": str(getattr(project, "last_stop_reason", ""))[:80]}
+        return {"state": "HEALTHY", "reason": "moving" if idle_days < 3 else "quiet"}
+
+    def project_update(self, project_id: str, *, importance: str = "", hidden: Any = None, layout: dict[str, Any] | None = None,
+                       note: str = "") -> dict[str, Any]:
+        """Owner intent about a project in the universe: importance, hidden, node position (persisted in metadata)."""
+
+        project = self.kernel.projects.load(project_id) if hasattr(self.kernel.projects, "load") else None
+        if project is None:
+            return {"ok": False, "error": f"no project {project_id}"}
+        meta = project.metadata
+        if importance:
+            if importance not in self.IMPORTANCE_LEVELS:
+                return {"ok": False, "error": f"importance must be one of {', '.join(self.IMPORTANCE_LEVELS)}"}
+            meta["importance"] = importance
+        if hidden is not None:
+            meta["hidden"] = bool(hidden)
+        if layout is not None:
+            current = dict(meta.get("layout") or {})
+            for key in ("x", "y"):
+                if key in layout:
+                    current[key] = float(layout[key])
+            if "state" in layout and layout["state"] in {"AUTO_POSITIONED", "OWNER_POSITIONED", "LOCKED"}:
+                current["state"] = layout["state"]
+            if "cluster" in layout:
+                current["cluster"] = str(layout["cluster"] or "")
+            meta["layout"] = current
+        if note:
+            notes = list(meta.get("owner_notes") or [])
+            notes.append({"text": str(note)[:500], "at": _now()})
+            meta["owner_notes"] = notes[-20:]
+        self.kernel.projects.save(project)
+        self.emit(EventType.TOOL, {"summary": f"project {project.title or project.id}: " + ", ".join(
+            k for k, v in (("importance " + importance, importance), ("hidden", hidden is not None), ("position", layout is not None), ("note", bool(note))) if v),
+            "source": "projects"})
+        return {"ok": True, "id": project.id, "importance": meta.get("importance"), "hidden": meta.get("hidden", False), "layout": meta.get("layout", {})}
+
+    def project_timeline(self, project_id: str = "", limit: int = 200) -> dict[str, Any]:
+        """Meaningful events from the activity log and the mission stores, for one project or all."""
+
+        project = self.kernel.projects.load(project_id) if project_id and hasattr(self.kernel.projects, "load") else None
+        needle = (project.title or project.goal[:40]).lower() if project is not None else ""
+        events: list[dict[str, Any]] = []
+        if project is not None:
+            events.append({"at": project.created_at, "kind": "created", "summary": f"project created: {project.title or project.goal[:60]}", "ref": project.id})
+            for d in getattr(project, "decisions", [])[-20:]:
+                events.append({"at": getattr(d, "at", ""), "kind": "decision", "summary": str(getattr(d, "text", getattr(d, "summary", "")))[:160], "ref": project.id})
+        for m in self.list_missions()["missions"]:
+            if needle and needle not in str(m.get("goal", "")).lower() and needle not in str(m.get("title", "")).lower():
+                continue
+            events.append({"at": m.get("started", ""), "kind": "mission_started", "summary": m.get("title", ""), "ref": m.get("id", "")})
+            if m.get("state") in {"failed", "completed", "cancelled"}:
+                events.append({"at": m.get("updated", ""), "kind": f"mission_{m['state']}" if m["state"] != "completed" else ("mission_promoted" if m.get("deployment") == "promoted" else "mission_completed"),
+                               "summary": m.get("title", ""), "ref": m.get("id", "")})
+        try:
+            for entry in self.activity.recent(limit=1500):
+                if entry.kind not in {"action.verified", "action.failed", "notification"}:
+                    continue
+                summary = str(entry.summary or "")
+                if needle and needle not in summary.lower():
+                    continue
+                detail = entry.detail or {}
+                if entry.kind == "notification" and "correction" in summary:
+                    events.append({"at": entry.at, "kind": "owner_correction", "summary": summary[:160], "ref": entry.receipt_id})
+                elif entry.kind == "action.verified" and str(detail.get("kind", "")).startswith("capability"):
+                    events.append({"at": entry.at, "kind": "capability_used", "summary": summary[:160], "ref": entry.receipt_id})
+        except Exception:  # noqa: BLE001
+            pass
+        events = [e for e in events if e.get("at")]
+        events.sort(key=lambda e: str(e["at"]))
+        return {"ok": True, "project_id": project_id, "events": events[-limit:]}
+
+    def project_graph(self, *, everything: bool = False) -> dict[str, Any]:
+        """The universe: nodes and typed relations for the galaxy (owner projects, missions, capabilities, knowledge clusters, thoughts)."""
+
+        overview = self.projects_overview()
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        shown = [p for p in overview["projects"] if everything or (not p.get("hidden") and p.get("importance") not in {"ARCHIVED"})]
+        for p in shown:
+            nodes.append({"id": p["id"], "kind": "project", "label": p["title"] or p["goal"][:40], "importance": p["importance"], "health": p["health"],
+                          "state": p["state"], "tasks": p["tasks"], "tasks_done": p["tasks_done"], "layout": p.get("layout", {}), "updated_at": p["updated_at"], "data": p})
+        for fam in overview["internal"]:
+            if not everything and fam["latest_state"].lower() in {"completed", "paused", "draft"} and fam["count"] > 1:
+                pass  # collapsed by default: one node per family below
+            nodes.append({"id": f"cap:{fam['capability_id']}", "kind": "capability", "label": fam["capability_id"], "attempts": fam["count"],
+                          "state": fam["latest_state"], "collapsed": True, "data": fam})
+        titles = {n["id"]: n["label"].lower() for n in nodes if n["kind"] == "project"}
+        for m in overview["missions"]:
+            if m.get("system") == "acquisition":
+                continue
+            parent = next((pid for pid, t in titles.items() if t and t in str(m.get("goal", "")).lower()), None)
+            nodes.append({"id": m["id"], "kind": "mission", "label": m["title"], "state": m["state"], "system": m["system"], "updated_at": m.get("updated", ""), "data": m})
+            edges.append({"source": parent or "zeus", "target": m["id"], "type": "mission_of", "active": m["state"] in {"active", "waiting"}})
+        for n in nodes:
+            if n["kind"] == "capability":
+                for pid, t in titles.items():
+                    if any(w in n["label"] for w in t.split() if len(w) > 4):
+                        edges.append({"source": pid, "target": n["id"], "type": "uses", "active": False})
+        try:
+            for t in self.thoughts.store.list():
+                if t.status == "DISMISSED":
+                    continue
+                ids = t.context.get("project_ids") or ([t.context["project_id"]] if t.context.get("project_id") else [])
+                if not ids:
+                    continue
+                nodes.append({"id": t.thought_id, "kind": "thought", "label": t.title, "type": t.type, "importance": t.importance, "data": t.to_dict()})
+                for pid in ids:
+                    edges.append({"source": pid, "target": t.thought_id, "type": "thought", "active": t.status in {"NEW", "IMPORTANT"}})
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            stats = self.knowledge_stats()
+            if stats.get("ok") and int(stats.get("nodes", 0)) > 0:
+                nodes.append({"id": "knowledge", "kind": "knowledge", "label": f"Knowledge · {stats['nodes']} nodes", "data": stats})
+                edges.append({"source": "zeus", "target": "knowledge", "type": "part_of", "active": False})
+        except Exception:  # noqa: BLE001
+            pass
+        nodes.append({"id": "zeus", "kind": "self", "label": "ZEUS", "data": {}})
+        return {"ok": True, "nodes": nodes, "edges": edges, "everything": everything, "hidden": len(overview["projects"]) - len(shown)}
 
     def projects_overview(self) -> dict[str, Any]:
         """Owner projects first; internal acquisition attempts grouped per capability (attempt families)."""
