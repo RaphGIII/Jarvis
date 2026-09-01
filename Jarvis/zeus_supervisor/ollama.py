@@ -95,15 +95,21 @@ def _port_open(url: str, timeout: float = 0.5) -> bool:
 def _server_process_exists() -> bool:
     """Whether an ``ollama`` server process is present on this machine (cheap, no PowerShell)."""
 
+    # Bytes, decoded here with replacement: when no process matches, tasklist
+    # prints a localised OEM-encoded message ("...ausgeführt" carries 0x81),
+    # and ``text=True`` under cp1252 killed the reader thread, leaving
+    # ``stdout`` as None -- seen live, as a preflight that failed on every
+    # retry while Ollama was simply not running.
     try:
         if sys.platform == "win32":
             completed = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ollama.exe", "/NH", "/FO", "CSV"],
-                                       capture_output=True, text=True, timeout=10,
+                                       capture_output=True, timeout=10,
                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            return "ollama.exe" in completed.stdout.lower()
-        completed = subprocess.run(["pgrep", "-f", "ollama serve"], capture_output=True, text=True, timeout=10)
-        return completed.returncode == 0 and bool(completed.stdout.strip())
-    except (OSError, subprocess.SubprocessError):
+            out = (completed.stdout or b"").decode("utf-8", "replace").lower()
+            return '"ollama.exe"' in out or out.startswith("ollama.exe")
+        completed = subprocess.run(["pgrep", "-f", "ollama serve"], capture_output=True, timeout=10)
+        return completed.returncode == 0 and bool((completed.stdout or b"").strip())
+    except Exception:  # noqa: BLE001 - a probe that cannot answer says "no process seen"
         return False
 
 
@@ -192,11 +198,15 @@ class OllamaService:
                     started_by_supervisor=self._process is not None, pid=getattr(self._process, "pid", 0) or 0,
                     checked_at=time.time())
         version = self.version()
+        try:
+            port_or_process = (not version) and (self._port_probe(self.url) or self._process_probe())
+        except Exception:  # noqa: BLE001 - a probe is evidence, never a reason to fail the boot
+            port_or_process = False
         if version:
             self.last = OllamaStatus(OllamaState.RUNNING, "the API answers", version=version, **base)
         elif self.own_process_alive():
             self.last = OllamaStatus(OllamaState.STARTING, f"ollama serve (pid {self._process.pid}) is up; the API on {self.url} does not answer yet", **base)
-        elif self._port_probe(self.url) or self._process_probe():
+        elif port_or_process:
             self.last = OllamaStatus(OllamaState.STARTING, f"an ollama server process exists but the API on {self.url} does not answer", **base)
         elif not exe:
             self.last = OllamaStatus(OllamaState.MISSING, "ollama is not installed (no binary found)", **base)
