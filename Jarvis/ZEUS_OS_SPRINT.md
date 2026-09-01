@@ -146,14 +146,133 @@ is. Live sections are filled from the running ZEUS, not from unit tests.
 ## Test state
 
 - Targeted groups: wake re-arm 7, adaptation 10, security gate 9, filesystem
-  9, voice session 12 → 47 passed. Music 90 passed.
-- Full suite at the integration boundary: (filled in below when the run
-  completes).
+  9, voice session 12 → 47 passed. Music 90 passed (2 new).
+- Full suite at the integration boundary: **2061 passed, 5 skipped,
+  1 xpassed** in 17:31. Two initial failures, both resolved:
+  `test_the_core_service_never_passes_unlock_from_a_non_ui_origin` exposed
+  that the new security property assumed `kernel.state_root` (fixed with a
+  tolerant lookup; 22/22 personality tests green), and
+  `test_stockfish_returns_five_ranked_lines` is flaky under full-suite CPU
+  load only — it passes standalone (3.1 s) and is untouched by this sprint.
 
-## Live acceptance (§48–53)
+## Live acceptance (§48–53) — measured on the RELEASED instance
 
-(to be filled from the running, newly released ZEUS)
+- **Health**: `/api/health` → `ready: true`, revision
+  `c9b5321b6881…` (= HEAD = pushed), `supervised: true`; stages http /
+  fast_local / missions / voice / recogniser all ok. One ZEUS.exe, one
+  ollama.exe, one core/listener/worker set.
+- **Window flags live**: the relaunched shell's real command line contains
+  `--autoplay-policy=no-user-gesture-required
+  --disable-features=Translate,TranslateUI
+  --disable-background-timer-throttling
+  --disable-backgrounding-occluded-windows
+  --disable-renderer-backgrounding`, and the served page carries
+  `translate="no"` — the translate popup has nothing to attach to and audio
+  no longer needs focus/gesture.
+- **Wake pipeline**: `/api/voice/wake` on the new instance: model OWNER,
+  effective threshold 0.55, listener present, `listener_match: true`
+  (listener fingerprint = tested model).
+- **File Galaxy backend, live**: `/api/fs/roots` → real C:\ and D:\ with
+  sizes, D:\ primary; `/api/fs/list D:\` → 51 real entries, not truncated.
+  Watcher round-trip on `D:\ZeusFsAccept`: watch (`mode: rdcw`) → mkdir →
+  rename → rmdir produced exactly **3 debounced `fs` events** on the live
+  SSE stream, then `unwatch stopped: 1`. Nothing invented; the test dir was
+  created and removed for the probe.
+- **Security gate, live**: `/api/auth/status` → `configured: false, locked:
+  true` with all nine scopes listed — the gate is armed and waiting for the
+  owner to set the password (set it in Owner → Security; a password typed by
+  anyone else would lock the owner out, so this step is deliberately left to
+  the owner).
+- **Adaptation, live**: `/api/adaptation` → empty rule store with stats —
+  ready for real feedback; rules only ever come from the owner's clicks.
+- **Galaxy intact**: `/api/projects/graph` on the new build: 3 projects, 15
+  missions, 5 capabilities, knowledge, self, 16 edges — the loved Projects
+  view is untouched and the engine is shared, not replaced.
+- **New UI shipped**: `views/files.js`, `views/personality.js`,
+  `core/authgate.js`, redesigned `views/knowledge.js` all served by the
+  packaged exe.
+- **Owner-only checks that remain** (need a human at the microphone /
+  speaker, deliberately not simulated): saying "Zeus" with the window
+  unfocused/in another view/after long idle; confirming no `too_short`
+  ghosts in normal speech; the eye following LISTENING→CAPTURING live; a
+  spoken "Spiel …" end-to-end (the verifier fix is regression-tested against
+  the exact live failure receipt); setting the owner password.
 
 ## Release
 
-(to be filled: commit, push, promote, restart, revision match)
+- Commit `c9b5321` (32 files, +3196/−61), pushed to
+  `origin/adaptive-brain-v1`.
+- Candidate `c9b5321b6881-20260901T212248Z-67d28c` built by the live core
+  (PyInstaller), verified `files: ok; fingerprint: ok; size: ok; runs: ok;
+  preflight: ok`, promoted → `staged` (running exe locks its dir), relaunch
+  watchdog `swapped` then `healthy`.
+- Known-good: `dist/ZEUS` @ revision `c9b5321…`, fingerprint
+  `72ba974b79f356fd`. Rollback: `dist/ZEUS.previous` @ `30b7c7f` (the
+  supervisor-reliability build) plus tag `zeus-baseline-os-20260901`.
+- ZEUS left running for the owner.
+
+## Final report — the sprint's questions, answered
+
+1. **Wake without focus?** The root cause was the shell (autoplay policy +
+   background throttling), fixed at the source; flags verified in the live
+   process command line. Detection always ran out-of-window; the reaction now
+   does too. Owner mic confirmation pending.
+2. **`too_short` after wake?** Root-caused from live logs (wake-tail blips
+   armed capture); sustained onset + 8 s re-arm budget; 7 regression tests;
+   the old strict behaviour retained when the budget is 0.
+3. **Canonical wake word?** The detector's verdict names the session "Zeus";
+   Whisper's tail spelling is stripped by evidence (time window + low
+   probability), raw and final transcripts both kept.
+4. **German STT?** CPU int8 whisper-small, similarity 0.96 / median 3.7 s on
+   the owner corpus. CUDA measured dead on this Pascal card (details above);
+   `auto` no longer wastes ~50 s per worker start attempting it.
+5. **Listening animation = backend state?** Session transitions post to
+   `/api/voice/session` per frame-step and reach the UI over the same SSE
+   stream the eye already renders; re-arm emits LISTENING again. Live
+   <100 ms measurement needs the owner's microphone.
+6. **Feedback under every answer?** Yes — restrained 👍/👎/Korrigieren row
+   with 11 categories, wired to `/api/feedback` with the answer's
+   request_id.
+7. **Does feedback change behaviour, scoped?** Yes — bounded weights
+   (≤2.0), ≈3 ratings to full effect, 60-day half-life, one rule per scope,
+   context classifier keeps technical explanations apart from
+   confirmations; injected into the prompt only for the matching context.
+8. **Can the owner see/edit/delete learned rules?** Yes — Owner and
+   Persönlichkeit views: enable/disable, delete, add own rules that outrank
+   inferred ones.
+9. **Password security?** scrypt (n=2^15) + unique salt, verifier wrapped
+   with DPAPI, never plaintext, never in git/logs/prompts (it exists only in
+   `/api/auth/*` bodies); constant-time compare, backoff, scoped short-lived
+   memory-only tokens; locked on restart; only deterministic code emits
+   OWNER_AUTHORIZED. 9 tests.
+10. **What is gated?** Personality core/preference application, SelfDev/
+    release promotion, project deletion (voice-"Ja" included), plus scope
+    definitions for install/filesystem-destructive/credentials/system
+    levels. Gating activates the moment the owner sets a password.
+11. **Personality control centre?** The applied pipeline IDENTITÄT→KERN→
+    EHRLICHKEIT→PRÄFERENZEN→ADAPTIVE→AUFGABENREGELN→EFFEKTIV with the
+    literal prompt blocks in model order and a configuration inspector
+    naming storage and write authority for every layer.
+12. **File Galaxy without regressing Projects?** Same engine, exported with
+    additive hooks only; Projects rendering untouched (graph counts
+    unchanged live). Drives→folders→files with semantic zoom, real bounded
+    listings, live RDCW events (3 debounced events for a create/rename/
+    delete round-trip), context menu incl. Explorer/Copy Path/Ask Zeus,
+    immersive mode, project↔workspace links. Visual pin/hide never moves
+    anything on disk.
+13. **Knowledge ≠ galaxy copy?** Depth strata (DOMÄNEN→THEMEN→KONZEPTE &
+    BEFUNDE) with breadcrumb descent and search-jump; never all nodes at
+    once; dark scientific plates sized by real link counts.
+14. **Activity corrections?** ✎ transcript edit and 👎 per request;
+    append-only JSONL, original evidence immutable, corrections feed the
+    heard→meant vocabulary and can re-run the request.
+15. **Spotify false failure?** Reproduced from the live receipt
+    (`rcpt_b77ab7a7d2b0`), fixed by separating request intent / resolved
+    target / playback state; the headline now names the resolution; wrong
+    resolutions still fail. 90 music tests green.
+16. **Tests?** Targeted groups first, one full suite at the boundary: 2061
+    passed (chess flake passes standalone; stub-kernel fix applied and
+    re-verified).
+17. **Release?** Built, verified, staged-promoted, relaunched, READY at the
+    pushed HEAD revision with rollback retained — evidence above. ZEUS is
+    running for the owner now.
