@@ -110,10 +110,61 @@ function finishStreaming(finalText, payload) {
     addTurn("insight", "Insight", finalText, payload);
     return;
   }
-  if (streaming && !(payload && payload._replay)) { streaming.textContent = finalText; streaming = null; }
-  else if (finalText) addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", finalText, payload);
+  let what = null;
+  if (streaming && !(payload && payload._replay)) { streaming.textContent = finalText; what = streaming; streaming = null; }
+  else if (finalText) what = addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", finalText, payload);
+  if (what && !(payload && payload._replay)) attachFeedback(what, payload || {});
   $("app").classList.add("conversing");
   scrollDown();
+}
+
+/* ------------------------------------------------------------------ */
+/* response feedback: 👍 👎 Korrigieren under every ZEUS answer         */
+/* ------------------------------------------------------------------ */
+
+const FB_CATEGORIES = [
+  ["TOO_SHORT", "zu kurz"], ["TOO_LONG", "zu lang"], ["WRONG_FACT", "falscher Fakt"], ["MISUNDERSTOOD", "missverstanden"],
+  ["WRONG_ACTION", "falsche Aktion"], ["INCOMPLETE", "unvollständig"], ["TOO_TECHNICAL", "zu technisch"],
+  ["TOO_SIMPLE", "zu einfach"], ["BAD_STYLE", "Stil"], ["BAD_PRONUNCIATION", "Aussprache"], ["OTHER", "anderes"],
+];
+
+function attachFeedback(what, payload) {
+  const meta = payload.meta || {};
+  const requestId = meta.request_id || "";
+  const row = el("div", { class: "fb" });
+  const flash = (text) => { const n = el("span", { class: "fb-flash", text }); row.append(n); setTimeout(() => n.remove(), 2500); };
+  const up = el("a", { href: "#", class: "fb-btn", title: "Gute Antwort", text: "👍" });
+  const down = el("a", { href: "#", class: "fb-btn", title: "Antwort bewerten", text: "👎" });
+  const korr = el("a", { href: "#", class: "fb-btn fb-korr", text: "Korrigieren" });
+  up.onclick = async (ev) => {
+    ev.preventDefault();
+    await api("/api/feedback", { kind: "response", rating: "up", request_id: requestId });
+    row.querySelector(".fb-pop")?.remove();
+    flash("gemerkt");
+  };
+  const openPop = (ev, focusText) => {
+    ev.preventDefault();
+    row.querySelector(".fb-pop")?.remove();
+    const note = el("input", { placeholder: "optional: was genau?", class: "fb-note" });
+    const pop = el("div", { class: "fb-pop" });
+    for (const [key, label] of FB_CATEGORIES) {
+      pop.append(el("button", { class: "chip", text: label, onClick: async () => {
+        await api("/api/feedback", { kind: "response", rating: "down", category: key, text: note.value, request_id: requestId });
+        pop.remove(); flash("gelernt");
+      } }));
+    }
+    const send = el("button", { class: "chip on", text: "senden", onClick: async () => {
+      await api("/api/feedback", { kind: "response", rating: "down", category: "OTHER", text: note.value, request_id: requestId });
+      pop.remove(); flash("gelernt");
+    } });
+    pop.append(note, send);
+    row.append(pop);
+    if (focusText) note.focus();
+  };
+  down.onclick = (ev) => openPop(ev, false);
+  korr.onclick = (ev) => openPop(ev, true);
+  row.append(up, down, korr);
+  what.append(row);
 }
 
 export function endStreaming() {

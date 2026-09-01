@@ -11,6 +11,7 @@
 import { el, clear, kv, section, badge, button } from "../core/dom.js";
 import { api } from "../core/api.js";
 import * as views from "../core/views.js";
+import * as authgate from "../core/authgate.js";
 
 const DOCS = ["identity", "policy", "spending", "security"];
 const DIALS = [
@@ -51,9 +52,65 @@ export const view = {
       el("span", { class: "k", text: (h.at || h.applied_at || "").slice(0, 19) }),
       el("span", { class: "v" }, `${h.action || h.kind || "change"} · ${h.reason || ""} · ${(h.documents || []).join(", ")}`,
         h.audit_id ? button("Roll back", async () => { if (confirm(`Roll back ${h.audit_id}?`)) { await api("/api/owner/rollback", { audit_id: h.audit_id, confirm: true }); views.open("owner"); } }, "ghost danger") : null))) : [el("div", { class: "empty", text: "No owner changes recorded." })])));
+    pane.append(section("Security", await securityPanel(() => views.open("owner"))));
+    pane.append(section("Gelernt aus deinem Feedback", await adaptationPanel(() => views.open("owner"))));
     pane.append(section("Protected paths", el("div", { class: "kv" }, el("span", { class: "v mono", text: (data.protected_paths || []).join("\n") }))));
   },
 };
+
+/* ---- the Owner Security Center ------------------------------------- */
+export async function securityPanel(reload) {
+  const s = await api("/api/auth/status");
+  const box = el("div");
+  const state = s.configured ? (s.locked ? "LOCKED" : "UNLOCKED") : "NO PASSWORD SET";
+  box.append(el("div", { class: "meta" },
+    badge(state, s.configured ? (s.locked ? "ok" : "warn") : "bad"),
+    el("span", { text: ` KDF ${s.kdf || "scrypt"} · Speicher ${s.storage || "file"} · Passwort wird nur manuell eingegeben, nie von Modellen gesehen` })));
+  if ((s.sessions || []).length) {
+    for (const t of s.sessions) box.append(kv("freigegeben", `${t.scope} · noch ${Math.round(t.expires_in)}s`));
+  }
+  box.append(el("div", { class: "kv" }, el("span", { class: "k", text: "geschützt (Passwort nötig)" }),
+    el("span", { class: "v", text: "geschützte Persönlichkeit · Sicherheitsrichtlinie · SelfDev-Promotion · Software-Installation · endgültiges Löschen · Massen-Dateioperationen · Zugangsdaten · Autostart/System" })));
+  box.append(el("div", { class: "toolbar" },
+    button(s.configured ? "Passwort ändern" : "Passwort festlegen", async () => {
+      const current = s.configured ? (prompt("Aktuelles Passwort:") || "") : "";
+      const next = prompt("Neues Passwort (mind. 8 Zeichen):") || "";
+      if (!next) return;
+      const r = await api("/api/auth/setup", { password: next, current });
+      alert(r.ok ? "Gespeichert." : (r.error || "Nicht gespeichert."));
+      reload();
+    }, "primary"),
+    button("Alles sperren", async () => { await api("/api/auth/lock", {}); authgate.dropCache(); reload(); }, "ghost")));
+  return box;
+}
+
+/* ---- learned adaptive rules: inspect, disable, delete ---------------- */
+export async function adaptationPanel(reload) {
+  const data = await api("/api/adaptation");
+  const box = el("div");
+  const rules = data.rules || [];
+  if (!rules.length) box.append(el("div", { class: "empty", text: "Noch nichts gelernt. 👍/👎 unter Antworten und Korrekturen landen hier – begrenzt, abklingend, löschbar." }));
+  for (const r of rules) {
+    const conf = Math.round((r.effective_confidence ?? r.confidence ?? 0) * 100);
+    box.append(el("div", { class: "kv" },
+      el("span", { class: "k" }, badge(r.source === "OWNER_RULE" ? "REGEL" : "GELERNT", r.source === "OWNER_RULE" ? "amber" : "blue")),
+      el("span", { class: "v" },
+        `${r.text || r.domain} · ${JSON.stringify(r.scope)} · Gewicht ${Number(r.weight).toFixed(2)} · Konfidenz ${conf}%` + (r.enabled ? "" : " · AUS"),
+        el("div", { class: "toolbar" },
+          button(r.enabled ? "Deaktivieren" : "Aktivieren", async () => { await api("/api/adaptation/rule", { rule_id: r.rule_id, action: "update", changes: { enabled: !r.enabled } }); reload(); }, "ghost"),
+          button("Löschen", async () => { await api("/api/adaptation/rule", { rule_id: r.rule_id, action: "delete" }); reload(); }, "ghost danger")))));
+  }
+  const text = el("input", { placeholder: "Eigene Regel, z. B. „Bei medizinischen Erklärungen ausführlicher antworten.“", style: { minWidth: "340px" } });
+  const kind = el("select", {}, ...[["technical_explanation", "bei technischen Erklärungen"], ["action_confirmation", "bei Bestätigungen"], ["conversation", "im Gespräch"], ["", "überall"]]
+    .map(([v, t]) => el("option", { value: v, text: t })));
+  box.append(el("div", { class: "toolbar" }, text, kind,
+    button("Regel hinzufügen", async () => {
+      if (!text.value.trim()) return;
+      await api("/api/adaptation/rule", { action: "add", text: text.value.trim(), domain: "STYLE", scope: kind.value ? { kind: kind.value } : {} });
+      reload();
+    }, "primary")));
+  return box;
+}
 
 /* The personality panel: dials → proposal; core locked; prompt preview; history. */
 async function personalityPanel(reload) {
@@ -130,7 +187,11 @@ function editCore(core, reload) {
         if (JSON.stringify(v) !== JSON.stringify(value)) next[key] = v;
       }
       if (!Object.keys(next).length) { alert("nothing changed"); return; }
-      const r = await api("/api/owner/propose", { changes: { personality: { core: next } }, reason: reason.value || "personality core", unlock_core: true });
+      // the protected core: the security gate asks for the manually typed
+      // password and mints a scoped PERSONALITY_EDIT token for this call
+      const r = await authgate.withAuth("PERSONALITY_EDIT", (token) =>
+        api("/api/owner/propose", { changes: { personality: { core: next } }, reason: reason.value || "personality core",
+                                    unlock_core: true, authorization: token }));
       if (r.ok === false || r.error) { alert(r.error || "refused"); return; }
       reload();
     }, "primary")));
@@ -173,6 +234,11 @@ function proposal(t, reload) {
     el("div", { class: "meta", text: `${(t.documents || []).join(", ")} · ${t.origin || ""} · ${t.proposed_at || ""}` }),
     diff,
     el("div", { class: "toolbar" },
-      button("Confirm & apply", async () => { const r = await api("/api/owner/approve", { transaction_id: t.transaction_id, confirm: true }); if (r.error) alert(r.error); reload(); }, "primary"),
+      button("Confirm & apply", async () => {
+        const r = await authgate.withAuth("PERSONALITY_EDIT", (token) =>
+          api("/api/owner/approve", { transaction_id: t.transaction_id, confirm: true, authorization: token }));
+        if (r.error) alert(r.error);
+        reload();
+      }, "primary"),
       button("Reject", async () => { await api("/api/owner/reject", { transaction_id: t.transaction_id }); reload(); }, "ghost danger")));
 }

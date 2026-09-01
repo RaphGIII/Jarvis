@@ -1,0 +1,273 @@
+{
+ "at": "2026-09-01T20:52:17",
+ "exe": "D:\\Jarvis_recovery_20260823\\repo\\dist\\ZEUS\\ZEUS.exe",
+ "steps": [
+  {
+   "step": "quit failed",
+   "t": "20:52:37",
+   "error": "timed out"
+  },
+  {
+   "step": "A0 quit ZEUS",
+   "t": "20:53:00",
+   "seconds": 41.3,
+   "counts": {
+    "core": 0,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 0
+   }
+  },
+  {
+   "step": "A1 ollama stopped",
+   "t": "20:53:08",
+   "pids": [],
+   "api": ""
+  },
+  {
+   "step": "A2 cold start",
+   "t": "21:03:31",
+   "ready": false,
+   "seconds_to_ready": 530.9,
+   "revision": "",
+   "readiness": null,
+   "phases": [
+    "preflight:checking Python, repository, Ollama and the models",
+    "starting:waiting for the core",
+    "starting:loading the conversation model"
+   ],
+   "ollama": {
+    "state": "RUNNING",
+    "reason": "the API answers",
+    "version": "0.30.10",
+    "pid": 278832,
+    "started_by_supervisor": true,
+    "spawns": 1,
+    "url": "http://127.0.0.1:11434",
+    "exe": "C:\\Users\\rapha\\AppData\\Local\\Programs\\Ollama\\ollama.EXE",
+    "models_dir": "D:\\JarvisLocal\\ollama_models",
+    "checked_at": 1788288806.7715387,
+    "ok": true
+   },
+   "ollama_pids": [
+    278832
+   ],
+   "ollama_version": "0.30.10",
+   "counts": {
+    "core": 0,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 0
+   }
+  },
+  {
+   "step": "A3 supervisor log tail",
+   "t": "21:03:32",
+   "lines": [
+    "2026-09-01T18:53:26.776409+00:00   [ok] models: FAST_LOCAL=qwen3:4b-instruct, BUILD_LOCAL=qwen2.5-coder:7b-instruct-q4_K_M",
+    "2026-09-01T18:53:26.776462+00:00   [ok] speech: D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\.venv-speech\\Scripts\\python.exe (cached)",
+    "2026-09-01T18:53:26.945193+00:00 [starting] starting ZEUS at 30b7c7f21c5b",
+    "2026-09-01T18:53:27.310739+00:00 launched core pid 280364: C:\\Python314\\python.exe -m jarvis.serve --host 127.0.0.1 --port 8420 --token-file D:\\Jarvis_recovery_20260823\\r",
+    "2026-09-01T18:53:29.328962+00:00 [starting] waiting for the core",
+    "2026-09-01T18:53:38.141673+00:00 [starting] loading the conversation model",
+    "2026-09-01T18:56:44.655331+00:00 [starting] conversation model unavailable: ProviderError: ProviderError(kind='provider_connection_error', status=None, model='qwen3:4b-in",
+    "2026-09-01T19:03:27.790466+00:00 health check failed: not READY after 600s"
+   ]
+  },
+  {
+   "step": "quit failed",
+   "t": "21:03:52",
+   "error": "timed out"
+  },
+  {
+   "step": "B0 quit ZEUS",
+   "t": "21:05:52",
+   "seconds": 67.3,
+   "counts": {
+    "core": 0,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 0
+   },
+   "ollama_pids": [
+    278832
+   ]
+  },
+  {
+   "step": "B1 warm relaunch",
+   "t": "21:09:12",
+   "ready": true,
+   "seconds_to_ready": 193.9,
+   "ollama": {
+    "state": "RUNNING",
+    "reason": "the API answers",
+    "version": "0.30.10",
+    "pid": 278832,
+    "started_by_supervisor": true,
+    "spawns": 1,
+    "url": "http://127.0.0.1:11434",
+    "exe": "C:\\Users\\rapha\\AppData\\Local\\Programs\\Ollama\\ollama.EXE",
+    "models_dir": "D:\\JarvisLocal\\ollama_models",
+    "checked_at": 1788288806.7715387,
+    "ok": true
+   },
+   "ollama_pids": [
+    278832
+   ],
+   "counts": {
+    "core": 1,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 1
+   }
+  },
+  {
+   "step": "quit failed",
+   "t": "21:09:32",
+   "error": "timed out"
+  },
+  {
+   "step": "C0 quit ZEUS",
+   "t": "21:09:47",
+   "seconds": 32.4,
+   "counts": {
+    "core": 0,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 0
+   }
+  },
+  {
+   "step": "C1 check with missing exe + bad url",
+   "t": "21:10:03",
+   "exit": 1,
+   "seconds": 16.1,
+   "ollama_lines": [
+    "[FAIL] ollama.server: FAILED: ollama serve did not answer on http://127.0.0.1:11999 within 7s",
+    "\"ollama_state\": \"FAILED\",",
+    "\"detail\": \"FAILED: ollama serve did not answer on http://127.0.0.1:11999 within 7s\","
+   ]
+  },
+  {
+   "step": "C2 check with real exe but a port nothing answers on",
+   "t": "21:10:18",
+   "exit": 1,
+   "seconds": 13.6,
+   "ollama_lines": [
+    "[FAIL] ollama.server: FAILED: ollama serve did not answer on http://127.0.0.1:11999 within 9s",
+    "\"ollama_state\": \"FAILED\",",
+    "\"detail\": \"FAILED: ollama serve did not answer on http://127.0.0.1:11999 within 9s\","
+   ],
+   "ollama_pids_after": [
+    278832
+   ]
+  },
+  {
+   "step": "C3 boot with bad config holds",
+   "t": "21:10:31",
+   "seconds": 13.3,
+   "phase": "error",
+   "detail": "ollama.server: FAILED: ollama serve did not answer on http://127.0.0.1:11999 within 8s",
+   "remedy": "Run `ollama serve` in a terminal and read the error it prints; ZEUS retries by itself when it answers",
+   "ollama": {
+    "state": "FAILED",
+    "reason": "ollama serve did not answer on http://127.0.0.1:11999 within 8s",
+    "version": "",
+    "pid": 0,
+    "started_by_supervisor": false,
+    "spawns": 0,
+    "url": "http://127.0.0.1:11999",
+    "exe": "C:\\Users\\rapha\\AppData\\Local\\Programs\\Ollama\\ollama.EXE",
+    "models_dir": "D:\\JarvisLocal\\ollama_models",
+    "checked_at": 1788289827.6453617,
+    "ok": false
+   },
+   "status_page_answers": true
+  },
+  {
+   "step": "C4 quit through the status page",
+   "t": "21:10:39",
+   "response": {
+    "ok": true,
+    "supervisor": true,
+    "stopping": true
+   },
+   "seconds": 6.0,
+   "counts": {
+    "core": 0,
+    "listener": 0,
+    "worker": 0,
+    "supervisor": 0
+   }
+  },
+  {
+   "step": "D0 normal start",
+   "t": "21:10:58",
+   "ready": true,
+   "seconds_to_ready": 17.2,
+   "ollama_pids": [
+    278832
+   ]
+  },
+  {
+   "step": "D1 ollama killed under ZEUS",
+   "t": "21:11:06",
+   "ollama_pids": [],
+   "api": ""
+  },
+  {
+   "step": "D2 ollama recovered by the watchdog",
+   "t": "21:11:40",
+   "seconds": 32.3,
+   "ollama": {
+    "state": "RUNNING",
+    "reason": "the API answers",
+    "version": "0.30.10",
+    "pid": 281728,
+    "started_by_supervisor": true,
+    "spawns": 1,
+    "url": "http://127.0.0.1:11434",
+    "exe": "C:\\Users\\rapha\\AppData\\Local\\Programs\\Ollama\\ollama.EXE",
+    "models_dir": "D:\\JarvisLocal\\ollama_models",
+    "checked_at": 1788289898.5126612,
+    "ok": true
+   },
+   "ollama_pids": [
+    281728
+   ]
+  },
+  {
+   "step": "D3 supervisor log",
+   "t": "21:11:41",
+   "lines": [
+    "2026-09-01T19:10:56.015829+00:00 [ready] ZEUS is ready at 30b7c7f21c5b (15s)",
+    "2026-09-01T19:10:58.708637+00:00 launched listener pid 286208",
+    "2026-09-01T19:11:17.544609+00:00 ollama is no longer answering (UNAVAILABLE: nothing answers on http://127.0.0.1:11434 and no server process exists); recovering",
+    "2026-09-01T19:11:21.724959+00:00 started ollama serve (pid 281728, models from D:\\JarvisLocal\\ollama_models)",
+    "2026-09-01T19:11:38.514268+00:00 ollama RUNNING: version 0.30.10, started by the supervisor (pid 281728)",
+    "2026-09-01T19:11:38.514361+00:00 ollama recovery: RUNNING: the API answers"
+   ]
+  },
+  {
+   "step": "D4 core after recovery",
+   "t": "21:11:52",
+   "accepted": true,
+   "readiness": {
+    "UI_READY": true,
+    "CORE_READY": true,
+    "AI_READY": true,
+    "VOICE_READY": false,
+    "FULL_READY": false
+   },
+   "counts": {
+    "core": 1,
+    "listener": 1,
+    "worker": 1,
+    "supervisor": 1
+   },
+   "ollama_pids": [
+    281728
+   ]
+  }
+ ]
+}

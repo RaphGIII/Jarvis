@@ -12,31 +12,74 @@ let graphNode = null;
 export const view = {
   id: "knowledge",
   title: "Knowledge",
+  /* Not a galaxy: knowledge is DEPTH. The view descends through strata —
+     DOMÄNEN (the most connected hubs) → THEMEN (their neighbours) →
+     BEFUNDE (findings, lessons, decisions, notes at the bottom). Only the
+     current stratum is fully lit; you never see all nodes at once. Every
+     plate is a real node; sizes come from real link counts. */
   async mount(pane, params) {
-    const search = el("input", { placeholder: "Search knowledge…", value: params.q || "" });
-    const list = el("div", { class: "grid" });
+    const search = el("input", { placeholder: "Suchen… (springt zur Fundstelle)", value: params.q || "" });
     const summary = el("span", { class: "empty", style: { padding: 0 } });
-    const load = async () => {
-      const data = await api("/api/knowledge/graph", { query: search.value, limit: 200 });
-      clear(list);
-      const nodes = data.nodes || [];
-      summary.textContent = `${nodes.length} nodes · ${(data.edges || []).length} links${data.truncated ? " (truncated)" : ""}`;
-      if (!nodes.length) list.append(el("div", { class: "empty", text: "Nothing here yet. Ingest a document, finish a mission or record a decision and it appears." }));
-      const degree = {};
-      for (const e of data.edges || []) { degree[e.source] = (degree[e.source] || 0) + 1; degree[e.target] = (degree[e.target] || 0) + 1; }
-      for (const n of nodes.sort((a, b) => (degree[b.id] || 0) - (degree[a.id] || 0)).slice(0, 120)) {
-        const card = el("div", { class: "card click" }, el("div", { class: "title", text: n.title }),
-          el("div", { class: "meta" }, badge(n.type, "blue"), el("span", { text: `${degree[n.id] || 0} links` }), n.updated_at ? el("span", { text: n.updated_at.slice(0, 10) }) : null));
-        card.onclick = () => inspectNode(n);
-        list.append(card);
+    const crumbs = el("div", { class: "fs-crumbs" });
+    const board = el("div", { class: "kboard" });
+    const data = await api("/api/knowledge/graph", { query: "", limit: 400 });
+    const nodes = data.nodes || [], edges = data.edges || [];
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const near = new Map(); const degree = {};
+    for (const e of edges) {
+      degree[e.source] = (degree[e.source] || 0) + 1; degree[e.target] = (degree[e.target] || 0) + 1;
+      if (!near.has(e.source)) near.set(e.source, new Set());
+      if (!near.has(e.target)) near.set(e.target, new Set());
+      near.get(e.source).add(e.target); near.get(e.target).add(e.source);
+    }
+    const FINDING = new Set(["technical_finding", "verified_lesson", "decision", "note", "document", "idea"]);
+    const maxDeg = Math.max(1, ...nodes.map((n) => degree[n.id] || 0));
+    const neighbours = (id) => [...(near.get(id) || [])].map((x) => byId.get(x)).filter(Boolean);
+    let path = []; // ids of the descended strata
+    const STRATUM = ["DOMÄNEN", "THEMEN", "KONZEPTE & BEFUNDE", "BEFUNDE"];
+    const plate = (n) => {
+      const d = degree[n.id] || 0;
+      const leaf = FINDING.has(n.type) || d <= 1 || path.includes(n.id);
+      const box = el("div", { class: "kplate" + (leaf ? " leaf" : "") + (FINDING.has(n.type) ? " finding" : ""), dataset: { type: n.type } },
+        el("div", { class: "kplate-title", text: n.title }),
+        el("div", { class: "kplate-meta" }, badge(n.type, FINDING.has(n.type) ? "amber" : "blue"),
+          el("span", { text: `${d} Verknüpfungen` }), n.updated_at ? el("span", { text: n.updated_at.slice(0, 10) }) : null),
+        el("div", { class: "kplate-deg" }, el("i", { style: { width: `${Math.max(6, Math.round((d / maxDeg) * 100))}%` } })));
+      box.onclick = () => { if (leaf) { inspectNode(n); } else { path.push(n.id); render(); } };
+      return box;
+    };
+    const render = () => {
+      clear(crumbs); clear(board);
+      crumbs.append(el("button", { class: "chip" + (path.length ? "" : " on"), text: "◈ Wissen", onClick: () => { path = []; search.value = ""; render(); } }));
+      path.forEach((id, i) => crumbs.append(el("span", { class: "sep", text: "›" }),
+        el("button", { class: "chip" + (i === path.length - 1 ? " on" : ""), text: (byId.get(id)?.title || id).slice(0, 30), onClick: () => { path = path.slice(0, i + 1); render(); } })));
+      const q = search.value.trim().toLowerCase();
+      let level, label;
+      if (q) {
+        level = nodes.filter((n) => (n.title || "").toLowerCase().includes(q) || String(n.body || "").toLowerCase().includes(q)).slice(0, 40);
+        label = `SUCHE · ${level.length} Treffer`;
+      } else if (!path.length) {
+        level = nodes.filter((n) => !FINDING.has(n.type)).sort((a, b) => (degree[b.id] || 0) - (degree[a.id] || 0)).slice(0, 9);
+        label = STRATUM[0];
+      } else {
+        const cur = path.at(-1);
+        level = neighbours(cur).filter((n) => !path.includes(n.id))
+          .sort((a, b) => (FINDING.has(a.type) ? 1 : 0) - (FINDING.has(b.type) ? 1 : 0) || (degree[b.id] || 0) - (degree[a.id] || 0)).slice(0, 30);
+        label = STRATUM[Math.min(path.length, STRATUM.length - 1)];
       }
+      board.append(el("div", { class: "kdepth", text: `${label} · Ebene ${q ? "—" : path.length}` + (path.length || q ? "" : ` · ${nodes.length} Knoten, ${edges.length} Kanten insgesamt — nie alle auf einmal`) }));
+      const grid = el("div", { class: "kgrid depth-" + Math.min(path.length, 2) });
+      if (!level.length) grid.append(el("div", { class: "empty", text: q ? "Keine Treffer." : "Noch nichts hier. Ein Dokument ingestieren, eine Mission abschließen oder eine Entscheidung festhalten — dann erscheint es." }));
+      for (const n of level) grid.append(plate(n));
+      board.append(grid);
+      summary.textContent = `${nodes.length} Knoten · ${edges.length} Kanten${data.truncated ? " (gekürzt)" : ""}`;
     };
     let timer = null;
-    search.oninput = () => { clearTimeout(timer); timer = setTimeout(load, 300); };
-    pane.append(el("div", { class: "toolbar" }, search, button("Open graph", () => openGraph(search.value), "primary"), summary));
-    pane.append(section("Store knowledge", composer(load)));
-    pane.append(list);
-    await load();
+    search.oninput = () => { clearTimeout(timer); timer = setTimeout(render, 250); };
+    pane.append(el("div", { class: "toolbar" }, crumbs, search, button("Graph-Overlay", () => openGraph(search.value), "primary"), summary));
+    pane.append(board);
+    pane.append(section("Store knowledge", composer(() => views.open("knowledge"))));
+    render();
   },
 };
 

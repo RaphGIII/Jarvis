@@ -900,3 +900,38 @@ def test_asking_what_is_playing_still_works():
 
     assert understand("Was laeuft gerade?").action == "current"
     assert understand("what's playing").action == "current"
+
+
+def test_a_resolved_track_playing_counts_as_success_not_failure(tmp_path):
+    """"Rammstein ohne mich" resolved by the provider to "Ohne dich"
+    (Rammstein): the resolved track playing is a SUCCESS. The old title-only
+    comparison failed this live on 2026-09-01 (receipt rcpt_b77ab7a7d2b0)
+    while Windows reported the resolved track playing."""
+
+    resolved = MediaState(ok=True, app="Spotify.exe", status="Playing",
+                          title="Ohne dich", artist="Rammstein")
+    service = build(tmp_path, session=FakeSession(resolved),
+                    execution=FakeExecution(ok=True, output={
+                        "ok": True, "title": "Ohne dich", "artist": "Rammstein",
+                        "now_playing": {"title": "Ohne dich", "artist": "Rammstein", "status": "Playing"}}))
+
+    outcome = service.run(MusicRequest("play", query="Rammstein ohne mich", kind="track"))
+
+    assert outcome.receipt.verified is True
+    assert "resolved from" in outcome.receipt.detail
+
+
+def test_a_resolution_unrelated_to_the_request_still_fails(tmp_path):
+    """Separating intent from resolution cuts both ways: the resolved track
+    playing does not excuse a resolution that ignores the words entirely."""
+
+    wrong = MediaState(ok=True, app="Spotify.exe", status="Playing",
+                       title="Atemlos durch die Nacht", artist="Helene Fischer")
+    service = build(tmp_path, session=FakeSession(wrong),
+                    execution=FakeExecution(ok=True, output={
+                        "ok": True, "title": "Atemlos durch die Nacht", "artist": "Helene Fischer"}))
+
+    outcome = service.run(MusicRequest("play", query="Rammstein ohne mich", kind="track"))
+
+    assert outcome.receipt.verified is False
+    assert "the requested track is playing" in [check.check for check in outcome.receipt.failures]

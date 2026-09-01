@@ -101,8 +101,11 @@ function focusPanel(overview, graph, params) {
     col("Needs owner", needsOwner, missionRow), col("ZEUS suggests", suggests, thoughtRow));
 }
 
-/* ---- the galaxy ------------------------------------------------------- */
-class Galaxy {
+/* ---- the galaxy engine -------------------------------------------------
+   Shared with the File Galaxy (views/files.js): the class is exported and
+   gains only additive hooks (custom hue, double-click/context callbacks,
+   dynamic sub-graphs). The Projects rendering itself is unchanged. */
+export class Galaxy {
   constructor(canvas, wrap, graph, opts) {
     this.canvas = canvas; this.wrap = wrap; this.ctx = canvas.getContext("2d"); this.opts = opts;
     this.nodes = []; this.edges = []; this.byId = new Map();
@@ -256,6 +259,9 @@ class Galaxy {
     const slow = REDUCED() ? 0 : 1;
     for (const n of this.nodes) {
       if (n.orbit && n.parent && !n.flow) {
+        // hovering or selecting a body freezes its orbit locally, so slow
+        // cinematic motion never makes clicking a moving target
+        if (n === this.hover || this.selected.has(n.id) || n.parent === this.hover) { continue; }
         n.orbit.a += n.orbit.speed * 0.003 * slow;
         n.x = n.parent.x + Math.cos(n.orbit.a) * n.orbit.d; n.y = n.parent.y + Math.sin(n.orbit.a) * n.orbit.d * (n.orbit.tilt || 1);
       } else if (n.flow && n.tx !== undefined) { n.x += (n.tx - n.x) * 0.1; n.y += (n.ty - n.y) * 0.1; }
@@ -365,7 +371,7 @@ class Galaxy {
   }
 
   drawStar(ctx, n, x, y, r, t) {
-    const hs = n.health?.state || "HEALTHY", [cr, cg, cb] = HEALTH_HUE[hs] || HEALTH_HUE.HEALTHY;
+    const hs = n.health?.state || "HEALTHY", [cr, cg, cb] = n.hue || HEALTH_HUE[hs] || HEALTH_HUE.HEALTHY;
     const faded = ["DORMANT", "ARCHIVED", "LOW_PRIORITY", "TEST"].includes(n.importance);
     const pulse = (["ACTIVE", "FOCUS", "PINNED"].includes(n.importance) && !REDUCED()) ? 1 + Math.sin(t / 28 + n.seed) * 0.05 : 1;
     const sel = this.selected.has(n.id) || n === this.hover;
@@ -479,20 +485,84 @@ class Galaxy {
         return;
       }
       if (d.kind === "node") {
-        if (d.moved) { for (const n of d.nodes) { if (n.locked) continue; n.ownerPlaced = true; n.layout = { ...(n.layout || {}), x: n.x, y: n.y, state: "OWNER_POSITIONED" }; await api("/api/project/update", { id: n.id, layout: { x: n.x, y: n.y, state: "OWNER_POSITIONED" } }); } }
+        if (d.moved) { for (const n of d.nodes) { if (n.locked) continue; n.ownerPlaced = true; n.layout = { ...(n.layout || {}), x: n.x, y: n.y, state: "OWNER_POSITIONED" }; if (this.opts.persistDrag !== false) await api("/api/project/update", { id: n.id, layout: { x: n.x, y: n.y, state: "OWNER_POSITIONED" } }); } }
         else if (d.nodes.length === 1) this.opts.onSelect(d.nodes[0]);
         return;
       }
       if (d.kind === "pan") { const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top); if (n && Math.abs(e.clientX - r.left - d.sx) < 3 && Math.abs(e.clientY - r.top - d.sy) < 3) this.opts.onSelect(n); }
     };
     c.onmouseup = finish; c.onmouseleave = () => { if (this.drag?.kind === "pan") this.drag = null; this.hover = null; };
-    c.ondblclick = (e) => { const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top); if (n?.kind === "project") views.open("projects", { id: n.id }); else if (n) this.focusText(n.label); };
+    c.ondblclick = (e) => {
+      const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top);
+      if (n && this.opts.onDoubleClick) { this.opts.onDoubleClick(n); return; }
+      if (n?.kind === "project") views.open("projects", { id: n.id }); else if (n) this.focusText(n.label);
+    };
     c.onwheel = (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top; const [wx, wy] = this.fromScreen(sx, sy); const z = Math.max(0.45, Math.min(3.4, this.cam.z * (e.deltaY < 0 ? 1.1 : 0.91))); this.cam.z = z; const [nx, ny] = this.fromScreen(sx, sy); this.cam.x += wx - nx; this.cam.y += wy - ny; this.settled = false; };
-    c.oncontextmenu = (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top); if (n && n.kind === "project") { if (!this.selected.has(n.id)) this.selected = new Set([n.id]); this.openMenu(n, e.clientX - r.left, e.clientY - r.top); } else this.closeMenu(); };
+    c.oncontextmenu = (e) => {
+      e.preventDefault();
+      const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top);
+      if (n && this.opts.onContext) { if (!this.selected.has(n.id)) this.selected = new Set([n.id]); this.opts.onContext(n, e.clientX - r.left, e.clientY - r.top); return; }
+      if (n && n.kind === "project") { if (!this.selected.has(n.id)) this.selected = new Set([n.id]); this.openMenu(n, e.clientX - r.left, e.clientY - r.top); } else this.closeMenu();
+    };
     this._onKey = (e) => { if (e.key === "Escape") { if (this.menu) { this.closeMenu(); e.stopPropagation(); return; } if (this.dim || this.cam.z !== 1) { this.dim = null; this.focusId = null; this.flyTo({ x: this.W() / 2, y: this.H() / 2 }, 1); e.stopPropagation(); } } };
     window.addEventListener("keydown", this._onKey, true);
     this._onResize = () => this.resize(); window.addEventListener("resize", this._onResize);
   }
+  /* ---- dynamic sub-graphs (the File Galaxy's semantic zoom) ----------- */
+  addGraph(nodes, edges, { around = null } = {}) {
+    const added = [];
+    for (const raw of nodes) {
+      if (this.byId.has(raw.id)) continue;
+      const base = around || this.byId.get(raw.parentId) || { x: this.W() / 2, y: this.H() / 2, r: 20 };
+      const a = Math.random() * Math.PI * 2;
+      const n = { visible: true, fixed: false, locked: false, ownerPlaced: false, vx: 0, vy: 0, depth: 0.9, r: 6,
+                  seed: hash(raw.id), ...raw, x: base.x + Math.cos(a) * (base.r + 30), y: base.y + Math.sin(a) * (base.r + 22) };
+      this.nodes.push(n); this.byId.set(n.id, n);
+      added.push(n);
+    }
+    for (const e of edges || []) {
+      if (!this.byId.has(e.source) || !this.byId.has(e.target)) continue;
+      const edge = { ...e, a: this.byId.get(e.source), b: this.byId.get(e.target) };
+      this.edges.push(edge);
+      if (e.type === "mission_of" || e.type === "uses" || e.type === "subproject_of" || e.type === "thought") edge.b.parent = edge.b.parent || edge.a;
+      if (e.type === "subproject_of") { edge.b.sub = true; }
+    }
+    // place the new children on orbit rings around their parent
+    for (const n of added) {
+      if (!n.parent || n.orbit) continue;
+      const siblings = this.childrenOf(n.parent).filter((c) => c.kind === n.kind && Boolean(c.sub) === Boolean(n.sub));
+      const idx = Math.max(0, siblings.indexOf(n));
+      const ring = n.sub ? 1 : n.kind === "capability" ? 2.2 : 1.6;
+      const d = n.parent.r + 14 + ring * 15 + (idx % 3) * 6;
+      const a = (idx / Math.max(1, siblings.length)) * Math.PI * 2 + (n.seed % 100) / 100 * 0.6;
+      n.orbit = { a, d, speed: (0.05 + (n.seed % 5) * 0.012) * (n.sub ? 0.4 : 0.8), tilt: 0.62 };
+      n.x = n.parent.x + Math.cos(a) * d; n.y = n.parent.y + Math.sin(a) * d * n.orbit.tilt;
+      n.placedOnce = true;
+    }
+    this.settled = false;
+    return added;
+  }
+
+  removeSubtree(id, { keepRoot = true } = {}) {
+    const doomed = new Set();
+    const collect = (nodeId) => {
+      for (const e of this.edges) {
+        if (e.a?.id === nodeId && (e.type === "subproject_of" || e.type === "uses" || e.type === "mission_of")) {
+          if (!doomed.has(e.b.id)) { doomed.add(e.b.id); collect(e.b.id); }
+        }
+      }
+    };
+    collect(id);
+    if (!keepRoot) doomed.add(id);
+    if (!doomed.size) return 0;
+    this.nodes = this.nodes.filter((n) => !doomed.has(n.id));
+    for (const gone of doomed) this.byId.delete(gone);
+    this.edges = this.edges.filter((e) => !doomed.has(e.a?.id) && !doomed.has(e.b?.id));
+    this.selected = new Set([...this.selected].filter((s) => !doomed.has(s)));
+    this.settled = false;
+    return doomed.size;
+  }
+
   lock(n, locked) { n.locked = locked; n.layout = { ...(n.layout || {}), x: n.x, y: n.y, state: locked ? "LOCKED" : "OWNER_POSITIONED" }; return api("/api/project/update", { id: n.id, layout: n.layout }); }
   release(n) { n.ownerPlaced = false; n.locked = false; n.layout = { state: "AUTO_POSITIONED" }; this.layout(false); return api("/api/project/update", { id: n.id, layout: { state: "AUTO_POSITIONED" } }); }
 

@@ -133,6 +133,40 @@ function verdict(g) {
   return ["", ""];
 }
 
+/* Append-only owner corrections: the original stays; the edit is a new
+   record; the STT lexicon learns from transcript edits. */
+function correctionTools(entry) {
+  const meta = (entry.detail || {}).meta || {};
+  const wrap = el("span", { class: "act-tools" });
+  const edit = el("a", { href: "#", class: "act-tool-link", title: "Transkript korrigieren", text: "✎" });
+  edit.onclick = (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    wrap.parentElement.querySelector(".act-edit")?.remove();
+    const input = el("input", { value: entry.summary || "", class: "act-edit-input" });
+    const save = async (rerun) => {
+      const out = await api("/api/activity/correct", { request_id: meta.request_id || "", seq: entry.seq || 0,
+        type: "TRANSCRIPT", original: entry.summary || "", corrected: input.value, rerun });
+      box.replaceWith(el("span", { class: "act-corrected", text: out.ok ? ` → ${input.value}` : " (nicht gespeichert)" }));
+    };
+    const box = el("span", { class: "act-edit" }, input,
+      el("button", { class: "chip", text: "speichern", onClick: () => save(false) }),
+      el("button", { class: "chip", text: "speichern + erneut ausführen", onClick: () => save(true) }));
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(false); if (e.key === "Escape") box.remove(); });
+    wrap.after(box);
+    input.focus();
+  };
+  const fb = el("a", { href: "#", class: "act-tool-link", title: "Feedback zu dieser Anfrage", text: "👎" });
+  fb.onclick = async (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    const why = prompt("Was war falsch? (MISHEARD/INTENT/RESULT/… oder frei)") || "";
+    if (!why) return;
+    await api("/api/feedback", { kind: "response", rating: "down", category: "OTHER", text: why, request_id: meta.request_id || "" });
+    fb.replaceWith(el("span", { class: "act-corrected", text: " gemerkt" }));
+  };
+  wrap.append(edit, fb);
+  return wrap;
+}
+
 function group(g, params) {
   const [label, cls] = verdict(g);
   const route = g.rows.find((r) => r.kind === "tool" && /^routed:/.test(r.summary || ""));
@@ -143,6 +177,7 @@ function group(g, params) {
   const head = el("div", { class: "act-head expandable" },
     el("span", { class: "act-tag", text: `${headMeta.icon} ${headMeta.label}` + (g.repeats > 1 ? ` ×${g.repeats}` : "") }),
     el("span", { class: "act-sum", text: g.head.summary || "(no detail recorded)" }),
+    g.head.kind === "request" ? correctionTools(g.head) : null,
     label ? el("span", { class: `act-tag ${cls}`, text: label }) : null,
     el("span", { class: "act-when", text: clockOf(g.head.at) }));
   head.onclick = () => { body.hidden = !body.hidden; };

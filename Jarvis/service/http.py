@@ -230,6 +230,31 @@ class JarvisHTTPServer:
                 original_request=str(body.get("original_request", "")), rerun=bool(body.get("rerun", False)),
                 category=str(body.get("category", "")),
             ),
+            "/api/fs/roots": lambda _: self.core.fs.roots(),
+            "/api/fs/list": lambda body: self.core.fs.list(str(body.get("path", "")), hidden=bool(body.get("hidden", False)),
+                                                            files=bool(body.get("files", True))),
+            "/api/fs/open": lambda body: self.core.fs.open_in_explorer(str(body.get("path", ""))),
+            "/api/fs/watch": lambda body: self.core.fs.watch(str(body.get("path", ""))),
+            "/api/fs/unwatch": lambda body: self.core.fs.unwatch(str(body.get("path", ""))),
+            "/api/fs/status": lambda _: {"ok": True, **self.core.fs.status()},
+            "/api/feedback": lambda body: self.core.feedback(
+                str(body.get("kind", "response")), rating=str(body.get("rating", "")), category=str(body.get("category", "")),
+                text=str(body.get("text", "")), request_id=str(body.get("request_id", "")),
+                receipt_id=str(body.get("receipt_id", "")), session=str(body.get("session", "")),
+            ),
+            "/api/adaptation": lambda _: self.core.adaptation_rules(),
+            "/api/adaptation/rule": lambda body: self.core.adaptation_rule(
+                rule_id=str(body.get("rule_id", "")), action=str(body.get("action", "update")), text=str(body.get("text", "")),
+                domain=str(body.get("domain", "STYLE")), scope=body.get("scope") if isinstance(body.get("scope"), dict) else None,
+                changes=body.get("changes") if isinstance(body.get("changes"), dict) else None,
+            ),
+            # The password strings live only inside this call; handle_api and
+            # the activity log never see or record these bodies.
+            "/api/auth/status": lambda _: self.core.auth_status(),
+            "/api/auth/setup": lambda body: self.core.auth_setup(str(body.get("password", "")), current=str(body.get("current", ""))),
+            "/api/auth/unlock": lambda body: self.core.auth_unlock(str(body.get("password", "")), str(body.get("scope", "")),
+                                                                   seconds=float(body.get("seconds", 0) or 0)),
+            "/api/auth/lock": lambda body: self.core.auth_lock(str(body.get("scope", ""))),
             "/api/corrections": lambda _: self.core.list_corrections(),
             "/api/correction/update": lambda body: self.core.update_correction(
                 str(body.get("correction_id", "")), dict(body.get("changes") or {})
@@ -238,17 +263,25 @@ class JarvisHTTPServer:
             "/api/selfdev": lambda _: self.core.list_selfdev(),
             "/api/selfdev/cancel": lambda body: self.core.cancel_selfdev(str(body.get("mission_id", ""))),
             "/api/selfdev/resume": lambda body: self.core.resume_selfdev(str(body.get("mission_id", ""))),
+            "/api/project/delete": lambda body: self.core.project_delete(
+                str(body.get("id", "")), authorization=str(body.get("authorization", ""))),
+            "/api/activity/correct": lambda body: self.core.activity_correct(
+                request_id=str(body.get("request_id", "")), seq=int(body.get("seq", 0) or 0),
+                correction_type=str(body.get("type", "TRANSCRIPT")), corrected_text=str(body.get("corrected", "")),
+                original_text=str(body.get("original", "")), note=str(body.get("note", "")), rerun=bool(body.get("rerun", False))),
+            "/api/activity/corrections": lambda body: self.core.activity_corrections(int(body.get("limit", 200) or 200)),
             "/api/owner": lambda _: self.core.owner_view(),
             "/api/owner/propose": lambda body: self.core.owner_propose(
                 dict(body.get("changes") or {}), reason=str(body.get("reason", "")), origin="ui",
-                unlock_core=bool(body.get("unlock_core", False)),
+                unlock_core=bool(body.get("unlock_core", False)), authorization=str(body.get("authorization", "")),
             ),
             "/api/owner/personality": lambda _: self.core.owner_personality(),
             "/api/thoughts": lambda body: self.core.list_thoughts(status=str(body.get("status", ""))),
             "/api/thoughts/think": lambda body: self.core.think(str(body.get("trigger", "manual")), force=True, background=False),
             "/api/thoughts/act": lambda body: self.core.thought_action(str(body.get("id", body.get("thought_id", ""))), str(body.get("action", ""))),
             "/api/owner/approve": lambda body: self.core.owner_approve(
-                str(body.get("transaction_id", "")), confirm=bool(body.get("confirm", False))
+                str(body.get("transaction_id", "")), confirm=bool(body.get("confirm", False)),
+                authorization=str(body.get("authorization", "")),
             ),
             "/api/owner/reject": lambda body: self.core.owner_reject(str(body.get("transaction_id", ""))),
             "/api/owner/rollback": lambda body: self.core.owner_rollback(
@@ -303,7 +336,8 @@ class JarvisHTTPServer:
             "/api/release/build": lambda body: self.core.release_build(verify=bool(body.get("verify", True))),
             "/api/release/verify": lambda body: self.core.release_verify(str(body.get("candidate", ""))),
             "/api/release/promote": lambda body: self.core.release_promote(
-                str(body.get("candidate", "")), relaunch=bool(body.get("relaunch", True))
+                str(body.get("candidate", "")), relaunch=bool(body.get("relaunch", True)),
+                authorization=str(body.get("authorization", "")),
             ),
             "/api/release/rollback": lambda body: self.core.release_rollback(confirm=bool(body.get("confirm", False))),
             "/api/quit": lambda body: self.core.lifecycle.request_quit(

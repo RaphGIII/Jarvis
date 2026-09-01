@@ -52,7 +52,22 @@ export const view = {
           w.listener ? el("span", { text: `listener pid ${w.listener.pid}: threshold ${num(w.listener.threshold)}, model ${w.listener.fingerprint || "?"}${w.listener_match ? "" : ` ≠ ${w.model_fingerprint || "?"}`}` }) : null));
     };
     renderWake(wake);
-    pane.append(el("div", { class: "card" }, evidence));
+    // wake feedback: the owner grades real detections, ZEUS learns thresholds
+    const wakeFb = el("div", { class: "toolbar" });
+    const fbNote = el("span", { class: "empty", style: { padding: 0 } });
+    const sendWake = async (rating, category, label) => {
+      const last = (await api("/api/voice/wake")).last_score;
+      const r = await api("/api/feedback", { kind: "wake", rating, category,
+        text: last ? `score ${Number(last.score).toFixed(3)} at ${last.at}` : "no last detection", session: last ? last.at : "" });
+      fbNote.textContent = r.ok === false ? (r.error || "nicht gespeichert") : label + (r.insight ? " · Muster erkannt → Vorschlag erstellt" : "");
+    };
+    wakeFb.append(
+      button("✓ Letzte Erkennung war Zeus", () => sendWake("up", "WAKE_CORRECT", "gemerkt: korrekt")),
+      button("✗ Das war nicht Zeus", () => sendWake("down", "WAKE_WRONG", "gemerkt: Fehlauslösung"), "ghost danger"),
+      button("Ich sagte Zeus — nicht gehört", () => sendWake("down", "WAKE_MISSED", "gemerkt: verpasst"), "ghost"),
+      fbNote);
+    // outside `evidence`: renderWake clears that node on every refresh
+    pane.append(el("div", { class: "card" }, evidence, wakeFb));
 
     const form = el("div");
     const field = (label, key, type = "text", hint = "") => {

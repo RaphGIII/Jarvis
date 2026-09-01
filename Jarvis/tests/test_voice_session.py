@@ -86,11 +86,25 @@ def test_a_wake_during_cooldown_does_not_open_a_second_session():
 
 
 def test_speech_that_is_too_short_ends_with_that_reason_and_no_post():
-    loop = CaptureLoop(ListenerConfig(arm_seconds=3.0, min_utterance_seconds=0.35, silence_seconds=0.5))
+    """A blip now RE-ARMS while the session budget lasts; only when the whole
+    budget passes without real speech does the session end -- once, reason-coded,
+    and still without a post."""
+
+    # total_listen_seconds=0 disables re-arming: the configured fallback to
+    # the strict old behaviour, which this test pins.
+    loop = CaptureLoop(ListenerConfig(arm_seconds=3.0, min_utterance_seconds=0.35, silence_seconds=0.5,
+                                      total_listen_seconds=0.0, min_voiced_frames=1))
     actions = run(loop, wake_at=2, speech=[(10, 12)], frames=60)   # 0.16 s of speech
     st = states(actions)
     assert st[-1] == ("IDLE", "too_short")
     assert not [a for a in actions if a[0] == "send"]
+    # the default config re-arms instead and ends once when the budget passes
+    loop2 = CaptureLoop(ListenerConfig(arm_seconds=1.0, silence_seconds=0.5, total_listen_seconds=2.0, min_voiced_frames=1))
+    actions2 = run(loop2, wake_at=2, speech=[(6, 8)], frames=80)
+    st2 = states(actions2)
+    idles = [r for s, r in st2 if s == "IDLE"]
+    assert len(idles) == 1 and idles[0] in {"no_speech_after_wake", "too_short"}
+    assert any("re-armed" in r for _s, r in st2), st2
 
 
 def test_barge_in_is_requested_once_per_wake_and_never_ends_the_session():

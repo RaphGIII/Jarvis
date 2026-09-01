@@ -160,6 +160,22 @@ def window_command(
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-mode",
+        # ZEUS speaks without being clicked first.  Chromium's autoplay policy
+        # blocks `audio.play()` until a user gesture *on the page*, so a fresh
+        # window sat silent until the owner happened to click the input --
+        # which read as "voice only works after clicking Talk to Zeus".  This
+        # is ZEUS's own shell window, not the owner's browser; its answers are
+        # the point of the page.
+        "--autoplay-policy=no-user-gesture-required",
+        # No "Diese Seite übersetzen?" bar over the interface: the page is the
+        # product, not a foreign website.  Scoped to this profile only.
+        "--disable-features=Translate,TranslateUI",
+        # An unfocused or occluded ZEUS still renders its state live: the eye,
+        # the event stream and the voice-state animation must not be throttled
+        # just because the owner is looking at another window.
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
     ]
     # A TV or a wall panel wants the whole screen and no chrome at all; the
     # same shell serves both, chosen per device rather than per build.

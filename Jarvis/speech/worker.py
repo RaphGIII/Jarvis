@@ -33,13 +33,46 @@ _state: dict[str, Any] = {"stt": None, "tts": {}, "stt_name": "", "voices_dir": 
 def _load_stt(model: str, download_root: str) -> Any:
     if _state["stt"] is not None and _state["stt_name"] == model:
         return _state["stt"]
+    import os
+
     from faster_whisper import WhisperModel
 
-    _state["stt"] = WhisperModel(
-        model or "base", device="cpu", compute_type="int8", download_root=download_root or None
-    )
-    _state["stt_name"] = model
-    return _state["stt"]
+    # Measured on this machine (2026-09-01): CUDA on the GTX 1070 is a dead
+    # end today -- int8/int8_float16/float16 are refused by ctranslate2 on
+    # Pascal ("not efficient"), and float32 constructs in ~50s but fails at
+    # the first transcribe because cublas64_12.dll is not installed.  CPU
+    # int8 transcribes the German corpus at similarity 0.96 (median 3.7s),
+    # so "auto" means CPU; only an explicit ZEUS_STT_DEVICE=cuda pays the
+    # CUDA attempt (once, remembered on failure).
+    wanted = os.environ.get("ZEUS_STT_DEVICE", "auto").strip().lower()
+    attempts = []
+    if wanted == "cuda" and _state.get("cuda_failed") is not True:
+        # Pascal (GTX 1070, CC 6.1): no int8 tensor cores, fp16 at 1/64 rate --
+        # ctranslate2 refuses both as "not efficient".  float32 on CUDA still
+        # beats int8 on this CPU; measured before enabling.
+        attempts.append(("cuda", "int8"))
+        attempts.append(("cuda", "float16"))
+        attempts.append(("cuda", "float32"))
+    if wanted != "cuda":
+        attempts.append(("cpu", "int8"))
+    last_error: Exception | None = None
+    for device, compute in attempts:
+        try:
+            engine = WhisperModel(model or "base", device=device, compute_type=compute, download_root=download_root or None)
+            if device == "cuda":
+                # prove it can actually run, not just construct
+                import numpy as _np
+
+                list(engine.transcribe(_np.zeros(1600, dtype=_np.float32), language="de", beam_size=1)[0])
+            _state["stt"] = engine
+            _state["stt_name"] = model
+            _state["stt_device"] = f"{device}/{compute}"
+            return engine
+        except Exception as exc:  # noqa: BLE001 - fall through to the CPU
+            last_error = exc
+            if device == "cuda":
+                _state["cuda_failed"] = True
+    raise RuntimeError(f"could not load whisper {model!r}: {last_error}")
 
 
 def _load_voice(model_path: str) -> Any:

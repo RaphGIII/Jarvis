@@ -50,3 +50,6 @@ build/
 # Promotion snapshots and audit: runtime state, written by the promoter
 Jarvis/data/snapshots/
 Jarvis/data/promotions.jsonl
+
+# owner voice recordings never leave this machine
+Jarvis/data/wake/

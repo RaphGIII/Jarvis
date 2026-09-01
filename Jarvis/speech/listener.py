@@ -79,6 +79,15 @@ class ListenerConfig:
     #: margin and costs nothing when the owner speaks at once, because the
     #: session leaves LISTENING the moment speech is heard.
     arm_seconds: float = 3.0
+    #: The whole session's budget for finding real speech: a blip that turns
+    #: out too short RE-ARMS the session instead of killing it, until this
+    #: much time has passed since the wake word.  Live logs showed nine
+    #: sessions enter CAPTURING after 0.08-0.96 s (the wake word's own tail,
+    #: a breath) and die `too_short` while the owner was still inhaling.
+    total_listen_seconds: float = 8.0
+    #: Consecutive voiced frames (80 ms each) before LISTENING becomes
+    #: CAPTURING.  One loud frame is a click or the wake tail, not a command.
+    min_voiced_frames: int = 3
     #: Refuse to record forever if the room is noisy.
     max_utterance_seconds: float = 20.0
     #: Ignore an utterance shorter than this: usually a cough or a door.
@@ -192,6 +201,10 @@ class Endpointer:
         self.heard_speech = False
         self.timed_out = False
         self.lead_silence = 0.0
+        #: Voiced frames in a row.  Speech onset needs a sustained run
+        #: (``min_voiced_frames``); the wake word's own tail or a keyboard
+        #: click is one or two frames and must not open CAPTURING.
+        self.voiced_streak = 0
 
     def reset(self) -> None:
         self.silence_for = 0.0
@@ -199,6 +212,7 @@ class Endpointer:
         self.heard_speech = False
         self.timed_out = False
         self.lead_silence = 0.0
+        self.voiced_streak = 0
 
     def track_noise(self, level: float) -> None:
         self.noise_floor = level if self.noise_floor == 0.0 else (
@@ -217,11 +231,21 @@ class Endpointer:
         self.elapsed += self.frame_seconds
         if level < self.threshold:
             self.silence_for += self.frame_seconds
+            self.voiced_streak = 0
             if not self.heard_speech:
                 self.lead_silence += self.frame_seconds
         else:
             self.silence_for = 0.0
-            self.heard_speech = True
+            self.voiced_streak += 1
+            if not self.heard_speech:
+                if self.voiced_streak >= max(1, int(getattr(self.config, "min_voiced_frames", 1))):
+                    self.heard_speech = True
+                    # the streak's earlier frames were provisionally counted
+                    # as lead silence; onset is confirmed, so they were speech
+                    self.lead_silence = max(0.0, self.lead_silence - (self.voiced_streak - 1) * self.frame_seconds)
+                else:
+                    # a lone loud frame is not onset yet; count it provisionally
+                    self.lead_silence += self.frame_seconds
         if self.elapsed >= self.config.max_utterance_seconds:
             return True
         if not self.heard_speech and self.arm_seconds > 0:
@@ -248,7 +272,9 @@ TRANSITIONS = {
     "IDLE": {"WAKE_DETECTED"},
     "WAKE_DETECTED": {"LISTENING", "IDLE"},
     "LISTENING": {"CAPTURING", "IDLE"},
-    "CAPTURING": {"UTTERANCE_CAPTURED", "IDLE"},
+    # CAPTURING may fall back to LISTENING: a blip that proved too short
+    # re-arms the session instead of ending it while budget remains.
+    "CAPTURING": {"UTTERANCE_CAPTURED", "LISTENING", "IDLE"},
     "UTTERANCE_CAPTURED": {"SENT", "IDLE"},
     "SENT": {"IDLE"},
 }
@@ -360,17 +386,38 @@ class CaptureLoop:
         if not over:
             return actions
 
-        self.muted_until = now + self.config.cooldown_seconds
-        frames, self.recording = self.recording, []
+        session_elapsed = now - session.opened_at
         if self.endpointer.timed_out:
+            self.muted_until = now + self.config.cooldown_seconds
+            self.recording = []
             self._end(session, "no_speech_after_wake", actions)
             return actions
         if self.endpointer.elapsed >= self.config.max_utterance_seconds and not self.endpointer.heard_speech:
+            self.muted_until = now + self.config.cooldown_seconds
+            self.recording = []
             self._end(session, "no_speech_after_wake", actions)
             return actions
         if self.endpointer.speech_seconds < self.config.min_utterance_seconds:
+            # A blip -- the wake word's own tail, a breath, a chair.  The
+            # owner is often still about to speak: while the session budget
+            # lasts, go back to LISTENING and keep waiting instead of dying
+            # `too_short` (nine such deaths in one live log).  The blip's
+            # frames stay in the recording; Whisper ignores non-speech.
+            budget = float(getattr(self.config, "total_listen_seconds", 0.0) or 0.0)
+            if budget > 0 and session_elapsed < budget:
+                remaining = budget - session_elapsed
+                blip = self.endpointer.speech_seconds
+                self.endpointer.reset()
+                self.endpointer.arm_seconds = min(self.config.arm_seconds, remaining)
+                session.transition("LISTENING", "re-armed after a blip")
+                actions.append(("session", session, "LISTENING", f"re-armed ({remaining:.1f}s left) after a {blip:.2f}s blip"))
+                return actions
+            self.muted_until = now + self.config.cooldown_seconds
+            self.recording = []
             self._end(session, "too_short", actions)
             return actions
+        self.muted_until = now + self.config.cooldown_seconds
+        frames, self.recording = self.recording, []
         session.transition("UTTERANCE_CAPTURED", "silence" if self.endpointer.elapsed < self.config.max_utterance_seconds else "max_length")
         actions.append(("session", session, "UTTERANCE_CAPTURED", f"{self.endpointer.speech_seconds:.1f}s of speech"))
         actions.append(("send", session, frames))

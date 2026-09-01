@@ -622,6 +622,18 @@ class JarvisCore:
         de = self.language.startswith("de")
         if self._YES.match(text):
             action, original = pending.get("action"), str(pending.get("text", ""))
+            if action is not None and action.operation == "project.delete" and self.security.configured:
+                # Confirmed by voice/text -- but a permanent deletion is a
+                # protected change once a password exists.  The dialog is the
+                # interface's; the password never passes through a model.
+                target = action.target or ""
+                self.emit(EventType.NOTIFICATION, {"kind": "needs_auth", "scope": "PROJECT_DELETE",
+                                                   "text": f"Löschen von „{target}“ wartet auf deine Passwort-Freigabe.",
+                                                   "retry": {"operation": "project.delete", "target": target, "request": original}})
+                self._deliver("Das ist eine geschützte Änderung – bitte gib dein Passwort im Dialog ein, dann lösche ich es.",
+                              scope=scope, backend="policy", final_state=JarvisState.WAITING,
+                              context_text="[protected deletion: awaiting the owner's password]")
+                return True
             if action is not None and str(action.operation).startswith("project."):
                 self._answer_by_project_operation(action, original, scope, confirmed=True)
             elif action is not None and action.operation in {"system.open_view", "system.stop"}:
@@ -2136,7 +2148,16 @@ class JarvisCore:
             # The assistant referred to something it really did. Name the
             # receipt so the user can check rather than take its word.
             answer += "\n\n" + "\n".join(f"receipt {item.id}" for item in supported)
-        self._deliver(answer, scope=scope, backend=backend, context_text=context_text)
+        # The reply carries the request it answered, so a 👍/👎 under it can
+        # attach to the right exchange and the right learned scope.
+        reply_meta: dict[str, Any] = {}
+        try:
+            last_user = self._last_user_meta()
+            if last_user.get("request_id"):
+                reply_meta["request_id"] = last_user["request_id"]
+        except Exception:  # noqa: BLE001
+            pass
+        self._deliver(answer, scope=scope, backend=backend, context_text=context_text, meta=reply_meta)
         self._say_pending_thought(scope)
 
     def _block_fabrication(self, claim: Any, request: str, scope: str) -> str:
@@ -2279,6 +2300,14 @@ class JarvisCore:
             guidance = guidance_lines(self.corrections.relevant(text, intent="conversation"))
         except Exception:
             guidance = []
+        # What the owner's feedback has taught, scoped to this kind of turn:
+        # owner-authored rules first, then confident learned nudges.
+        try:
+            from runtime.adaptation import classify_context
+
+            guidance += self.adaptation.guidance(classify_context(request=text))
+        except Exception:  # noqa: BLE001 - adaptation never blocks an answer
+            pass
         recent = self.history[-8:]
         transcript = "\n".join(f"{turn.role}: {turn.for_prompt()}" for turn in recent[:-1])
         from config import conversation_prompt
@@ -2882,9 +2911,17 @@ class JarvisCore:
     def release_verify(self, candidate: str) -> dict[str, Any]:
         return self.releases.verify_candidate(candidate).to_dict()
 
-    def release_promote(self, candidate: str, *, relaunch: bool = True) -> dict[str, Any]:
-        """Promote a verified candidate and, under the supervisor, relaunch into it."""
+    def release_promote(self, candidate: str, *, relaunch: bool = True, authorization: str = "") -> dict[str, Any]:
+        """Promote a verified candidate and, under the supervisor, relaunch into it.
 
+        With an owner password set, promoting code into the product is a
+        Level-2 change behind a SELFDEV_PROMOTE authorization.
+        """
+
+        if self.security.configured:
+            denied = self.require_auth(authorization, "SELFDEV_PROMOTE")
+            if denied is not None:
+                return denied
         record = self.releases.promote(candidate)
         out = record.to_dict()
         # "staged": the running exe locks its directory (Windows); the swap is
@@ -3570,6 +3607,130 @@ class JarvisCore:
     # ------------------------------------------------------------------
 
     @property
+    def adaptation(self) -> Any:
+        """The Adaptive Owner Model: scoped, bounded, deletable learning from feedback."""
+
+        if getattr(self, "_adaptation", None) is None:
+            from runtime.adaptation import AdaptiveOwnerModel
+
+            def insight(kind: str, payload: dict[str, Any]) -> None:
+                self.emit(EventType.NOTIFICATION, {"kind": "adaptation_insight", "text": str(payload.get("summary", ""))[:200],
+                                                   "insight_kind": kind, "detail": {k: v for k, v in payload.items() if k != "summary"}})
+
+            self._adaptation = AdaptiveOwnerModel(Path(self.kernel.state_root) / "owner" / "adaptive.json", on_insight=insight)
+        return self._adaptation
+
+    @property
+    def fs(self) -> Any:
+        """The filesystem index for the File Galaxy: staged, cached, watched."""
+
+        if getattr(self, "_fs", None) is None:
+            from service.filesystem import FilesystemIndex
+
+            self._fs = FilesystemIndex(emit=lambda payload: self.emit(EventType.DIAGNOSTIC, payload),
+                                       log=lambda m: self.emit(EventType.DIAGNOSTIC, {"fs_log": m}))
+        return self._fs
+
+    @property
+    def security(self) -> Any:
+        """The Owner Security Gate.  Deterministic code; no model ever touches it."""
+
+        if getattr(self, "_security", None) is None:
+            from owner.security_gate import SecurityGate
+
+            root = Path(getattr(self.kernel, "state_root", "") or "data/jarvis")
+            self._security = SecurityGate(root / "owner" / "auth.json")
+        return self._security
+
+    def auth_status(self) -> dict[str, Any]:
+        return {"ok": True, **self.security.status()}
+
+    def auth_setup(self, password: str, *, current: str = "") -> dict[str, Any]:
+        # the password strings live only in this call frame; nothing is emitted
+        return self.security.setup(password, current=current)
+
+    def auth_unlock(self, password: str, scope: str, *, seconds: float = 0.0) -> dict[str, Any]:
+        out = self.security.unlock(password, scope, seconds=seconds or None)
+        if out.get("ok"):
+            self.emit(EventType.NOTIFICATION, {"kind": "auth", "text": f"Freigegeben: {scope} für {int(out['expires_in'])}s", "scope": scope})
+        else:
+            self.emit(EventType.NOTIFICATION, {"kind": "auth", "text": f"Freigabe verweigert ({scope})", "scope": scope})
+        return out
+
+    def auth_lock(self, scope: str = "") -> dict[str, Any]:
+        dropped = self.security.lock(scope)
+        return {"ok": True, "locked": dropped}
+
+    def require_auth(self, authorization: str, scope: str) -> dict[str, Any] | None:
+        """None when authorized; otherwise the standard needs_auth answer the UI understands."""
+
+        if self.security.authorized(authorization, scope):
+            return None
+        from owner.security_gate import SCOPE_LEVELS
+
+        return {"ok": False, "needs_auth": scope, "level": SCOPE_LEVELS.get(scope, 2),
+                "error": "Das ist eine geschützte Änderung – bitte mit deinem Passwort freigeben.",
+                "configured": self.security.configured}
+
+    # ------------------------------------------------------------------
+    # Feedback: 👍/👎 and owner verdicts, into the adaptive model
+    # ------------------------------------------------------------------
+
+    def feedback(self, kind: str, *, rating: str = "", category: str = "", text: str = "", request_id: str = "",
+                 receipt_id: str = "", session: str = "") -> dict[str, Any]:
+        from runtime.adaptation import classify_context
+
+        if kind == "response":
+            request_text, answer_text, backend = "", "", ""
+            with self._lock:
+                turns = list(self._history)
+            for index, turn in enumerate(turns):
+                if turn.role == "user" and (not request_id or turn.meta.get("request_id") == request_id):
+                    request_text = turn.text
+                    for later in turns[index + 1:]:
+                        if later.role == "assistant":
+                            answer_text, backend = later.text, later.backend
+                            break
+            context = classify_context(request=request_text, answer=answer_text, backend=backend)
+            out = self.adaptation.record_response_feedback(rating=rating, category=category, text=text, context=context,
+                                                           request=request_text, answer=answer_text, request_id=request_id)
+            learned = out.get("learned") or []
+            self.emit(EventType.NOTIFICATION, {"kind": "feedback", "text": f"Feedback: {'👍' if rating == 'up' else '👎'}"
+                                               + (f" · {category}" if category else ""), "rating": rating, "category": category,
+                                               "request_id": request_id, "context": context,
+                                               "learned": [r.get("text") for r in learned]})
+            return {"ok": True, "context": context, "learned": learned}
+        if kind == "action":
+            receipt = self.receipts.get(receipt_id) if receipt_id else None
+            action_kind = getattr(receipt, "kind", "") or category or "action"
+            verdict = category or "RESULT_WAS_SUCCESSFUL"
+            out = self.adaptation.record_action_feedback(kind=action_kind, verdict=verdict, receipt_id=receipt_id,
+                                                         request=getattr(receipt, "request", ""), detail=text)
+            self.emit(EventType.NOTIFICATION, {"kind": "feedback", "text": f"Aktions-Feedback: {verdict} für {action_kind}",
+                                               "receipt_id": receipt_id, "verdict": verdict, "insight": out.get("insight")})
+            return out
+        if kind == "wake":
+            verdict = category or ("WAKE_CORRECT" if rating == "up" else "WAKE_WRONG")
+            out = self.adaptation.record_action_feedback(kind="wake", verdict=verdict, receipt_id=session, detail=text, threshold=5)
+            self.emit(EventType.NOTIFICATION, {"kind": "feedback", "text": f"Wake-Feedback: {verdict}", "session": session})
+            return out
+        return {"ok": False, "error": f"unknown feedback kind {kind!r}"}
+
+    def adaptation_rules(self) -> dict[str, Any]:
+        return {"ok": True, "rules": self.adaptation.list_rules(), "stats": self.adaptation.stats(),
+                "feedback": self.adaptation.feedback_log[-50:]}
+
+    def adaptation_rule(self, *, rule_id: str = "", action: str = "update", text: str = "", domain: str = "STYLE",
+                        scope: dict[str, str] | None = None, changes: dict[str, Any] | None = None) -> dict[str, Any]:
+        if action == "add":
+            rule = self.adaptation.add_owner_rule(text, domain=domain, scope=scope)
+            return {"ok": True, "rule": rule.to_dict()}
+        if action == "delete":
+            return {"ok": self.adaptation.delete_rule(rule_id)}
+        rule = self.adaptation.update_rule(rule_id, changes or {})
+        return {"ok": rule is not None, "rule": rule.to_dict() if rule else None}
+
+    @property
     def thoughts(self) -> Any:
         from runtime.thoughts import ThoughtEngine, ThoughtStore
 
@@ -3723,7 +3884,15 @@ class JarvisCore:
         return {"ok": True, **effective, "defaults": DEFAULTS["personality"], "history": history[-20:],
                 "prompt": "\n\n".join(text for _n, text in effective["blocks"])}
 
-    def owner_propose(self, changes: dict[str, Any], *, reason: str = "", origin: str = "ui", unlock_core: bool = False) -> dict[str, Any]:
+    def owner_propose(self, changes: dict[str, Any], *, reason: str = "", origin: str = "ui", unlock_core: bool = False,
+                      authorization: str = "") -> dict[str, Any]:
+        # Touching the protected core is a Level-2 change: once the owner has
+        # set a password, it takes a scoped PERSONALITY_EDIT authorization
+        # minted by the security gate -- no model output can substitute.
+        if unlock_core and self.security.configured:
+            denied = self.require_auth(authorization, "PERSONALITY_EDIT")
+            if denied is not None:
+                return denied
         try:
             transaction = self.owner.propose(changes, reason=reason, origin=origin, unlock_core=bool(unlock_core and origin == "ui"))
         except PermissionError as exc:
@@ -3732,9 +3901,13 @@ class JarvisCore:
                                            "kind": "owner_proposal", "transaction": transaction.to_dict()})
         return {"ok": True, "transaction": transaction.to_dict()}
 
-    def owner_approve(self, transaction_id: str, *, confirm: bool) -> dict[str, Any]:
+    def owner_approve(self, transaction_id: str, *, confirm: bool, authorization: str = "") -> dict[str, Any]:
         if not confirm:
             return {"ok": False, "error": "explicit confirmation is required to change the owner core"}
+        if self.security.configured:
+            denied = self.require_auth(authorization, "PERSONALITY_EDIT")
+            if denied is not None:
+                return denied
         record = self.owner.approve(transaction_id, approved_by="owner-ui")
         self.emit(EventType.NOTIFICATION, {"text": "owner core changed", "kind": "owner_change", "record": record})
         return {"ok": True, "record": record}
@@ -4224,6 +4397,90 @@ class JarvisCore:
             "active": [item for item in records if item.get("status") == "active"],
             "disabled": [item for item in records if item.get("status") != "active"],
         }
+
+    def project_delete(self, project_id: str, *, authorization: str = "") -> dict[str, Any]:
+        """Permanent deletion through the API: PROJECT_DELETE authorization when a password is set."""
+
+        if self.security.configured:
+            denied = self.require_auth(authorization, "PROJECT_DELETE")
+            if denied is not None:
+                return denied
+        from service.intents import ActionIntent
+        from service.project_ops import ProjectOperations, compose_concise
+
+        ops = ProjectOperations(self)
+        project = ops._find(project_id)
+        if project is None:
+            return {"ok": False, "error": f"no project {project_id!r}"}
+        intent = ActionIntent("project.delete", verb="delete", object_type="project", target=project.id,
+                              success_criteria=["the project no longer exists"], confidence=1.0, reason="owner-authorized deletion")
+        receipt = ops.execute(intent, request=f"delete project {project.title or project.id} (owner-authorized)")
+        self.receipts.record(receipt)
+        self._session_receipts.append(receipt)
+        self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()})
+        self._deliver(compose_concise(receipt, language=self.language), scope="", backend=receipt.executor)
+        return {"ok": receipt.verified, "receipt": receipt.to_dict()}
+
+    def activity_correct(self, *, request_id: str = "", seq: int = 0, correction_type: str = "TRANSCRIPT",
+                         corrected_text: str = "", original_text: str = "", note: str = "", rerun: bool = False) -> dict[str, Any]:
+        """Append-only owner corrections on the activity ledger.
+
+        The original evidence is never mutated: the correction is a new
+        record referencing it, the interface shows ORIGINAL -> corrected,
+        and the learning systems (STT lexicon, corrections memory) are fed
+        from it.  ``rerun`` re-sends the corrected text through the normal
+        request path -- side effects then pass the same guards as any
+        request (duplicates, confirmations, the security gate).
+        """
+
+        corrected = (corrected_text or "").strip()
+        if not corrected and correction_type in {"TRANSCRIPT", "INTENT"}:
+            return {"ok": False, "error": "say what it should have been"}
+        entry = {"request_id": request_id, "seq": int(seq or 0), "type": correction_type, "original": original_text[:400],
+                 "corrected": corrected[:400], "note": note[:300], "at": _now()}
+        path = Path(self.kernel.state_root) / "owner" / "activity_corrections.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        learned: dict[str, Any] = {}
+        if correction_type == "TRANSCRIPT" and original_text and corrected:
+            # a transcript edit is STT ground truth: learn the heard->meant
+            # pair(s) that differ, bounded and context-scoped
+            from service.corrections import heard_meant_pair
+
+            pair = heard_meant_pair(f"nicht {original_text} sondern {corrected}", heard_text=original_text)
+            import re as _re
+
+            orig_tokens = _re.findall(r"[^\W\d_]+", original_text, _re.UNICODE)
+            new_tokens = _re.findall(r"[^\W\d_]+", corrected, _re.UNICODE)
+            if pair and pair[0].lower() != pair[1].lower() and len(orig_tokens) == len(new_tokens):
+                learned = self.voice.vocabulary.learn(pair[0], pair[1], note=f"activity edit {request_id}"[:120])
+            elif len(orig_tokens) == len(new_tokens):
+                for heard, meant in zip(orig_tokens, new_tokens):
+                    if heard.lower() != meant.lower() and len(heard) >= 3:
+                        learned = self.voice.vocabulary.learn(heard, meant, note=f"activity edit {request_id}"[:120])
+                        break
+            self.adaptation.record_action_feedback(kind="stt", verdict="TRANSCRIPT_CORRECTED", receipt_id=request_id,
+                                                   request=original_text, detail=corrected, threshold=999)
+        self.emit(EventType.NOTIFICATION, {"kind": "activity_correction", "text": f"Korrigiert ({correction_type}): „{corrected[:80]}“",
+                                           "request_id": request_id, "entry": entry, "learned": learned})
+        out: dict[str, Any] = {"ok": True, "entry": entry, "learned": learned}
+        if rerun and corrected:
+            out["rerun"] = self.send_message(corrected, meta={"source": "correction_rerun", "corrected_from": original_text[:120]})
+        return out
+
+    def activity_corrections(self, limit: int = 200) -> dict[str, Any]:
+        path = Path(self.kernel.state_root) / "owner" / "activity_corrections.jsonl"
+        rows: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+        except OSError:
+            pass
+        return {"ok": True, "corrections": rows}
 
     def list_activity(self, limit: int = 200) -> dict[str, Any]:
         """Everything that happened, newest last, from the durable log."""

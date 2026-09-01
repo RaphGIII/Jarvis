@@ -90,7 +90,25 @@ def strip_wake_word(text: str, *, wake_word: str, words: Iterable[dict[str, Any]
         return Segmentation(original.strip(), reason="no leading token")
     token, sep, rest = match.group(1), match.group(2), match.group(3)
     if not sounds_like(token, wake_word):
-        return Segmentation(original.strip(), reason="leading token is not the wake word")
+        # The detector already proved the wake word was said; when Whisper's
+        # own timing puts this token inside the wake tail AND Whisper itself
+        # doubts it (low word probability), it is the wake word misheard --
+        # "Das" for "Zeus" -- and goes, whatever it is spelled like.  A
+        # confident early token ("Öffne" spoken immediately) stays.
+        first = next(iter(words or []), None)
+        doubted = False
+        if first is not None:
+            try:
+                doubted = float(first.get("end", 9.9)) <= WAKE_TAIL_SECONDS and float(first.get("probability", 1.0)) < 0.5
+            except (TypeError, ValueError):
+                doubted = False
+        if not doubted:
+            return Segmentation(original.strip(), reason="leading token is not the wake word")
+        remainder2 = rest.strip()
+        if remainder2:
+            remainder2 = remainder2[0].upper() + remainder2[1:]
+        return Segmentation(remainder2, removed=(original[:lead.end()] if lead else "") + token + sep.strip(),
+                            reason="leading token sits in the wake tail with low confidence; the detector says it was the wake word")
     first_word = next(iter(words or []), None)
     if first_word is not None:
         try:

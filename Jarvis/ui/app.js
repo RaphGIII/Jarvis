@@ -18,6 +18,8 @@ import * as views from "./core/views.js";
 import * as chat from "./views/chat.js";
 import * as activity from "./views/activity.js";
 import * as projects from "./views/projects.js";
+import * as files from "./views/files.js";
+import * as personality from "./views/personality.js";
 import * as missions from "./views/missions.js";
 import * as knowledge from "./views/knowledge.js";
 import * as corrections from "./views/corrections.js";
@@ -37,7 +39,7 @@ let stream = null;
 let lastSeq = 0;
 let reconnectDelay = 500;
 
-const VIEW_MODULES = [missions, projects, knowledge, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
+const VIEW_MODULES = [missions, projects, files, knowledge, personality, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
 
 function startJarvis() {
   if (new URLSearchParams(location.search).has("tv")) {
@@ -108,8 +110,19 @@ function connect() {
 /* ZEUS opening a view on request ("Zeus, öffne meine Projekte"). Never from
    replayed history: a refresh must not re-open whatever was opened before. */
 bus.on("notification", (payload) => {
-  if (payload._replay || payload.kind !== "open_view" || !payload.view) return;
-  views.open(payload.view, payload.params || {});
+  if (payload._replay) return;
+  if (payload.kind === "open_view" && payload.view) { views.open(payload.view, payload.params || {}); return; }
+  if (payload.kind === "needs_auth" && payload.scope) {
+    // A protected change is waiting for the owner's manually typed password.
+    import("./core/authgate.js").then(async (authgate) => {
+      const token = await authgate.ensureAuth(payload.scope, { reason: payload.text });
+      if (!token) return;
+      const retry = payload.retry || {};
+      if (retry.operation === "project.delete" && retry.target) {
+        await api("/api/project/delete", { id: retry.target, authorization: token });
+      }
+    });
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -212,8 +225,8 @@ function wireShell() {
 function buildRail() {
   const rail = $("rail");
   const groups = [
-    ["Work", ["missions", "projects", "activity"]],
-    ["Mind", ["knowledge", "corrections", "capabilities"]],
+    ["Work", ["missions", "projects", "files", "activity"]],
+    ["Mind", ["knowledge", "personality", "corrections", "capabilities"]],
     ["System", ["diagnostics", "release", "owner", "voice"]],
   ];
   for (const [title, ids] of groups) {

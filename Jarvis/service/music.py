@@ -673,6 +673,21 @@ class MusicService:
             )
 
         if request.action == "play" and request.query:
+            # REQUEST INTENT vs RESOLVED TARGET vs PLAYBACK STATE are three
+            # different facts.  "Rammstein ohne mich" resolved by the provider
+            # to the track "Ohne dich" (Rammstein) and playing exactly that is
+            # a SUCCESS -- the old title-only comparison called it a failure
+            # while Windows reported the resolved track playing (2026-09-01).
+            resolved_title = str(output.get("title") or (output.get("now_playing") or {}).get("title") or "")
+            resolved_artist = str(output.get("artist") or (output.get("now_playing") or {}).get("artist") or "")
+            if resolved_title:
+                checks.append(Verification(
+                    check="the resolved track is playing",
+                    passed=self._covers(resolved_title, after.title)
+                    and (not resolved_artist or self._covers(resolved_artist, after.artist)),
+                    observed=f"resolved to {resolved_title} - {resolved_artist}; playing {after.title} - {after.artist}",
+                    expected=f"{resolved_title} - {resolved_artist}",
+                ))
             checks.append(self._track_matches(request.query, after, kind=getattr(request, "kind", "any"), artist=getattr(request, "artist", "")))
         if request.action in {"next", "previous"}:
             checks.append(
@@ -684,6 +699,15 @@ class MusicService:
                 )
             )
         return checks
+
+    @staticmethod
+    def _covers(wanted_text: str, have_text: str) -> bool:
+        """Most of the wanted words appear in the observed field."""
+        want = {w for w in re.findall(r"\w+", _fold(wanted_text)) if len(w) > 2}
+        have = {w for w in re.findall(r"\w+", _fold(have_text)) if len(w) > 2}
+        if not want:
+            return bool(have) is False or True
+        return len(want & have) >= max(1, round(len(want) * 0.6))
 
     @staticmethod
     def _track_matches(query: str, after: Any, *, kind: str = "any", artist: str = "") -> Verification:
@@ -718,12 +742,20 @@ class MusicService:
             passed = most(name, artist_tokens)
             return Verification(check="the requested artist is playing", passed=passed,
                                 observed=f"{observed} (artist tokens {sorted(artist_tokens)} vs {sorted(name)})", expected=f"artist {artist or query}")
-        if kind == "track":
+        if kind == "track" and artist_wanted:
+            # an explicitly named artist ("Titel von X") is checked strictly
             title_ok = most(wanted - artist_wanted or wanted, title_tokens)
-            artist_ok = most(artist_wanted, artist_tokens) if artist_wanted else True
+            artist_ok = most(artist_wanted, artist_tokens)
             return Verification(check="the requested track is playing", passed=title_ok and artist_ok,
-                                observed=f"{observed} (title {'ok' if title_ok else 'differs'}" + (f", artist {'ok' if artist_ok else 'differs'}" if artist_wanted else "") + ")",
-                                expected=f"{query}" + (f" by {artist}" if artist else ""))
+                                observed=f"{observed} (title {'ok' if title_ok else 'differs'}, artist {'ok' if artist_ok else 'differs'})",
+                                expected=f"{query} by {artist}")
+        if kind == "track":
+            # no explicit artist: the words may name the artist as well as the
+            # title ("Rammstein ohne mich"), so both fields may satisfy them
+            passed = most(wanted, title_tokens | artist_tokens)
+            return Verification(check="the requested track is playing", passed=passed,
+                                observed=f"{observed} (matched {sorted(wanted & (title_tokens | artist_tokens))} of {sorted(wanted)} in title or artist)",
+                                expected=query)
         if kind in {"album", "playlist"}:
             passed = most(wanted, title_tokens | artist_tokens)
             return Verification(check=f"the requested {kind} is playing", passed=passed, observed=observed, expected=query)
@@ -739,6 +771,10 @@ class MusicService:
             return f"now playing: {track} [{after.status}]"
         if request.action == "pause":
             return f"paused: {track}"
+        if request.action == "play" and request.query and _fold(request.query) not in _fold(track):
+            # say what the request was resolved to, so a resolved title is
+            # never mistaken for a wrong one
+            return f"playing: {track} (resolved from '{request.query}')"
         return f"playing: {track}"
 
 
