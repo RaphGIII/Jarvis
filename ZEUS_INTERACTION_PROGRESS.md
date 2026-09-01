@@ -287,6 +287,82 @@ Full suite: see the final report section below.
 
 ---
 
-## 10. Live verification
+## 10. Live verification (ZEUS.exe, revision b82d91f)
 
-(filled in after the restart of the real product — see the final report)
+Process shape after a clean start: 1 core, 1 listener, 1 speech worker, 1
+supervisor; owner wake model `1b540fcadd731255` loaded at threshold 0.55
+(`/api/voice/wake`); restart through the supervisor 11–13 s; known-good
+re-verified at `b82d91f` (2026-09-01T16:16:21Z).
+
+`data/acceptance_evidence/V3_live_interaction.json` — through `/api/message`:
+
+| request | outcome |
+|---|---|
+| same `request_id` twice | second refused `{"duplicate": true}` |
+| `source: whisper_ghost` | refused: "no provenance" |
+| "Zeus, wie geht es dir?" | „Mir geht's gut. Systeme laufen. Womit fange ich an?“ 0.25 s |
+| "Zeus, erstelle ein neues Projekt namens Sprachtest Live und leg die Aufgaben Eins, Zwei und Drei an." | PROJECT_OPERATION → project.create, verified, 3 tasks, GOAL SATISFIED, „Erledigt. Projekt „Sprachtest Live“ ist angelegt – mit drei Aufgaben.“ 1.46 s, no model call |
+| "Zeus, öffne dieses Projekt." | project.open → `open_view` projects/{id}, „Projekt „Sprachtest Live“ ist offen.“ 0.29 s |
+| "Zeus, öffne meine Projekte." | project.list → view opened, the titles named, 0.44 s |
+| "Das Projekt heißt nicht Sprachtest Live sondern Sprachtest Live Zwei." | project.rename, verified, 0.43 s |
+| "Was ist ein Projekt?" | CONVERSATION → FAST_LOCAL answer, 4.1 s |
+
+`data/acceptance_evidence/V3_live_voice_path.json` — real audio posted to
+`/api/voice/utterance` exactly as the listener posts it (wake score, session,
+utterance id, device evidence):
+
+| audio | user messages | verdict |
+|---|---|---|
+| 2 s silence | 0 | rejected before Whisper: silence |
+| 2 s fan noise | 0 | rejected before Whisper: no speech energy |
+| 2 s keyboard clicks | 0 | rejected before Whisper: 0.24 s speech energy |
+| Piper „Zeus, wie geht es dir?“ | 1 | accepted, answered, 4.9 s end to end |
+| the same bytes again | 0 | rejected: replay (identical audio 4.8 s ago) |
+| Piper „…erstelle ein neues Projekt namens Sprachtest Audio.“ | 1 | heard „Sprachtist Audio“ → project created (a Whisper mishear on a synthetic voice; „Nein, ich meinte Sprachtest“ now renames instead of creating twice) |
+| Piper „Zeus, wer bist du?“ | 1 | „Ich bin Zeus – dein persönlicher Assistent. …“ |
+| ZEUS's own last answer, synthesised, with `interrupted=speech` | 0 | rejected: self-echo 0.73 |
+
+The live listener log during the session shows one false wake (score 0.83)
+that ended `no_speech_after_wake` — nothing entered the conversation.
+
+UI (headless Edge over CDP, no extension available): chat renders the
+replayed history dimmed under „— earlier —“, spoken turns as „YOU · 🎙“
+with wake tag and confidence; Projects renders the galaxy (2 owner systems
+after the TEST rule, 15 missions, 5 capability satellites, Knowledge nebula,
+4 hidden), Activity shows VOICE REJECTED groups and the accepted chain; **no
+console errors** on either page.
+
+Test artefacts created during verification („Sprachtest Live Zwei“,
+„Sprachtist Audio“) were set to TEST + hidden, not deleted.
+
+### Found on the way, not fixed here
+
+The frozen supervisor hung in preflight when Ollama was not running (its
+`ollama serve` `Popen` never returned; no child process appeared; 12 min).
+Starting Ollama by hand and relaunching ZEUS.exe took the "already running"
+path and worked.  This is in `zeus_supervisor/preflight.py`, i.e. inside the
+frozen exe, and outside this sprint's scope; it is recorded here so the next
+session does not rediscover it.
+
+`tests/test_environment.py::test_the_fingerprint_keys_are_all_actually_probed`
+fails on the baseline tree as well when Ollama is not reachable
+(`ollama.models` never probed) — environment-dependent, not a regression.
+
+---
+
+## Final report
+
+**CURRENT HEAD** `b82d91f` · **PUSHED HEAD** `b82d91f` (origin/adaptive-brain-v1) · **KNOWN GOOD** `b82d91f`, verified live 2026-09-01T16:16:21Z · **ROLLBACK** tag `zeus-baseline-interaction-20260901` = `58a37cb`.
+
+**FULL SUITE** 1996 passed, 6 skipped, 1 xpassed, 1 failed (the pre-existing, Ollama-dependent environment test above) in 12:47.
+
+1. *Can silence/noise still produce ghost user sentences?* — Not through any path found: silence, fan noise and keyboard clicks are refused before Whisper runs (live: 0 user messages); Whisper's own doubt, repetition and impossible word rates are refused after; the interim transcript is gone; replayed history is never a new turn. Residual: a real voice saying real words that Whisper mishears is still a *mishear*, not a ghost — and it is now visible („gehört: …“) and correctable.
+2. *Can duplicate/stale transcripts execute twice?* — No: utterance id, audio bytes and envelope are refused by the ledger (live: replay refused), `request_id` makes `send_message` idempotent (live: duplicate refused), a session's microphone backlog is discarded.
+3. *Can ZEUS reliably understand natural German project-creation requests?* — Yes for the paraphrase set (12 forms + tasks/parent/importance/deadline, `tests/test_intents.py`), deterministic, no model; a missing title asks one question.
+4. *Does an actionable request actually cause an action?* — Yes: project operations execute typed and verified; other action requests reach the executor, a mission, one question or a plain "cannot" — never prose (`test_an_action_request_never_degrades_into_prose`).
+5. *Does ZEUS know when it misunderstood speech?* — Partly: it knows when the evidence is weak (confidence level from Whisper's signals and the audio; low → asks before acting) and when a correction arrives; it cannot know a confident mishear by itself — that is what the visible raw transcript and the correction path are for.
+6. *Can owner corrections improve future recognition?* — Yes: „Nein, ich meinte X“ and Korrigieren/MISHEARD store a bounded heard→meant rule that the normaliser applies to the exact heard form and the hotword list carries to Whisper; after a spoken create it renames instead of duplicating.
+7. *Can ZEUS distinguish its own thoughts from owner speech?* — Yes by construction: a USER turn needs provenance; thoughts carry `zeus_thought`/`thought_inbox` and render as INSIGHT; the live self-echo test rejected ZEUS's own words.
+8. *Is the personality now actually applied to FAST_LOCAL?* — Yes: the conversation prompt is the system message (verified by test that "Your job is to" never reaches it); „Wer bist du?“ answered as Zeus live.
+9. *Is Project Galaxy materially more sophisticated in the real UI?* — Yes (screenshots taken live: layered star systems, orbit rings, satellites, nebula, parallax, spread layout, context menu, chips, no console errors). Visual taste is the owner's to judge.
+10. *Is ZEUS now ready for owner-only microphone acceptance?* — Technically yes: the live product runs the committed revision with one listener/worker/core/supervisor, the owner wake model loaded, and the whole audio→verdict→action→answer chain exercised with real audio. The owner's spoken tests (§35 of the brief) remain the owner's — nothing acoustic with the owner's voice was claimed here.
