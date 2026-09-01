@@ -9,6 +9,9 @@ import * as bus from "./bus.js";
 import { state, setPref } from "./state.js";
 
 const registry = new Map();
+// Spatial views are an environment, not a page: no rail, no pane header,
+// the surface takes everything below the thin top bar.
+const SPATIAL = new Set(["projects", "files"]);
 let current = null;         // {id, params, view}
 let inspectorOpen = false;
 
@@ -46,6 +49,7 @@ export async function open(id, params = {}, { push = true } = {}) {
   clear(pane);
   current = { id, params, view };
   app.classList.add("workspace");
+  app.classList.toggle("spatial", SPATIAL.has(id));
   app.dataset.view = id;
   $("workspaceTitle").textContent = view.title;
   $("breadcrumb").textContent = "";
@@ -75,6 +79,7 @@ export function close({ push = true } = {}) {
   current = null;
   const app = $("app");
   app.classList.remove("workspace");
+  app.classList.remove("spatial");
   delete app.dataset.view;
   clear($("workspacePane"));
   closeInspector();

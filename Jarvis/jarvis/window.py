@@ -177,9 +177,11 @@ def window_command(
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
     ]
-    # A TV or a wall panel wants the whole screen and no chrome at all; the
-    # same shell serves both, chosen per device rather than per build.
-    mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower()
+    # ZEUS is an operating environment, not a browser page: the default shell
+    # is FULLSCREEN -- no Windows title bar, no visible frame.  The page draws
+    # its own thin top bar with minimize/hide controls.  ZEUS_WINDOW_MODE
+    # still overrides per device: kiosk, maximized, windowed (the old look).
+    mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower() or "fullscreen"
     if mode == "kiosk":
         command.append("--kiosk")
     elif mode == "fullscreen":

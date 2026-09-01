@@ -140,7 +140,7 @@ function attachFeedback(what, payload) {
     ev.preventDefault();
     await api("/api/feedback", { kind: "response", rating: "up", request_id: requestId });
     row.querySelector(".fb-pop")?.remove();
-    flash("gemerkt");
+    flash("Danke, gemerkt");
   };
   const openPop = (ev, focusText) => {
     ev.preventDefault();
@@ -150,12 +150,12 @@ function attachFeedback(what, payload) {
     for (const [key, label] of FB_CATEGORIES) {
       pop.append(el("button", { class: "chip", text: label, onClick: async () => {
         await api("/api/feedback", { kind: "response", rating: "down", category: key, text: note.value, request_id: requestId });
-        pop.remove(); flash("gelernt");
+        pop.remove(); flash("Präferenz gespeichert");
       } }));
     }
     const send = el("button", { class: "chip on", text: "senden", onClick: async () => {
       await api("/api/feedback", { kind: "response", rating: "down", category: "OTHER", text: note.value, request_id: requestId });
-      pop.remove(); flash("gelernt");
+      pop.remove(); flash("Präferenz gespeichert");
     } });
     pop.append(note, send);
     row.append(pop);

@@ -30,31 +30,60 @@ export const view = {
   async mount(pane, params) {
     const data = await api("/api/owner");
     if (data.ok === false) { pane.append(el("div", { class: "empty", text: data.error || "owner core unavailable" })); return; }
-    pane.append(el("div", { class: "card" }, el("div", { class: "title" }, badge("OWNER CORE", "amber"), " Protected configuration"),
-      el("div", { class: "meta", text: "Changes here never happen from a chat sentence or a self-development mission: propose → diff → confirm → snapshot → apply → audit." })));
-    pane.append(section("Personality", await personalityPanel(() => views.open("owner"))));
+    const reload = () => views.open("owner");
+
+    // 1 - SECURITY: who may change ZEUS at all
+    pane.append(section("Sicherheit", await securityPanel(reload)));
+
+    // 2 - PROTECTED OPERATIONS: what the password protects, with levels
+    const OPS = [
+      ["Persönlichkeits-Kern ändern", "PERSONALITY_EDIT", 2],
+      ["SelfDev-Release freigeben", "SELFDEV_PROMOTE", 2],
+      ["Software installieren", "INSTALL", 2],
+      ["Projekt endgültig löschen", "PROJECT_DELETE", 2],
+      ["Zerstörende Dateioperationen", "FILESYSTEM_DESTRUCTIVE", 2],
+      ["Sicherheitsrichtlinie ändern", "SECURITY_CONFIG", 3],
+      ["Zugangsdaten verwenden", "CREDENTIALS", 3],
+      ["System-Integration (Autostart u. a.)", "SYSTEM_INTEGRATION", 3],
+    ];
+    pane.append(section("Geschützte Operationen", ...OPS.map(([label, scope, level]) => el("div", { class: "kv" },
+      el("span", { class: "k" }, badge(`Stufe ${level}`, level >= 3 ? "amber" : "blue")),
+      el("span", { class: "v", text: `${label} · ${scope}` })))));
+
+    // 3 - SYSTEM OWNERSHIP: the protected documents, audit behind a fold
     const docs = data.documents || {};
     const grid = el("div", { class: "grid" });
     for (const name of DOCS) {
       const doc = docs[name] || {};
       const card = el("div", { class: "card click" }, el("div", { class: "title", text: name }),
         el("div", { class: "meta", text: Object.keys(doc).slice(0, 6).join(" · ") || "(empty)" }));
-      card.onclick = () => editDocument(name, doc, () => views.open("owner"));
+      card.onclick = () => editDocument(name, doc, reload);
       grid.append(card);
     }
-    pane.append(section("Documents", grid));
     const pending = data.pending || [];
-    if (pending.length) {
-      pane.append(section("Pending proposals", ...pending.map((t) => proposal(t, () => views.open("owner")))));
-    }
     const history = data.history || [];
-    pane.append(section("Audit", ...(history.length ? history.slice().reverse().slice(0, 20).map((h) => el("div", { class: "kv" },
-      el("span", { class: "k", text: (h.at || h.applied_at || "").slice(0, 19) }),
-      el("span", { class: "v" }, `${h.action || h.kind || "change"} · ${h.reason || ""} · ${(h.documents || []).join(", ")}`,
-        h.audit_id ? button("Roll back", async () => { if (confirm(`Roll back ${h.audit_id}?`)) { await api("/api/owner/rollback", { audit_id: h.audit_id, confirm: true }); views.open("owner"); } }, "ghost danger") : null))) : [el("div", { class: "empty", text: "No owner changes recorded." })])));
-    pane.append(section("Security", await securityPanel(() => views.open("owner"))));
-    pane.append(section("Gelernt aus deinem Feedback", await adaptationPanel(() => views.open("owner"))));
-    pane.append(section("Protected paths", el("div", { class: "kv" }, el("span", { class: "v mono", text: (data.protected_paths || []).join("\n") }))));
+    pane.append(section("System-Besitz",
+      el("div", { class: "meta", text: "Ändern heißt: vorschlagen → Diff → bestätigen → Snapshot → Audit. Nie aus einem Chat-Satz, nie aus einer SelfDev-Mission." }),
+      grid,
+      ...pending.map((t) => proposal(t, reload)),
+      el("details", {}, el("summary", { text: `Audit (${history.length})` }),
+        ...(history.length ? history.slice().reverse().slice(0, 20).map((h) => el("div", { class: "kv" },
+          el("span", { class: "k", text: (h.at || h.applied_at || "").slice(0, 19) }),
+          el("span", { class: "v" }, `${h.action || h.kind || "change"} · ${h.reason || ""} · ${(h.documents || []).join(", ")}`,
+            h.audit_id ? button("Roll back", async () => { if (confirm(`Roll back ${h.audit_id}?`)) { await api("/api/owner/rollback", { audit_id: h.audit_id, confirm: true }); reload(); } }, "ghost danger") : null))) : [el("div", { class: "empty", text: "No owner changes recorded." })])),
+      el("details", {}, el("summary", { text: "Geschützte Pfade" }),
+        el("div", { class: "kv" }, el("span", { class: "v mono", text: (data.protected_paths || []).join("
+") })))));
+
+    // 4 - DATA
+    const backupStatus = el("span", { class: "empty", style: { padding: 0 } });
+    pane.append(section("Daten", el("div", { class: "toolbar" },
+      button("Backup erstellen", async () => { backupStatus.textContent = "läuft…"; const r = await api("/api/backup/create", {}); backupStatus.textContent = r.ok === false ? (r.error || "fehlgeschlagen") : `Backup: ${r.path || r.archive || r.detail || "erstellt"}`; }, "primary"),
+      button("Backup prüfen", async () => { const r = await api("/api/backup/verify", {}); backupStatus.textContent = r.ok === false ? (r.error || "fehlgeschlagen") : `geprüft: ${r.detail || r.result || "ok"}`; }),
+      backupStatus)));
+
+    pane.append(el("div", { class: "toolbar" },
+      button("Verhalten, Regeln & Lernen → Persönlichkeit", () => views.open("personality"), "ghost")));
   },
 };
 
@@ -113,7 +142,7 @@ export async function adaptationPanel(reload) {
 }
 
 /* The personality panel: dials → proposal; core locked; prompt preview; history. */
-async function personalityPanel(reload) {
+export async function personalityPanel(reload) {
   const p = await api("/api/owner/personality");
   const box = el("div");
   if (p.ok === false) { box.append(el("div", { class: "empty", text: p.error || "unavailable" })); return box; }

@@ -179,6 +179,15 @@ def focus(hwnd: int) -> bool:
     return True
 
 
+def minimize_window(hwnd: int) -> bool:
+    """Minimize to the taskbar -- works on fullscreen windows too."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    user32 = _user32()
+    user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    return True
+
+
 def hide_window(hwnd: int) -> bool:
     w = _win32()
     if w is None:
@@ -387,6 +396,17 @@ class DesktopWindow:
                 self.emit("tool", {"summary": f"window {action} in {self.last_show_seconds}s" + (f" ({reason})" if reason else ""),
                                    "source": "desktop", "window": result})
             return result
+
+    def minimize(self, *, reason: str = "") -> dict[str, Any]:
+        """Minimize to the taskbar; the eye keeps running, voice stays armed."""
+
+        with self._lock:
+            found = self.find()
+            if found is None:
+                return {"ok": True, "action": "absent", "reason": reason}
+            ok = minimize_window(found.hwnd)
+            self.hwnd = found.hwnd
+            return {"ok": ok, "action": "minimized", "hwnd": found.hwnd, "reason": reason}
 
     def hide(self, *, reason: str = "") -> dict[str, Any]:
         """Hide without ending the engine; the next show is instant."""

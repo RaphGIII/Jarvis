@@ -202,6 +202,10 @@ function wireShell() {
     chat.reset();
     await api("/api/new", {});
   };
+  // the shell is fullscreen and frameless: these are the window's real
+  // controls, backed by Win32 through the core (never fake CSS buttons)
+  $("btnWinMin").onclick = () => api("/api/window", { action: "minimize", reason: "owner" });
+  $("btnWinHide").onclick = () => api("/api/window", { action: "hide", reason: "owner" });
 
   document.addEventListener("keydown", (e) => {
     const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);

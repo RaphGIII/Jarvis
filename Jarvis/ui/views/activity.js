@@ -138,15 +138,16 @@ function verdict(g) {
 function correctionTools(entry) {
   const meta = (entry.detail || {}).meta || {};
   const wrap = el("span", { class: "act-tools" });
-  const edit = el("a", { href: "#", class: "act-tool-link", title: "Transkript korrigieren", text: "✎" });
-  edit.onclick = (ev) => {
+  const link = (text, title) => el("a", { href: "#", class: "act-tool-link", title, text });
+
+  const editor = (type, placeholder, value) => (ev) => {
     ev.preventDefault(); ev.stopPropagation();
     wrap.parentElement.querySelector(".act-edit")?.remove();
-    const input = el("input", { value: entry.summary || "", class: "act-edit-input" });
+    const input = el("input", { value, placeholder, class: "act-edit-input" });
     const save = async (rerun) => {
       const out = await api("/api/activity/correct", { request_id: meta.request_id || "", seq: entry.seq || 0,
-        type: "TRANSCRIPT", original: entry.summary || "", corrected: input.value, rerun });
-      box.replaceWith(el("span", { class: "act-corrected", text: out.ok ? ` → ${input.value}` : " (nicht gespeichert)" }));
+        type, original: entry.summary || "", corrected: input.value, rerun });
+      box.replaceWith(el("span", { class: "act-corrected", text: out.ok ? ` → ${input.value}` : ` (${out.error || "nicht gespeichert"})` }));
     };
     const box = el("span", { class: "act-edit" }, input,
       el("button", { class: "chip", text: "speichern", onClick: () => save(false) }),
@@ -155,15 +156,28 @@ function correctionTools(entry) {
     wrap.after(box);
     input.focus();
   };
-  const fb = el("a", { href: "#", class: "act-tool-link", title: "Feedback zu dieser Anfrage", text: "👎" });
-  fb.onclick = async (ev) => {
+
+  const edit = link("Transkript korrigieren", "Was wurde wirklich gesagt? Das Original bleibt als Beweis stehen.");
+  edit.onclick = editor("TRANSCRIPT", "so hätte es heißen sollen", entry.summary || "");
+  const intent = link("Intent korrigieren", "Was war gemeint? Zeus lernt die Absicht, nicht nur die Wörter.");
+  intent.onclick = editor("INTENT", "was gemeint war, z. B. „Spiel Rammstein“", "");
+
+  const rate = link("Antwort bewerten", "Feedback zu dieser Anfrage");
+  rate.onclick = (ev) => {
     ev.preventDefault(); ev.stopPropagation();
-    const why = prompt("Was war falsch? (MISHEARD/INTENT/RESULT/… oder frei)") || "";
-    if (!why) return;
-    await api("/api/feedback", { kind: "response", rating: "down", category: "OTHER", text: why, request_id: meta.request_id || "" });
-    fb.replaceWith(el("span", { class: "act-corrected", text: " gemerkt" }));
+    wrap.parentElement.querySelector(".act-edit")?.remove();
+    const box = el("span", { class: "act-edit" });
+    for (const [key, label] of [["TOO_SHORT", "zu kurz"], ["TOO_LONG", "zu lang"], ["MISUNDERSTOOD", "missverstanden"],
+                                ["WRONG_ACTION", "falsche Aktion"], ["WRONG_FACT", "falscher Fakt"], ["OTHER", "anderes"]]) {
+      box.append(el("button", { class: "chip", text: label, onClick: async () => {
+        await api("/api/feedback", { kind: "response", rating: "down", category: key, request_id: meta.request_id || "" });
+        box.replaceWith(el("span", { class: "act-corrected", text: " Präferenz gespeichert" }));
+      } }));
+    }
+    wrap.after(box);
   };
-  wrap.append(edit, fb);
+
+  wrap.append(edit, intent, rate);
   return wrap;
 }
 

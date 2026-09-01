@@ -40,6 +40,7 @@ const STATE_TONE = { active: "active", running: "active", working: "active", exe
 const REDUCED = () => Boolean(state.ui.reducedMotion);
 
 let galaxy = null;
+let savedCam = null; // the owner's camera survives leaving the view
 
 export const view = {
   id: "projects",
@@ -59,17 +60,29 @@ export const view = {
     let level = params.level || "ALL";
     for (const l of levels) chips.append(el("button", { class: "chip" + (level === l ? " on" : ""), text: l.toLowerCase(), onClick: (ev) => {
       level = l; for (const c of chips.querySelectorAll(".chip")) c.classList.toggle("on", c === ev.currentTarget); galaxy?.setLevel(level); } }));
-    const toolbar = el("div", { class: "toolbar" }, search, mode, chips, everyToggle, counts);
+    // immersive: everything floats OVER the galaxy; nothing frames it
+    const toolbar = el("div", { class: "toolbar galaxy-overlay" }, search, mode, chips, everyToggle, counts);
     const legend = el("div", { class: "galaxy-legend" },
       el("span", { style: { "--c": HEALTH_COLOUR.HEALTHY }, text: "healthy" }), el("span", { style: { "--c": HEALTH_COLOUR.AT_RISK }, text: "at risk" }),
       el("span", { style: { "--c": HEALTH_COLOUR.BLOCKED }, text: "blocked" }), el("span", { style: { "--c": KIND_COLOUR.mission }, text: "mission" }),
       el("span", { style: { "--c": KIND_COLOUR.capability }, text: "capability" }), el("span", { style: { "--c": KIND_COLOUR.knowledge }, text: "knowledge" }));
-    const hint = el("div", { class: "galaxy-hint", text: "drag · wheel zoom · shift+drag select · right-click menu · esc reset" });
-    wrap.append(canvas, legend, hint);
-    pane.append(toolbar, wrap);
-    const focus = focusPanel(overview, graph, params);
-    pane.append(focus);
-    galaxy = new Galaxy(canvas, wrap, graph, { onSelect: (n) => inspect(n, graph, () => views.open("projects", params)), mode: mode.value, filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "", level });
+    const hint = el("div", { class: "galaxy-hint", text: "doppelklick eintauchen · ziehen · rad zoom · rechtsklick menü · esc zurück" });
+    wrap.append(toolbar, canvas, legend, hint);
+    wrap.append(focusDrawer(overview, graph, params));
+    pane.append(wrap);
+    galaxy = new Galaxy(canvas, wrap, graph, {
+      onSelect: (n) => inspect(n, graph, () => views.open("projects", params)),
+      // double-click = dive INTO the system (camera + context dim), no page swap
+      onDoubleClick: (n) => {
+        if (!galaxy) return;
+        if (n.kind === "project") {
+          const keep = new Set([n.id]);
+          for (const e of galaxy.edges) { if (e.a === n) keep.add(e.b.id); if (e.b === n) keep.add(e.a.id); }
+          galaxy.dim = keep; galaxy.focusId = n.id; galaxy.flyTo(n, 2.05);
+        } else { galaxy.focusText(n.label); }
+      },
+      mode: mode.value, filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "", level });
+    if (savedCam && !params.focus && !params.id) Object.assign(galaxy.cam, savedCam);
     const nP = graph.nodes.filter((n) => n.kind === "project").length, nM = graph.nodes.filter((n) => n.kind === "mission").length;
     counts.textContent = `${nP} project${nP === 1 ? "" : "s"} · ${nM} mission${nM === 1 ? "" : "s"} · ${graph.nodes.filter((n) => n.kind === "capability").length} capabilities · ${graph.nodes.filter((n) => n.kind === "thought").length} thoughts` + (graph.hidden ? ` · ${graph.hidden} hidden` : "");
     search.oninput = () => galaxy.focusText(search.value);
@@ -78,8 +91,27 @@ export const view = {
     everyToggle.firstChild.onchange = (e) => views.open("projects", { ...params, everything: e.target.checked ? "1" : "" });
     if (params.focus) galaxy.focusText(params.focus, true);
   },
-  unmount() { galaxy?.destroy(); galaxy = null; },
+  unmount() { if (galaxy) savedCam = { ...galaxy.cam }; galaxy?.destroy(); galaxy = null; },
 };
+
+/* The focus information lives in a drawer over the galaxy: one summary chip
+   line, the full panel on click. It never takes surface away from space. */
+function focusDrawer(overview, graph, params) {
+  const panel = focusPanel(overview, graph, params);
+  const projects = (overview.projects || []).filter((p) => !p.hidden && !["TEST", "ARCHIVED"].includes(p.importance));
+  const blocked = projects.filter((p) => p.health?.state === "BLOCKED").length;
+  const today = projects.filter((p) => Date.now() - new Date(p.updated_at || 0) < 864e5).length;
+  const waiting = (overview.missions || []).filter((m) => m.state === "waiting" || m.owner_input_required).length;
+  const drawer = el("div", { class: "focus-drawer", dataset: { open: "false" } });
+  const toggle = el("div", { class: "focus-toggle" },
+    el("b", { text: "Überblick" }),
+    el("span", { text: `heute ${today}` }),
+    el("span", { text: `blockiert ${blocked}` }),
+    el("span", { text: `wartet auf dich ${waiting}` }));
+  toggle.onclick = () => { drawer.dataset.open = drawer.dataset.open === "true" ? "false" : "true"; };
+  drawer.append(panel, toggle);
+  return drawer;
+}
 
 /* ---- the Focus panel: what deserves attention ------------------------- */
 function focusPanel(overview, graph, params) {
@@ -344,16 +376,25 @@ export class Galaxy {
     for (const n of [...this.nodes].sort((a, b) => a.depth - b.depth)) {
       if (!n.visible) continue;
       if (n.kind === "knowledge") { const [x, y] = this.toScreen(n); labels.push({ n, x, y: y + 6, size: 11, text: n.label }); continue; }
-      const wantedBody = n.kind === "project" || n.kind === "self" || (lod >= 1 && (n.kind === "capability" || n.sub)) || (lod >= 2) || n === this.hover || this.selected.has(n.id);
-      if (!wantedBody) continue;
+      // semantic LOD: detail fades IN as the camera closes, never pops
+      const ramp = (a, b) => Math.max(0, Math.min(1, (z - a) / (b - a)));
+      const detail = (n.kind === "project" || n.kind === "self") ? 1
+        : n.sub ? ramp(0.7, 1.0)
+        : n.kind === "capability" ? ramp(0.8, 1.15)
+        : n.kind === "mission" ? ramp(0.95, 1.3)
+        : n.kind === "thought" ? ramp(1.1, 1.5)
+        : ramp(1.25, 1.6);
+      const emphasized = n === this.hover || this.selected.has(n.id);
+      if (detail <= 0.02 && !emphasized) continue;
       const [x, y] = this.toScreen(n); const r = n.r * z * (0.6 + 0.4 * n.depth);
       const dimmed = this.dim && !this.dim.has(n.id);
-      ctx.globalAlpha = dimmed ? 0.18 : 1;
+      ctx.globalAlpha = dimmed ? 0.18 : emphasized ? 1 : detail;
       if (n.kind === "project") this.drawStar(ctx, n, x, y, r, t);
       else if (n.kind === "self") this.drawCore(ctx, x, y, r, t);
       else this.drawBody(ctx, n, x, y, r, t);
       ctx.globalAlpha = 1;
-      const wantedLabel = n.kind === "project" || n.kind === "self" || (lod >= 1 && (n.kind === "capability" || n.sub)) || (lod >= 2 && n.kind === "mission") || n === this.hover || this.selected.has(n.id);
+      // labels arrive later than bodies: names first, detail labels near
+      const wantedLabel = n.kind === "project" || n.kind === "self" || detail > 0.55 || emphasized;
       if (wantedLabel && !dimmed) labels.push({ n, x, y: y + r + 5, size: n.kind === "self" ? 12 : n.kind === "project" ? (n.sub ? 10 : 11.5) : 9.5, text: n.kind === "capability" ? `${n.label}` : n.label });
     }
     // labels without collisions (priority: self, systems, then the rest)
@@ -368,6 +409,7 @@ export class Galaxy {
       ctx.fillText(l.text, l.x, l.y + l.size);
     }
     if (this.box) { ctx.strokeStyle = "rgba(143,211,255,.7)"; ctx.setLineDash([4, 3]); ctx.strokeRect(this.box.x, this.box.y, this.box.w, this.box.h); ctx.setLineDash([]); }
+    if (this.opts.drawExtras) this.opts.drawExtras(ctx, this);
   }
 
   drawStar(ctx, n, x, y, r, t) {
@@ -648,6 +690,8 @@ async function inspect(n, graph, reload) {
 
 /* ---- deep view: the project's own system -------------------------------- */
 async function deep(pane, id) {
+  // the deep page is a reading surface, not a spatial one
+  $("app").classList.remove("spatial");
   const [detail, graph, timeline] = await Promise.all([api("/api/project", { id }), api("/api/projects/graph", { everything: true }), api("/api/project/timeline", { id })]);
   if (detail.error) { pane.append(el("div", { class: "empty", text: detail.error })); return; }
   const node = graph.nodes.find((n) => n.id === id) || { id, label: detail.title || detail.goal, data: {} };

@@ -134,6 +134,8 @@ class Lifecycle:
             return self.desktop.show(reason=reason or "api")
         if action == "hide":
             return self.desktop.hide(reason=reason or "api")
+        if action == "minimize":
+            return self.desktop.minimize(reason=reason or "api")
         if action == "close":
             return self.desktop.close(reason=reason or "api")
         return {"ok": True, "action": "status", **self.desktop.status()}

@@ -52,6 +52,18 @@ export const view = {
     root = params.path || store("zeus.files.root", "D:\\");
     await render(pane);
     if (!view._bused) { view._bused = true; bus.on("diagnostic", onFsEvent); }
+    if (!view._esc) {
+      // ESC = one level up (drive → drives → close); the engine's own ESC
+      // (menu close, zoom reset) keeps precedence via its guards below
+      view._esc = (e) => {
+        if (!active || e.key !== "Escape" || !galaxy) return;
+        if (galaxy.menu || galaxy.dim) return;
+        if (Math.abs(galaxy.cam.z - 1) > 0.15) return;
+        e.stopPropagation();
+        goUp();
+      };
+      window.addEventListener("keydown", view._esc, true);
+    }
   },
   unmount() {
     active = false;
@@ -156,7 +168,7 @@ async function render(pane) {
   }
   const immersive = el("button", { class: "chip", text: "⛶ immersiv", onClick: () => document.body.classList.toggle("galaxy-full") });
   const counts = el("span", { class: "empty", style: { padding: 0 } });
-  pane.append(el("div", { class: "toolbar" }, crumbs, search, shortcuts, immersive, counts));
+  pane.append(el("div", { class: "toolbar galaxy-overlay" }, crumbs, search, shortcuts, immersive, counts));
 
   const wrap = el("div", { class: "galaxy-wrap" });
   const canvas = el("canvas", { id: "constellation", class: "galaxy files" });
@@ -173,7 +185,44 @@ async function render(pane) {
     onSelect: (n) => inspectEntry(n),
     onDoubleClick: (n) => { if (n.data?.isFs && n.data.type === "dir") go(n.data.path); },
     onContext: (n, x, y) => contextMenu(n, x, y),
+    // faint category region names over their real folders (view-only grouping)
+    drawExtras: (ctx, g) => {
+      if (!root) return;
+      const groups = new Map();
+      for (const n of g.nodes) {
+        if (n.kind !== "project" || n.sub || !n.data?.category || !n.visible) continue;
+        if (!groups.has(n.data.category)) groups.set(n.data.category, []);
+        groups.get(n.data.category).push(n);
+      }
+      ctx.textAlign = "center"; ctx.font = "600 10px Segoe UI, sans-serif";
+      for (const [cat, ns] of groups) {
+        if (ns.length < 2) continue;
+        let sx = 0, sy = 0;
+        for (const n of ns) { const [x, y] = g.toScreen(n); sx += x; sy += y; }
+        const [r, gg, b] = CATEGORY_HUE[cat] || CATEGORY_HUE.OTHER;
+        ctx.fillStyle = `rgba(${r},${gg},${b},.32)`;
+        ctx.fillText(cat, sx / ns.length, sy / ns.length - 56);
+      }
+    },
   });
+  // category galaxies: the same real folders, spatially grouped by category
+  if (root) {
+    const folders = galaxy.nodes.filter((n) => n.kind === "project" && !n.sub && n.data?.category);
+    const cats = [...new Set(folders.map((n) => n.data.category))];
+    const W = galaxy.W(), H = galaxy.H();
+    cats.forEach((cat, ci) => {
+      const a = (ci / Math.max(1, cats.length)) * Math.PI * 2 - Math.PI / 2;
+      const spread = cats.length > 1 ? 1 : 0;
+      const cx = W / 2 + Math.cos(a) * W * 0.3 * spread;
+      const cy = H / 2 + Math.sin(a) * H * 0.28 * spread;
+      const members = folders.filter((n) => n.data.category === cat);
+      members.forEach((n, i) => {
+        const ga = i * 2.399963 + ci;
+        const rr = 26 + 22 * Math.sqrt(i);
+        n.tx = cx + Math.cos(ga) * rr; n.ty = cy + Math.sin(ga) * rr * 0.75;
+      });
+    });
+  }
   const saved = cams.get(root || "");
   if (saved) Object.assign(galaxy.cam, saved);
   search.oninput = () => galaxy?.focusText(search.value);
@@ -209,6 +258,13 @@ function go(path) {
   if (galaxy) cams.set(root || "", { ...galaxy.cam });
   root = path;
   views.open("files", { path: path || "" });
+}
+
+function goUp() {
+  if (!root) { views.close(); return; }
+  const trimmed = root.replace(/[\\/]+$/, "");
+  const idx = trimmed.lastIndexOf("\\");
+  go(idx > 1 ? trimmed.slice(0, idx + 1) : null);
 }
 
 /* ---- inspector and context menu --------------------------------------- */

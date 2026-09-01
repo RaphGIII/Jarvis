@@ -78,7 +78,8 @@ export const view = {
     search.oninput = () => { clearTimeout(timer); timer = setTimeout(render, 250); };
     pane.append(el("div", { class: "toolbar" }, crumbs, search, button("Graph-Overlay", () => openGraph(search.value), "primary"), summary));
     pane.append(board);
-    pane.append(section("Store knowledge", composer(() => views.open("knowledge"))));
+    // capture stays available but never competes with the hierarchy
+    pane.append(el("details", {}, el("summary", { text: "Wissen erfassen (Knoten, Verknüpfung, Dokument-Ingest)" }), composer(() => views.open("knowledge"))));
     render();
   },
 };
