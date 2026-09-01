@@ -2315,22 +2315,31 @@ class JarvisCore:
             except Exception:
                 pass
             self.emit(EventType.DIAGNOSTIC, {"warming": "started"})
-            try:
-                from brain.tiers import ModelTier
+            # Bounded retries, because the first attempt races the machine:
+            # a freshly started Ollama loads the 4B model on the first
+            # request (71 s measured cold), and one failed probe used to
+            # mark FAST_LOCAL unavailable for ever -- the supervisor then
+            # read a healthy revision as a broken one.
+            from brain.tiers import ModelTier
 
-                provider = self.kernel.provider(ModelTier.FAST_LOCAL)
-                answer = provider.generate("Reply with the single word: OK", max_tokens=4, temperature=0.0)
-                text = answer if isinstance(answer, str) else "".join(str(piece) for piece in answer)
-                if not text.strip():
-                    raise RuntimeError("the model returned an empty answer")
-                self.emit(EventType.DIAGNOSTIC, {"warming": "conversation model ready"})
-                # READY is earned here and nowhere else: real text came out of
-                # the model that answers the user, in this process.
-                self.lifecycle.mark("fast_local", True, text.strip()[:40])
-                self._health_ok, self._health_checked_at = True, time.time()
-            except Exception as exc:
-                self.emit(EventType.DIAGNOSTIC, {"warming": f"conversation model unavailable: {exc}"})
-                self.lifecycle.mark("fast_local", False, f"{type(exc).__name__}: {exc}"[:300])
+            for attempt in range(4):
+                try:
+                    provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                    answer = provider.generate("Reply with the single word: OK", max_tokens=4, temperature=0.0)
+                    text = answer if isinstance(answer, str) else "".join(str(piece) for piece in answer)
+                    if not text.strip():
+                        raise RuntimeError("the model returned an empty answer")
+                    self.emit(EventType.DIAGNOSTIC, {"warming": "conversation model ready" + (f" (attempt {attempt + 1})" if attempt else "")})
+                    # READY is earned here and nowhere else: real text came out of
+                    # the model that answers the user, in this process.
+                    self.lifecycle.mark("fast_local", True, text.strip()[:40])
+                    self._health_ok, self._health_checked_at = True, time.time()
+                    break
+                except Exception as exc:
+                    self.emit(EventType.DIAGNOSTIC, {"warming": f"conversation model unavailable (attempt {attempt + 1}/4): {exc}"})
+                    self.lifecycle.mark("fast_local", False, f"{type(exc).__name__}: {exc}"[:300])
+                    if attempt < 3:
+                        time.sleep(20.0)
 
             # A restart that follows a promotion must resume whatever was in
             # flight; this is where interrupted missions get their chance.

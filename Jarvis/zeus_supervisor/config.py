@@ -128,6 +128,11 @@ class SupervisorConfig:
     ollama_max_spawns: int = 3
     #: How often the running supervisor looks whether Ollama is still there.
     ollama_watch_interval: float = 15.0
+    #: Extra seconds the core gets to report READY when the supervisor had to
+    #: start Ollama itself: the first load of the conversation model into a
+    #: freshly started server measured 71 s on this machine, on top of the
+    #: whisper load, and READY is a real generation.
+    ollama_cold_ready_extra: float = 300.0
     #: How often a held supervisor re-runs its preflight to recover by itself.
     hold_retry_interval: float = 30.0
     #: Ollama versions known not to generate on this GPU.  Empty means none
@@ -203,7 +208,7 @@ class SupervisorConfig:
                             "generation_timeout", "stop_timeout", "max_failures", "failure_window",
                             "voice", "open_browser", "ollama_min_version", "preflight_generation",
                             "ollama_start_timeout", "ollama_spawn_cooldown", "ollama_max_spawns",
-                            "ollama_watch_interval", "hold_retry_interval"):
+                            "ollama_watch_interval", "hold_retry_interval", "ollama_cold_ready_extra"):
                     if key in data:
                         setattr(config, key, type(getattr(config, key))(data[key]))
                 if isinstance(data.get("ollama_incompatible_versions"), list):

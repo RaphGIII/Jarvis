@@ -70,7 +70,7 @@ class Supervisor:
         self.ollama = OllamaService(
             url=config.ollama_url, exe_finder=lambda: find_ollama_exe(config.ollama_exe), models_dir=config.ollama_models_dir,
             start_timeout=config.ollama_start_timeout, spawn_cooldown=config.ollama_spawn_cooldown,
-            max_spawns=config.ollama_max_spawns, log=self.log,
+            max_spawns=config.ollama_max_spawns, log=self.log, log_path=self.logs_dir / "ollama.log",
         )
         self._ollama_recovery: threading.Thread | None = None
         self._ollama_was_running = False
@@ -435,6 +435,23 @@ class Supervisor:
             self.status_page.start()
             self.failures.append(time.monotonic())
 
+            # A revision is only rolled back for a failure the revision can
+            # explain.  A core that came up, answered its own health report
+            # and only lacks the conversation model (Ollama loading, a cold
+            # model, a GPU that will not run it) is an environment failure:
+            # reverting source for it would -- and once did -- throw away a
+            # good commit.  Those retry on the same revision, and hold after
+            # the failure budget with the diagnosis on the status page.
+            if self._environmental_failure(health):
+                self.known_good.record(DeploymentReceipt(
+                    kind=kind, revision=self.revision, outcome="unhealthy_environment", reason=reason,
+                    known_good_before=before.revision, health=health, duration_seconds=round(elapsed, 1),
+                ))
+                self._set("restarting", f"the conversation model is unavailable ({reason}); the code is not the cause -- retrying",
+                          str(health.get("remedy", "")) or "Check Ollama's log (data/jarvis/supervisor/logs/ollama.log) and `ollama ps`")
+                time.sleep(3.0)
+                continue
+
             if before.revision and before.revision != self.revision:
                 self._set("rolling back", f"{self.revision[:12]} failed its health check ({reason}); returning to {before.revision[:12]}")
                 ok, detail = self._rollback(before.revision)
@@ -554,8 +571,26 @@ class Supervisor:
                 except OSError:
                     pass
 
+    @staticmethod
+    def _environmental_failure(health: dict[str, Any]) -> bool:
+        """The core answered and only the conversation model is missing -- not the code's fault."""
+
+        stages = health.get("stages") or {}
+        if not isinstance(stages, dict) or not stages:
+            return False
+        if str(health.get("reason", "")).startswith("process exited"):
+            return False
+        http_ok = bool((stages.get("http") or {}).get("ok"))
+        fast = stages.get("fast_local") or {}
+        return http_ok and not bool(fast.get("ok"))
+
     def _wait_ready(self) -> dict[str, Any]:
-        deadline = time.monotonic() + self.config.ready_timeout
+        budget = self.config.ready_timeout
+        report = self.preflight_report
+        if report is not None and getattr(report, "ollama_started_by_supervisor", False):
+            # A server this boot started has no model resident yet.
+            budget += self.config.ollama_cold_ready_extra
+        deadline = time.monotonic() + budget
         last: dict[str, Any] = {}
         while time.monotonic() < deadline and not self._stop.is_set():
             if self.core is not None and self.core.poll() is not None:
@@ -573,7 +608,7 @@ class Supervisor:
             if self.detail != stage:
                 self._set("starting", str(stage))
             time.sleep(1.0)
-        return {"ready": False, "reason": f"not READY after {self.config.ready_timeout:.0f}s", **last}
+        return {"ready": False, "reason": f"not READY after {budget:.0f}s", **last}
 
     def _watch(self) -> int:
         """Block until the core exits; keep the listener alive meanwhile."""

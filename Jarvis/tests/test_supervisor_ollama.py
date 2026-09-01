@@ -424,3 +424,71 @@ def test_the_real_windows_process_probe_decodes_bytes_itself(monkeypatch: pytest
     assert mod._server_process_exists() is True
     monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: Done(None))
     assert mod._server_process_exists() is False
+
+
+def test_an_environmental_health_failure_never_rolls_back_the_source(repo: Path):
+    """Live (b35c08b): a cold Ollama meant the conversation model was not loaded within the
+    READY window; the supervisor reverted a good commit for it.  A core that answered its
+    health report and only lacks the model is an environment failure, not a revision."""
+
+    from zeus_supervisor.supervisor import Supervisor
+
+    env_failure = {"ready": False, "reason": "not READY after 300s",
+                   "stages": {"http": {"ok": True}, "fast_local": {"ok": False, "detail": "ProviderError: timed out"}}}
+    assert Supervisor._environmental_failure(env_failure) is True
+    crash = {"ready": False, "reason": "process exited with code 1 before READY", "stages": {"http": {"ok": True}, "fast_local": {"ok": False}}}
+    assert Supervisor._environmental_failure(crash) is False
+    silent = {"ready": False, "reason": "not READY after 300s"}
+    assert Supervisor._environmental_failure(silent) is False
+    http_dead = {"ready": False, "reason": "x", "stages": {"http": {"ok": False}, "fast_local": {"ok": False}}}
+    assert Supervisor._environmental_failure(http_dead) is False
+
+
+def test_a_cold_started_ollama_extends_the_ready_budget(repo: Path, monkeypatch: pytest.MonkeyPatch):
+    from zeus_supervisor.preflight import PreflightReport
+
+    sup = _supervisor(repo, ready_timeout=5.0, ollama_cold_ready_extra=300.0)
+    report = PreflightReport()
+    report.ollama_started_by_supervisor = True
+    sup.preflight_report = report
+    sup.core = FakeProcess()  # never exits
+    calls = {"n": 0}
+
+    def fake_api(path, payload=None, timeout=5.0):
+        calls["n"] += 1
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(sup, "_api", fake_api)
+    times = iter([0.0, 0.0, 100.0, 200.0, 400.0])  # beyond 5s but inside 305s, then beyond
+
+    monkeypatch.setattr("zeus_supervisor.supervisor.time.monotonic", lambda: next(times, 400.0))
+    monkeypatch.setattr("zeus_supervisor.supervisor.time.sleep", lambda s: None)
+    health = sup._wait_ready()
+    assert "305s" in health["reason"], health
+    assert calls["n"] >= 2, "the wait kept polling past the base timeout"
+
+
+def test_the_spawner_writes_ollama_output_to_the_log_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import zeus_supervisor.ollama as mod
+
+    captured = {}
+
+    class P:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    def fake_popen(command, **kwargs):
+        captured["stdout"] = kwargs.get("stdout")
+        return P()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    log_path = tmp_path / "logs" / "ollama.log"
+    mod._default_spawner(["ollama", "serve"], dict(os.environ), log_path)
+    assert captured["stdout"] is not mod.subprocess.DEVNULL and log_path.parent.is_dir()
+    mod._default_spawner(["ollama", "serve"], dict(os.environ))
+    assert captured["stdout"] is mod.subprocess.DEVNULL
+
+
+import os  # noqa: E402

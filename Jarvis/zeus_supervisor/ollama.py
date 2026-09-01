@@ -120,13 +120,33 @@ def _detached_flags() -> int:
             | getattr(subprocess, "DETACHED_PROCESS", 0))
 
 
-def _default_spawner(command: list[str], env: dict[str, str]) -> Any:
-    kwargs: dict[str, Any] = dict(env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+def _default_spawner(command: list[str], env: dict[str, str], log_path: Any = None) -> Any:
+    """Detached ``ollama serve``; its own output goes to ``log_path`` when given, so a
+    server that cannot load a model leaves its reason where the owner can read it."""
+
+    out: Any = subprocess.DEVNULL
+    if log_path:
+        try:
+            path = log_path if hasattr(log_path, "open") else __import__("pathlib").Path(str(log_path))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_file() and path.stat().st_size > 2_000_000:
+                path.replace(path.with_suffix(".1.log"))
+            out = path.open("ab")
+        except OSError:
+            out = subprocess.DEVNULL
+    kwargs: dict[str, Any] = dict(env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT if out is not subprocess.DEVNULL else subprocess.DEVNULL, close_fds=True)
     if sys.platform == "win32":
         kwargs["creationflags"] = _detached_flags()
     else:
         kwargs["start_new_session"] = True
-    return subprocess.Popen(command, **kwargs)
+    try:
+        return subprocess.Popen(command, **kwargs)
+    finally:
+        if out is not subprocess.DEVNULL:
+            try:
+                out.close()  # the child holds its own handle
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class OllamaService:
@@ -145,14 +165,16 @@ class OllamaService:
         probe: Callable[[str, float], str] = _http_version,
         port_probe: Callable[[str], bool] = _port_open,
         process_probe: Callable[[], bool] = _server_process_exists,
-        spawner: Callable[[list[str], dict[str, str]], Any] = _default_spawner,
+        spawner: Callable[..., Any] = _default_spawner,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         log: Callable[[str], None] | None = None,
+        log_path: Any = None,
     ) -> None:
         self.url = url
         self.exe_finder = exe_finder
         self.models_dir = models_dir
+        self.log_path = log_path
         self.start_timeout = float(start_timeout)
         self.spawn_cooldown = float(spawn_cooldown)
         self.max_spawns = int(max_spawns)
@@ -289,7 +311,10 @@ class OllamaService:
         if self.models_dir:
             env["OLLAMA_MODELS"] = self.models_dir
         try:
-            self._process = self._spawner([exe, "serve"], env)
+            try:
+                self._process = self._spawner([exe, "serve"], env, self.log_path)
+            except TypeError:
+                self._process = self._spawner([exe, "serve"], env)
         except Exception as exc:  # noqa: BLE001 - OSError, or a broken launcher
             self._process = None
             self._last_failure = f"could not start ollama serve: {type(exc).__name__}: {exc}"
