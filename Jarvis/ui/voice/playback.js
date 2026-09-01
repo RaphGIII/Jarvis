@@ -26,6 +26,9 @@ export function init(deps) {
   eye = deps.eye;
   api("/api/voice").then((r) => { const s = r.settings || r; if (s && s.volume !== undefined) setVolume(s.volume); }).catch(() => {});
   bus.on("speech", (payload) => {
+    // Audio from replayed history is never played: a page refresh used to
+    // make ZEUS say its last answers again, which read as ghost speech.
+    if (payload._replay) return;
     if (payload.stop) { stop(); return; }
     if (payload.url) enqueue(payload);
   });

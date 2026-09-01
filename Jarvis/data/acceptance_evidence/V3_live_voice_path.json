@@ -1,0 +1,672 @@
+{
+ "at": "2026-09-01T18:08:28",
+ "cases": [
+  {
+   "label": "silence",
+   "result": {
+    "ok": false,
+    "ignored": true,
+    "reason": "silence: rms 0, peak 0",
+    "text": "",
+    "raw_text": null,
+    "speech_confidence": null,
+    "utterance_id": "live-silence-1788278908-u1"
+   },
+   "seconds": 4.08,
+   "user_messages": [],
+   "verdict": {
+    "accepted": false,
+    "reason": "silence: rms 0, peak 0",
+    "confidence": 0.0,
+    "level": "low",
+    "checks": [
+     {
+      "name": "audio energy above a silent room",
+      "passed": false,
+      "observed": "rms 0"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": false,
+      "observed": "0.00s"
+     }
+    ]
+   },
+   "stt": {},
+   "receipts": [],
+   "answers": [],
+   "expected_user_message": false
+  },
+  {
+   "label": "fan",
+   "result": {
+    "ok": false,
+    "ignored": true,
+    "reason": "no speech energy: 0.00s above the floor",
+    "text": "",
+    "raw_text": null,
+    "speech_confidence": null,
+    "utterance_id": "live-fan-1788278912-u1"
+   },
+   "seconds": 4.08,
+   "user_messages": [],
+   "verdict": {
+    "accepted": false,
+    "reason": "no speech energy: 0.00s above the floor",
+    "confidence": 0.0,
+    "level": "low",
+    "checks": [
+     {
+      "name": "audio energy above a silent room",
+      "passed": true,
+      "observed": "rms 180"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": false,
+      "observed": "0.00s"
+     }
+    ]
+   },
+   "stt": {},
+   "receipts": [],
+   "answers": [],
+   "expected_user_message": false
+  },
+  {
+   "label": "keyboard",
+   "result": {
+    "ok": false,
+    "ignored": true,
+    "reason": "no speech energy: 0.24s above the floor",
+    "text": "",
+    "raw_text": null,
+    "speech_confidence": null,
+    "utterance_id": "live-keyboard-1788278916-u1"
+   },
+   "seconds": 4.08,
+   "user_messages": [],
+   "verdict": {
+    "accepted": false,
+    "reason": "no speech energy: 0.24s above the floor",
+    "confidence": 0.0,
+    "level": "low",
+    "checks": [
+     {
+      "name": "audio energy above a silent room",
+      "passed": true,
+      "observed": "rms 1319"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": false,
+      "observed": "0.24s"
+     }
+    ]
+   },
+   "stt": {},
+   "receipts": [],
+   "answers": [],
+   "expected_user_message": false
+  },
+  {
+   "label": "greeting",
+   "result": {
+    "ok": true,
+    "ignored": null,
+    "reason": null,
+    "text": "Wie geht es dir?",
+    "raw_text": "Zeus, wie geht es dir?",
+    "speech_confidence": 0.927,
+    "utterance_id": "live-greeting-1788278927-u1"
+   },
+   "seconds": 4.87,
+   "user_messages": [
+    {
+     "text": "Wie geht es dir?",
+     "source": "microphone",
+     "utterance": "live-greeting-1788278927-u1"
+    }
+   ],
+   "verdict": {
+    "accepted": true,
+    "reason": "accepted",
+    "confidence": 0.927,
+    "level": "high",
+    "checks": [
+     {
+      "name": "authorised by a wake session or a press",
+      "passed": true,
+      "observed": "microphone"
+     },
+     {
+      "name": "utterance not seen before",
+      "passed": true,
+      "observed": "new"
+     },
+     {
+      "name": "recording long enough",
+      "passed": true,
+      "observed": "1.76s"
+     },
+     {
+      "name": "audio energy above a silent room",
+      "passed": true,
+      "observed": "rms 5144, peak 32619"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": true,
+      "observed": "1.14s measured, 1.50s on the device"
+     },
+     {
+      "name": "Whisper believes there is speech",
+      "passed": true,
+      "observed": "no_speech 0.01"
+     },
+     {
+      "name": "token probability plausible",
+      "passed": true,
+      "observed": "avg_logprob -0.32"
+     },
+     {
+      "name": "no repetition loop",
+      "passed": true,
+      "observed": "compression 0.73"
+     },
+     {
+      "name": "words fit the speech duration",
+      "passed": true,
+      "observed": "4 words in 1.50s"
+     },
+     {
+      "name": "text is a plausible request",
+      "passed": true,
+      "observed": "4 words"
+     },
+     {
+      "name": "not ZEUS's own speech",
+      "passed": true,
+      "observed": "no match with recent speech"
+     },
+     {
+      "name": "confidence above the floor",
+      "passed": true,
+      "observed": "0.93 (high)"
+     },
+     {
+      "name": "not a duplicate of a recent utterance",
+      "passed": true,
+      "observed": "new"
+     }
+    ]
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.008,
+    "avg_logprob": -0.315,
+    "compression_ratio": 0.733,
+    "word_probabilities": [
+     0.261,
+     0.995,
+     0.999,
+     0.821,
+     0.987
+    ],
+    "language_probability": 1.0,
+    "elapsed": 3.975,
+    "model": "small",
+    "language": "de"
+   },
+   "receipts": [],
+   "answers": [
+    "Mir geht's gut. Systeme laufen. Was steht an?"
+   ],
+   "expected_user_message": true
+  },
+  {
+   "label": "greeting-replay",
+   "result": {
+    "ok": false,
+    "ignored": true,
+    "reason": "replay: identical audio was already accepted 4.8s ago",
+    "text": "Wie geht es dir?",
+    "raw_text": "Zeus, wie geht es dir?",
+    "speech_confidence": null,
+    "utterance_id": "live-greeting-replay-1788278932-u1"
+   },
+   "seconds": 4.15,
+   "user_messages": [],
+   "verdict": {
+    "accepted": false,
+    "reason": "replay: identical audio was already accepted 4.8s ago",
+    "confidence": 0.927,
+    "level": "high",
+    "checks": [
+     {
+      "name": "authorised by a wake session or a press",
+      "passed": true,
+      "observed": "microphone"
+     },
+     {
+      "name": "utterance not seen before",
+      "passed": false,
+      "observed": "identical audio was already accepted 4.8s ago"
+     }
+    ]
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.008,
+    "avg_logprob": -0.315,
+    "compression_ratio": 0.733,
+    "word_probabilities": [
+     0.261,
+     0.995,
+     0.999,
+     0.821,
+     0.987
+    ],
+    "language_probability": 1.0,
+    "elapsed": 3.971,
+    "model": "small",
+    "language": "de"
+   },
+   "receipts": [],
+   "answers": [],
+   "expected_user_message": false
+  },
+  {
+   "label": "project-create",
+   "result": {
+    "ok": true,
+    "ignored": null,
+    "reason": null,
+    "text": "Erstelle ein neues Projekt namens Sprachtist Audio.",
+    "raw_text": "Zeus erstelle ein neues Projekt namens Sprachtist Audio.",
+    "speech_confidence": 0.924,
+    "utterance_id": "live-project-create-1788278937-u1"
+   },
+   "seconds": 4.95,
+   "user_messages": [
+    {
+     "text": "Erstelle ein neues Projekt namens Sprachtist Audio.",
+     "source": "microphone",
+     "utterance": "live-project-create-1788278937-u1"
+    }
+   ],
+   "verdict": {
+    "accepted": true,
+    "reason": "accepted",
+    "confidence": 0.924,
+    "level": "high",
+    "checks": [
+     {
+      "name": "authorised by a wake session or a press",
+      "passed": true,
+      "observed": "microphone"
+     },
+     {
+      "name": "utterance not seen before",
+      "passed": true,
+      "observed": "new"
+     },
+     {
+      "name": "recording long enough",
+      "passed": true,
+      "observed": "3.49s"
+     },
+     {
+      "name": "audio energy above a silent room",
+      "passed": true,
+      "observed": "rms 5120, peak 32622"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": true,
+      "observed": "2.82s measured, 1.50s on the device"
+     },
+     {
+      "name": "Whisper believes there is speech",
+      "passed": true,
+      "observed": "no_speech 0.00"
+     },
+     {
+      "name": "token probability plausible",
+      "passed": true,
+      "observed": "avg_logprob -0.33"
+     },
+     {
+      "name": "no repetition loop",
+      "passed": true,
+      "observed": "compression 0.88"
+     },
+     {
+      "name": "words fit the speech duration",
+      "passed": true,
+      "observed": "7 words in 2.82s"
+     },
+     {
+      "name": "text is a plausible request",
+      "passed": true,
+      "observed": "7 words"
+     },
+     {
+      "name": "not ZEUS's own speech",
+      "passed": true,
+      "observed": "no match with recent speech"
+     },
+     {
+      "name": "confidence above the floor",
+      "passed": true,
+      "observed": "0.92 (high)"
+     },
+     {
+      "name": "not a duplicate of a recent utterance",
+      "passed": true,
+      "observed": "new"
+     }
+    ]
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.0,
+    "avg_logprob": -0.325,
+    "compression_ratio": 0.875,
+    "word_probabilities": [
+     0.087,
+     0.839,
+     0.998,
+     0.998,
+     0.991,
+     0.984,
+     0.637,
+     0.862
+    ],
+    "language_probability": 1.0,
+    "elapsed": 4.106,
+    "model": "small",
+    "language": "de"
+   },
+   "receipts": [
+    {
+     "kind": "project.create",
+     "verified": true,
+     "detail": "created project 'Sprachtist Audio' as proj_a114664950"
+    }
+   ],
+   "answers": [
+    "Erledigt. Projekt „Sprachtist Audio“ ist angelegt."
+   ],
+   "expected_user_message": true
+  },
+  {
+   "label": "identity",
+   "result": {
+    "ok": true,
+    "ignored": null,
+    "reason": null,
+    "text": "Wer bist du?",
+    "raw_text": "Zeus, wer bist du?",
+    "speech_confidence": 0.881,
+    "utterance_id": "live-identity-1788278942-u1"
+   },
+   "seconds": 5.03,
+   "user_messages": [
+    {
+     "text": "Wer bist du?",
+     "source": "microphone",
+     "utterance": "live-identity-1788278942-u1"
+    }
+   ],
+   "verdict": {
+    "accepted": true,
+    "reason": "accepted",
+    "confidence": 0.881,
+    "level": "high",
+    "checks": [
+     {
+      "name": "authorised by a wake session or a press",
+      "passed": true,
+      "observed": "microphone"
+     },
+     {
+      "name": "utterance not seen before",
+      "passed": true,
+      "observed": "new"
+     },
+     {
+      "name": "recording long enough",
+      "passed": true,
+      "observed": "1.39s"
+     },
+     {
+      "name": "audio energy above a silent room",
+      "passed": true,
+      "observed": "rms 4794, peak 32655"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": true,
+      "observed": "0.88s measured, 1.50s on the device"
+     },
+     {
+      "name": "Whisper believes there is speech",
+      "passed": true,
+      "observed": "no_speech 0.01"
+     },
+     {
+      "name": "token probability plausible",
+      "passed": true,
+      "observed": "avg_logprob -0.44"
+     },
+     {
+      "name": "no repetition loop",
+      "passed": true,
+      "observed": "compression 0.69"
+     },
+     {
+      "name": "words fit the speech duration",
+      "passed": true,
+      "observed": "3 words in 1.50s"
+     },
+     {
+      "name": "text is a plausible request",
+      "passed": true,
+      "observed": "3 words"
+     },
+     {
+      "name": "not ZEUS's own speech",
+      "passed": true,
+      "observed": "no match with recent speech"
+     },
+     {
+      "name": "confidence above the floor",
+      "passed": true,
+      "observed": "0.88 (high)"
+     },
+     {
+      "name": "not a duplicate of a recent utterance",
+      "passed": true,
+      "observed": "new"
+     }
+    ]
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.006,
+    "avg_logprob": -0.443,
+    "compression_ratio": 0.692,
+    "word_probabilities": [
+     0.001,
+     0.996,
+     0.996,
+     0.941
+    ],
+    "language_probability": 1.0,
+    "elapsed": 3.955,
+    "model": "small",
+    "language": "de"
+   },
+   "receipts": [],
+   "answers": [
+    "Ich bin Zeus – dein persönlicher Assistent. Ich helfe dir bei deinen Projekten, deinem Wissen und allem, was wir gemeinsam aufbauen."
+   ],
+   "expected_user_message": true
+  },
+  {
+   "label": "tts-echo",
+   "result": {
+    "ok": false,
+    "ignored": true,
+    "reason": "self-echo: 0.73 similar to ZEUS's own speech",
+    "text": "Ich bin Zeus, dein persönlicher Assistent. Ich helfe dir bei deinen Projekten, deinem Wissen und allem, was wir gemeint.",
+    "raw_text": null,
+    "speech_confidence": null,
+    "utterance_id": "live-tts-echo-1788278948-u1"
+   },
+   "seconds": 4.51,
+   "user_messages": [],
+   "verdict": {
+    "accepted": false,
+    "reason": "self-echo: 0.73 similar to ZEUS's own speech",
+    "confidence": 0.974,
+    "level": "high",
+    "checks": [
+     {
+      "name": "authorised by a wake session or a press",
+      "passed": true,
+      "observed": "microphone"
+     },
+     {
+      "name": "utterance not seen before",
+      "passed": true,
+      "observed": "new"
+     },
+     {
+      "name": "recording long enough",
+      "passed": true,
+      "observed": "6.56s"
+     },
+     {
+      "name": "audio energy above a silent room",
+      "passed": true,
+      "observed": "rms 5730, peak 32746"
+     },
+     {
+      "name": "speech-like energy present",
+      "passed": true,
+      "observed": "5.34s measured, 1.50s on the device"
+     },
+     {
+      "name": "Whisper believes there is speech",
+      "passed": true,
+      "observed": "no_speech 0.00"
+     },
+     {
+      "name": "token probability plausible",
+      "passed": true,
+      "observed": "avg_logprob -0.20"
+     },
+     {
+      "name": "no repetition loop",
+      "passed": true,
+      "observed": "compression 1.13"
+     },
+     {
+      "name": "words fit the speech duration",
+      "passed": true,
+      "observed": "19 words in 5.34s"
+     },
+     {
+      "name": "text is a plausible request",
+      "passed": true,
+      "observed": "19 words"
+     },
+     {
+      "name": "not ZEUS's own speech",
+      "passed": false,
+      "observed": "0.73 similar to what was just said"
+     }
+    ]
+   },
+   "stt": {
+    "segments": 2,
+    "no_speech_probability": 0.001,
+    "avg_logprob": -0.2,
+    "compression_ratio": 1.131,
+    "word_probabilities": [
+     0.944,
+     0.979,
+     0.401,
+     0.921,
+     0.993,
+     0.964,
+     0.993,
+     0.994,
+     0.897,
+     0.997,
+     0.952,
+     0.979,
+     0.883,
+     0.994,
+     0.977,
+     0.688,
+     0.964,
+     0.994,
+     0.491
+    ],
+    "language_probability": 1.0,
+    "elapsed": 4.334,
+    "model": "small",
+    "language": "de"
+   },
+   "receipts": [],
+   "answers": [],
+   "expected_user_message": false
+  }
+ ],
+ "created": [],
+ "rejected_utterances": [
+  {
+   "text": "",
+   "reason": "silence: rms 0, peak 0",
+   "confidence": 0.0,
+   "at": 1788278908.4298575,
+   "utterance_id": "live-silence-1788278908-u1",
+   "session": "live-silence-1788278908"
+  },
+  {
+   "text": "",
+   "reason": "no speech energy: 0.00s above the floor",
+   "confidence": 0.0,
+   "at": 1788278912.4977086,
+   "utterance_id": "live-fan-1788278912-u1",
+   "session": "live-fan-1788278912"
+  },
+  {
+   "text": "",
+   "reason": "no speech energy: 0.24s above the floor",
+   "confidence": 0.0,
+   "at": 1788278916.6331708,
+   "utterance_id": "live-keyboard-1788278916-u1",
+   "session": "live-keyboard-1788278916"
+  },
+  {
+   "text": "Wie geht es dir?",
+   "reason": "replay: identical audio was already accepted 4.8s ago",
+   "confidence": 0.927,
+   "at": 1788278936.887935,
+   "utterance_id": "live-greeting-replay-1788278932-u1",
+   "session": "live-greeting-replay-1788278932"
+  },
+  {
+   "text": "Ich bin Zeus, dein persönlicher Assistent. Ich helfe dir bei deinen Projekten, d",
+   "reason": "self-echo: 0.73 similar to ZEUS's own speech",
+   "confidence": 0.974,
+   "at": 1788278953.4206285,
+   "utterance_id": "live-tts-echo-1788278948-u1",
+   "session": "live-tts-echo-1788278948"
+  }
+ ]
+}

@@ -1,0 +1,396 @@
+{
+ "at": "2026-09-01T18:07:09",
+ "health": {
+  "ready": true,
+  "revision": "58a37cbeef479c0bda3299e3e2bde2e0cf8b3b48",
+  "pid": 157816,
+  "readiness": {
+   "UI_READY": true,
+   "CORE_READY": true,
+   "AI_READY": true,
+   "VOICE_READY": true,
+   "FULL_READY": true
+  }
+ },
+ "steps": [
+  {
+   "request": "Zeus, wie geht es dir?",
+   "sent": {
+    "ok": true,
+    "accepted": "Zeus, wie geht es dir?",
+    "request_id": "live-1788278831379"
+   },
+   "answer": "Mir geht's gut. Systeme laufen. Womit fange ich an?",
+   "backend": "personality",
+   "seconds": 0.25,
+   "understood": {
+    "top": "conversation",
+    "reason": "a question or a remark with no side effect",
+    "action": null,
+    "question": "",
+    "is_action_request": false
+   },
+   "receipts": [],
+   "goals": [],
+   "open_view": [],
+   "user_messages": [
+    {
+     "text": "Zeus, wie geht es dir?",
+     "source": "test",
+     "request_id": "live-1788278831379"
+    }
+   ]
+  },
+  {
+   "request": "Zeus, erstelle ein neues Projekt namens Sprachtest Live und leg die Aufgaben Eins, Zwei und Drei an.",
+   "sent": {
+    "ok": true,
+    "accepted": "Zeus, erstelle ein neues Projekt namens Sprachtest Live und leg die Aufgaben Eins, Zwei und Drei an.",
+    "request_id": "live-1788278831630"
+   },
+   "answer": "Erledigt. Projekt „Sprachtest Live“ ist angelegt – mit drei Aufgaben.",
+   "backend": "projects.store",
+   "seconds": 1.46,
+   "understood": {
+    "top": "project_operation",
+    "reason": "asks to create a project",
+    "action": {
+     "operation": "project.create",
+     "verb": "create",
+     "object_type": "project",
+     "target": "Sprachtest Live",
+     "arguments": {
+      "title": "Sprachtest Live",
+      "goal": "Sprachtest Live",
+      "tasks": [
+       "Eins",
+       "Zwei",
+       "Drei"
+      ],
+      "parent": "",
+      "importance": "",
+      "deadline": "",
+      "description": "erstelle ein neues Projekt namens Sprachtest Live und leg die Aufgaben Eins, Zwei und Drei an."
+     },
+     "constraints": [],
+     "success_criteria": [
+      "the project persists with this title",
+      "3 tasks persist"
+     ],
+     "forbidden_effects": [
+      "file",
+      "note"
+     ],
+     "confidence": 0.92,
+     "consequence": "harmless",
+     "missing": [],
+     "reason": "asks to create a project"
+    },
+    "question": "",
+    "is_action_request": true
+   },
+   "receipts": [
+    {
+     "kind": "project.create",
+     "ok": true,
+     "verified": true,
+     "detail": "created project 'Sprachtest Live' as proj_95dd7c501e with 3 task(s)",
+     "id": "rcpt_d1a26ca38623"
+    }
+   ],
+   "goals": [
+    {
+     "ACTION_EXECUTED": true,
+     "EXECUTION_VERIFIED": true,
+     "GOAL_SATISFIED": true,
+     "reasons": [
+      "every success criterion verified"
+     ]
+    }
+   ],
+   "open_view": [],
+   "user_messages": [
+    {
+     "text": "Zeus, erstelle ein neues Projekt namens Sprachtest Live und leg die Aufgaben Eins, Zwei und Drei an.",
+     "source": "test",
+     "request_id": "live-1788278831630"
+    }
+   ]
+  },
+  {
+   "request": "Zeus, öffne dieses Projekt.",
+   "sent": {
+    "ok": true,
+    "accepted": "Zeus, öffne dieses Projekt.",
+    "request_id": "live-1788278833089"
+   },
+   "answer": "Projekt „Sprachtest Live“ ist offen.",
+   "backend": "projects",
+   "seconds": 0.29,
+   "understood": {
+    "top": "project_operation",
+    "reason": "asks to open a project",
+    "action": {
+     "operation": "project.open",
+     "verb": "open",
+     "object_type": "project",
+     "target": "__last__",
+     "arguments": {},
+     "constraints": [],
+     "success_criteria": [
+      "the project view is opened on the project"
+     ],
+     "forbidden_effects": [],
+     "confidence": 0.9,
+     "consequence": "harmless",
+     "missing": [],
+     "reason": "asks to open a project"
+    },
+    "question": "",
+    "is_action_request": true
+   },
+   "receipts": [],
+   "goals": [],
+   "open_view": [
+    {
+     "kind": "open_view",
+     "view": "projects",
+     "params": {
+      "id": "proj_95dd7c501e"
+     },
+     "text": ""
+    }
+   ],
+   "user_messages": [
+    {
+     "text": "Zeus, öffne dieses Projekt.",
+     "source": "test",
+     "request_id": "live-1788278833089"
+    }
+   ]
+  },
+  {
+   "request": "Zeus, öffne meine Projekte.",
+   "sent": {
+    "ok": true,
+    "accepted": "Zeus, öffne meine Projekte.",
+    "request_id": "live-1788278833374"
+   },
+   "answer": "Du hast 5 Projekte: „Sprachtest Live“, „ZEUS“, „Zeus Realtest“, „Zeus Testprojekt“, „chess analysis“. Die Projektansicht ist offen.",
+   "backend": "projects",
+   "seconds": 0.44,
+   "understood": {
+    "top": "project_operation",
+    "reason": "asks for the project list",
+    "action": {
+     "operation": "project.list",
+     "verb": "read",
+     "object_type": "project",
+     "target": "",
+     "arguments": {},
+     "constraints": [],
+     "success_criteria": [
+      "the owner's projects are listed"
+     ],
+     "forbidden_effects": [],
+     "confidence": 0.9,
+     "consequence": "harmless",
+     "missing": [],
+     "reason": "asks for the project list"
+    },
+    "question": "",
+    "is_action_request": true
+   },
+   "receipts": [],
+   "goals": [],
+   "open_view": [
+    {
+     "kind": "open_view",
+     "view": "projects",
+     "params": {},
+     "text": ""
+    }
+   ],
+   "user_messages": [
+    {
+     "text": "Zeus, öffne meine Projekte.",
+     "source": "test",
+     "request_id": "live-1788278833374"
+    }
+   ]
+  },
+  {
+   "request": "Das Projekt heißt nicht Sprachtest Live sondern Sprachtest Live Zwei.",
+   "sent": {
+    "ok": true,
+    "accepted": "Das Projekt heißt nicht Sprachtest Live sondern Sprachtest Live Zwei.",
+    "request_id": "live-1788278833814"
+   },
+   "answer": "Erledigt. Das Projekt heißt jetzt „Sprachtest Live Zwei“.",
+   "backend": "projects.store",
+   "seconds": 0.43,
+   "understood": {
+    "top": "project_operation",
+    "reason": "corrects the project title",
+    "action": {
+     "operation": "project.rename",
+     "verb": "rename",
+     "object_type": "project",
+     "target": "Sprachtest Live",
+     "arguments": {
+      "title": "Sprachtest Live Zwei"
+     },
+     "constraints": [],
+     "success_criteria": [
+      "a project titled 'Sprachtest Live Zwei' exists",
+      "no project titled 'Sprachtest Live' remains"
+     ],
+     "forbidden_effects": [],
+     "confidence": 0.9,
+     "consequence": "moderate",
+     "missing": [],
+     "reason": "corrects the project title"
+    },
+    "question": "",
+    "is_action_request": true
+   },
+   "receipts": [
+    {
+     "kind": "project.rename",
+     "ok": true,
+     "verified": true,
+     "detail": "renamed project 'Sprachtest Live' to 'Sprachtest Live Zwei'",
+     "id": "rcpt_7d81107826e7"
+    }
+   ],
+   "goals": [
+    {
+     "ACTION_EXECUTED": true,
+     "EXECUTION_VERIFIED": true,
+     "GOAL_SATISFIED": true,
+     "reasons": [
+      "every success criterion verified"
+     ]
+    }
+   ],
+   "open_view": [],
+   "user_messages": [
+    {
+     "text": "Das Projekt heißt nicht Sprachtest Live sondern Sprachtest Live Zwei.",
+     "source": "test",
+     "request_id": "live-1788278833814"
+    }
+   ]
+  },
+  {
+   "request": "Was ist ein Projekt?",
+   "sent": {
+    "ok": true,
+    "accepted": "Was ist ein Projekt?",
+    "request_id": "live-1788278834245"
+   },
+   "answer": "Ein Projekt ist eine organisierte Gruppe von Aufgaben, Daten oder Aktivitäten, die gemeinsam verfolgt werden. In deinem Fall: eine Sammlung von Einzelaktionen, die du für einen bestimmten Zweck durchführst.",
+   "backend": "qwen3:4b-instruct",
+   "seconds": 4.1,
+   "understood": {
+    "top": "conversation",
+    "reason": "a question or a remark with no side effect",
+    "action": null,
+    "question": "",
+    "is_action_request": false
+   },
+   "receipts": [],
+   "goals": [],
+   "open_view": [],
+   "user_messages": [
+    {
+     "text": "Was ist ein Projekt?",
+     "source": "test",
+     "request_id": "live-1788278834245"
+    }
+   ]
+  }
+ ],
+ "duplicate_request": {
+  "first": {
+   "ok": true,
+   "accepted": "Zeus, wer bist du?",
+   "request_id": "dup-1788278829"
+  },
+  "second": {
+   "ok": false,
+   "duplicate": true,
+   "request_id": "dup-1788278829",
+   "accepted": "Zeus, wer bist du?"
+  }
+ },
+ "no_provenance": {
+  "ok": false,
+  "error": "no provenance: 'whisper_ghost' may not enter the conversation as the owner"
+ },
+ "created_projects": [
+  {
+   "id": "proj_95dd7c501e",
+   "title": "Sprachtest Live Zwei",
+   "goal": "Sprachtest Live",
+   "state": "DRAFT",
+   "kind": "software",
+   "capability_id": "",
+   "origin": "owner",
+   "tasks": 3,
+   "tasks_done": 0,
+   "tasks_blocked": 0,
+   "steps": 0,
+   "created_at": "2026-09-01T16:07:12.591699+00:00",
+   "updated_at": "2026-09-01T16:07:14.099788+00:00",
+   "importance": "NORMAL",
+   "hidden": false,
+   "parent_id": "",
+   "deadline": "",
+   "layout": {},
+   "health": {
+    "state": "HEALTHY",
+    "reason": "moving"
+   },
+   "notes": []
+  }
+ ],
+ "galaxy": {
+  "nodes": 27,
+  "projects": [
+   "Sprachtest Live Zwei",
+   "ZEUS",
+   "Zeus Realtest",
+   "Zeus Testprojekt",
+   "chess analysis"
+  ],
+  "hidden": 0
+ },
+ "cleanup": [
+  {
+   "ok": true,
+   "id": "proj_95dd7c501e",
+   "importance": "TEST",
+   "hidden": true,
+   "layout": {}
+  }
+ ],
+ "voice": {
+  "speaking": false,
+  "engine": "small",
+  "rejected": []
+ },
+ "wake": {
+  "model_kind": "OWNER",
+  "model_fingerprint": "1b540fcadd731255",
+  "effective_threshold": 0.55,
+  "listener": {
+   "model": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\models\\wake\\zeus.npz",
+   "fingerprint": "1b540fcadd731255",
+   "threshold": 0.55,
+   "pid": 34108,
+   "at": 1788278836.4564946,
+   "last_score": 0.0
+  }
+ }
+}

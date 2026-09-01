@@ -52,10 +52,15 @@ def venv_python(venv: Path | None = None) -> Path | None:
 
 @dataclass
 class SpeechConfig:
-    #: whisper model size.  "base" chosen on measured evidence: on this machine
-    #: it transcribed a German sample at RTF 0.26 against "small"'s 0.79, and
-    #: was also the more accurate of the two on that sample.
-    stt_model: str = "base"
+    #: whisper model size.  "small", on measured evidence (2026-09-01,
+    #: data/acceptance_evidence/V2_acoustic_probe_*.json): on 14 German
+    #: commands synthesised with Piper and decoded in one pass, "base" reached
+    #: a mean transcript similarity of 0.69 (beam 1) / 0.89 (beam 4) with
+    #: "Spieleramstein", "Erfne", "Zroz" as typical misses, "small" 0.96 at a
+    #: median 3.7 s against 2.3 s per utterance on this CPU.  Reliability of
+    #: the command is worth the 1.4 s; beam stays 1 because a wider beam
+    #: produced a 20 s hallucination on keyboard clicks.
+    stt_model: str = "small"
     language: str = ""
     #: Words the recogniser would otherwise mis-hear, fed to whisper as an
     #: initial prompt. Names and product terms, not general vocabulary.
@@ -198,7 +203,7 @@ class SpeechEngine:
 
     # -- speech to text --------------------------------------------------
 
-    def transcribe(self, audio: Audio, *, language: str = "") -> Transcript:
+    def transcribe(self, audio: Audio, *, language: str = "", hotwords: str = "") -> Transcript:
         response = self._call(
             {
                 "action": "transcribe",
@@ -206,16 +211,20 @@ class SpeechEngine:
                 "download_root": str(self.config.models_dir),
                 "language": language or self.config.language,
                 "vocabulary": self.config.vocabulary,
+                "hotwords": hotwords or "",
                 "wav": base64.b64encode(audio.to_wav()).decode("ascii"),
             },
             timeout=self.config.call_timeout,
         )
+        text = str(response.get("text", ""))
         return Transcript(
-            text=str(response.get("text", "")),
+            text=text,
             language=str(response.get("language", "")),
             confidence=float(response.get("confidence", 0.0)),
             duration_seconds=float(response.get("duration_seconds", 0.0)),
             words=list(response.get("words") or []),
+            quality=dict(response.get("quality") or {}),
+            raw_text=text,
         )
 
     def transcribe_file(self, path: str | Path, *, language: str = "") -> Transcript:

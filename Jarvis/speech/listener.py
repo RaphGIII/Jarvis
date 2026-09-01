@@ -265,6 +265,14 @@ class VoiceSession:
     ended: bool = False
     end_reason: str = ""
     history: list[tuple[str, str]] = field(default_factory=list)
+    #: One utterance per session; the id travels with the audio so the core
+    #: can refuse a replay of the same recording.
+    utterance_id: str = ""
+    #: Wall-clock (epoch) time the wake word fired.
+    opened_wall: float = 0.0
+    #: What the barge-in interrupted on the core ("speech", "answer"): when
+    #: it interrupted speech, this recording may contain ZEUS's own voice.
+    interrupted: list[str] = field(default_factory=list)
 
     def transition(self, state: str, reason: str = "") -> bool:
         if state not in TRANSITIONS.get(self.state, set()):
@@ -306,6 +314,10 @@ class CaptureLoop:
         self.muted_until = 0.0
         self.sessions_opened = 0
         self.sessions_ended = 0
+        #: Set when a session ends: the process around the loop discards the
+        #: microphone backlog that piled up while the utterance was posted,
+        #: so audio from *before* the next wake never reaches a new session.
+        self.drain_requested = False
 
     @property
     def state(self) -> str:
@@ -323,7 +335,9 @@ class CaptureLoop:
             if now < self.muted_until or not wake_fired:
                 return actions
             self.sessions_opened += 1
-            session = self.session = VoiceSession(session_id=f"vs{int(now * 1000):x}{self.sessions_opened}", wake_score=1.0, opened_at=now)
+            session_id = f"vs{int(now * 1000):x}{self.sessions_opened}"
+            session = self.session = VoiceSession(session_id=session_id, wake_score=1.0, opened_at=now,
+                                                  utterance_id=f"{session_id}-u1", opened_wall=time.time())
             actions.append(("session", session, "WAKE_DETECTED", "wake word"))
             if self.config.barge_in:
                 actions.append(("interrupt", session))
@@ -375,6 +389,9 @@ class CaptureLoop:
     def _end(self, session: VoiceSession, reason: str, actions: list[tuple]) -> None:
         if session.end(reason):
             self.sessions_ended += 1
+            self.recording = []
+            self.preroll.clear()
+            self.drain_requested = True
             actions.append(("session", session, "IDLE", reason))
             actions.append(("reset", session))
 
@@ -462,6 +479,16 @@ class WakeListener:
                         if fired:
                             wake_score = model.score if isinstance(model, _TrainedWake) else score
                 self._perform(loop.step(frame.copy(), level, fired, now), loop, model, wake_score if fired else 0.0)
+                if loop.drain_requested:
+                    # The POST blocked this loop for as long as transcription
+                    # took; the device kept recording.  That backlog is old
+                    # audio (often ZEUS's own answer starting) and must not
+                    # be scored for the wake word or land in the next
+                    # session's pre-roll.
+                    loop.drain_requested = False
+                    dropped = self._drain(stream)
+                    if dropped and self.config.verbose:
+                        self._say(f"(discarded {dropped / SAMPLE_RATE:.2f}s of backlog)")
 
     def _perform(self, actions: list[tuple], loop: CaptureLoop, model: Any, wake_score: float) -> None:
         import numpy as np
@@ -479,17 +506,46 @@ class WakeListener:
                     self._say(f"[{session.session_id}] -> {state} ({reason})")
                 self._report_session(session, state, reason)
             elif kind == "interrupt":
-                self._interrupt(action[1])
+                action[1].interrupted = self._interrupt(action[1])
             elif kind == "reset":
                 model.reset()
             elif kind == "send":
                 _, session, frames = action
                 audio = np.concatenate(frames) if frames else np.zeros(0, dtype="int16")
                 self._say(f"[{session.session_id}] heard {loop.endpointer.speech_seconds:.1f}s, sending...")
-                ok, detail = self._send(audio.tobytes(), wake=session.wake_score, session=session.session_id)
+                # What the device measured while recording travels with the
+                # audio: the core's acceptance gate weighs it against what
+                # the recogniser claims to have heard.
+                evidence = {
+                    "utterance": session.utterance_id,
+                    "speech_seconds": round(float(loop.endpointer.speech_seconds), 3),
+                    "noise_floor": round(float(loop.endpointer.noise_floor), 1),
+                    "threshold": round(float(loop.endpointer.threshold), 1),
+                    "elapsed": round(float(loop.endpointer.elapsed), 3),
+                    "started": round(float(session.opened_wall), 3),
+                    "interrupted": ",".join(session.interrupted),
+                    "wake_at": round(float(session.opened_wall), 3),
+                }
+                ok, detail = self._send(audio.tobytes(), wake=session.wake_score, session=session.session_id, evidence=evidence)
                 self._perform(loop.sent(session, ok, detail), loop, model, wake_score)
 
     # -- helpers ---------------------------------------------------------
+
+    @staticmethod
+    def _drain(stream: Any) -> int:
+        """Discard whatever the input stream buffered; returns the samples dropped."""
+
+        dropped = 0
+        try:
+            while True:
+                available = int(getattr(stream, "read_available", 0) or 0)
+                if available < FRAME_SAMPLES:
+                    break
+                stream.read(min(available, FRAME_SAMPLES * 8))
+                dropped += min(available, FRAME_SAMPLES * 8)
+        except Exception:  # noqa: BLE001 - draining is a courtesy
+            pass
+        return dropped
 
     #: How often the idle loop asks the core for the wake status.
     SYNC_SECONDS = 5.0
@@ -533,26 +589,34 @@ class WakeListener:
         with urllib.request.urlopen(request, timeout=3) as response:
             return json.loads(response.read().decode())
 
-    def _interrupt(self, session: VoiceSession | None = None) -> None:
+    def _interrupt(self, session: VoiceSession | None = None) -> list[str]:
         """Barge-in: ask the core to interrupt what is speaking or being generated.
 
         ``/api/voice/interrupt`` is a no-op when nothing is -- it never opens,
         closes or otherwise touches the listening session, and it never
-        produces a transcript entry by itself.
+        produces a transcript entry by itself.  Returns what was interrupted
+        so the session knows whether ZEUS was talking when the wake fired.
         """
 
         if not getattr(self.config, "barge_in", True):
-            return
+            return []
         try:
             result = self._post_json("/api/voice/interrupt", {"session": session.session_id if session else "",
                                                                "wake": round(float(session.wake_score), 4) if session else 0.0})
-            if result.get("interrupted") and self.config.verbose:
-                self._say(f"(interrupted: {', '.join(result['interrupted'])})")
+            stopped = [str(x) for x in (result.get("interrupted") or [])]
+            if stopped and self.config.verbose:
+                self._say(f"(interrupted: {', '.join(stopped)})")
+            # The core also says whether it believes it is speaking right now
+            # (audio published, not yet played out): that is the same signal.
+            if result.get("speaking") and "speech" not in stopped:
+                stopped.append("speech")
+            return stopped
         except Exception as exc:  # noqa: BLE001 - listening matters more than the interrupt
             if self.config.verbose:
                 self._say(f"(interrupt failed: {exc})")
+            return []
 
-    def _send(self, pcm: bytes, *, wake: float = 0.0, session: str = "") -> tuple[bool, str]:
+    def _send(self, pcm: bytes, *, wake: float = 0.0, session: str = "", evidence: dict[str, Any] | None = None) -> tuple[bool, str]:
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as handle:
             handle.setnchannels(1)
@@ -563,12 +627,15 @@ class WakeListener:
         # The wake score that opened this session travels with the audio:
         # the core acts only on utterances that a wake word (or a press in
         # the interface) authorised.
+        headers = {"Content-Type": "application/octet-stream", "X-Jarvis-Token": self.config.token,
+                   "X-Jarvis-Wake": f"{float(wake):.4f}", "X-Jarvis-Session": session, "X-Jarvis-Source": "microphone"}
+        for key, value in (evidence or {}).items():
+            headers[f"X-Jarvis-{key.replace('_', '-').title()}"] = str(value)
         request = urllib.request.Request(
             f"{self.config.url.rstrip('/')}/api/voice/utterance",
             data=buffer.getvalue(),
             method="POST",
-            headers={"Content-Type": "application/octet-stream", "X-Jarvis-Token": self.config.token,
-                     "X-Jarvis-Wake": f"{float(wake):.4f}", "X-Jarvis-Session": session},
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=300) as response:

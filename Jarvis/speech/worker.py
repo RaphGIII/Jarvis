@@ -87,14 +87,44 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         # German word -- "wie geht es mit meinem Jarvis-Projekt" came back as
         # "Jahresprojekt". initial_prompt biases decoding toward the vocabulary
         # this system is actually about, which is what it is for.
-        segments, info = model.transcribe(
-            audio_path,
+        #
+        # Decoding is deliberately *stateless and suspicious*: one utterance
+        # is one request, so nothing conditions on a previous window (that is
+        # how one hallucination seeds the next), Whisper's own no-speech and
+        # log-probability verdicts are returned rather than swallowed, and a
+        # silent stretch is not decoded at all (hallucination_silence_threshold).
+        # ``hotwords`` carries the bounded entity list (project names, ZEUS
+        # terms) as a decoding bias, not as a prompt that leaks into the text.
+        options: dict[str, Any] = dict(
             language=language,
             beam_size=int(request.get("beam_size", 1)),
             initial_prompt=request.get("vocabulary") or None,
             word_timestamps=bool(request.get("word_timestamps", True)),
+            condition_on_previous_text=False,
+            # One decoding pass.  The default temperature *fallback* re-decodes
+            # up to six times when the log-probability or compression check
+            # fails -- exactly on silence, noise and mumbling -- and cost 10-15
+            # s per bad utterance on this CPU.  A single pass reports the same
+            # quality signals; the gate does the rejecting, cheaply.
+            temperature=float(request.get("temperature", 0.0)),
+            no_speech_threshold=float(request.get("no_speech_threshold", 0.6)),
+            log_prob_threshold=float(request.get("log_prob_threshold", -1.0)),
+            compression_ratio_threshold=float(request.get("compression_ratio_threshold", 2.4)),
+            hallucination_silence_threshold=float(request.get("hallucination_silence_threshold", 1.5)),
+            vad_filter=bool(request.get("vad_filter", False)),
         )
-        pieces = list(segments)
+        hotwords = str(request.get("hotwords") or "").strip()
+        if hotwords:
+            options["hotwords"] = hotwords
+        try:
+            segments, info = model.transcribe(audio_path, **options)
+            pieces = list(segments)
+        except TypeError:
+            # an older faster-whisper without one of the knobs
+            for key in ("hotwords", "hallucination_silence_threshold", "vad_filter"):
+                options.pop(key, None)
+            segments, info = model.transcribe(audio_path, **options)
+            pieces = list(segments)
         text = "".join(segment.text for segment in pieces).strip()
         # Word timings let the core tell a wake-word tail from the command.
         words = []
@@ -102,6 +132,23 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
             for w in (getattr(segment, "words", None) or []):
                 words.append({"word": str(getattr(w, "word", "")).strip(), "start": round(float(getattr(w, "start", 0.0) or 0.0), 3),
                               "end": round(float(getattr(w, "end", 0.0) or 0.0), 3), "probability": round(float(getattr(w, "probability", 0.0) or 0.0), 3)})
+        # Per-segment quality, reduced to the most pessimistic value across
+        # the utterance: one hallucinated segment is enough to distrust it.
+        quality: dict[str, Any] = {"segments": len(pieces)}
+        if pieces:
+            nsp = [float(getattr(s, "no_speech_prob", 0.0) or 0.0) for s in pieces]
+            lps = [float(getattr(s, "avg_logprob", 0.0) or 0.0) for s in pieces]
+            crs = [float(getattr(s, "compression_ratio", 0.0) or 0.0) for s in pieces]
+            quality.update({
+                "no_speech_probability": round(max(nsp), 3),
+                "avg_logprob": round(min(lps), 3),
+                "compression_ratio": round(max(crs), 3),
+            })
+        if words:
+            quality["word_probabilities"] = [w["probability"] for w in words]
+        quality["language_probability"] = round(float(getattr(info, "language_probability", 0.0) or 0.0), 3)
+        quality["elapsed"] = round(time.perf_counter() - started, 3)
+        quality["model"] = str(request.get("model", "base"))
         return {
             "ok": True,
             "text": text,
@@ -109,7 +156,8 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
             "language": getattr(info, "language", "") or "",
             "confidence": float(getattr(info, "language_probability", 0.0) or 0.0),
             "duration_seconds": float(getattr(info, "duration", 0.0) or 0.0),
-            "elapsed": round(time.perf_counter() - started, 3),
+            "elapsed": quality["elapsed"],
+            "quality": quality,
         }
 
     if action == "synthesize":

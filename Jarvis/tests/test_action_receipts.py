@@ -598,7 +598,10 @@ def test_creating_a_project_persists_it_and_reloads_it_from_disk(live, tmp_path)
     # And through the same endpoint the Projects panel calls.
     listed = client.call("/api/projects")["projects"]
     assert any(item["title"] == "Zeus Testprojekt" for item in listed)
-    assert receipt.evidence["project_id"] in reply["text"]
+    # The owner reads one natural sentence; the id and the checks stay in
+    # the receipt (Activity / Beleg), which the same turn published.
+    assert "Zeus Testprojekt" in reply["text"] and reply["text"].startswith("Erledigt")
+    assert any(e.get("receipt", {}).get("id") == receipt.id for e in client.of_type("tool"))
 
 
 def test_a_project_the_model_merely_described_does_not_appear(live):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from _audio import speech_wav
+
 import pytest
 
 from service.core import JarvisCore
@@ -67,7 +69,7 @@ def make(heard, confidence=0.9):
         def transcribe(self, audio, *, language=""): return Transcript(text=heard, confidence=confidence)
 
     core._voice = VoiceService(core.bus, engine_factory=Engine)
-    return core, Audio(samples=bytes(16000), sample_rate=16000).to_wav()
+    return core, speech_wav()
 
 
 def test_router_receives_the_command_and_the_turn_carries_wake_metadata():

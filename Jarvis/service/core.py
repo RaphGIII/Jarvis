@@ -324,12 +324,40 @@ class JarvisCore:
         with self._lock:
             return list(self._history)
 
-    def send_message(self, text: str, *, scope: str = "", meta: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Accept user input and answer it, streaming tokens as events."""
+    #: Where a USER turn may come from.  A message with no provenance never
+    #: enters the conversation: every visible owner sentence must be traceable
+    #: to a typed message, a listening session, a press, or an owner action.
+    USER_SOURCES = frozenset({"text", "microphone", "ui_mic", "thought_inbox", "correction_rerun", "api", "cli", "test", "galaxy", "palette"})
+
+    def send_message(self, text: str, *, scope: str = "", meta: dict[str, Any] | None = None, request_id: str = "") -> dict[str, Any]:
+        """Accept user input and answer it, streaming tokens as events.
+
+        Idempotent by ``request_id``: a websocket retry, a UI refresh or a
+        replayed utterance carrying an id that was already accepted is
+        refused rather than answered twice.
+        """
+
+        import uuid
 
         text = (text or "").strip()
         if not text:
             return {"ok": False, "error": "empty message"}
+        meta = dict(meta or {})
+        meta.setdefault("source", "text")
+        if meta["source"] not in self.USER_SOURCES:
+            return {"ok": False, "error": f"no provenance: {meta['source']!r} may not enter the conversation as the owner"}
+        request_id = str(request_id or meta.get("request_id") or "") or uuid.uuid4().hex[:12]
+        with self._lock:
+            seen = getattr(self, "_requests_seen", None)
+            if seen is None:
+                seen = self._requests_seen = {}
+            if request_id in seen:
+                self.emit(EventType.DIAGNOSTIC, {"request": "duplicate refused", "request_id": request_id, "text": text[:80], "source": meta["source"]}, scope=scope)
+                return {"ok": False, "duplicate": True, "request_id": request_id, "accepted": text}
+            seen[request_id] = time.monotonic()
+            for key in list(seen)[:-400]:
+                del seen[key]
+        meta["request_id"] = request_id
 
         # Touched before the first event is published, so the request that
         # started everything is in the record rather than missing from it.
@@ -343,7 +371,7 @@ class JarvisCore:
 
         self.language = stable_language(text, current=self.language)
 
-        turn = ConversationTurn(role="user", text=text, at=_now(), meta=dict(meta or {}))
+        turn = ConversationTurn(role="user", text=text, at=_now(), meta=meta)
         with self._lock:
             self._history.append(turn)
         self.emit(EventType.USER_MESSAGE, turn.to_dict(), scope=scope)
@@ -358,7 +386,7 @@ class JarvisCore:
             self._current_work = thread
         self._stop_requested.clear()
         thread.start()
-        return {"ok": True, "accepted": text}
+        return {"ok": True, "accepted": text, "request_id": request_id}
 
     def _answer_guarded(self, text: str, scope: str) -> None:
         """Run :meth:`_answer`, and never let it fail in silence.
@@ -463,6 +491,43 @@ class JarvisCore:
                 except Exception:  # noqa: BLE001
                     pass
 
+        # Semantic purpose before any domain parser: one top-level intent and,
+        # where the operation is deterministic (projects, views, stop, the
+        # owner's corrections), a typed action contract that is executed
+        # without a model.  Word overlap never selects an operation here.
+        from service.intents import TopIntent, understand
+
+        try:
+            titles = [str(p.get("title") or "") for p in self.list_projects()]
+        except Exception:  # noqa: BLE001
+            titles = []
+        understanding = understand(text, route=route, project_titles=titles, capability_names=names)
+        self.emit(EventType.TOOL, {"summary": f"understood: {understanding.top.value}" + (f" -> {understanding.action.operation}" if understanding.action else ""),
+                                   "understanding": understanding.to_dict(), "source": "intents", "text": text[:160]}, scope=scope)
+        if self._handle_pending_confirmation(text, scope):
+            return
+        if understanding.top is TopIntent.CONVERSATION and self._resume_clarification(text, scope):
+            return
+        if understanding.top is TopIntent.CORRECTION:
+            self._answer_correction(text, scope, understanding.action)
+            return
+        if understanding.top is TopIntent.SELF_DEVELOPMENT and understanding.reason.startswith("asks ZEUS to find"):
+            # "Finde den Fehler und repariere dich": the action router must
+            # never swallow an explicit self-improvement request.
+            self._answer_by_self_development(text, scope, classification=classification)
+            return
+        if understanding.top is TopIntent.CLARIFICATION and understanding.action is not None:
+            self._ask_clarification(understanding.action, understanding.question, text, scope)
+            return
+        if understanding.top in {TopIntent.PROJECT_OPERATION, TopIntent.SYSTEM_CONTROL} and understanding.action is not None:
+            if self._needs_confirmation(understanding.action, text, scope):
+                return
+            if understanding.top is TopIntent.SYSTEM_CONTROL:
+                self._answer_by_system_control(understanding.action, text, scope)
+            else:
+                self._answer_by_project_operation(understanding.action, text, scope)
+            return
+
         # CAPABILITY joins READ rather than going to the executor, because
         # "learn to do X" cannot be executed from a chat turn in this system.
         # Answering it conversationally invites "I can do that now" -- a
@@ -476,6 +541,8 @@ class JarvisCore:
             self._answer_from_records(text, scope, classification)
             return
         if classification.intent is Intent.MUSIC:
+            if self._needs_confirmation(None, text, scope, side_effect=True):
+                return
             self._answer_musically(text, scope, classification)
             return
         if classification.intent is Intent.SELF_DEVELOPMENT:
@@ -485,15 +552,280 @@ class JarvisCore:
             self._answer_owner_config(text, scope, classification)
             return
         if classification.intent is Intent.CORRECTION:
-            self._answer_correction_hint(text, scope)
+            self._answer_correction(text, scope, None)
             return
         if route is not None and route.intent.value == "research":
             self._answer_by_research(text, scope)
             return
-        if classification.intent.has_side_effect:
-            self._answer_by_executing(text, scope, classification)
+        if classification.intent.has_side_effect or understanding.is_action_request:
+            if self._needs_confirmation(None, text, scope, side_effect=True):
+                return
+            if not classification.intent.has_side_effect:
+                # The legacy classifier saw conversation; the request is an
+                # imperative with an action verb.  It goes to the executor,
+                # which may decline honestly -- but never to prose.
+                from service.intent import Classification
+
+                classification = Classification(Intent.ACTION, understanding.reason, matched="action-request", route=route)
+            self._answer_by_executing(text, scope, classification, action_request=understanding.is_action_request)
             return
         self._answer_conversationally(text, scope)
+
+    # -- typed operations ------------------------------------------------
+
+    def _last_user_meta(self) -> dict[str, Any]:
+        with self._lock:
+            for turn in reversed(self._history):
+                if turn.role == "user":
+                    return dict(turn.meta or {})
+        return {}
+
+    def _needs_confirmation(self, action: Any, text: str, scope: str, *, side_effect: bool = False) -> bool:
+        """Confidence + consequence: uncertain speech never executes; irreversible actions ask once.
+
+        Returns True when a question was asked (and the intent parked) instead of executing.
+        """
+
+        from service.intents import Consequence
+
+        meta = self._last_user_meta()
+        level = str(meta.get("speech_level") or "")
+        spoken = meta.get("source") in {"microphone", "ui_mic"}
+        de = self.language.startswith("de")
+        irreversible = action is not None and action.consequence is Consequence.IRREVERSIBLE
+        if irreversible:
+            self._pending = {"action": action, "text": text, "kind": "irreversible"}
+            target = action.target or (action.arguments or {}).get("title") or ""
+            self._deliver((f"Soll ich „{target}“ wirklich löschen? Das lässt sich nicht rückgängig machen – ja oder nein?" if de
+                           else f"Do you really want me to delete “{target}”? This cannot be undone – yes or no?"),
+                          scope=scope, backend="policy", final_state=JarvisState.WAITING,
+                          context_text="[confirmation requested for an irreversible action]")
+            return True
+        if spoken and level == "low" and (side_effect or action is not None):
+            self._pending = {"action": action, "text": text, "kind": "low_confidence"}
+            heard = str(meta.get("normalized") or text)
+            self._deliver((f"Ich bin nicht sicher, ob ich dich richtig verstanden habe: „{heard}“ – soll ich das machen?" if de
+                           else f"I am not sure I understood you correctly: “{heard}” – should I do that?"),
+                          scope=scope, backend="policy", final_state=JarvisState.WAITING,
+                          context_text="[confirmation requested: low speech confidence]")
+            return True
+        return False
+
+    _YES = re.compile(r"^\s*(ja|jawohl|genau|mach|mach das|mach es|bitte|ok|okay|yes|yep|do it|go ahead|sure)\b[.!\s]*$", re.I)
+    _NO = re.compile(r"^\s*(nein|nee|nö|nicht|lass|lass es|abbrechen|no|nope|cancel|stop)\b[.!\s]*$", re.I)
+
+    def _handle_pending_confirmation(self, text: str, scope: str) -> bool:
+        pending = getattr(self, "_pending", None)
+        if not pending:
+            return False
+        self._pending = None
+        de = self.language.startswith("de")
+        if self._YES.match(text):
+            action, original = pending.get("action"), str(pending.get("text", ""))
+            if action is not None and str(action.operation).startswith("project."):
+                self._answer_by_project_operation(action, original, scope, confirmed=True)
+            elif action is not None and action.operation in {"system.open_view", "system.stop"}:
+                self._answer_by_system_control(action, original, scope)
+            else:
+                # a spoken side-effect request the router handles: run the original words again, confirmed
+                self.send_message(original, scope=scope, meta={"source": "correction_rerun", "confirmed": True})
+            return True
+        if self._NO.match(text):
+            self._deliver("Okay, nichts gemacht." if de else "Okay, nothing done.", scope=scope, backend="policy",
+                          context_text="[confirmation declined; nothing executed]")
+            return True
+        # anything else: the owner moved on; the parked intent is dropped, the new text is handled normally
+        return False
+
+    def _ask_clarification(self, action: Any, question: str, text: str, scope: str) -> None:
+        """One concise question for genuinely missing information; the intent waits for the answer."""
+
+        self._pending_clarification = {"action": action, "text": text}
+        self.emit(EventType.TOOL, {"summary": f"clarification needed: {', '.join(action.missing)}", "action": action.to_dict(), "source": "intents"}, scope=scope)
+        self._deliver(question, scope=scope, backend="intents", final_state=JarvisState.WAITING,
+                      context_text=f"[clarification asked for {action.operation}: {', '.join(action.missing)}]")
+
+    def _resume_clarification(self, text: str, scope: str) -> bool:
+        """The owner answered the question: fill the missing slot and execute."""
+
+        pending = getattr(self, "_pending_clarification", None)
+        if not pending:
+            return False
+        self._pending_clarification = None
+        action = pending["action"]
+        from service.intents import _clean_title, is_action_request
+
+        if is_action_request(text) or len(text.split()) > 8:
+            return False  # a new request, not an answer
+        value = _clean_title(text)
+        if not value:
+            return False
+        if "title" in action.missing:
+            action.arguments["title"] = value
+            action.arguments.setdefault("goal", value)
+            action.target = value
+        elif "target" in action.missing:
+            action.target = value
+        elif "tasks" in action.missing:
+            from service.intents import _split_list
+
+            action.arguments["tasks"] = _split_list(text)
+        action.missing = []
+        self._answer_by_project_operation(action, f"{pending['text']} → {text}", scope)
+        return True
+
+    def _answer_by_project_operation(self, action: Any, text: str, scope: str, *, confirmed: bool = False) -> None:
+        """Execute a typed project operation deterministically and verify the goal independently."""
+
+        from service.project_ops import ProjectOperations, compose_concise
+
+        de = self.language.startswith("de")
+        if action.operation == "project.list":
+            rows = [p for p in self.list_projects() if p.get("origin") == "owner" and not p.get("hidden") and p.get("importance") not in {"ARCHIVED", "TEST"}]
+            self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": "projects", "params": {}, "text": ""}, scope=scope)
+            names = ", ".join(f"„{p['title'] or p['goal'][:30]}“" for p in rows[:8])
+            more = f" und {len(rows) - 8} weitere" if len(rows) > 8 else ""
+            answer = ((f"Du hast {len(rows)} Projekte: {names}{more}. Die Projektansicht ist offen." if rows else "Du hast noch keine Projekte. Die Projektansicht ist offen.") if de
+                      else (f"You have {len(rows)} projects: {names}{more}. The Projects view is open." if rows else "You have no projects yet. The Projects view is open."))
+            self._deliver(answer, scope=scope, backend="projects", context_text=f"[listed {len(rows)} owner projects]")
+            return
+        if action.operation == "project.open":
+            ops = ProjectOperations(self)
+            project = ops._find(action.target)
+            if project is None:
+                self._deliver((f"Ich finde kein Projekt namens „{action.target}“." if action.target != "__last__" else "Ich weiß nicht, welches Projekt du meinst – nenn mir den Namen.") if de
+                              else (f"I cannot find a project called “{action.target}”." if action.target != "__last__" else "I do not know which project you mean – give me its name."),
+                              scope=scope, backend="projects", final_state=JarvisState.WAITING, context_text="[project.open: target not found]")
+                return
+            self._last_project_id = project.id
+            self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": "projects", "params": {"id": project.id}, "text": ""}, scope=scope)
+            self._deliver((f"Projekt „{project.title}“ ist offen." if de else f"Project “{project.title}” is open."), scope=scope, backend="projects",
+                          context_text=f"[opened project {project.id}]")
+            return
+
+        self.state.set(JarvisState.WORKING, detail=action.operation, scope=scope)
+        self.emit(EventType.TOOL, {"summary": f"executing {action.operation}", "action": action.to_dict(), "source": "project_ops"}, scope=scope)
+        receipt = ProjectOperations(self).execute(action, request=text)
+        self.state.set(JarvisState.VERIFYING, detail=receipt.kind, scope=scope)
+        self.receipts.record(receipt)
+        self._session_receipts.append(receipt)
+        self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()}, scope=scope)
+        # GOAL_SATISFIED is the contract, not the return code: every success
+        # criterion of the intent has a verification behind it.
+        satisfied = receipt.verified
+        reasons = [v.check for v in receipt.failures] or (["every success criterion verified"] if satisfied else [receipt.detail])
+        self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if satisfied else 'NOT satisfied'} — {action.operation} {action.target or ''}".strip(),
+                                   "goal": {"ACTION_EXECUTED": receipt.ok, "EXECUTION_VERIFIED": receipt.verified, "GOAL_SATISFIED": satisfied, "reasons": reasons},
+                                   "receipt_id": receipt.id, "source": "project_ops"}, scope=scope)
+        if satisfied:
+            try:
+                self.think("mission_finished")
+            except Exception:  # noqa: BLE001
+                pass
+        self._deliver(compose_concise(receipt, language=self.language), scope=scope, backend=receipt.executor,
+                      final_state=JarvisState.IDLE if satisfied else JarvisState.ERROR,
+                      context_text=f"[executed {receipt.kind}: {'verified' if receipt.verified else 'not verified'}, receipt {receipt.id}]")
+
+    def _answer_by_system_control(self, action: Any, text: str, scope: str) -> None:
+        de = self.language.startswith("de")
+        if action.operation == "system.stop":
+            self.stop_current(reason="owner")
+            self.state.set(JarvisState.IDLE)
+            return
+        if action.operation == "system.open_view":
+            self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": action.target, "params": {}, "text": ""}, scope=scope)
+            names = {"projects": "Projekte", "missions": "Mission Control", "activity": "Activity", "knowledge": "Knowledge", "corrections": "Korrekturen",
+                     "diagnostics": "Diagnose", "owner": "Einstellungen", "voice": "Voice Studio", "thoughts": "Gedanken", "capabilities": "Fähigkeiten", "release": "Release"}
+            label = names.get(action.target, action.target)
+            self._deliver((f"{label} ist offen." if de else f"{label} is open."), scope=scope, backend="ui", context_text=f"[opened view {action.target}]")
+            return
+        self._deliver("Das kann ich nicht steuern." if de else "I cannot control that.", scope=scope, backend="ui")
+
+    def _answer_correction(self, text: str, scope: str, action: Any) -> None:
+        """"Nein, ich meinte Stockfish": classify the correction and act on it.
+
+        STT corrections (the previous spoken request contained a look-alike of
+        what the owner meant) become a bounded vocabulary rule and the
+        corrected request runs again.  Everything else is attached to the last
+        receipt through the correction memory, as before.
+        """
+
+        de = self.language.startswith("de")
+        meant = str((action.arguments if action is not None else {}).get("meant") or "").strip() if action is not None else ""
+        last_user = None
+        with self._lock:
+            users = [t for t in self._history if t.role == "user"]
+            last_user = users[-2] if len(users) >= 2 else None
+        heard_text = ""
+        if last_user is not None:
+            heard_text = str(last_user.meta.get("normalized") or last_user.text or "")
+        # STT correction: which heard token does the meant word replace?
+        if meant and last_user is not None and last_user.meta.get("source") in {"microphone", "ui_mic"}:
+            from difflib import SequenceMatcher
+
+            tokens = re.findall(r"[^\W\d_]+", heard_text, re.UNICODE)
+            best, score = "", 0.0
+            for token in tokens:
+                if token.lower() == meant.lower():
+                    continue
+                ratio = SequenceMatcher(None, token.lower(), meant.lower()).ratio()
+                if ratio > score:
+                    best, score = token, ratio
+            if best and score >= 0.5 and len(best) >= 3:
+                learned = self.voice.vocabulary.learn(best, meant, note=text[:120])
+                corrected = re.sub(r"(?<![\w'])" + re.escape(best) + r"(?![\w'])", meant, heard_text)
+                self.emit(EventType.NOTIFICATION, {"kind": "correction", "text": f"STT correction: „{best}“ → „{meant}“", "classification": "STT_CORRECTION",
+                                                   "heard": best, "meant": meant, "learned": learned}, scope=scope)
+                try:
+                    self.corrections.add(__import__("service.corrections", fromlist=["OwnerCorrection"]).OwnerCorrection(
+                        original_request=heard_text, what_was_wrong=text.strip(), classification="STT_CORRECTION", scope="ENTITY_SPECIFIC",
+                        parsed_intent="", entities={"heard": best, "meant": meant}, executed_action="", observed_result="",
+                        receipt_id=getattr(self._session_receipts[-1], "id", "") if self._session_receipts else "",
+                        when={"terms": [best.lower()]}, then={"note": f"{best} means {meant}", "overrides": {}}, provenance="owner-chat"))
+                except Exception:  # noqa: BLE001 - the vocabulary rule is the durable part
+                    pass
+                # The mis-heard word already produced something durable?  A
+                # project created as "Sprachtist" is renamed, not created twice.
+                last_receipt = self._session_receipts[-1] if self._session_receipts else None
+                if last_receipt is not None and last_receipt.kind == "project.create" and last_receipt.ok:
+                    made = str(last_receipt.evidence.get("title") or "")
+                    if best.lower() in made.lower():
+                        from service.intents import ActionIntent
+
+                        new_title = re.sub(re.escape(best), meant, made, flags=re.I)
+                        intent = ActionIntent("project.rename", verb="rename", object_type="project", target=made, arguments={"title": new_title},
+                                              confidence=0.9, success_criteria=[f"a project titled {new_title!r} exists"], reason="STT correction after a create")
+                        self._deliver((f"Verstanden – {meant}. Ich merke mir das und benenne das Projekt um." if de
+                                       else f"Understood – {meant}. I will remember that and rename the project."),
+                                      scope=scope, backend="corrections", context_text=f"[STT correction {best} -> {meant}; project renamed]")
+                        self._answer_by_project_operation(intent, text, scope)
+                        return
+                self._deliver((f"Verstanden – {meant}. Ich merke mir das und führe es korrigiert aus." if de
+                               else f"Understood – {meant}. I will remember that and run it corrected."),
+                              scope=scope, backend="corrections", context_text=f"[STT correction {best} -> {meant}; corrected request re-run]")
+                self.send_message(corrected, scope=scope, meta={"source": "correction_rerun", "corrected_from": best, "meant": meant})
+                return
+        # Not a transcription error: an intent/entity/result correction attached to the last receipt.
+        last = self._session_receipts[-1] if getattr(self, "_session_receipts", None) else None
+        receipt_id = getattr(last, "id", "") if last is not None else ""
+        classification = "ENTITY_RESOLUTION_ERROR" if meant else "INTENT_ERROR"
+        try:
+            if receipt_id or heard_text:
+                self.correction_save(text.strip(), receipt_id=receipt_id, classification=classification, original_request=heard_text)
+        except Exception:  # noqa: BLE001
+            pass
+        self.emit(EventType.NOTIFICATION, {"kind": "correction", "text": text[:160], "receipt_id": receipt_id}, scope=scope)
+        if meant and heard_text:
+            self._deliver((f"Verstanden – {meant}, nicht das, was ich verstanden hatte. Ich habe es notiert; sag es noch einmal ganz, dann führe ich es richtig aus." if de
+                           else f"Understood – {meant}, not what I had understood. Noted; say it once more in full and I will do it right."),
+                          scope=scope, backend="corrections", context_text="[owner correction recorded]")
+            return
+        self._deliver(
+            (f"Verstanden – das war falsch. Ich habe es notiert{' (' + receipt_id + ')' if receipt_id else ''}. Sag mir, was du meintest, oder nutze „Korrigieren“ am letzten Ergebnis.")
+            if de else
+            (f"Understood – that was wrong. Noted{' (' + receipt_id + ')' if receipt_id else ''}. Tell me what you meant, or use “Korrigieren” on the last result."),
+            scope=scope, backend="corrections", context_text="[owner correction signalled; handled through the correction memory]",
+        )
 
     # -- the three answering paths --------------------------------------
 
@@ -1499,7 +1831,7 @@ class JarvisCore:
         finally:
             self._acquiring.release()
 
-    def _answer_by_executing(self, text: str, scope: str, classification: Any) -> None:
+    def _answer_by_executing(self, text: str, scope: str, classification: Any, *, action_request: bool = False) -> None:
         """A request with a side effect.  Nothing is said until something is done.
 
         No model output reaches the user on this path.  The model is asked for
@@ -1564,13 +1896,13 @@ class JarvisCore:
             from service.intent import ACTION_OBJECTS, FILENAME
 
             names_object = any(word in f" {text.lower()} " for word in ACTION_OBJECTS) or bool(FILENAME.search(text))
+            de = self.language.startswith("de")
             if classification.matched and names_object:
                 # The request names a side effect and the planner could not
                 # turn it into one for want of a detail. Handing that to the
                 # conversation model produced an invented "notes database"
                 # with a fake commit id; one concise question is the honest
                 # answer, and the receipt path resumes when it is answered.
-                de = self.language.startswith("de")
                 self._deliver(
                     (f"Das kann ich ausführen, aber ein Detail fehlt: {plan.reason[:160]}. "
                      f"Sag mir zum Beispiel den Dateinamen, dann mache ich es.") if de else
@@ -1579,7 +1911,42 @@ class JarvisCore:
                     scope=scope, backend="planner", final_state=JarvisState.WAITING,
                 )
                 return
+            from service.intents import is_action_request
+
+            creative = re.search(r"\b(gedicht|geschichte|witz|poem|story|joke|text|zusammenfassung|summary|erklaer|erklär|explain|beschreib|describe|liste\s+mir|nenn)\w*", text.lower())
+            if (action_request or is_action_request(text)) and not creative:
+                # An action request never degrades into advisory prose: it is
+                # executed, becomes a mission, asks for what is missing, or
+                # says plainly why it cannot be done.  This is the last branch.
+                self._deliver(
+                    (f"Das kann ich so nicht ausführen: {plan.reason[:160] or 'keine passende Aktion'}. "
+                     f"Sag mir genauer, was entstehen soll (Projekt, Datei, Notiz, Knowledge-Eintrag, Musik …), dann mache ich es.") if de else
+                    (f"I cannot execute that as asked: {plan.reason[:160] or 'no matching action'}. "
+                     f"Tell me more precisely what should exist afterwards (project, file, note, Knowledge entry, music …) and I will do it."),
+                    scope=scope, backend="planner", final_state=JarvisState.WAITING,
+                    context_text="[action request: no executable action; asked for the missing detail]",
+                )
+                return
             self._answer_conversationally(text, scope)
+            return
+
+        if plan.action == "project.create":
+            # The model extracted a project; the typed executor verifies the contract.
+            from service.intents import ActionIntent
+
+            args = dict(plan.arguments)
+            title = str(args.get("name") or args.get("title") or args.get("goal") or "").strip()
+            intent = ActionIntent("project.create", verb="create", object_type="project", target=title,
+                                  arguments={"title": title, "goal": str(args.get("goal") or title), "tasks": list(args.get("tasks") or []),
+                                             "parent": "", "importance": "", "deadline": "", "description": text},
+                                  success_criteria=["the project persists with this title"], confidence=0.7, reason="planner: project.create")
+            if not title:
+                from service.intents import clarification_for
+
+                intent.missing = ["title"]
+                self._ask_clarification(intent, clarification_for(intent, language=self.language), text, scope)
+                return
+            self._answer_by_project_operation(intent, text, scope)
             return
 
         if plan.action == "capability":
@@ -1642,8 +2009,11 @@ class JarvisCore:
         personality prompt.
         """
 
-        from persona.smalltalk import small_talk_answer
+        from persona.smalltalk import identity_answer, small_talk_answer
 
+        who = identity_answer(text, language=self.language or "de", assistant=self.identity.assistant_name)
+        if who:
+            return who
         try:
             missions = self.list_missions(status="active")["count"]
         except Exception:  # noqa: BLE001
@@ -1689,8 +2059,13 @@ class JarvisCore:
             tier = ModelTier.FAST_LOCAL
             provider = self.kernel.provider(tier)
             backend = getattr(self.kernel.catalog.get(tier), "model", "") or tier.value
-            prompt = self._compose_prompt(text)
-            stream = self._generate(provider, prompt)
+            # The conversation prompt is the *system* message: the owner's
+            # identity and personality documents, in their fixed order, and
+            # nothing else -- the provider's default engineering preamble
+            # ("Your job is to: 1. Understand the user's goal ...") stays out
+            # of ordinary conversation, where it read as a robot's job sheet.
+            system, user = self._compose_messages(text)
+            stream = self._generate(provider, user, system=system)
 
             def tee():
                 """One pass over the model's output feeds both the screen and the voice.
@@ -1820,25 +2195,59 @@ class JarvisCore:
         backend: str,
         context_text: str = "",
         final_state: JarvisState = JarvisState.IDLE,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         """Record the assistant's turn, publish it, and settle into a state."""
 
         reply = ConversationTurn(
-            role="assistant", text=answer, at=_now(), backend=backend, context_text=context_text
+            role="assistant", text=answer, at=_now(), backend=backend, context_text=context_text, meta=dict(meta or {})
         )
         with self._lock:
             self._history.append(reply)
         self.emit(EventType.MESSAGE, reply.to_dict(), scope=scope)
         self.state.set(final_state, detail="" if final_state is JarvisState.IDLE else answer[:120])
 
-    def _generate(self, provider: Any, prompt: str) -> Iterable[str]:
-        """Stream from a provider, falling back to a single block if it cannot."""
+    def _generate(self, provider: Any, prompt: str, *, system: str | None = None) -> Iterable[str]:
+        """Stream from a provider, falling back to a single block if it cannot.
+
+        ``system`` is passed to providers that accept one; a provider that
+        does not gets it folded into the prompt, so the personality reaches
+        every backend either way.
+        """
 
         stream = getattr(provider, "generate_stream", None)
         if callable(stream):
+            if system:
+                try:
+                    yield from stream(prompt, system=system)
+                    return
+                except TypeError:
+                    yield from stream(f"{system}\n\n{prompt}")
+                    return
             yield from stream(prompt)
             return
+        if system:
+            try:
+                yield provider.generate(prompt, system=system)
+                return
+            except TypeError:
+                yield provider.generate(f"{system}\n\n{prompt}")
+                return
         yield provider.generate(prompt)
+
+    def _compose_messages(self, text: str) -> tuple[str, str]:
+        """(system, user): the personality/identity block and the transcript + the owner's words."""
+
+        full = self._compose_prompt(text)
+        marker = "\n\nRecent conversation:\n"
+        if marker in full:
+            head, tail = full.split(marker, 1)
+            return head, "Recent conversation:\n" + tail
+        marker = f"\n\nuser: "
+        if marker in full:
+            head, tail = full.rsplit(marker, 1)
+            return head, "user: " + tail
+        return "", full
 
     def _compose_prompt(self, text: str) -> str:
         """Wrap the user's words in the persona and recent context.
@@ -2000,33 +2409,143 @@ class JarvisCore:
                                              "volume": self.voice.settings.volume})
         return status
 
+    def _stt_hotwords(self) -> str:
+        """A bounded, current entity list for the recogniser: product terms, project titles, capability names, owner vocabulary."""
+
+        from speech.normalize import BUILTIN_ENTITIES, entity_hints
+
+        names: list[str] = [self.identity.assistant_name]
+        try:
+            names += [str(p.get("title") or "") for p in self.list_projects() if not p.get("hidden")][:12]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            names += [str(m.capability_id).split(".")[0] for m in self.capabilities.registry.all()][:8]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            names += self.voice.vocabulary.meant_terms()[-10:]
+        except Exception:  # noqa: BLE001
+            pass
+        names += list(BUILTIN_ENTITIES)
+        return entity_hints(names, limit=28)
+
+    def _normalizer(self) -> Any:
+        from speech.normalize import Normalizer
+
+        entities: list[str] = []
+        try:
+            entities += [str(p.get("title") or "") for p in self.list_projects() if not p.get("hidden")][:40]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            entities += [str(m.capability_id).split(".")[0] for m in self.capabilities.registry.all()][:20]
+        except Exception:  # noqa: BLE001
+            pass
+        return Normalizer(entities=entities, vocabulary=self.voice.vocabulary)
+
     def hear(self, wav: bytes, *, language: str = "", answer: bool = True, wake: Any = None,
-             session: str = "", origin: str = "") -> dict[str, Any]:
+             session: str = "", origin: str = "", evidence: dict[str, Any] | None = None) -> dict[str, Any]:
         """Transcribe a posted utterance and, unless told otherwise, reply to it.
 
         ``wake`` is the detector score that opened this listening session
         (the listener sends it), ``origin`` is ``"ui"`` for the microphone
-        button.  Audio that carries neither is not a request: it is
-        transcribed, reported back, and creates nothing.
+        button, ``evidence`` is what the device measured while recording.
+        Audio that carries neither authority is not a request.
+
+        One utterance is one authoritative event: it gets an identity, its
+        audio is measured independently of the recogniser, the recogniser's
+        own doubt is read rather than ignored, the wake word is removed only
+        inside a wake session, the text is normalised conservatively, and
+        the evidence gate rules -- with reasons that go to Activity as one
+        ``voice_trace`` -- before anything reaches the conversation.  An
+        accepted utterance is entered in the ledger so the same audio can
+        never be executed twice.
         """
 
+        import uuid
+
+        from speech.utterance import AudioEvidence, UtteranceEvidence
+
+        evidence = dict(evidence or {})
+        authorised = origin == "ui" or self._wake_authorised(wake)
+        source = "ui_mic" if origin == "ui" else str(evidence.get("source") or ("microphone" if self._wake_authorised(wake) else "unknown"))
+        utterance_id = str(evidence.get("utterance") or "") or f"{session or 'ui'}-{uuid.uuid4().hex[:8]}"
+        received = time.monotonic()
         # Speaking to Jarvis is what enters voice mode; it is the least
         # surprising trigger and needs no separate switch.
         self.voice.settings.enabled = True
-        # Hint the recogniser with the language the conversation is already in.
-        # Whisper decodes measurably better when told, and the alternative --
-        # letting it decide per utterance -- makes it flip on short phrases.
-        transcript = self.voice.transcribe(
-            wav, language=language or self.voice.settings.language or self.language
+
+        # 1. The audio itself, measured before any recogniser has an opinion.
+        try:
+            from speech.contracts import Audio
+
+            audio = Audio.from_wav(wav)
+            audio_evidence = AudioEvidence.from_pcm(audio.samples, audio.sample_rate, audio.width)
+        except Exception:  # noqa: BLE001 - unreadable audio is empty evidence; transcribe() reports it
+            audio_evidence = AudioEvidence()
+        device = {k: v for k, v in evidence.items() if k in {"speech_seconds", "noise_floor", "threshold", "elapsed", "interrupted", "started", "wake_at"}}
+        try:
+            device_speech = float(device.get("speech_seconds", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            device_speech = 0.0
+        # Was ZEUS talking while this was recorded?  Either the device says
+        # its barge-in interrupted speech, or the core's own playback estimate
+        # overlaps the recording window.
+        window_start = received - max(audio_evidence.duration_seconds, 0.0) - 0.5
+        speaking_overlap = "speech" in str(device.get("interrupted", "")) or self.voice.was_speaking_between(window_start, received)
+
+        utterance = UtteranceEvidence(
+            utterance_id=utterance_id, session_id=session, source=source, wake_session_id=session if self._wake_authorised(wake) else "",
+            wake_score=float(wake) if self._wake_authorised(wake) else 0.0, started_at=float(device.get("started", 0.0) or 0.0) or time.time(),
+            ended_at=time.time(), audio=audio_evidence, device=device, speaking_overlap=speaking_overlap,
         )
+
+        def trace(verdict: Any, transcript: Any = None, segmentation: Any = None, normalized: Any = None) -> dict[str, Any]:
+            payload = {"voice_trace": True, "utterance": utterance.to_dict(), "verdict": verdict.to_dict() if verdict is not None else None,
+                       "segmentation": segmentation.to_dict() if segmentation is not None else None,
+                       "normalization": normalized.to_dict() if normalized is not None else None,
+                       "session": session, "wake_score": wake, "text": (transcript.text if transcript is not None else "")[:200]}
+            self.emit(EventType.DIAGNOSTIC, payload)
+            return payload
+
+        # 2. Silence and noise are refused before the recogniser can invent a sentence for them.
+        if authorised and audio_evidence.frames and audio_evidence.duration_seconds >= 0.3:
+            silent = audio_evidence.rms < self.voice.gate.settings.min_rms or audio_evidence.peak < self.voice.gate.settings.min_peak
+            no_speech = max(audio_evidence.speech_seconds, device_speech) < self.voice.gate.settings.min_speech_seconds
+            if silent or no_speech:
+                from speech.utterance import Check, Verdict
+
+                why = (f"silence: rms {audio_evidence.rms:.0f}, peak {audio_evidence.peak}" if silent
+                       else f"no speech energy: {audio_evidence.speech_seconds:.2f}s above the floor")
+                verdict = Verdict(False, why, [Check("audio energy above a silent room", not silent, f"rms {audio_evidence.rms:.0f}"),
+                                               Check("speech-like energy present", not no_speech, f"{audio_evidence.speech_seconds:.2f}s")], 0.0, "low")
+                self.voice.gate.rejected.append({"text": "", "reason": why, "confidence": 0.0, "at": time.time(), "utterance_id": utterance_id, "session": session})
+                del self.voice.gate.rejected[:-50]
+                trace(verdict)
+                self.state.set(JarvisState.IDLE, detail="nothing heard")
+                return {"ok": False, "ignored": True, "reason": why, "text": "", "utterance_id": utterance_id, "wake": wake}
+
+        # 3. Recognise, with the language the conversation is already in and
+        #    the current entity names as a bounded decoding bias.
+        transcript = self.voice.transcribe(
+            wav, language=language or self.voice.settings.language or self.language, hotwords=self._stt_hotwords(),
+        )
+        utterance.raw_transcript = transcript.raw_text or transcript.text
+        utterance.stt = dict(transcript.quality or {})
+        utterance.stt.setdefault("language", transcript.language)
+        utterance.language = transcript.language
+        utterance.confidence = float(transcript.confidence or 0.0)
         if transcript.empty:
+            from speech.utterance import Verdict
+
+            trace(Verdict(False, "nothing heard", [], 0.0, "low"), transcript)
             self.state.set(JarvisState.IDLE, detail="nothing heard")
-            return {"ok": False, "text": "", "reason": "no speech detected"}
-        authorised = origin == "ui" or self._wake_authorised(wake)
+            return {"ok": False, "ignored": True, "text": "", "reason": "no speech detected", "utterance_id": utterance_id}
+
+        # 4. The wake word is session metadata, never command content.
         segmentation = None
         if self._wake_authorised(wake):
-            # The detector knows the trigger was the wake word; the command
-            # is what remains.  Session-scoped: never a global rewrite.
             from speech.wake_segment import strip_wake_word
 
             segmentation = strip_wake_word(transcript.text, wake_word=self._wake_word_name(), words=transcript.words, wake_session=True)
@@ -2034,15 +2553,34 @@ class JarvisCore:
                 self.emit(EventType.DIAGNOSTIC, {"wake_segment": segmentation.to_dict(), "session": session})
                 transcript.text = segmentation.text
                 if transcript.empty:
+                    from speech.utterance import Verdict
+
+                    trace(Verdict(False, "only the wake word was heard", [], 0.0, "low"), transcript, segmentation)
                     self.state.set(JarvisState.IDLE, detail="only the wake word was heard")
-                    self.emit(EventType.DIAGNOSTIC, {"utterance": "ignored", "reason": "only the wake word", "session": session, "wake": wake})
-                    return {"ok": False, "ignored": True, "reason": "only the wake word was heard", "text": "", "wake": wake}
-        accepted, why = self.voice.gate.check(transcript, authorised=authorised)
-        if not accepted:
+                    return {"ok": False, "ignored": True, "reason": "only the wake word was heard", "text": "", "wake": wake, "utterance_id": utterance_id}
+
+        # 5. Conservative normalisation: known entities and owner corrections only.
+        try:
+            normalized = self._normalizer().apply(transcript.text)
+        except Exception:  # noqa: BLE001 - normalisation must never lose the request
+            from speech.normalize import Normalized
+
+            normalized = Normalized(transcript.text, transcript.text)
+        utterance.normalized_transcript = normalized.text
+        transcript.raw_text = utterance.raw_transcript
+        transcript.text = normalized.text
+
+        # 6. The gate rules, with every check named.
+        verdict = self.voice.gate.check(utterance, authorised=authorised, recent_spoken=self.voice.spoken_recently(), ledger=self.voice.ledger)
+        self.emit(EventType.TRANSCRIPT, {**transcript.to_dict(), "accepted": verdict.accepted, "reason": verdict.reason, "utterance_id": utterance_id})
+        trace(verdict, transcript, segmentation, normalized)
+        if not verdict.accepted:
             self.state.set(JarvisState.IDLE, detail="utterance ignored")
-            self.emit(EventType.DIAGNOSTIC, {"utterance": "ignored", "reason": why, "text": transcript.text[:80],
-                                             "confidence": round(transcript.confidence, 3), "wake": wake, "session": session})
-            return {"ok": False, "ignored": True, "reason": why, **transcript.to_dict()}
+            self.emit(EventType.DIAGNOSTIC, {"utterance": "ignored", "reason": verdict.reason, "text": transcript.text[:80],
+                                             "confidence": round(verdict.confidence, 3), "wake": wake, "session": session, "utterance_id": utterance_id})
+            return {"ok": False, "ignored": True, "reason": verdict.reason, "utterance_id": utterance_id, **transcript.to_dict()}
+        self.voice.ledger.accept(utterance)
+
         if transcript.language:
             from persona.language import stable_language
 
@@ -2050,21 +2588,31 @@ class JarvisCore:
             # same confidence threshold as text: a mis-heard word should not
             # switch the voice.
             self.language = stable_language(transcript.text, current=self.language)
-        meta = {}
+
+        # 7. Provenance travels with the turn: who said it, when, from which
+        #    session, what was heard and what was made of it.
+        meta: dict[str, Any] = {
+            "source": source, "utterance_id": utterance_id, "session": session,
+            "raw_transcript": utterance.raw_transcript, "normalized": normalized.text,
+            "replacements": [r.to_dict() for r in normalized.replacements],
+            "speech_confidence": round(verdict.confidence, 3), "speech_level": verdict.level,
+            "stt": {k: v for k, v in utterance.stt.items() if k != "word_probabilities"},
+            "audio": audio_evidence.to_dict(),
+        }
         if self._wake_authorised(wake):
-            meta = {"wake_word": self._wake_word_name(), "wake_score": round(float(wake), 3), "session": session,
-                    "wake_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "removed": segmentation.removed if segmentation else ""}
+            meta.update({"wake_word": self._wake_word_name(), "wake_score": round(float(wake), 3),
+                         "wake_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "removed": segmentation.removed if segmentation else ""})
             self.emit(EventType.DIAGNOSTIC, {"wake": self._wake_word_name(), "score": round(float(wake), 3), "session": session,
-                                             "command": transcript.text[:200]})
+                                             "command": transcript.text[:200], "utterance_id": utterance_id})
         elif origin == "ui":
-            meta = {"origin": "ui"}
+            meta["origin"] = "ui"
         if answer:
-            self.send_message(transcript.text, meta=meta)
+            self.send_message(transcript.text, meta=meta, request_id=utterance_id)
         else:
             # Transcribed on request without an answer: the turn is over, the
             # eye must not stay on TRANSCRIBING.
             self.state.set(JarvisState.IDLE, detail="transcribed")
-        return {"ok": True, **transcript.to_dict()}
+        return {"ok": True, "utterance_id": utterance_id, "speech_confidence": round(verdict.confidence, 3), **transcript.to_dict()}
 
     # ------------------------------------------------------------------
     # Persona
@@ -2494,6 +3042,7 @@ class JarvisCore:
         at = evaluation.get("at_effective_threshold") or {}
         return {
             "ok": True, "wake_word": "zeus", "model_trained": trained, "model": str(model) if trained else "",
+            "speaking": bool(self._voice is not None and self._voice.speaking),
             "model_kind": "OWNER" if trained and owner_trained else ("SYNTHETIC" if trained else "NONE"),
             "model_fingerprint": fingerprint,
             "positive": positive, "negative": negative, "hard_negative": hard_negative, "owner_samples": owner_trained,
@@ -2895,14 +3444,24 @@ class JarvisCore:
                 "classes": list(CLASSES), "scopes": list(SCOPES)}
 
     def correction_save(self, what_was_wrong: str, *, receipt_id: str = "", classification: str = "",
-                        scope: str = "", original_request: str = "", rerun: bool = False) -> dict[str, Any]:
-        """Store a trusted owner correction.  Reached only from the owner's UI."""
+                        scope: str = "", original_request: str = "", rerun: bool = False, category: str = "") -> dict[str, Any]:
+        """Store a trusted owner correction.  Reached only from the owner's UI.
 
-        from service.corrections import CLASSES, SCOPES, OwnerCorrection, pronunciation_pair, rule_for
+        ``category`` is the owner's own word for what went wrong (MISHEARD,
+        WRONG_INTENT, WRONG_TARGET, WRONG_RESULT, INCOMPLETE, PRONUNCIATION,
+        OTHER); it decides which system learns.  A MISHEARD correction becomes
+        a bounded vocabulary rule for the recogniser and never a global
+        replacement; the protected personality and policy are never touched.
+        """
+
+        from service.corrections import CLASSES, OWNER_CATEGORIES, SCOPES, OwnerCorrection, heard_meant_pair, pronunciation_pair, rule_for
 
         if not what_was_wrong.strip():
             return {"ok": False, "error": "say what was wrong"}
-        pair = pronunciation_pair(what_was_wrong)
+        category = str(category or "").upper()
+        if category in OWNER_CATEGORIES and classification not in CLASSES:
+            classification = OWNER_CATEGORIES[category]
+        pair = pronunciation_pair(what_was_wrong) if category in {"", "PRONUNCIATION"} else None
         if pair:
             # A pronunciation correction lives in the lexicon (and is tested
             # by synthesis); it never touches the personality documents.
@@ -2910,6 +3469,33 @@ class JarvisCore:
             return {"ok": result.get("ok", False), "classification": "PRONUNCIATION", "scope": "GLOBAL_OWNER_PREFERENCE", **result}
         context = self.correction_context(receipt_id) if receipt_id else {}
         request = original_request or str(context.get("original_request", ""))
+        if category == "MISHEARD" or classification == "STT_CORRECTION":
+            heard_text = request
+            with self._lock:
+                for turn in reversed(self._history):
+                    if turn.role == "user" and turn.meta.get("raw_transcript"):
+                        heard_text = str(turn.meta.get("normalized") or turn.text)
+                        break
+            found = heard_meant_pair(what_was_wrong, heard_text=heard_text)
+            if not found:
+                return {"ok": False, "error": "say what was heard and what you meant, e.g. „Starkfisch → Stockfish“ or „ich meinte Stockfish“"}
+            heard, meant = found
+            learned = self.voice.vocabulary.learn(heard, meant, note=what_was_wrong[:200])
+            if not learned.get("ok"):
+                return {"ok": False, "error": learned.get("error", "not learned")}
+            correction = OwnerCorrection(
+                original_request=request, what_was_wrong=what_was_wrong.strip(), classification="STT_CORRECTION", scope="ENTITY_SPECIFIC",
+                parsed_intent=str(context.get("parsed_intent", "")), entities={"heard": heard, "meant": meant}, executed_action=str(context.get("executed_action", "")),
+                observed_result=str(context.get("observed_result", ""))[:500], receipt_id=receipt_id, when={"terms": [heard.lower()]},
+                then={"note": f"{heard} means {meant}", "overrides": {}}, provenance="owner-ui",
+            )
+            self.corrections.add(correction)
+            self.emit(EventType.NOTIFICATION, {"text": f"STT correction learned: „{heard}“ → „{meant}“", "kind": "owner_correction", "correction": correction.to_dict()})
+            out: dict[str, Any] = {"ok": True, "correction": correction.to_dict(), "vocabulary": learned}
+            if rerun and heard_text.strip():
+                corrected = re.sub(r"(?<![\w'])" + re.escape(heard) + r"(?![\w'])", meant, heard_text)
+                out["rerun"] = self.send_message(corrected, scope="", meta={"source": "correction_rerun", "corrected_from": heard, "meant": meant})
+            return out
         guess = self.correction_classify(what_was_wrong, receipt_id=receipt_id)
         classification = classification if classification in CLASSES else guess["classification"]
         scope = scope if scope in SCOPES else guess["scope"]
@@ -3048,7 +3634,9 @@ class JarvisCore:
                 self.voice.speak_stream([text], scope=scope)
             except Exception:  # noqa: BLE001
                 pass
-        self._deliver(text, scope=scope, backend="thoughts", context_text=f"[thought {thought.thought_id}]")
+        # A thought is ZEUS's, never the owner's: the turn says so.
+        self._deliver(text, scope=scope, backend="thoughts", context_text=f"[thought {thought.thought_id}]",
+                      meta={"source": "zeus_thought", "thought_id": thought.thought_id, "importance": thought.importance})
 
     def list_thoughts(self, status: str = "") -> dict[str, Any]:
         store = self.thoughts.store
@@ -3102,8 +3690,12 @@ class JarvisCore:
             store.set_status(thought_id, "ACTED_ON")
             return {"ok": True, "mission_id": mission.mission_id}
         if action == "tell_me_more":
+            # The owner pressed a button; the words are ZEUS's own.  The turn
+            # carries that provenance so the interface never renders it as
+            # something the owner said.
             self.send_message(f"Erklär mir deinen Gedanken „{thought.title}“ genauer: {thought.text} Belege: " +
-                              "; ".join(e.get("summary", "") for e in thought.evidence[:4]))
+                              "; ".join(e.get("summary", "") for e in thought.evidence[:4]),
+                              meta={"source": "thought_inbox", "thought_id": thought_id})
             return {"ok": True, "asked": True}
         return {"ok": False, "error": f"unknown action {action}"}
 
@@ -3223,9 +3815,17 @@ class JarvisCore:
         """
 
         running = self._running_now()
+        # Audio already handed to the client may still be playing after the
+        # speaker object is gone: the estimate says so, and the listener
+        # needs to know its recording may contain ZEUS's own voice.
+        speaking = bool(self._voice is not None and self._voice.speaking)
         if not running:
+            if speaking and self._voice is not None:
+                self._voice.interrupt()
+                self.emit(EventType.DIAGNOSTIC, {"voice_interrupt": "playback stopped", "session": session, "wake": wake})
+                return {"ok": True, "interrupted": ["speech"], "speaking": True}
             self.emit(EventType.DIAGNOSTIC, {"voice_interrupt": "nothing to interrupt", "session": session, "wake": wake})
-            return {"ok": True, "interrupted": []}
+            return {"ok": True, "interrupted": [], "speaking": False}
         self._stop_requested.set()
         if self._voice is not None:
             self._voice.interrupt()
@@ -3233,7 +3833,7 @@ class JarvisCore:
         self.emit(EventType.NOTIFICATION, {"text": ("Unterbrochen — ich höre zu." if de else "Interrupted — listening."), "kind": "barge_in",
                                            "stopped": running, "session": session, "wake": wake})
         self.state.set(JarvisState.LISTENING, detail=f"barge-in {session}".strip())
-        return {"ok": True, "interrupted": running}
+        return {"ok": True, "interrupted": running, "speaking": speaking}
 
     #: The listener's session states, mirrored into the core's state so the
     #: interface (the eye) shows LISTENING while the device is armed.
@@ -3321,17 +3921,31 @@ class JarvisCore:
                 # hidden flag, and the owner's own placement of the node
                 "importance": str(metadata.get("importance") or self._default_importance(project, tasks, blocked)),
                 "hidden": bool(metadata.get("hidden", False)),
+                "parent_id": str(metadata.get("parent_id") or ""),
+                "deadline": str(metadata.get("deadline") or ""),
                 "layout": dict(metadata.get("layout") or {}),
                 "health": self._project_health(project, tasks, blocked, done),
                 "notes": list(metadata.get("zeus_notes") or [])[-3:],
             })
         return rows
 
-    IMPORTANCE_LEVELS = ("PINNED", "FOCUS", "ACTIVE", "NORMAL", "LOW_PRIORITY", "DORMANT", "ARCHIVED")
+    IMPORTANCE_LEVELS = ("PINNED", "FOCUS", "ACTIVE", "NORMAL", "LOW_PRIORITY", "DORMANT", "TEST", "ARCHIVED")
+    #: Hidden from the default galaxy; "show everything" reveals them.  Nothing is deleted.
+    HIDDEN_IMPORTANCE = frozenset({"TEST", "ARCHIVED"})
+    #: "Test", "Test Alpha", "zeus_test", "Zeus Testprojekt", "Zeus Realtest" -- legacy probes.
+    #: Deliberately not every compound with "test" in it: "Sprachtest" is a project the owner
+    #: creates on purpose and expects to see.
+    _TEST_TITLE = re.compile(r"(^|\b)(test|tests|testing|probe|dummy|demo|sample|acceptance)(\b|_|\d)|testprojekt|zeus_test|realtest", re.I)
 
-    @staticmethod
-    def _default_importance(project: Any, tasks: list[Any], blocked: int) -> str:
+    @classmethod
+    def _default_importance(cls, project: Any, tasks: list[Any], blocked: int) -> str:
         state = str(getattr(project.state, "value", str(project.state))).lower()
+        title = str(getattr(project, "title", "") or "")
+        goal = str(getattr(project, "goal", "") or "")
+        # Legacy test/probe records ("Test Alpha", "zeus_test", "Zeus Testprojekt")
+        # are TEST by default: kept as evidence, out of the owner's galaxy.
+        if cls._TEST_TITLE.search(title) or (not title and cls._TEST_TITLE.search(goal[:40])):
+            return "TEST"
         if state in {"completed", "abandoned"}:
             return "ARCHIVED" if state == "abandoned" else "DORMANT"
         try:
@@ -3446,7 +4060,7 @@ class JarvisCore:
         overview = self.projects_overview()
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
-        shown = [p for p in overview["projects"] if everything or (not p.get("hidden") and p.get("importance") not in {"ARCHIVED"})]
+        shown = [p for p in overview["projects"] if everything or (not p.get("hidden") and p.get("importance") not in self.HIDDEN_IMPORTANCE)]
         for p in shown:
             nodes.append({"id": p["id"], "kind": "project", "label": p["title"] or p["goal"][:40], "importance": p["importance"], "health": p["health"],
                           "state": p["state"], "tasks": p["tasks"], "tasks_done": p["tasks_done"], "layout": p.get("layout", {}), "updated_at": p["updated_at"], "data": p})
@@ -3456,6 +4070,10 @@ class JarvisCore:
             nodes.append({"id": f"cap:{fam['capability_id']}", "kind": "capability", "label": fam["capability_id"], "attempts": fam["count"],
                           "state": fam["latest_state"], "collapsed": True, "data": fam})
         titles = {n["id"]: n["label"].lower() for n in nodes if n["kind"] == "project"}
+        # Subprojects orbit their parent: an explicit owner hierarchy, never inferred from words.
+        for p in shown:
+            if p.get("parent_id") and p["parent_id"] in titles:
+                edges.append({"source": p["parent_id"], "target": p["id"], "type": "subproject_of", "active": False})
         for m in overview["missions"]:
             if m.get("system") == "acquisition":
                 continue
@@ -3520,6 +4138,14 @@ class JarvisCore:
             "id": project.id,
             "goal": project.goal,
             "state": getattr(project.state, "value", str(project.state)),
+            "title": getattr(project, "title", "") or "",
+            "created_at": getattr(project, "created_at", ""),
+            "updated_at": getattr(project, "updated_at", ""),
+            "metadata": {k: v for k, v in dict(getattr(project, "metadata", {}) or {}).items() if k in {"parent_id", "parent_title", "deadline", "importance", "owner_request", "renamed", "hidden"}},
+            "artifacts": [{"path": a.path, "kind": a.kind, "description": a.description, "at": a.added_at} for a in getattr(project, "artifacts", [])][-20:],
+            "decisions": [{"text": d.text, "rationale": d.rationale, "at": d.added_at} for d in getattr(project, "decisions", [])][-20:],
+            "findings": [{"text": f.text, "source": f.source, "at": f.added_at} for f in getattr(project, "findings", [])][-20:],
+            "blockers": [{"text": b.text, "needs_user": b.needs_user, "resolved": b.resolved} for b in getattr(project, "blockers", []) if not b.resolved][-20:],
             "tasks": [
                 {
                     "title": task.title,

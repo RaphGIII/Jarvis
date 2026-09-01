@@ -118,7 +118,8 @@ class JarvisHTTPServer:
 
         routes: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "/api/message": lambda body: self.core.send_message(
-                str(body.get("text", "")), scope=str(body.get("scope", ""))
+                str(body.get("text", "")), scope=str(body.get("scope", "")),
+                meta={"source": str(body.get("source") or "text")}, request_id=str(body.get("request_id", "")),
             ),
             "/api/status": lambda _: self.core.status(),
             # Polled far more often than /api/status, because the whole value
@@ -227,6 +228,7 @@ class JarvisHTTPServer:
                 str(body.get("what_was_wrong", "")), receipt_id=str(body.get("receipt_id", "")),
                 classification=str(body.get("classification", "")), scope=str(body.get("scope", "")),
                 original_request=str(body.get("original_request", "")), rerun=bool(body.get("rerun", False)),
+                category=str(body.get("category", "")),
             ),
             "/api/corrections": lambda _: self.core.list_corrections(),
             "/api/correction/update": lambda body: self.core.update_correction(
@@ -419,8 +421,19 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                 wake = (query.get("wake") or [self.headers.get("X-Jarvis-Wake") or ""])[0] or None
                 session = (query.get("session") or [self.headers.get("X-Jarvis-Session") or ""])[0]
                 origin = (query.get("origin") or [self.headers.get("X-Jarvis-Origin") or ""])[0]
+                # What the device measured while recording (X-Jarvis-Utterance,
+                # -Speech-Seconds, -Noise-Floor, -Interrupted, ...): evidence for
+                # the acceptance gate, and the utterance's identity.
+                evidence: dict[str, Any] = {}
+                for name in ("Utterance", "Source", "Speech-Seconds", "Noise-Floor", "Threshold", "Elapsed", "Started", "Interrupted", "Wake-At"):
+                    value = self.headers.get(f"X-Jarvis-{name}")
+                    if value is not None and value != "":
+                        evidence[name.lower().replace("-", "_")] = value
+                for key in ("utterance", "source"):
+                    if query.get(key):
+                        evidence[key] = query[key][0]
                 try:
-                    result = app.core.hear(raw, language=language, answer=answer, wake=wake, session=session, origin=origin)
+                    result = app.core.hear(raw, language=language, answer=answer, wake=wake, session=session, origin=origin, evidence=evidence)
                 except Exception as exc:
                     self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
                     return
@@ -503,7 +516,12 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
             subscription = app.bus.subscribe(replay=False)
             try:
                 for event in app.bus.history(since=since):
-                    if not self._write_event(event.to_dict()):
+                    # History is context, not something that is happening
+                    # now: a client must render it as the past (no speech
+                    # playback, no "new" user turn), so it is marked.
+                    data = event.to_dict()
+                    data["replay"] = True
+                    if not self._write_event(data):
                         return
                 # Tell the client the current state immediately, so a page
                 # opened mid-mission renders the truth rather than "idle".

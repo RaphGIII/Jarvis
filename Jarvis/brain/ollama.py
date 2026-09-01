@@ -99,8 +99,9 @@ class OllamaBrainProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        system: str | None = None,
     ) -> str:
-        return self._chat(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        return self._chat(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, system=system)
 
     def generate_coding(
         self, prompt: str, *, max_tokens: int = 1024, temperature: float = 0.1, top_p: float = 0.9
@@ -127,6 +128,7 @@ class OllamaBrainProvider:
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        system: str | None = None,
     ) -> Iterator[str]:
         """Yield content as the model produces it.
 
@@ -140,7 +142,7 @@ class OllamaBrainProvider:
         line rather than buffering the response.
         """
 
-        body = self._body(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+        body = self._body(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, system=system)
         body["stream"] = True
 
         url = self.spec.base_url.rstrip("/") + "/api/chat"
@@ -213,6 +215,7 @@ class OllamaBrainProvider:
         temperature: float | None = None,
         top_p: float | None = None,
         schema: dict[str, Any] | None = None,
+        system: str | None = None,
     ) -> dict[str, Any]:
         """The /api/chat request, shared by the streaming and blocking paths.
 
@@ -223,8 +226,12 @@ class OllamaBrainProvider:
         """
 
         messages: list[dict[str, str]] = []
-        if self.system_prompt:
-            messages.append({"role": "system", "content": self.system_prompt})
+        # A caller-supplied system message replaces the provider default:
+        # ordinary conversation sends the owner's personality documents and
+        # nothing else, while planners keep the engineering preamble.
+        chosen = system if system is not None else self.system_prompt
+        if chosen:
+            messages.append({"role": "system", "content": chosen})
         messages.append({"role": "user", "content": prompt})
 
         options: dict[str, Any] = {
@@ -256,9 +263,10 @@ class OllamaBrainProvider:
         temperature: float | None,
         top_p: float | None,
         schema: dict[str, Any] | None = None,
+        system: str | None = None,
     ) -> str:
         body = self._body(
-            prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, schema=schema
+            prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, schema=schema, system=system
         )
         options = body["options"]
 

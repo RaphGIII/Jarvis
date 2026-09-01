@@ -153,9 +153,16 @@ class MusicRequest:
     #: Which provider preference resolved this, filled in by the resolver.
     provider: str = ""
     reason: str = ""
+    #: What the query names: track | artist | album | playlist | top_track | any.
+    #: "Spiel Rammstein" is an ARTIST request; verifying it by looking for
+    #: "Rammstein" in the track *title* failed a request that succeeded
+    #: (track "Sonne", artist "Rammstein").  The kind decides what is checked.
+    kind: str = "any"
+    #: The artist named with "von"/"by", when the query is a track by someone.
+    artist: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"action": self.action, "query": self.query, "provider": self.provider}
+        return {"action": self.action, "query": self.query, "provider": self.provider, "kind": self.kind, "artist": self.artist}
 
 
 def understand(text: str) -> MusicRequest | None:
@@ -190,11 +197,47 @@ def understand(text: str) -> MusicRequest | None:
             # A paragraph is not a track name, whichever verb matched.
             return None
         if query:
-            return MusicRequest("play", query=query, reason="names something to play")
+            kind, artist = classify_target(text, query)
+            return MusicRequest("play", query=query, reason=f"names something to play ({kind})", kind=kind, artist=artist)
         if has_context:
             # "Mach Musik an" -- a play with no particular track.
             return MusicRequest("resume", reason="asks for music with no track named")
     return None
+
+
+_ALBUM = re.compile(r"\b(das\s+album|the\s+album|album)\b", re.I)
+_PLAYLIST = re.compile(r"\b(playlist|die\s+liste|wiedergabeliste)\b", re.I)
+_TOP = re.compile(r"\b(top[-\s]?(?:track|song|titel|hits?)|beliebteste\w*|bekannteste\w*|most\s+popular|biggest\s+hit)\b", re.I)
+_ARTIST_CUE = re.compile(r"\b(?:was|etwas|irgendwas|irgendetwas|musik|songs?|lieder|tracks?|something|some\s+music|anything)\s+(?:von|by|from)\s+(.+)$", re.I)
+_BY = re.compile(r"\b(?:von|by)\s+(.+)$", re.I)
+
+
+def classify_target(text: str, query: str) -> tuple[str, str]:
+    """(kind, artist) for a play request.
+
+    album / playlist / top_track by their nouns; "etwas von X" or a bare
+    single name is an ARTIST request; "Titel von X" is a TRACK by artist X;
+    a multi-word query without a "von" is a track (or any).
+    """
+
+    stripped = _PLAY_SUFFIX.sub("", (text or "").strip())
+    if _PLAYLIST.search(stripped):
+        return "playlist", ""
+    if _ALBUM.search(stripped):
+        return "album", ""
+    if _TOP.search(stripped):
+        m = _BY.search(query) or _ARTIST_CUE.search(stripped)
+        return "top_track", (m.group(1).strip(" .!?") if m else query)
+    m = _ARTIST_CUE.search(stripped)
+    if m:
+        return "artist", m.group(1).strip(" .!?")
+    m = _BY.search(stripped)
+    if m:
+        return "track", m.group(1).strip(" .!?")
+    if len(query.split()) <= 2:
+        # one name: an artist or a track -- verified against both
+        return "any", ""
+    return "track", ""
 
 
 def prose_reason(query: str) -> str:
@@ -630,7 +673,7 @@ class MusicService:
             )
 
         if request.action == "play" and request.query:
-            checks.append(self._track_matches(request.query, after))
+            checks.append(self._track_matches(request.query, after, kind=getattr(request, "kind", "any"), artist=getattr(request, "artist", "")))
         if request.action in {"next", "previous"}:
             checks.append(
                 Verification(
@@ -643,29 +686,50 @@ class MusicService:
         return checks
 
     @staticmethod
-    def _track_matches(query: str, after: Any) -> Verification:
-        """Does what is playing resemble what was asked for?
+    def _track_matches(query: str, after: Any, *, kind: str = "any", artist: str = "") -> Verification:
+        """Does what is playing satisfy what was asked for -- by the *kind* of request?
 
         Token overlap rather than equality: Spotify returns "Lose Yourself -
         From '8 Mile' Soundtrack" for "Lose Yourself", and calling that a
-        mismatch would fail a request that succeeded. Requiring most of the
-        asked-for words to appear is strict enough to catch the failure that
-        matters -- a completely different song playing.
+        mismatch would fail a request that succeeded.  What the tokens are
+        compared against depends on the typed target: an ARTIST request is
+        satisfied by the artist field ("Rammstein" playing "Sonne"), a TRACK
+        request by the title (and the named artist, when there is one), an
+        ALBUM/PLAYLIST/TOP_TRACK request by the artist or the title, ANY by
+        either.
         """
 
-        wanted = {word for word in re.findall(r"\w+", _fold(query)) if len(word) > 2}
-        playing = set(re.findall(r"\w+", _fold(f"{after.title} {after.artist}")))
+        def tokens(text: str) -> set[str]:
+            return {word for word in re.findall(r"\w+", _fold(text)) if len(word) > 2}
+
+        wanted = tokens(query)
         if not wanted:
-            return Verification("the requested track is playing", False,
-                                observed="no query to compare", expected="a track name")
-        hits = wanted & playing
-        passed = len(hits) >= max(1, round(len(wanted) * 0.6))
-        return Verification(
-            check="the requested track is playing",
-            passed=passed,
-            observed=f"{after.title} - {after.artist} (matched {sorted(hits)} of {sorted(wanted)})",
-            expected=query,
-        )
+            return Verification("the requested music is playing", False, observed="no query to compare", expected="a name")
+        title_tokens, artist_tokens = tokens(after.title or ""), tokens(after.artist or "")
+        artist_wanted = tokens(artist) if artist else set()
+        observed = f"{after.title} - {after.artist}"
+
+        def most(want: set[str], have: set[str]) -> bool:
+            hits = want & have
+            return len(hits) >= max(1, round(len(want) * 0.6))
+
+        if kind == "artist" or kind == "top_track":
+            name = artist_wanted or wanted
+            passed = most(name, artist_tokens)
+            return Verification(check="the requested artist is playing", passed=passed,
+                                observed=f"{observed} (artist tokens {sorted(artist_tokens)} vs {sorted(name)})", expected=f"artist {artist or query}")
+        if kind == "track":
+            title_ok = most(wanted - artist_wanted or wanted, title_tokens)
+            artist_ok = most(artist_wanted, artist_tokens) if artist_wanted else True
+            return Verification(check="the requested track is playing", passed=title_ok and artist_ok,
+                                observed=f"{observed} (title {'ok' if title_ok else 'differs'}" + (f", artist {'ok' if artist_ok else 'differs'}" if artist_wanted else "") + ")",
+                                expected=f"{query}" + (f" by {artist}" if artist else ""))
+        if kind in {"album", "playlist"}:
+            passed = most(wanted, title_tokens | artist_tokens)
+            return Verification(check=f"the requested {kind} is playing", passed=passed, observed=observed, expected=query)
+        passed = most(wanted, title_tokens | artist_tokens)
+        return Verification(check="the requested track is playing", passed=passed,
+                            observed=f"{observed} (matched {sorted(wanted & (title_tokens | artist_tokens))} of {sorted(wanted)} in title or artist)", expected=query)
 
     def _headline(self, request: MusicRequest, after: Any, ok: bool) -> str:
         track = f"{after.title} - {after.artist}".strip(" -")

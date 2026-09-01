@@ -25,6 +25,38 @@ _PHATIC = (
 #: Literal questions about feelings/consciousness are not small talk.
 _LITERAL = re.compile(r"(wirklich|echt|tatsächlich|literally|really|actually).{0,30}(gefühl|emotion|bewusst|conscious|feel)", re.I)
 
+#: "Wer bist du?" is a social question about identity, not a request for a
+#: system description.  The live product answered it with "Ich bin dein
+#: persönliches System. Keine Wahrnehmung, kein Gefühl." -- a 4B model
+#: reading the identity preamble as a script.  Zeus introduces himself.
+_IDENTITY = (
+    re.compile(r"^\s*(?:hallo|hi|hey)?[\s,!.]*(?:zeus[\s,!.]*)?(?:und\s+)?(?:wer\s+bist\s+du(?:\s+(?:eigentlich|denn|genau|überhaupt))?|wie\s+hei(?:ß|ss)t\s+du|wer\s+bist\s+du\s+eigentlich|stell\s+dich\s+(?:kurz\s+)?vor|was\s+bist\s+du(?:\s+(?:eigentlich|denn|genau))?)[\s?!.]*$", re.I),
+    re.compile(r"^\s*(?:hello|hi|hey)?[\s,!.]*(?:zeus[\s,!.]*)?(?:who\s+are\s+you(?:\s+(?:exactly|really|anyway))?|what(?:'s|\s+is)\s+your\s+name|introduce\s+yourself|what\s+are\s+you(?:\s+exactly)?)[\s?!.]*$", re.I),
+)
+#: "was bist du technisch", "welches Modell" -- a technical question, answered truthfully by the model.
+_TECHNICAL = re.compile(r"(technisch|technically|modell|model|backend|llm|sprachmodell|language\s+model|ki\b|ai\b|programm|software|hardware)", re.I)
+
+
+def is_identity_question(text: str) -> bool:
+    if _TECHNICAL.search(text or "") or _LITERAL.search(text or ""):
+        return False
+    return any(p.match(text or "") for p in _IDENTITY)
+
+
+def identity_answer(text: str, *, language: str = "de", assistant: str = "Zeus", rng: random.Random | None = None) -> str | None:
+    if not is_identity_question(text):
+        return None
+    rng = rng or random.Random()
+    if (language or "de").startswith("de"):
+        return rng.choice([
+            f"Ich bin {assistant} – dein persönlicher Assistent. Ich helfe dir bei deinen Projekten, deinem Wissen und allem, was wir gemeinsam aufbauen.",
+            f"{assistant}. Dein persönlicher Assistent – für deine Projekte, dein Wissen und alles, was wir zusammen aufbauen.",
+        ])
+    return rng.choice([
+        f"I am {assistant} – your personal assistant. I help you with your projects, your knowledge and everything we build together.",
+        f"{assistant}. Your personal assistant – for your projects, your knowledge and everything we build together.",
+    ])
+
 
 def is_small_talk(text: str) -> bool:
     if _LITERAL.search(text or ""):

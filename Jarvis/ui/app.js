@@ -95,10 +95,22 @@ function connect() {
       let event;
       try { event = JSON.parse(e.data); } catch { return; }
       if (event.seq) lastSeq = Math.max(lastSeq, event.seq);
-      bus.emit(type, event.payload || {});
+      const payload = event.payload || {};
+      // Replayed history (a refresh, a reconnect from seq 0) is the past:
+      // views render it as history and never play its audio or act on it.
+      if (event.replay) payload._replay = true;
+      payload._seq = event.seq;
+      bus.emit(type, payload);
     });
   }
 }
+
+/* ZEUS opening a view on request ("Zeus, öffne meine Projekte"). Never from
+   replayed history: a refresh must not re-open whatever was opened before. */
+bus.on("notification", (payload) => {
+  if (payload._replay || payload.kind !== "open_view" || !payload.view) return;
+  views.open(payload.view, payload.params || {});
+});
 
 /* ------------------------------------------------------------------ */
 /* state -> eye, label, HUD                                            */

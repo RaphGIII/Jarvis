@@ -15,6 +15,8 @@ import * as views from "../core/views.js";
 const KINDS = {
   "request": { label: "REQUEST", cls: "req", icon: "›" },
   "wake": { label: "WAKE", cls: "tool", icon: "◉" },
+  "voice.accepted": { label: "VOICE", cls: "ok", icon: "🎙" },
+  "voice.rejected": { label: "VOICE REJECTED", cls: "warn", icon: "🎙" },
   "answer": { label: "ANSWER", cls: "ans", icon: "‹" },
   "action.verified": { label: "VERIFIED", cls: "ok", icon: "✓" },
   "action.ran": { label: "UNVERIFIED", cls: "warn", icon: "○" },
@@ -95,8 +97,17 @@ function groups(entries) {
   const out = [];
   let current = null;
   for (const e of entries) {
-    if (e.kind === "request" || !current) {
-      current = { head: e, rows: [e], repeats: 1, key: e.kind === "request" ? norm(e.summary) : "" };
+    // A rejected utterance is its own group: it produced no request, and it
+    // must not be filed under the previous one.  An accepted utterance's
+    // trace arrives just *before* its request row: it opens the group, and
+    // the request row that follows becomes the group's head.
+    if (e.kind === "request" && current && current.pendingVoice) {
+      current.head = e; current.rows.push(e); current.key = norm(e.summary); current.pendingVoice = false;
+      continue;
+    }
+    if (e.kind === "request" || e.kind === "voice.rejected" || e.kind === "voice.accepted" || !current) {
+      current = { head: e, rows: [e], repeats: 1, key: e.kind === "request" ? norm(e.summary) : e.kind === "voice.rejected" ? "rejected:" + norm(e.summary) : "",
+                  pendingVoice: e.kind === "voice.accepted" };
       out.push(current);
     } else {
       current.rows.push(e);
@@ -125,20 +136,21 @@ function verdict(g) {
 function group(g, params) {
   const [label, cls] = verdict(g);
   const route = g.rows.find((r) => r.kind === "tool" && /^routed:/.test(r.summary || ""));
-  const node = el("div", { class: "act req" });
+  const headMeta = KINDS[g.head.kind] || { label: "REQUEST", cls: "req", icon: "›" };
+  const node = el("div", { class: `act ${g.head.kind === "request" ? "req" : headMeta.cls}` });
   const body = el("div", { class: "act-body" });
   body.hidden = true;
   const head = el("div", { class: "act-head expandable" },
-    el("span", { class: "act-tag", text: "› REQUEST" + (g.repeats > 1 ? ` ×${g.repeats}` : "") }),
+    el("span", { class: "act-tag", text: `${headMeta.icon} ${headMeta.label}` + (g.repeats > 1 ? ` ×${g.repeats}` : "") }),
     el("span", { class: "act-sum", text: g.head.summary || "(no detail recorded)" }),
     label ? el("span", { class: `act-tag ${cls}`, text: label }) : null,
     el("span", { class: "act-when", text: clockOf(g.head.at) }));
   head.onclick = () => { body.hidden = !body.hidden; };
   const summary = el("div", { class: "empty", style: { padding: "2px 0 4px 18px" } });
-  const steps = g.rows.slice(1).filter((r) => r.kind !== "state.working" && r.kind !== "state.verifying" && r.kind !== "state.coding");
+  const steps = g.rows.filter((r) => r !== g.head).filter((r) => r.kind !== "state.working" && r.kind !== "state.verifying" && r.kind !== "state.coding");
   const short = steps.map((r) => (KINDS[r.kind] || { icon: "•" }).icon + " " + String(r.summary || r.kind).slice(0, 70));
   summary.textContent = (route ? route.summary.replace(/^routed:\s*/, "→ ") + " · " : "") + short.slice(0, 4).join("  ·  ") + (short.length > 4 ? `  ·  +${short.length - 4} more` : "");
-  for (const r of g.rows.slice(1)) body.append(row(r, params.receipt && r.receipt_id === params.receipt));
+  for (const r of g.rows.filter((x) => x !== g.head)) body.append(row(r, params.receipt && r.receipt_id === params.receipt));
   node.append(head, summary, body);
   return node;
 }
@@ -189,6 +201,18 @@ function technical(entry) {
     }
     return body;
   }
+  if (d.voice_trace) { voiceTrace(body, d); return body; }
+  if (d.understanding) {
+    line("top-level intent", d.understanding.top);
+    line("why", d.understanding.reason);
+    if (d.understanding.action) {
+      line("operation", d.understanding.action.operation);
+      line("target", d.understanding.action.target);
+      line("arguments", JSON.stringify(d.understanding.action.arguments));
+      line("confidence", d.understanding.action.confidence);
+      if ((d.understanding.action.missing || []).length) line("missing", d.understanding.action.missing.join(", "));
+    }
+  }
   if (d.mission_id) line("mission", d.mission_id);
   if (d.phase) line("phase", d.phase);
   if (d.goal) { line("ACTION_EXECUTED", d.goal.ACTION_EXECUTED); line("EXECUTION_VERIFIED", d.goal.EXECUTION_VERIFIED); line("GOAL_SATISFIED", d.goal.GOAL_SATISFIED); line("reasons", (d.goal.reasons || []).join("; ")); }
@@ -205,6 +229,26 @@ function technical(entry) {
     line(k, v);
   }
   return body.children.length ? body : null;
+}
+
+/* The voice chain for one utterance: WAKE → AUDIO → STT → VERDICT, each with
+   the numbers the gate actually saw. Bug reports become "utterance vs…-u1
+   rejected: self-echo 0.71" instead of "it said something weird". */
+function voiceTrace(body, d) {
+  const u = d.utterance || {}, a = u.audio || {}, s = u.stt || {}, v = d.verdict || {};
+  const block = (title, rows) => {
+    body.append(el("div", { class: "act-k", text: title, style: { marginTop: "6px" } }));
+    for (const [k, val] of rows) if (val !== undefined && val !== null && val !== "") body.append(el("div", { class: "act-kv" }, el("span", { class: "act-k", text: k }), el("span", { class: "act-v", text: String(val) })));
+  };
+  block("WAKE", [["session", u.wake_session_id || u.session_id], ["score", u.wake_score], ["utterance", u.utterance_id], ["source", u.source]]);
+  block("AUDIO", [["duration", a.duration_seconds !== undefined ? `${a.duration_seconds}s` : ""], ["speech", a.speech_seconds !== undefined ? `${a.speech_seconds}s (${Math.round((a.speech_fraction || 0) * 100)}%)` : ""],
+    ["rms / peak", a.rms !== undefined ? `${a.rms} / ${a.peak}` : ""], ["noise floor", a.noise_floor], ["device speech", (u.device || {}).speech_seconds ? `${u.device.speech_seconds}s` : ""],
+    ["ZEUS speaking", u.speaking_overlap ? "yes" : "no"]]);
+  block("STT", [["raw", u.raw_transcript], ["normalized", u.normalized_transcript], ["language", `${s.language || ""} ${s.language_probability !== undefined ? "(" + s.language_probability + ")" : ""}`],
+    ["no-speech prob.", s.no_speech_probability], ["avg logprob", s.avg_logprob], ["compression", s.compression_ratio], ["model / elapsed", s.model ? `${s.model} / ${s.elapsed}s` : ""],
+    ["replacements", ((d.normalization || {}).replacements || []).map((r) => `${r.heard} → ${r.meant}`).join(", ")], ["wake word removed", (d.segmentation || {}).removed]]);
+  block(v.accepted ? "VERDICT · ACCEPTED" : "VERDICT · REJECTED", [["reason", v.reason], ["confidence", v.confidence !== undefined ? `${v.confidence} (${v.level})` : ""]]);
+  for (const c of v.checks || []) body.append(el("div", { class: "act-check" + (c.passed ? "" : " bad"), text: `${c.passed ? "✓" : "✗"} ${c.name}` + (c.observed ? ` — ${c.observed}` : "") }));
 }
 
 function inspect(entry) {

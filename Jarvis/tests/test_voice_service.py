@@ -58,8 +58,12 @@ class StubKernel:
         return P()
 
 
-def wav_bytes(seconds=0.5, rate=16000):
-    return Audio(samples=b"\x00\x00" * int(rate * seconds), sample_rate=rate).to_wav()
+def wav_bytes(seconds=1.2, rate=16000):
+    # Speech-like samples: the acceptance gate measures the audio, and a
+    # silent buffer is refused before the (fake) recogniser is even asked.
+    from _audio import speech_wav
+
+    return speech_wav(seconds)
 
 
 # --------------------------------------------------------------------------
@@ -93,15 +97,25 @@ def test_an_unknown_id_returns_nothing():
 # --------------------------------------------------------------------------
 
 def test_a_posted_utterance_becomes_a_transcript_event():
+    """The TRANSCRIPT event carries the gate's verdict: it is published by
+    hear(), after acceptance, never by the recogniser boundary itself --
+    a rejected hallucination must not reach the owner's screen as text."""
+
     bus = EventBus()
     service = VoiceService(bus, engine_factory=lambda: FakeEngine(heard="wie spät ist es"))
 
     with bus.subscribe(replay=False) as subscription:
         transcript = service.transcribe(wav_bytes())
         events = subscription.drain()
-
     assert transcript.text == "wie spät ist es"
-    assert any(e.type is EventType.TRANSCRIPT for e in events)
+    assert not any(e.type is EventType.TRANSCRIPT for e in events), "no transcript before the verdict"
+
+    core = JarvisCore(kernel=StubKernel())
+    core._voice = VoiceService(core.bus, engine_factory=lambda: FakeEngine(heard="wie spät ist es"))
+    with core.bus.subscribe(replay=False) as subscription:
+        core.hear(wav_bytes(), origin="ui", answer=False)
+        published = [e.payload for e in subscription.drain() if e.type is EventType.TRANSCRIPT]
+    assert published and published[0]["accepted"] is True and published[0]["text"].lower().startswith("wie spät ist es")
 
 
 def test_transcribing_announces_the_state_first():
@@ -230,7 +244,7 @@ def test_speaking_to_jarvis_enters_voice_mode_and_it_answers_aloud():
     result = core.hear(wav_bytes(), origin="ui")
     _wait_for_reply(core)
 
-    assert result["ok"] and result["text"] == "wie geht es weiter"
+    assert result["ok"] and result["text"] == "Wie geht es weiter?" and result["raw_text"] == "wie geht es weiter"
     assert core._voice.settings.enabled
     assert engine.synthesized, "the reply should have been spoken"
 
@@ -322,7 +336,7 @@ def test_an_utterance_can_be_posted_as_raw_bytes(server):
     result = post_audio(server, wav_bytes(), path="/api/voice/utterance?origin=ui")
 
     assert result["ok"] is True
-    assert result["text"] == "hallo jarvis"
+    assert result["text"] == "Hallo jarvis." and result["raw_text"] == "hallo jarvis"
 
 
 def test_posting_audio_requires_the_token(server):

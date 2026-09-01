@@ -142,7 +142,7 @@ def test_barge_in_with_nothing_running_is_a_silent_no_op():
     core = JarvisCore(kernel=StubKernel())
     result, evs = events(core, lambda: core.voice_interrupt(session="vs1", wake=0.93))
 
-    assert result == {"ok": True, "interrupted": []}
+    assert result["ok"] is True and result["interrupted"] == []
     assert not [e for e in evs if e.type is EventType.NOTIFICATION], "no transcript entry"
     assert [e for e in evs if e.type is EventType.DIAGNOSTIC]
     assert core.state.snapshot.state is JarvisState.IDLE

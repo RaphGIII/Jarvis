@@ -1,5 +1,5 @@
 {
   "model": "qwen2.5-coder:7b-instruct-q4_K_M",
-  "latency_seconds": 0.43804730000556447,
+  "latency_seconds": 96.40920999999798,
   "state": "ONLINE"
 }

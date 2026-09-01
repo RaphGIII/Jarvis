@@ -1,0 +1,542 @@
+{
+ "at": "2026-09-01T17:27:31",
+ "hotwords": "Zeus, Spotify, GitHub, Stockfish, SelfDev, Mission Control, Knowledge, Ollama, Whisper, Piper, Python, PowerShell, Windows, Chrome, Screenshot, Playlist, Physikum, Biochemie, Anatomie, Physiologie, Repository, Capability, Worktree, Supervisor",
+ "rows": [
+  {
+   "label": "silence",
+   "variant": "clean",
+   "expected": "",
+   "heard": "",
+   "normalized": "",
+   "accepted": false,
+   "reason": "silence: rms 0, peak 0",
+   "confidence": 0.0,
+   "level": "low",
+   "audio": {
+    "duration_seconds": 2.0,
+    "rms": 0.0,
+    "peak": 0,
+    "speech_seconds": 0.0,
+    "speech_fraction": 0.0,
+    "noise_floor": 1.0,
+    "fingerprint": "c8640a0b692a40ca",
+    "envelope": "ed4a77d1b56a1189",
+    "frames": 100
+   },
+   "stt": {
+    "segments": 0,
+    "language_probability": 1.0,
+    "elapsed": 3.493,
+    "model": "small"
+   },
+   "elapsed": 3.5
+  },
+  {
+   "label": "fan",
+   "variant": "clean",
+   "expected": "",
+   "heard": "",
+   "normalized": "",
+   "accepted": false,
+   "reason": "no speech energy: 0.00s above the floor",
+   "confidence": 0.0,
+   "level": "low",
+   "audio": {
+    "duration_seconds": 2.0,
+    "rms": 179.762,
+    "peak": 688,
+    "speech_seconds": 0.0,
+    "speech_fraction": 0.0,
+    "noise_floor": 168.956,
+    "fingerprint": "0303f865b1c64acb",
+    "envelope": "51effba25560a428",
+    "frames": 100
+   },
+   "stt": {
+    "segments": 0,
+    "language_probability": 1.0,
+    "elapsed": 3.111,
+    "model": "small"
+   },
+   "elapsed": 3.11
+  },
+  {
+   "label": "keyboard",
+   "variant": "clean",
+   "expected": "",
+   "heard": "",
+   "normalized": "",
+   "accepted": false,
+   "reason": "no speech energy: 0.24s above the floor",
+   "confidence": 0.3,
+   "level": "low",
+   "audio": {
+    "duration_seconds": 2.0,
+    "rms": 1319.099,
+    "peak": 18833,
+    "speech_seconds": 0.24,
+    "speech_fraction": 0.12,
+    "noise_floor": 11.012,
+    "fingerprint": "4c25e1b04fdf7d08",
+    "envelope": "90a1ae70b3bde28c",
+    "frames": 100
+   },
+   "stt": {
+    "segments": 0,
+    "language_probability": 1.0,
+    "elapsed": 3.179,
+    "model": "small"
+   },
+   "elapsed": 3.18
+  },
+  {
+   "label": "c00",
+   "variant": "clean",
+   "expected": "Zeus, wie geht es dir?",
+   "heard": "Zeus, wie geht es dir?",
+   "normalized": "Zeus, wie geht es dir?",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.895,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.579,
+    "rms": 6350.169,
+    "peak": 32669,
+    "speech_seconds": 1.1,
+    "speech_fraction": 0.705,
+    "noise_floor": 6.369,
+    "fingerprint": "be83cfb98f9e27fb",
+    "envelope": "99d890d501a52f2f",
+    "frames": 78
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.043,
+    "avg_logprob": -0.326,
+    "compression_ratio": 0.733,
+    "language_probability": 1.0,
+    "elapsed": 3.62,
+    "model": "small"
+   },
+   "elapsed": 3.62
+  },
+  {
+   "label": "c01",
+   "variant": "clean",
+   "expected": "Zeus, wer bist du?",
+   "heard": "Zeus, wer bist du?",
+   "normalized": "Zeus, wer bist du?",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.895,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.347,
+    "rms": 5128.13,
+    "peak": 32697,
+    "speech_seconds": 0.94,
+    "speech_fraction": 0.701,
+    "noise_floor": 5.784,
+    "fingerprint": "1b21b9f24bbcbea4",
+    "envelope": "0d3f22908de846d0",
+    "frames": 67
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.004,
+    "avg_logprob": -0.374,
+    "compression_ratio": 0.692,
+    "language_probability": 1.0,
+    "elapsed": 3.691,
+    "model": "small"
+   },
+   "elapsed": 3.69
+  },
+  {
+   "label": "c02",
+   "variant": "clean",
+   "expected": "Zeus, erstelle ein neues Projekt namens Biochemie.",
+   "heard": "Zeus erstelle ein neues Projekt namens Biochemie.",
+   "normalized": "Zeus erstelle ein neues Projekt namens Biochemie.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.928,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 3.1,
+    "rms": 5853.887,
+    "peak": 32645,
+    "speech_seconds": 2.54,
+    "speech_fraction": 0.825,
+    "noise_floor": 23.403,
+    "fingerprint": "541a25f69e78f191",
+    "envelope": "54df8ae392c6e6da",
+    "frames": 154
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.001,
+    "avg_logprob": -0.258,
+    "compression_ratio": 0.86,
+    "language_probability": 1.0,
+    "elapsed": 3.681,
+    "model": "small"
+   },
+   "elapsed": 3.68
+  },
+  {
+   "label": "c03",
+   "variant": "clean",
+   "expected": "Zeus, mach ein Projekt für meine M1 Vorbereitung.",
+   "heard": "Zeus, mach ein Projekt für meine M1 Vorbereitung.",
+   "normalized": "Zeus, mach ein Projekt für meine M1 Vorbereitung.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.937,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 3.077,
+    "rms": 5740.519,
+    "peak": 32624,
+    "speech_seconds": 2.56,
+    "speech_fraction": 0.837,
+    "noise_floor": 25.201,
+    "fingerprint": "17c034b11d314af0",
+    "envelope": "d6ef6e7ff4fa5b53",
+    "frames": 153
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.0,
+    "avg_logprob": -0.292,
+    "compression_ratio": 0.862,
+    "language_probability": 1.0,
+    "elapsed": 3.771,
+    "model": "small"
+   },
+   "elapsed": 3.77
+  },
+  {
+   "label": "c04",
+   "variant": "clean",
+   "expected": "Zeus, öffne meine Projekte.",
+   "heard": "Zeus, Öffne meine Projekte.",
+   "normalized": "Zeus, Öffne meine Projekte.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.881,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.904,
+    "rms": 5494.303,
+    "peak": 32689,
+    "speech_seconds": 1.36,
+    "speech_fraction": 0.716,
+    "noise_floor": 2.669,
+    "fingerprint": "b855e710ac619d70",
+    "envelope": "e3121510284b6429",
+    "frames": 95
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.007,
+    "avg_logprob": -0.337,
+    "compression_ratio": 0.778,
+    "language_probability": 1.0,
+    "elapsed": 3.602,
+    "model": "small"
+   },
+   "elapsed": 3.6
+  },
+  {
+   "label": "c05",
+   "variant": "clean",
+   "expected": "Zeus, spiel Rammstein.",
+   "heard": "Zeus, Spielramstein",
+   "normalized": "Zeus, Spielramstein.",
+   "accepted": false,
+   "reason": "fragment: 1 word(s) is not a request",
+   "confidence": 0.8,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.707,
+    "rms": 4935.129,
+    "peak": 32752,
+    "speech_seconds": 1.26,
+    "speech_fraction": 0.741,
+    "noise_floor": 7.265,
+    "fingerprint": "5468c1000392668b",
+    "envelope": "65c6f6cc3422b274",
+    "frames": 85
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.002,
+    "avg_logprob": -0.503,
+    "compression_ratio": 0.704,
+    "language_probability": 1.0,
+    "elapsed": 3.579,
+    "model": "small"
+   },
+   "elapsed": 3.58
+  },
+  {
+   "label": "c06",
+   "variant": "clean",
+   "expected": "Zeus, pausiere die Musik.",
+   "heard": "Zeus, posiere die Musik.",
+   "normalized": "Zeus, posiere die Musik.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.878,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.869,
+    "rms": 5511.641,
+    "peak": 32635,
+    "speech_seconds": 1.32,
+    "speech_fraction": 0.71,
+    "noise_floor": 2.045,
+    "fingerprint": "9eeaaa66061918ae",
+    "envelope": "86d1be49037d3436",
+    "frames": 93
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.018,
+    "avg_logprob": -0.432,
+    "compression_ratio": 0.75,
+    "language_probability": 1.0,
+    "elapsed": 3.797,
+    "model": "small"
+   },
+   "elapsed": 3.8
+  },
+  {
+   "label": "c07",
+   "variant": "clean",
+   "expected": "Zeus, speichere das in Knowledge.",
+   "heard": "Zeus, Speichere das in Nord.",
+   "normalized": "Zeus, Speichere das in Nord.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.795,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.985,
+    "rms": 4892.491,
+    "peak": 32204,
+    "speech_seconds": 1.56,
+    "speech_fraction": 0.788,
+    "noise_floor": 5.262,
+    "fingerprint": "2ceea398c6e93cf0",
+    "envelope": "fcec287990fb827d",
+    "frames": 99
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.003,
+    "avg_logprob": -0.467,
+    "compression_ratio": 0.778,
+    "language_probability": 1.0,
+    "elapsed": 3.633,
+    "model": "small"
+   },
+   "elapsed": 3.63
+  },
+  {
+   "label": "c08",
+   "variant": "clean",
+   "expected": "Zeus, mach einen Screenshot.",
+   "heard": "Zeus, Mach1, Screenshot.",
+   "normalized": "Zeus, Mach1, Screenshot.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.791,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.707,
+    "rms": 5394.168,
+    "peak": 32658,
+    "speech_seconds": 1.26,
+    "speech_fraction": 0.741,
+    "noise_floor": 7.577,
+    "fingerprint": "25afa736443f0531",
+    "envelope": "add327bd16e65180",
+    "frames": 85
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.002,
+    "avg_logprob": -0.418,
+    "compression_ratio": 0.75,
+    "language_probability": 1.0,
+    "elapsed": 3.652,
+    "model": "small"
+   },
+   "elapsed": 3.65
+  },
+  {
+   "label": "c09",
+   "variant": "clean",
+   "expected": "Zeus, verbessere deine Projektansicht.",
+   "heard": "Zeus, verbessere deine Projektansicht.",
+   "normalized": "Zeus, verbessere deine Projektansicht.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.88,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 2.368,
+    "rms": 4923.317,
+    "peak": 32642,
+    "speech_seconds": 1.86,
+    "speech_fraction": 0.788,
+    "noise_floor": 7.375,
+    "fingerprint": "d0a9785eea66b49c",
+    "envelope": "2324fa9cd060df39",
+    "frames": 118
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.002,
+    "avg_logprob": -0.373,
+    "compression_ratio": 0.826,
+    "language_probability": 1.0,
+    "elapsed": 3.763,
+    "model": "small"
+   },
+   "elapsed": 3.76
+  },
+  {
+   "label": "c10",
+   "variant": "clean",
+   "expected": "Nein, ich meinte Stockfish.",
+   "heard": "Nein, ich meine Stockfish.",
+   "normalized": "Nein, ich meine Stockfish.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.906,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 1.776,
+    "rms": 5603.45,
+    "peak": 32586,
+    "speech_seconds": 1.3,
+    "speech_fraction": 0.739,
+    "noise_floor": 6.406,
+    "fingerprint": "e7e140cc7fca305a",
+    "envelope": "ace5f9a44afb746f",
+    "frames": 88
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.0,
+    "avg_logprob": -0.362,
+    "compression_ratio": 0.765,
+    "language_probability": 1.0,
+    "elapsed": 3.659,
+    "model": "small"
+   },
+   "elapsed": 3.66
+  },
+  {
+   "label": "c11",
+   "variant": "clean",
+   "expected": "Zeus, erstelle ein neues Projekt namens Sprachtest.",
+   "heard": "Zeus erstelle ein neues Projekt namens Prachtest.",
+   "normalized": "Zeus erstelle ein neues Projekt namens Prachtest.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.922,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 3.088,
+    "rms": 5762.348,
+    "peak": 32663,
+    "speech_seconds": 2.42,
+    "speech_fraction": 0.786,
+    "noise_floor": 9.39,
+    "fingerprint": "d13a6f826f90e273",
+    "envelope": "091406b8fcb7e2b4",
+    "frames": 154
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.003,
+    "avg_logprob": -0.317,
+    "compression_ratio": 0.907,
+    "language_probability": 1.0,
+    "elapsed": 3.817,
+    "model": "small"
+   },
+   "elapsed": 3.82
+  },
+  {
+   "label": "c12",
+   "variant": "clean",
+   "expected": "Zeus, öffne das Stockfish-Projekt.",
+   "heard": "Zeus öffnet das Stockfish-Projekt.",
+   "normalized": "Zeus öffnet das Stockfish-Projekt.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.882,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 2.241,
+    "rms": 4257.372,
+    "peak": 32325,
+    "speech_seconds": 1.64,
+    "speech_fraction": 0.732,
+    "noise_floor": 4.008,
+    "fingerprint": "58612d52f672d9cd",
+    "envelope": "cc04f6c5a9d9be2b",
+    "frames": 112
+   },
+   "stt": {
+    "segments": 1,
+    "no_speech_probability": 0.002,
+    "avg_logprob": -0.321,
+    "compression_ratio": 0.814,
+    "language_probability": 1.0,
+    "elapsed": 3.651,
+    "model": "small"
+   },
+   "elapsed": 3.65
+  },
+  {
+   "label": "c13",
+   "variant": "clean",
+   "expected": "Erstelle ein Projekt M1 und leg drei Aufgaben an: Biochemie wiederholen, Anatomie kreuzen, Physik Formeln.",
+   "heard": "Erstelle ein Projekt M1 und leg drei Aufgaben an. Biochemie, Wiederholen, Anatomie, Kreuzen, Physik, Formeln.",
+   "normalized": "Erstelle ein Projekt M1 und leg drei Aufgaben an. Biochemie, Wiederholen, Anatomie, Kreuzen, Physikum, Formeln.",
+   "accepted": true,
+   "reason": "accepted",
+   "confidence": 0.976,
+   "level": "high",
+   "audio": {
+    "duration_seconds": 7.059,
+    "rms": 5791.899,
+    "peak": 32456,
+    "speech_seconds": 5.8,
+    "speech_fraction": 0.824,
+    "noise_floor": 63.126,
+    "fingerprint": "a31b0021043ae445",
+    "envelope": "9f0c86fcb6deb02f",
+    "frames": 352
+   },
+   "stt": {
+    "segments": 2,
+    "no_speech_probability": 0.0,
+    "avg_logprob": -0.195,
+    "compression_ratio": 1.058,
+    "language_probability": 1.0,
+    "elapsed": 4.32,
+    "model": "small"
+   },
+   "elapsed": 4.33
+  }
+ ],
+ "note": "Piper-synthesised German (de_DE-thorsten) through the real faster-whisper worker; not the owner's voice"
+}

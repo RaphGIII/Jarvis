@@ -44,12 +44,61 @@ from typing import Any, Iterable
 #: "du sprichst X falsch aus, sag Y": stored in the pronunciation lexicon, never in the personality.
 PRONUNCIATION = "PRONUNCIATION"
 
+#: "du hast X gehört, ich sagte Y": a transcription error, stored as a bounded vocabulary rule.
+STT_CORRECTION = "STT_CORRECTION"
+
 CLASSES = (
-    PRONUNCIATION,
+    PRONUNCIATION, STT_CORRECTION,
     "INTENT_ERROR", "ENTITY_RESOLUTION_ERROR", "PARAMETER_ERROR", "OWNER_PREFERENCE",
     "CAPABILITY_DEFECT", "EXECUTION_FAILURE", "VERIFICATION_DEFECT",
 )
 SCOPES = ("THIS_REQUEST", "ENTITY_SPECIFIC", "INTENT_SPECIFIC", "DOMAIN_SPECIFIC", "GLOBAL_OWNER_PREFERENCE")
+
+#: What the owner picks in the dialog, in the owner's words, and the class it
+#: becomes.  The owner writes one sentence; the category says which system
+#: learns from it (the recogniser's vocabulary, the router, the resolver, the
+#: verifier, the lexicon) so the same mistake is not repeated.
+OWNER_CATEGORIES: dict[str, str] = {
+    "MISHEARD": STT_CORRECTION,
+    "WRONG_INTENT": "INTENT_ERROR",
+    "WRONG_TARGET": "ENTITY_RESOLUTION_ERROR",
+    "WRONG_RESULT": "VERIFICATION_DEFECT",
+    "INCOMPLETE": "PARAMETER_ERROR",
+    "PRONUNCIATION": PRONUNCIATION,
+    "OTHER": "OWNER_PREFERENCE",
+}
+
+_HEARD_MEANT = (
+    re.compile(r"(?:nicht|not)\s+[„\"“']?(?P<heard>[^„\"“”'\s,]+)[“\"”']?\s*[,]?\s*(?:sondern|but)\s+[„\"“']?(?P<meant>[^„\"“”'.!?]+)", re.I),
+    re.compile(r"[„\"“']?(?P<heard>[^„\"“”'\s]+)[“\"”']?\s*(?:->|→|=>|heisst|heißt|means|ist|is)\s+[„\"“']?(?P<meant>[^„\"“”'.!?]+)", re.I),
+    re.compile(r"(?:ich\s+meinte|i\s+meant|gemeint\s+war|ich\s+sagte|i\s+said)\s+[„\"“']?(?P<meant>[^„\"“”'.!?]+)", re.I),
+)
+
+
+def heard_meant_pair(text: str, *, heard_text: str = "") -> tuple[str, str] | None:
+    """(heard, meant) from the owner's sentence; the heard token is looked up in the transcript when the sentence names only what was meant."""
+
+    from difflib import SequenceMatcher
+
+    for pattern in _HEARD_MEANT:
+        m = pattern.search(text or "")
+        if not m:
+            continue
+        meant = m.group("meant").strip(" .!?\"'„“”")
+        heard = (m.groupdict().get("heard") or "").strip(" .!?\"'„“”")
+        if heard and meant and heard.lower() != meant.lower():
+            return heard, meant
+        if meant and heard_text:
+            best, score = "", 0.0
+            for token in re.findall(r"[^\W\d_]+(?:-[^\W\d_]+)*", heard_text, re.UNICODE):
+                if token.lower() == meant.lower():
+                    continue
+                ratio = SequenceMatcher(None, token.lower(), meant.lower()).ratio()
+                if ratio > score:
+                    best, score = token, ratio
+            if best and score >= 0.5 and len(best) >= 3:
+                return best, meant
+    return None
 
 #: What a correction may change about a plan, by parameter name.
 OVERRIDABLE = ("path", "directory", "folder", "provider", "format", "language", "output", "device")

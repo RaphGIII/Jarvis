@@ -1,5 +1,16 @@
 /* The conversation: turns, streaming tokens, receipts as evidence, the
-   composer, and the Korrigieren dialog on every receipt. */
+   composer, and the Korrigieren dialog on every receipt.
+
+   Provenance rules, because the live product showed sentences nobody said:
+   - a USER turn is rendered only for a user_message event, which the core
+     publishes only for a message with provenance (typed, a wake session, a
+     press, an owner action); its meta says which, and a spoken turn shows
+     its wake tag, confidence and the raw transcript when it was normalised;
+   - a thought is ZEUS's (meta.source zeus_thought / thought_inbox) and is
+     rendered as INSIGHT, never as "You";
+   - replayed history (a refresh) is rendered dimmed as the past, never
+     spoken, and never re-triggers anything;
+   - nothing is shown for a transcript before the gate accepted it. */
 
 import { $, el, clear } from "../core/dom.js";
 import { api } from "../core/api.js";
@@ -11,27 +22,46 @@ import * as playback from "../voice/playback.js";
 
 let streaming = null;
 let eye = null;
+let historyDivider = false;
 
 export function init(deps) {
   eye = deps.eye;
   wireComposer();
   bus.on("user_message", (p) => {
-    const what = addTurn("user", "You", p.text);
-    // a spoken request: the wake word is session metadata, not content
-    if (what && p.meta && p.meta.wake_word) what.append(el("span", { class: "wake-tag", text: ` ${p.meta.wake_word} · ${Number(p.meta.wake_score).toFixed(2)}` }));
+    document.querySelector(".turn.interim")?.remove();
+    const meta = p.meta || {};
+    if (meta.source === "thought_inbox") {
+      addTurn("insight" + (p._replay ? " history" : ""), "Thought", p.text, p);
+      return;
+    }
+    const who = meta.source === "microphone" || meta.source === "ui_mic" ? "You · 🎙" : meta.source === "correction_rerun" ? "You · corrected" : "You";
+    const what = addTurn("user" + (p._replay ? " history" : ""), who, p.text, p);
+    if (what && meta.wake_word) what.append(el("span", { class: "wake-tag", text: ` ${meta.wake_word} · ${Number(meta.wake_score).toFixed(2)}` }));
+    if (what && meta.speech_level) {
+      what.append(el("span", { class: "wake-tag", title: `speech confidence ${meta.speech_confidence}`, text: ` ${meta.speech_level}` }));
+    }
+    if (what && meta.raw_transcript && meta.normalized && meta.raw_transcript !== meta.normalized && (meta.replacements || []).length) {
+      what.append(el("div", { class: "heard", text: `gehört: „${meta.raw_transcript}“` }));
+    }
     $("app").classList.add("conversing");
   });
-  bus.on("token", (p) => appendToken(p.text || ""));
-  bus.on("message", (p) => finishStreaming(p.text || ""));
-  bus.on("transcript", (p) => showInterim(p.text || ""));
-  bus.on("error", (p) => { endStreaming(); addTurn("error", "Error", p.error || "something went wrong"); });
-  bus.on("notification", (p) => { if (p.text) addTurn("note", "", p.text); });
+  bus.on("token", (p) => { if (!p._replay) appendToken(p.text || ""); });
+  bus.on("message", (p) => finishStreaming(p.text || "", p));
+  bus.on("transcript", () => { /* the verdict follows as a user_message, or not at all */ });
+  bus.on("error", (p) => { if (p._replay) return; endStreaming(); addTurn("error", "Error", p.error || "something went wrong"); });
+  bus.on("notification", (p) => {
+    if (p._replay || !p.text) return;
+    if (p.kind === "thought") { addTurn("insight", "Insight", p.text, p); return; }
+    if (p.kind === "open_view") return;
+    addTurn("note", "", p.text);
+  });
   bus.on("state", (p) => { if (p.state !== "thinking" && p.state !== "speaking") endStreaming(); });
   bus.on("tool", onToolOrProgress);
   bus.on("progress", onToolOrProgress);
 }
 
 function onToolOrProgress(payload) {
+  if (payload._replay) return;
   if (payload.receipt) { addReceipt(payload.receipt); return; }
   if (state.ui.echoActions && payload.summary) addTurn("note", "", payload.summary);
 }
@@ -39,13 +69,25 @@ function onToolOrProgress(payload) {
 export function reset() {
   clear($("log"));
   streaming = null;
+  historyDivider = false;
   $("app").classList.remove("conversing");
 }
 
-export function addTurn(kind, who, text) {
+export function addTurn(kind, who, text, payload) {
   if (!text) return null;
+  const replay = Boolean(payload && payload._replay);
+  if (replay && !historyDivider) {
+    historyDivider = true;
+    $("log").append(el("div", { class: "turn divider" }, el("div", { class: "who", text: "" }), el("div", { class: "what", text: "— earlier —" })));
+  }
+  if (!replay && historyDivider) {
+    historyDivider = false;
+    $("log").append(el("div", { class: "turn divider" }, el("div", { class: "who", text: "" }), el("div", { class: "what", text: "— now —" })));
+  }
   const what = el("div", { class: "what", text });
-  const turn = el("div", { class: `turn ${kind}` }, el("div", { class: "who", text: who }), what);
+  const turn = el("div", { class: `turn ${kind}${replay ? " history" : ""}` }, el("div", { class: "who", text: who }), what);
+  if (payload && payload.meta && payload.meta.utterance_id) turn.dataset.utterance = payload.meta.utterance_id;
+  if (payload && payload.meta && payload.meta.request_id) turn.dataset.request = payload.meta.request_id;
   $("log").append(turn);
   scrollDown();
   return what;
@@ -61,9 +103,15 @@ function appendToken(text) {
   scrollDown();
 }
 
-function finishStreaming(finalText) {
-  if (streaming) { streaming.textContent = finalText; streaming = null; }
-  else if (finalText) addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", finalText);
+function finishStreaming(finalText, payload) {
+  const meta = (payload && payload.meta) || {};
+  if (meta.source === "zeus_thought") {
+    if (streaming) { streaming.parentElement?.remove(); streaming = null; }
+    addTurn("insight", "Insight", finalText, payload);
+    return;
+  }
+  if (streaming && !(payload && payload._replay)) { streaming.textContent = finalText; streaming = null; }
+  else if (finalText) addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", finalText, payload);
   $("app").classList.add("conversing");
   scrollDown();
 }
@@ -74,33 +122,34 @@ export function endStreaming() {
   streaming = null;
 }
 
-function showInterim(text) {
-  let node = $("log").querySelector(".turn.interim .what");
-  if (!node) node = addTurn("note interim", "", text);
-  if (node) node.textContent = text;
-}
-
 function scrollDown() {
   const log = $("log");
   log.scrollTop = log.scrollHeight;
 }
 
-/* A receipt, rendered as evidence. The verdict word comes from the receipt's
-   own `verified` flag, never from any text the model wrote. */
+/* A receipt, rendered as evidence -- compact: one line and the links, the
+   checks behind a click. The verdict word comes from the receipt's own
+   `verified` flag, never from any text the model wrote. */
 export function addReceipt(receipt) {
   const verdict = receipt.verified ? "verified" : receipt.ok ? "ran, unverified" : "failed";
   const what = addTurn(`receipt ${receipt.verified ? "good" : "bad"}`, `${receipt.kind} · ${verdict}`,
                        receipt.detail || receipt.kind || "action");
   if (!what) return;
+  const checks = el("div", { class: "checks" });
+  checks.hidden = receipt.verified;
   for (const check of receipt.verifications || []) {
-    what.append(el("div", { class: "check" + (check.passed ? "" : " bad"),
-                            text: `${check.passed ? "✓" : "✗"} ${check.check}` + (check.observed ? ` — ${check.observed}` : "") }));
+    checks.append(el("div", { class: "check" + (check.passed ? "" : " bad"),
+                              text: `${check.passed ? "✓" : "✗"} ${check.check}` + (check.observed ? ` — ${check.observed}` : "") }));
   }
-  what.append(el("div", { class: "check", text: receipt.id }));
+  checks.append(el("div", { class: "check", text: receipt.id }));
+  what.append(checks);
   const links = el("div", { class: "links" });
   links.append(el("a", { class: "korrigieren", href: "#", text: "Korrigieren",
                          onClick: (ev) => { ev.preventDefault(); corrections.openDialog(receipt.id); } }));
   links.append(el("a", { href: "#", text: "Beleg", onClick: (ev) => { ev.preventDefault(); views.open("activity", { receipt: receipt.id }); } }));
+  const n = (receipt.verifications || []).length;
+  links.append(el("a", { href: "#", text: checks.hidden ? `${n} Prüfungen` : "weniger",
+                         onClick: (ev) => { ev.preventDefault(); checks.hidden = !checks.hidden; ev.target.textContent = checks.hidden ? `${n} Prüfungen` : "weniger"; } }));
   what.append(links);
   scrollDown();
 }
@@ -109,12 +158,17 @@ export function addReceipt(receipt) {
 /* composer                                                            */
 /* ------------------------------------------------------------------ */
 
-export function send(text) {
+function requestId() {
+  return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/-/g, "").slice(0, 12);
+}
+
+export function send(text, source = "text") {
   const clean = (text || "").trim();
   if (!clean) return;
   document.querySelector(".turn.interim")?.remove();
   if (views.isWorkspace()) views.close();
-  return api("/api/message", { text: clean });
+  // One id per press: a retried POST cannot become a second request.
+  return api("/api/message", { text: clean, source, request_id: requestId() });
 }
 
 function wireComposer() {

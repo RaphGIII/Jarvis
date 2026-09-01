@@ -141,10 +141,18 @@ class ActivityLog:
             return ActivityEntry(kind="request", summary=str(payload.get("text", ""))[:400], detail={"meta": meta} if meta else {}, **common)
 
         if kind == "diagnostic":
-            # Only the wake event itself is activity; the rest stays diagnostics.
+            # The wake event and the voice trace are activity; the rest stays diagnostics.
             if payload.get("wake") and "score" in payload:
                 return ActivityEntry(kind="wake", summary=f"{payload['wake']} · score {float(payload['score']):.3f}",
-                                     detail={"session": payload.get("session", ""), "command": payload.get("command", "")}, **common)
+                                     detail={"session": payload.get("session", ""), "command": payload.get("command", ""),
+                                             "utterance_id": payload.get("utterance_id", "")}, **common)
+            if payload.get("voice_trace"):
+                verdict = payload.get("verdict") or {}
+                accepted = bool(verdict.get("accepted"))
+                utterance = payload.get("utterance") or {}
+                text = str(utterance.get("normalized_transcript") or utterance.get("raw_transcript") or payload.get("text") or "")
+                summary = (f"accepted „{text[:120]}“" if accepted else f"rejected: {verdict.get('reason', '?')}" + (f" — „{text[:80]}“" if text else ""))
+                return ActivityEntry(kind="voice.accepted" if accepted else "voice.rejected", summary=summary, detail=payload, **common)
             return None
 
         if kind == "message":

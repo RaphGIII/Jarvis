@@ -10,6 +10,8 @@ the model's own judgement.
 
 from __future__ import annotations
 
+from _audio import speech_wav
+
 import json
 import time
 from pathlib import Path
@@ -318,7 +320,7 @@ def test_i_ambient_fragments_create_no_message_action_receipt_or_mission(tmp_pat
         def transcribe(self, audio, *, language=""): return Transcript(text=next(heard), confidence=0.5)
 
     core._voice = VoiceService(core.bus, engine_factory=Engine)
-    wav = Audio(samples=bytes(16000), sample_rate=16000).to_wav()
+    wav = speech_wav()
     results = [core.hear(wav, wake=0.9) for _ in range(4)]          # fragments after a (false) wake
     results.append(core.hear(wav))                                    # a real sentence, but no session at all
 

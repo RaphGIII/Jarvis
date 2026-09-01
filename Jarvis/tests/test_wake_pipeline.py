@@ -20,6 +20,8 @@ model is measured by ``speech.wake_eval`` on the owner's recordings instead.
 
 from __future__ import annotations
 
+from _audio import speech_wav
+
 import json
 from pathlib import Path
 
@@ -443,7 +445,7 @@ def test_an_ambient_fragment_creates_no_message_no_receipt_no_mission(core):
         def transcribe(self, audio, *, language=""): return Transcript(text="Toys.", confidence=0.4)
 
     core._voice = VoiceService(core.bus, engine_factory=Engine)
-    wav = Audio(samples=bytes(16000), sample_rate=16000).to_wav()
+    wav = speech_wav()
 
     result = core.hear(wav, wake=0.93)
 
@@ -462,7 +464,7 @@ def test_a_wake_authorised_sentence_is_a_request(core):
         def transcribe(self, audio, *, language=""): return Transcript(text="wie geht es weiter", confidence=0.9)
 
     core._voice = VoiceService(core.bus, engine_factory=Engine)
-    wav = Audio(samples=bytes(16000), sample_rate=16000).to_wav()
+    wav = speech_wav()
 
     assert core.hear(wav, wake=0.93, answer=False)["ok"] is True
     assert core.hear(wav, answer=False)["ignored"], "the same words without a session are not a request"

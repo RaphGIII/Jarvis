@@ -35,19 +35,29 @@ class Transcript:
     final: bool = True
     #: Word timings from the recogniser when it gives them: [{word, start, end, probability}].
     words: list = field(default_factory=list)
+    #: The recogniser's own quality signals, when it reports them:
+    #: no_speech_probability, avg_logprob, compression_ratio, language_probability, elapsed.
+    quality: dict = field(default_factory=dict)
+    #: What was heard before any normalisation touched it ("" = same as text).
+    raw_text: str = ""
 
     @property
     def empty(self) -> bool:
         return not self.text.strip()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "text": self.text,
             "language": self.language,
             "confidence": round(self.confidence, 3),
             "duration_seconds": round(self.duration_seconds, 3),
             "final": self.final,
         }
+        if self.quality:
+            out["quality"] = dict(self.quality)
+        if self.raw_text and self.raw_text != self.text:
+            out["raw_text"] = self.raw_text
+        return out
 
 
 @dataclass

@@ -1,21 +1,27 @@
 /* Projects: the owner's project universe.
 
-   A galaxy, not a card list: owner projects are stars (size from importance
-   and work, halo from health), missions are small bodies orbiting the
-   project they belong to (or ZEUS), capability families are collapsed
-   satellites, Knowledge is a nebula, and ZEUS's own thoughts are pulses on
-   the relations they concern. Depth, parallax and a settled layout that
-   stops burning CPU once it has relaxed.
+   A galaxy, not a card list.  Each owner project is a STAR SYSTEM: a layered
+   star (size from importance and work, colour and halo from health), its
+   subprojects and missions on faint orbit rings, the capabilities it uses as
+   small satellites on an outer orbit.  Knowledge is a soft nebula.  ZEUS's
+   own thoughts are pulses travelling along the relation they concern.  A
+   three-layer parallax star field and a restrained particle drift give the
+   canvas depth; the camera eases; semantic zoom shows systems from afar and
+   missions/thoughts up close.
 
-   Owner intent wins over the layout engine: a dragged node becomes
-   OWNER_POSITIONED and is persisted (/api/project/update); LOCKED nodes never
-   move; box-select and group move; layout modes (galaxy, dependency,
-   timeline, hierarchy, mission flow) never touch owner-saved positions.
-   Importance (PINNED FOCUS ACTIVE NORMAL LOW_PRIORITY DORMANT ARCHIVED)
-   decides what dominates by default; "show everything" is explicit.
+   The whole canvas is used: systems are laid out on a golden-angle spiral
+   scaled to the canvas and relaxed apart, so four projects are four distinct
+   systems rather than a cluster in the middle.
 
-   The Focus panel answers "what deserves my attention?"; the inspector
-   answers what a selected project is, where it stands and what is next. */
+   Owner intent wins over the layout engine: a dragged system becomes
+   OWNER_POSITIONED and is persisted (/api/project/update); LOCKED systems
+   never move; box-select, multi-select and group move; layout modes never
+   touch owner-saved positions.  Importance (PINNED FOCUS ACTIVE NORMAL
+   LOW_PRIORITY DORMANT TEST ARCHIVED) decides what dominates; TEST and
+   ARCHIVED stay out of the default view ("show everything" is explicit).
+
+   Right-click (or the ⋯ button) opens the context menu: Focus, Pin, Hide,
+   Archive, Importance, Create Mission, Ask Zeus, Local Graph. */
 
 import { $, el, clear, kv, section, badge, button, ago, seconds } from "../core/dom.js";
 import { api } from "../core/api.js";
@@ -23,13 +29,15 @@ import { state, setPref } from "../core/state.js";
 import * as views from "../core/views.js";
 import * as chat from "./chat.js";
 
-const IMPORTANCE = ["PINNED", "FOCUS", "ACTIVE", "NORMAL", "LOW_PRIORITY", "DORMANT", "ARCHIVED"];
-const IMPORTANCE_WEIGHT = { PINNED: 1.0, FOCUS: 0.95, ACTIVE: 0.8, NORMAL: 0.6, LOW_PRIORITY: 0.4, DORMANT: 0.3, ARCHIVED: 0.2 };
-const HEALTH_COLOUR = { HEALTHY: "#66d9a0", AT_RISK: "#e0b04a", BLOCKED: "#ff6b6b", DORMANT: "#5b6b82", COMPLETE: "#4fc3f7" };
-const KIND_COLOUR = { self: "#8fd3ff", mission: "#9fb7d9", capability: "#7a8aa8", knowledge: "#7f6fd9", thought: "#f0c674" };
+const IMPORTANCE = ["PINNED", "FOCUS", "ACTIVE", "NORMAL", "LOW_PRIORITY", "DORMANT", "TEST", "ARCHIVED"];
+const IMPORTANCE_WEIGHT = { PINNED: 1.0, FOCUS: 0.95, ACTIVE: 0.8, NORMAL: 0.6, LOW_PRIORITY: 0.4, DORMANT: 0.3, TEST: 0.25, ARCHIVED: 0.2 };
+const HEALTH_COLOUR = { HEALTHY: "#7fe0b4", AT_RISK: "#f0c674", BLOCKED: "#ff7b7b", DORMANT: "#6f7f99", COMPLETE: "#66c9ff" };
+const HEALTH_HUE = { HEALTHY: [120, 230, 180], AT_RISK: [240, 200, 110], BLOCKED: [255, 120, 120], DORMANT: [120, 135, 165], COMPLETE: [110, 200, 255] };
+const KIND_COLOUR = { self: "#9fdcff", mission: "#b8c9e6", capability: "#8fa1c2", knowledge: "#9b8cf0", thought: "#f0c674" };
 const MODES = ["GALAXY", "DEPENDENCY", "TIMELINE", "HIERARCHY", "KNOWLEDGE", "MISSION FLOW"];
 const STATE_TONE = { active: "active", running: "active", working: "active", executing: "active", blocked: "blocked", failed: "blocked",
                      accepted: "done", complete: "done", completed: "done", paused: "idle", draft: "idle" };
+const REDUCED = () => Boolean(state.ui.reducedMotion);
 
 let galaxy = null;
 
@@ -40,17 +48,30 @@ export const view = {
     if (params.id) return deep(pane, params.id);
     const everything = params.everything === "1" || params.everything === true;
     const [graph, overview] = await Promise.all([api("/api/projects/graph", { everything }), api("/api/projects/overview")]);
+    const wrap = el("div", { class: "galaxy-wrap" });
     const canvas = el("canvas", { id: "constellation", class: "galaxy" });
-    const search = el("input", { placeholder: "Focus… (project, mission, capability)", value: params.focus || params.q || "", style: { maxWidth: "260px" } });
+    const search = el("input", { placeholder: "Focus… (project, mission, capability)", value: params.focus || params.q || "", style: { maxWidth: "240px" } });
     const mode = el("select", {}, ...MODES.map((m) => el("option", { value: m, text: m.toLowerCase(), selected: (params.mode || state.ui.galaxyMode || "GALAXY") === m })));
     const everyToggle = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } }, el("input", { type: "checkbox", checked: everything }), " show everything");
     const counts = el("span", { class: "empty", style: { padding: 0 } });
-    const toolbar = el("div", { class: "toolbar" }, search, mode, everyToggle, counts);
-    pane.append(toolbar, canvas);
+    const chips = el("span", { class: "galaxy-toolbar", style: { display: "inline-flex", gap: "4px" } });
+    const levels = ["ALL", "FOCUS", "ACTIVE", "BLOCKED"];
+    let level = params.level || "ALL";
+    for (const l of levels) chips.append(el("button", { class: "chip" + (level === l ? " on" : ""), text: l.toLowerCase(), onClick: (ev) => {
+      level = l; for (const c of chips.querySelectorAll(".chip")) c.classList.toggle("on", c === ev.currentTarget); galaxy?.setLevel(level); } }));
+    const toolbar = el("div", { class: "toolbar" }, search, mode, chips, everyToggle, counts);
+    const legend = el("div", { class: "galaxy-legend" },
+      el("span", { style: { "--c": HEALTH_COLOUR.HEALTHY }, text: "healthy" }), el("span", { style: { "--c": HEALTH_COLOUR.AT_RISK }, text: "at risk" }),
+      el("span", { style: { "--c": HEALTH_COLOUR.BLOCKED }, text: "blocked" }), el("span", { style: { "--c": KIND_COLOUR.mission }, text: "mission" }),
+      el("span", { style: { "--c": KIND_COLOUR.capability }, text: "capability" }), el("span", { style: { "--c": KIND_COLOUR.knowledge }, text: "knowledge" }));
+    const hint = el("div", { class: "galaxy-hint", text: "drag · wheel zoom · shift+drag select · right-click menu · esc reset" });
+    wrap.append(canvas, legend, hint);
+    pane.append(toolbar, wrap);
     const focus = focusPanel(overview, graph, params);
     pane.append(focus);
-    galaxy = new Galaxy(canvas, graph, { onSelect: (n) => inspect(n, graph, () => views.open("projects", params)), mode: mode.value, filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "" });
-    counts.textContent = `${graph.nodes.filter((n) => n.kind === "project").length} projects · ${graph.nodes.filter((n) => n.kind === "mission").length} missions · ${graph.nodes.filter((n) => n.kind === "capability").length} capability families · ${graph.nodes.filter((n) => n.kind === "thought").length} thoughts` + (graph.hidden ? ` · ${graph.hidden} hidden/archived` : "");
+    galaxy = new Galaxy(canvas, wrap, graph, { onSelect: (n) => inspect(n, graph, () => views.open("projects", params)), mode: mode.value, filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "", level });
+    const nP = graph.nodes.filter((n) => n.kind === "project").length, nM = graph.nodes.filter((n) => n.kind === "mission").length;
+    counts.textContent = `${nP} project${nP === 1 ? "" : "s"} · ${nM} mission${nM === 1 ? "" : "s"} · ${graph.nodes.filter((n) => n.kind === "capability").length} capabilities · ${graph.nodes.filter((n) => n.kind === "thought").length} thoughts` + (graph.hidden ? ` · ${graph.hidden} hidden` : "");
     search.oninput = () => galaxy.focusText(search.value);
     if (search.value) galaxy.focusText(search.value);
     mode.onchange = () => { setPref("galaxyMode", mode.value); galaxy.setMode(mode.value); };
@@ -62,7 +83,7 @@ export const view = {
 
 /* ---- the Focus panel: what deserves attention ------------------------- */
 function focusPanel(overview, graph, params) {
-  const projects = (overview.projects || []).filter((p) => !p.hidden);
+  const projects = (overview.projects || []).filter((p) => !p.hidden && !["TEST", "ARCHIVED"].includes(p.importance));
   const missions = overview.missions || [];
   const now = Date.now();
   const today = projects.filter((p) => now - new Date(p.updated_at || 0) < 864e5);
@@ -82,13 +103,17 @@ function focusPanel(overview, graph, params) {
 
 /* ---- the galaxy ------------------------------------------------------- */
 class Galaxy {
-  constructor(canvas, graph, opts) {
-    this.canvas = canvas; this.ctx = canvas.getContext("2d"); this.opts = opts;
+  constructor(canvas, wrap, graph, opts) {
+    this.canvas = canvas; this.wrap = wrap; this.ctx = canvas.getContext("2d"); this.opts = opts;
     this.nodes = []; this.edges = []; this.byId = new Map();
     this.cam = { x: 0, y: 0, z: 1, vx: 0, vy: 0 };
     this.selected = new Set(); this.hover = null; this.drag = null; this.box = null; this.focusId = null; this.dim = null;
-    this.frames = 0; this.settled = false; this.raf = 0; this.mode = opts.mode || "GALAXY"; this.t = 0;
-    this.stars = Array.from({ length: 220 }, (_, i) => ({ x: Math.random(), y: Math.random(), z: 0.2 + Math.random() * 0.8, s: Math.random() < 0.15 ? 1.6 : 0.9 }));
+    this.frames = 0; this.settled = false; this.raf = 0; this.mode = opts.mode || "GALAXY"; this.t = 0; this.level = opts.level || "ALL";
+    this.menu = null;
+    // three parallax layers of stars and a sparse particle drift
+    const rnd = mulberry(7);
+    this.layers = [0.35, 0.7, 1.15].map((depth, i) => ({ depth, stars: Array.from({ length: [260, 140, 60][i] }, () => ({ x: rnd(), y: rnd(), s: [0.7, 1.1, 1.7][i] * (0.7 + rnd() * 0.6), a: 0.25 + rnd() * 0.6, tw: rnd() * 6.28, hue: rnd() })) }));
+    this.motes = Array.from({ length: 48 }, () => ({ x: rnd(), y: rnd(), vx: (rnd() - 0.5) * 0.00012, vy: (rnd() - 0.5) * 0.00012, a: 0.08 + rnd() * 0.2, s: 0.8 + rnd() * 1.4 }));
     this.build(graph);
     this.applyFilters();
     this.resize(); this.bind();
@@ -99,204 +124,342 @@ class Galaxy {
   build(graph) {
     const W = this.W(), H = this.H();
     for (const raw of graph.nodes) {
-      const n = { ...raw, x: W / 2, y: H / 2, vx: 0, vy: 0, r: 6, depth: 1, fixed: false, locked: false, ownerPlaced: false, visible: true };
+      const n = { ...raw, x: W / 2, y: H / 2, vx: 0, vy: 0, r: 6, depth: 1, fixed: false, locked: false, ownerPlaced: false, visible: true, seed: hash(raw.id) };
       if (n.kind === "project") {
         const w = IMPORTANCE_WEIGHT[n.importance] || 0.6;
-        n.r = 10 + w * 18 + Math.min(10, (n.tasks || 0) * 0.6); n.depth = 1;
+        n.r = 9 + w * 16 + Math.min(9, (n.tasks || 0) * 0.5); n.depth = 1;
         const layout = n.layout || {};
         if (layout.state === "OWNER_POSITIONED" || layout.state === "LOCKED") { n.x = layout.x; n.y = layout.y; n.ownerPlaced = true; n.locked = layout.state === "LOCKED"; }
-      } else if (n.kind === "self") { n.r = 22; n.depth = 1; n.x = W / 2; n.y = H / 2; n.fixed = true; }
-      else if (n.kind === "mission") { n.r = 4 + (n.state === "active" ? 1.5 : 0); n.depth = 0.85; }
-      else if (n.kind === "capability") { n.r = 6 + Math.min(6, (n.attempts || 1) * 0.6); n.depth = 0.75; }
-      else if (n.kind === "knowledge") { n.r = 30; n.depth = 0.6; }
-      else if (n.kind === "thought") { n.r = 4; n.depth = 0.95; }
+      } else if (n.kind === "self") { n.r = 14; n.depth = 1; n.x = W / 2; n.y = H / 2; n.fixed = true; }
+      else if (n.kind === "mission") { n.r = 3.2 + (n.state === "active" ? 1.2 : 0); n.depth = 0.85; }
+      else if (n.kind === "capability") { n.r = 3.5 + Math.min(3, (n.attempts || 1) * 0.4); n.depth = 0.75; }
+      else if (n.kind === "knowledge") { n.r = 34; n.depth = 0.55; }
+      else if (n.kind === "thought") { n.r = 3; n.depth = 0.95; }
       this.nodes.push(n); this.byId.set(n.id, n);
     }
     this.edges = graph.edges.filter((e) => this.byId.has(e.source) && this.byId.has(e.target)).map((e) => ({ ...e, a: this.byId.get(e.source), b: this.byId.get(e.target) }));
-    for (const e of this.edges) if (e.type === "mission_of" || e.type === "thought" || e.type === "uses") { e.b.parent = e.b.parent || e.a; }
+    for (const e of this.edges) {
+      if (e.type === "mission_of" || e.type === "thought" || e.type === "uses" || e.type === "subproject_of") { e.b.parent = e.b.parent || e.a; }
+      if (e.type === "subproject_of") { e.b.sub = true; e.b.depth = 0.92; e.b.r = Math.max(6, e.b.r * 0.55); }
+    }
   }
 
   applyFilters() {
     const { filter, uses, idleDays, connected } = this.opts;
     for (const n of this.nodes) n.visible = true;
-    if (filter === "blocked") for (const n of this.nodes) if (n.kind === "project" && n.health?.state !== "BLOCKED") n.visible = n.kind !== "project";
+    if (filter === "blocked" || this.level === "BLOCKED") for (const n of this.nodes) if (n.kind === "project" && n.health?.state !== "BLOCKED") n.visible = false;
+    if (this.level === "FOCUS") for (const n of this.nodes) if (n.kind === "project" && !["PINNED", "FOCUS"].includes(n.importance)) n.visible = false;
+    if (this.level === "ACTIVE") for (const n of this.nodes) if (n.kind === "project" && !["PINNED", "FOCUS", "ACTIVE"].includes(n.importance)) n.visible = false;
     if (idleDays) for (const n of this.nodes) if (n.kind === "project" && Date.now() - new Date(n.updated_at || 0) < idleDays * 864e5) n.visible = false;
     if (uses) for (const n of this.nodes) if (n.kind === "project" && !this.edges.some((e) => e.a === n && e.b.kind === "capability" && e.b.label.includes(uses))) n.visible = false;
     if (connected) {
       const anchor = this.find(connected);
       if (anchor) { const keep = new Set([anchor.id]); for (const e of this.edges) { if (e.a === anchor) keep.add(e.b.id); if (e.b === anchor) keep.add(e.a.id); } for (const n of this.nodes) n.visible = keep.has(n.id) || n.kind === "self"; }
     }
+    // children follow their parent's visibility
+    for (const n of this.nodes) if (n.parent && n.parent.kind === "project" && !n.parent.visible) n.visible = false;
   }
 
+  setLevel(level) { this.level = level; this.applyFilters(); this.layout(false); this.start(); }
+
   W() { return this.canvas.clientWidth || 900; }
-  H() { return this.canvas.clientHeight || 420; }
+  H() { return this.canvas.clientHeight || 480; }
   resize() { this.canvas.width = this.W() * devicePixelRatio; this.canvas.height = this.H() * devicePixelRatio; this.settled = false; this.frames = 0; }
 
-  /* ---- layout modes (never move owner-placed nodes) ------------------- */
+  /* ---- layout: systems on a golden-angle spiral, relaxed apart --------- */
   layout(initial) {
     const W = this.W(), H = this.H();
-    const projects = this.nodes.filter((n) => n.kind === "project" && n.visible);
+    const systems = this.nodes.filter((n) => n.kind === "project" && n.visible && !n.sub);
     const zeus = this.byId.get("zeus");
     const place = (n, x, y) => { if (!n.ownerPlaced && !n.locked) { if (initial || this.mode !== "GALAXY") { n.x = x; n.y = y; } else { n.tx = x; n.ty = y; } } };
+    const systemRadius = (n) => n.r + 22 + Math.min(70, 14 * this.childrenOf(n).length);
     if (this.mode === "GALAXY") {
-      projects.sort((a, b) => (IMPORTANCE_WEIGHT[b.importance] || 0) - (IMPORTANCE_WEIGHT[a.importance] || 0));
-      projects.forEach((n, i) => { const w = IMPORTANCE_WEIGHT[n.importance] || 0.6; const ring = 120 + (1 - w) * 240; const a = (i / Math.max(1, projects.length)) * Math.PI * 2 - Math.PI / 2; place(n, W / 2 + Math.cos(a) * ring * (W / 900), H / 2 + Math.sin(a) * ring * 0.62 * (H / 420)); });
+      systems.sort((a, b) => (IMPORTANCE_WEIGHT[b.importance] || 0) - (IMPORTANCE_WEIGHT[a.importance] || 0) || (a.seed - b.seed));
+      const cx = W / 2, cy = H / 2, golden = Math.PI * (3 - Math.sqrt(5));
+      const rx = W * 0.40, ry = H * 0.38, count = Math.max(1, systems.length);
+      systems.forEach((n, i) => {
+        // i=0 nearest the core (but never on it); radius grows with sqrt so area is used evenly
+        const f = Math.sqrt((i + 0.85) / (count + 0.5));
+        const a = i * golden + (n.seed % 1000) / 1000 * 0.35;
+        place(n, cx + Math.cos(a) * rx * f * (0.55 + 0.45 * f) + Math.cos(a) * 60, cy + Math.sin(a) * ry * f * (0.55 + 0.45 * f) + Math.sin(a) * 40);
+      });
+      // relax: no two systems overlap (their orbit radii included); owner-placed stay
+      for (let it = 0; it < 120; it++) {
+        let moved = false;
+        for (const a of systems) for (const b of systems) {
+          if (a === b) continue;
+          const ax = a.tx ?? a.x, ay = a.ty ?? a.y, bx = b.tx ?? b.x, by = b.ty ?? b.y;
+          const dx = ax - bx, dy = ay - by, d = Math.max(1, Math.hypot(dx, dy)), min = systemRadius(a) + systemRadius(b) + 28;
+          if (d < min) {
+            const push = (min - d) / 2, ux = dx / d, uy = dy / d;
+            if (!a.ownerPlaced && !a.locked) { if (initial) { a.x += ux * push; a.y += uy * push; } else { a.tx = (a.tx ?? a.x) + ux * push; a.ty = (a.ty ?? a.y) + uy * push; } moved = true; }
+            if (!b.ownerPlaced && !b.locked) { if (initial) { b.x -= ux * push; b.y -= uy * push; } else { b.tx = (b.tx ?? b.x) - ux * push; b.ty = (b.ty ?? b.y) - uy * push; } moved = true; }
+          }
+        }
+        for (const a of systems) {
+          if (a.ownerPlaced || a.locked) continue;
+          const R = systemRadius(a) + 10;
+          if (initial) { a.x = Math.max(R, Math.min(W - R, a.x)); a.y = Math.max(R, Math.min(H - R - 16, a.y)); }
+          else if (a.tx !== undefined) { a.tx = Math.max(R, Math.min(W - R, a.tx)); a.ty = Math.max(R, Math.min(H - R - 16, a.ty)); }
+        }
+        if (!moved) break;
+      }
+      if (zeus) { zeus.x = W / 2; zeus.y = H / 2; }
     } else if (this.mode === "DEPENDENCY") {
-      // capabilities in a bottom band, projects above, missions between
       const caps = this.nodes.filter((n) => n.kind === "capability" && n.visible);
-      caps.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, caps.length), H * 0.85));
-      projects.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, projects.length), H * 0.28));
+      caps.forEach((n, i) => { n.x = 80 + (i + 0.5) * (W - 160) / Math.max(1, caps.length); n.y = H * 0.85; n.placedOnce = true; n.orbit = null; });
+      systems.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, systems.length), H * 0.28));
     } else if (this.mode === "TIMELINE") {
-      const dated = projects.filter((n) => n.updated_at).sort((a, b) => new Date(a.data?.created_at || a.updated_at) - new Date(b.data?.created_at || b.updated_at));
+      const dated = systems.filter((n) => n.updated_at).sort((a, b) => new Date(a.data?.created_at || a.updated_at) - new Date(b.data?.created_at || b.updated_at));
       dated.forEach((n, i) => place(n, 70 + (i + 0.5) * (W - 140) / Math.max(1, dated.length), H * (0.35 + 0.3 * ((i % 2) ? 1 : 0))));
     } else if (this.mode === "HIERARCHY") {
-      projects.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, projects.length), H * 0.3));
-      if (zeus) zeus.x = W / 2, zeus.y = H * 0.08;
+      systems.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, systems.length), H * 0.3));
+      if (zeus) { zeus.x = W / 2; zeus.y = H * 0.08; }
     } else if (this.mode === "MISSION FLOW") {
       const ms = this.nodes.filter((n) => n.kind === "mission" && n.visible).sort((a, b) => new Date(a.updated_at || 0) - new Date(b.updated_at || 0));
       ms.forEach((n, i) => { n.tx = 60 + (i + 0.5) * (W - 120) / Math.max(1, ms.length); n.ty = H * 0.55; n.flow = true; });
-      projects.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, projects.length), H * 0.2));
+      systems.forEach((n, i) => place(n, 80 + (i + 0.5) * (W - 160) / Math.max(1, systems.length), H * 0.2));
     } else if (this.mode === "KNOWLEDGE") {
-      const k = this.byId.get("knowledge"); if (k) { k.x = W / 2; k.y = H / 2; k.r = 60; }
-      projects.forEach((n, i) => { const a = (i / Math.max(1, projects.length)) * Math.PI * 2; place(n, W / 2 + Math.cos(a) * W * 0.32, H / 2 + Math.sin(a) * H * 0.34); });
+      const k = this.byId.get("knowledge"); if (k) { k.x = W / 2; k.y = H / 2; k.r = 70; }
+      systems.forEach((n, i) => { const a = (i / Math.max(1, systems.length)) * Math.PI * 2; place(n, W / 2 + Math.cos(a) * W * 0.34, H / 2 + Math.sin(a) * H * 0.36); });
     }
-    if (zeus && this.mode === "GALAXY") { zeus.x = W / 2; zeus.y = H / 2; }
-    // infrastructure without a project: capability families on an outer ring, spaced apart
+    // infrastructure without a project: capability satellites on ZEUS's outer orbit
     const loose = this.nodes.filter((n) => n.kind === "capability" && n.visible && !n.parent);
-    loose.forEach((n, i) => { const a = Math.PI * 0.15 + (i / Math.max(1, loose.length)) * Math.PI * 1.7; const rx = W * 0.44, ry = H * 0.42; if (!n.placedOnce) { n.x = W / 2 + Math.cos(a) * rx; n.y = H / 2 + Math.sin(a) * ry; n.placedOnce = true; } });
-    // children around their parents
+    loose.forEach((n, i) => { if (!n.placedOnce && zeus) { n.parent = zeus; n.orbit = { a: Math.PI * 0.15 + (i / Math.max(1, loose.length)) * Math.PI * 2, d: 58 + (i % 2) * 14, speed: 0.06 + (n.seed % 7) * 0.01, tilt: 0.55 }; n.placedOnce = true; } });
+    // children on orbit rings around their parents: subprojects innermost, missions, then capabilities
     for (const n of this.nodes) {
-      if ((n.kind === "mission" || n.kind === "thought" || n.kind === "capability") && n.parent && !n.flow && (initial || !n.placedOnce)) {
-        const a = Math.random() * Math.PI * 2, d = n.parent.r + 26 + Math.random() * 30;
-        n.x = n.parent.x + Math.cos(a) * d; n.y = n.parent.y + Math.sin(a) * d; n.orbit = { a, d, speed: (0.15 + Math.random() * 0.2) * (n.kind === "mission" && n.state === "active" ? 1.6 : 1) };
+      if (n.parent && !n.flow && (initial || !n.placedOnce) && (n.kind === "mission" || n.kind === "thought" || n.kind === "capability" || n.sub)) {
+        const siblings = this.childrenOf(n.parent).filter((c) => c.kind === n.kind && Boolean(c.sub) === Boolean(n.sub));
+        const idx = Math.max(0, siblings.indexOf(n));
+        const ring = n.sub ? 1 : n.kind === "mission" ? 2 : n.kind === "thought" ? 2.6 : 3;
+        const d = n.parent.r + 14 + ring * 15 + (idx % 2) * 5;
+        const a = (idx / Math.max(1, siblings.length)) * Math.PI * 2 + (n.seed % 100) / 100 * 0.6;
+        n.orbit = { a, d, speed: (0.05 + (n.seed % 5) * 0.012) * (n.kind === "mission" && n.state === "active" ? 1.8 : 1) * (n.sub ? 0.4 : 1), tilt: 0.62 };
+        n.x = n.parent.x + Math.cos(a) * d; n.y = n.parent.y + Math.sin(a) * d * n.orbit.tilt;
         n.placedOnce = true;
       }
-      if (n.kind === "knowledge" && this.mode !== "KNOWLEDGE") { n.x = W * 0.86; n.y = H * 0.2; }
+      if (n.kind === "knowledge" && this.mode !== "KNOWLEDGE") { n.x = W * 0.84; n.y = H * 0.22; }
     }
     this.settled = false; this.frames = 0;
   }
 
+  childrenOf(p) { return this.nodes.filter((c) => c.parent === p); }
   setMode(mode) { this.mode = mode; this.layout(false); this.start(); }
 
   /* ---- physics: a short relaxation, then rest ------------------------- */
   step() {
-    const W = this.W(), H = this.H();
-    const movers = this.nodes.filter((n) => n.visible && !n.fixed && !n.locked && n.kind !== "mission" && n.kind !== "thought");
+    const movers = this.nodes.filter((n) => n.visible && !n.fixed && !n.locked && n.kind === "project" && !n.sub);
     for (const a of movers) {
-      if (a.ownerPlaced) continue;
-      for (const b of movers) {
-        if (a === b) continue;
-        const dx = a.x - b.x, dy = a.y - b.y, d = Math.max(12, Math.hypot(dx, dy)), min = a.r + b.r + 34;
-        if (d < min) { const f = (min - d) / d * 0.04; a.vx += dx * f; a.vy += dy * f; }
-      }
-      if (a.tx !== undefined) { a.vx += (a.tx - a.x) * 0.02; a.vy += (a.ty - a.y) * 0.02; }
-      a.vx *= 0.8; a.vy *= 0.8; a.x += a.vx; a.y += a.vy;
-      a.x = Math.max(a.r + 6, Math.min(W - a.r - 6, a.x)); a.y = Math.max(a.r + 6, Math.min(H - a.r - 18, a.y));
+      if (a.tx !== undefined) { a.vx += (a.tx - a.x) * 0.04; a.vy += (a.ty - a.y) * 0.04; }
+      a.vx *= 0.78; a.vy *= 0.78; a.x += a.vx; a.y += a.vy;
     }
-    // orbiting bodies follow their parent; they never push it
+    const slow = REDUCED() ? 0 : 1;
     for (const n of this.nodes) {
       if (n.orbit && n.parent && !n.flow) {
-        n.orbit.a += n.orbit.speed * 0.004 * (state.ui.reducedMotion ? 0 : 1);
-        n.x = n.parent.x + Math.cos(n.orbit.a) * n.orbit.d; n.y = n.parent.y + Math.sin(n.orbit.a) * n.orbit.d;
+        n.orbit.a += n.orbit.speed * 0.003 * slow;
+        n.x = n.parent.x + Math.cos(n.orbit.a) * n.orbit.d; n.y = n.parent.y + Math.sin(n.orbit.a) * n.orbit.d * (n.orbit.tilt || 1);
       } else if (n.flow && n.tx !== undefined) { n.x += (n.tx - n.x) * 0.1; n.y += (n.ty - n.y) * 0.1; }
     }
-    // camera inertia
-    this.cam.x += this.cam.vx; this.cam.y += this.cam.vy; this.cam.vx *= 0.9; this.cam.vy *= 0.9;
+    for (const m of this.motes) { m.x = (m.x + m.vx * slow + 1) % 1; m.y = (m.y + m.vy * slow + 1) % 1; }
+    this.cam.x += this.cam.vx; this.cam.y += this.cam.vy; this.cam.vx *= 0.88; this.cam.vy *= 0.88;
     this.frames += 1;
     const moving = movers.some((n) => Math.hypot(n.vx, n.vy) > 0.05) || Math.hypot(this.cam.vx, this.cam.vy) > 0.05;
     if (this.frames > 60 && !moving) this.settled = true;
   }
 
   start() { if (this.raf) return; const tick = () => { if (!this.settled || this.hasMotion()) this.step(); this.draw(); this.t += 1; this.raf = requestAnimationFrame(tick); }; this.raf = requestAnimationFrame(tick); }
-  hasMotion() { return !state.ui.reducedMotion && this.nodes.some((n) => (n.kind === "mission" && n.state === "active") || n.kind === "thought"); }
-  destroy() { cancelAnimationFrame(this.raf); this.raf = 0; }
+  hasMotion() { return !REDUCED(); }
+  destroy() { cancelAnimationFrame(this.raf); this.raf = 0; this.closeMenu(); window.removeEventListener("keydown", this._onKey, true); window.removeEventListener("resize", this._onResize); }
 
   /* ---- drawing -------------------------------------------------------- */
   toScreen(n) { return [(n.x - this.cam.x) * this.cam.z + this.W() / 2 * (1 - this.cam.z), (n.y - this.cam.y) * this.cam.z + this.H() / 2 * (1 - this.cam.z)]; }
   fromScreen(sx, sy) { return [(sx - this.W() / 2 * (1 - this.cam.z)) / this.cam.z + this.cam.x, (sy - this.H() / 2 * (1 - this.cam.z)) / this.cam.z + this.cam.y]; }
+  lod() { return this.cam.z < 0.85 ? 0 : this.cam.z < 1.45 ? 1 : 2; }
 
   draw() {
-    const ctx = this.ctx, W = this.W(), H = this.H(), z = this.cam.z;
+    const ctx = this.ctx, W = this.W(), H = this.H(), z = this.cam.z, t = this.t, lod = this.lod();
     ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    // parallax star field + nebula wash
-    for (const s of this.stars) {
-      const x = ((s.x * W - this.cam.x * 0.05 * s.z) % W + W) % W, y = ((s.y * H - this.cam.y * 0.05 * s.z) % H + H) % H;
-      ctx.fillStyle = `rgba(160,190,230,${0.12 + s.z * 0.25})`; ctx.fillRect(x, y, s.s, s.s);
+    // deep space: a slow gradient wash with two faint nebular tints
+    const bg = ctx.createRadialGradient(W * 0.5, H * 0.45, 20, W * 0.5, H * 0.45, Math.max(W, H) * 0.75);
+    bg.addColorStop(0, "#0b1424"); bg.addColorStop(0.55, "#060a14"); bg.addColorStop(1, "#02040a");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    for (const [fx, fy, col] of [[0.18, 0.72, "rgba(60,90,160,.10)"], [0.8, 0.3, "rgba(120,80,170,.08)"]]) {
+      const g = ctx.createRadialGradient(W * fx - this.cam.x * 0.03, H * fy - this.cam.y * 0.03, 0, W * fx, H * fy, Math.max(W, H) * 0.45);
+      g.addColorStop(0, col); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
+    // parallax star layers
+    for (const layer of this.layers) {
+      const px = this.cam.x * 0.06 * layer.depth, py = this.cam.y * 0.06 * layer.depth;
+      for (const s of layer.stars) {
+        const x = ((s.x * W - px) % W + W) % W, y = ((s.y * H - py) % H + H) % H;
+        const tw = REDUCED() ? 1 : 0.75 + 0.25 * Math.sin(t / 40 + s.tw);
+        ctx.fillStyle = s.hue > 0.85 ? `rgba(200,215,255,${s.a * tw})` : s.hue < 0.08 ? `rgba(255,225,190,${s.a * tw})` : `rgba(170,195,235,${s.a * tw})`;
+        ctx.beginPath(); ctx.arc(x, y, s.s * (0.8 + 0.2 * z), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // particle drift
+    for (const m of this.motes) { ctx.fillStyle = `rgba(150,190,240,${m.a})`; ctx.beginPath(); ctx.arc(m.x * W, m.y * H, m.s, 0, Math.PI * 2); ctx.fill(); }
+    // knowledge nebula
     const k = this.byId.get("knowledge");
-    if (k && k.visible) { const [kx, ky] = this.toScreen(k); const g = ctx.createRadialGradient(kx, ky, 0, kx, ky, k.r * 2.6 * z); g.addColorStop(0, "rgba(127,111,217,.20)"); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(kx, ky, k.r * 2.6 * z, 0, Math.PI * 2); ctx.fill(); }
-    // edges: energy paths for active relations, faint otherwise
+    if (k && k.visible) {
+      const [kx, ky] = this.toScreen(k);
+      for (let i = 0; i < 4; i++) {
+        const ox = Math.cos(t / 400 + i * 1.7) * 14 * z, oy = Math.sin(t / 360 + i * 2.1) * 10 * z, rr = k.r * (1.6 + i * 0.5) * z;
+        const g = ctx.createRadialGradient(kx + ox, ky + oy, 0, kx + ox, ky + oy, rr);
+        g.addColorStop(0, i % 2 ? "rgba(140,110,240,.16)" : "rgba(90,130,240,.12)"); g.addColorStop(1, "transparent");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(kx + ox, ky + oy, rr, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // orbit rings (faint ellipses) for every system with children
+    for (const p of this.nodes) {
+      if (!p.visible || (p.kind !== "project" && p.kind !== "self")) continue;
+      const rings = new Set(this.childrenOf(p).filter((c) => c.visible && c.orbit).map((c) => Math.round(c.orbit.d)));
+      if (!rings.size) continue;
+      const [px, py] = this.toScreen(p);
+      const dimmed = this.dim && !this.dim.has(p.id);
+      for (const d of rings) {
+        ctx.strokeStyle = dimmed ? "rgba(140,170,220,.04)" : "rgba(140,170,220,.10)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(px, py, d * z, d * z * 0.62, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // relations: energy paths for active relations, faint otherwise; thoughts pulse along them
     for (const e of this.edges) {
       if (!e.a.visible || !e.b.visible) continue;
+      if (e.type === "mission_of" || e.type === "uses" || e.type === "subproject_of") { if (lod < 2 && !e.active) continue; }
       const [ax, ay] = this.toScreen(e.a), [bx, by] = this.toScreen(e.b);
       const dimmed = this.dim && !this.dim.has(e.a.id) && !this.dim.has(e.b.id);
-      ctx.strokeStyle = e.type === "thought" ? `rgba(240,198,116,${dimmed ? .06 : .35})` : e.active ? `rgba(102,217,160,${dimmed ? .05 : .35})` : `rgba(79,195,247,${dimmed ? .04 : .14})`;
-      ctx.lineWidth = e.active ? 1.4 : 1; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-      if (e.active && !state.ui.reducedMotion) { const p = (this.t / 90) % 1; ctx.fillStyle = "rgba(102,217,160,.8)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 1.8, 0, Math.PI * 2); ctx.fill(); }
-      if (e.type === "thought" && !state.ui.reducedMotion) { const p = (this.t / 140) % 1; ctx.fillStyle = "rgba(240,198,116,.9)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 2, 0, Math.PI * 2); ctx.fill(); }
+      ctx.strokeStyle = e.type === "thought" ? `rgba(240,198,116,${dimmed ? .05 : .28})` : e.active ? `rgba(127,224,180,${dimmed ? .05 : .32})` : `rgba(110,160,230,${dimmed ? .03 : .10})`;
+      ctx.lineWidth = e.active ? 1.3 : 0.8; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      if (e.active && !REDUCED()) { const p = (t / 90) % 1; ctx.fillStyle = "rgba(127,224,180,.85)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 1.8, 0, Math.PI * 2); ctx.fill(); }
+      if (e.type === "thought" && !REDUCED()) { const p = (t / 140 + e.b.seed % 100 / 100) % 1; ctx.fillStyle = "rgba(240,198,116,.9)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 2, 0, Math.PI * 2); ctx.fill(); }
     }
     // bodies, far to near
     const labels = [];
     for (const n of [...this.nodes].sort((a, b) => a.depth - b.depth)) {
       if (!n.visible) continue;
+      if (n.kind === "knowledge") { const [x, y] = this.toScreen(n); labels.push({ n, x, y: y + 6, size: 11, text: n.label }); continue; }
+      const wantedBody = n.kind === "project" || n.kind === "self" || (lod >= 1 && (n.kind === "capability" || n.sub)) || (lod >= 2) || n === this.hover || this.selected.has(n.id);
+      if (!wantedBody) continue;
       const [x, y] = this.toScreen(n); const r = n.r * z * (0.6 + 0.4 * n.depth);
       const dimmed = this.dim && !this.dim.has(n.id);
       ctx.globalAlpha = dimmed ? 0.18 : 1;
-      let colour = n.kind === "project" ? (HEALTH_COLOUR[n.health?.state] || "#9db0c8") : (KIND_COLOUR[n.kind] || "#6b7c93");
-      if (n.kind === "project" && ["DORMANT", "ARCHIVED", "LOW_PRIORITY"].includes(n.importance)) colour = "#5b6b82";
-      const halo = n.kind === "project" ? (n.importance === "ACTIVE" || n.importance === "FOCUS" || n.importance === "PINNED" ? 2.6 : 1.8) : n.kind === "self" ? 3 : 1.6;
-      const pulse = (n.kind === "project" && n.importance === "ACTIVE" && !state.ui.reducedMotion) ? 1 + Math.sin(this.t / 25) * 0.08 : 1;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r * halo * pulse); g.addColorStop(0, colour + "66"); g.addColorStop(1, "transparent");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * halo * pulse, 0, Math.PI * 2); ctx.fill();
-      if (n.kind === "project" && n.health?.state === "BLOCKED") { ctx.strokeStyle = "rgba(255,107,107,.55)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r * 1.35, 0, Math.PI * 2); ctx.stroke(); }
-      ctx.fillStyle = this.selected.has(n.id) || n === this.hover ? "#ffffff" : colour;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      if (n.kind === "project" && n.locked) { ctx.strokeStyle = "#dce5f0"; ctx.lineWidth = 1; ctx.strokeRect(x - 3, y - r - 9, 6, 5); }
-      if (n.kind === "project" && n.importance === "PINNED") { ctx.fillStyle = "#e0b04a"; ctx.beginPath(); ctx.arc(x + r * 0.8, y - r * 0.8, 2.5, 0, Math.PI * 2); ctx.fill(); }
+      if (n.kind === "project") this.drawStar(ctx, n, x, y, r, t);
+      else if (n.kind === "self") this.drawCore(ctx, x, y, r, t);
+      else this.drawBody(ctx, n, x, y, r, t);
       ctx.globalAlpha = 1;
-      // semantic zoom: far = projects only; medium = + capabilities; near = missions/thoughts too
-      const lod = z < 0.8 ? 0 : z < 1.4 ? 1 : 2;
-      const wanted = n.kind === "project" || n.kind === "self" || n.kind === "knowledge" || (lod >= 1 && n.kind === "capability") || (lod >= 2) || n === this.hover || this.selected.has(n.id);
-      if (wanted && !dimmed) labels.push({ n, x, y: y + r + 4, size: n.kind === "self" ? 12 : n.kind === "project" ? 11 : 10, text: n.kind === "capability" ? `${n.label} · ${n.attempts} attempts` : n.label });
+      const wantedLabel = n.kind === "project" || n.kind === "self" || (lod >= 1 && (n.kind === "capability" || n.sub)) || (lod >= 2 && n.kind === "mission") || n === this.hover || this.selected.has(n.id);
+      if (wantedLabel && !dimmed) labels.push({ n, x, y: y + r + 5, size: n.kind === "self" ? 12 : n.kind === "project" ? (n.sub ? 10 : 11.5) : 9.5, text: n.kind === "capability" ? `${n.label}` : n.label });
     }
-    // labels without collisions (priority: self, projects, then the rest)
+    // labels without collisions (priority: self, systems, then the rest)
     ctx.textAlign = "center"; const placed = [];
     for (const l of labels.sort((a, b) => b.size - a.size)) {
       ctx.font = `${l.size}px Segoe UI, sans-serif`; const w = ctx.measureText(l.text).width + 8, h = l.size + 4;
       const box = { x: l.x - w / 2, y: l.y, w, h };
       if (placed.some((b) => !(box.x + box.w < b.x || b.x + b.w < box.x || box.y + box.h < b.y || b.y + b.h < box.y))) { if (l.n.kind !== "project" && l.n.kind !== "self") continue; }
-      placed.push(box); ctx.fillStyle = l.n === this.hover ? "#ffffff" : l.n.kind === "project" ? "#c8d6ea" : "#8a9bb3"; ctx.fillText(l.text, l.x, l.y + l.size);
+      placed.push(box);
+      ctx.fillStyle = "rgba(4,7,14,.55)"; ctx.fillRect(box.x, box.y + 1, box.w, box.h);
+      ctx.fillStyle = l.n === this.hover ? "#ffffff" : l.n.kind === "project" ? "#d5e1f2" : l.n.kind === "knowledge" ? "#c6bcf5" : "#93a4bd";
+      ctx.fillText(l.text, l.x, l.y + l.size);
     }
     if (this.box) { ctx.strokeStyle = "rgba(143,211,255,.7)"; ctx.setLineDash([4, 3]); ctx.strokeRect(this.box.x, this.box.y, this.box.w, this.box.h); ctx.setLineDash([]); }
   }
 
+  drawStar(ctx, n, x, y, r, t) {
+    const hs = n.health?.state || "HEALTHY", [cr, cg, cb] = HEALTH_HUE[hs] || HEALTH_HUE.HEALTHY;
+    const faded = ["DORMANT", "ARCHIVED", "LOW_PRIORITY", "TEST"].includes(n.importance);
+    const pulse = (["ACTIVE", "FOCUS", "PINNED"].includes(n.importance) && !REDUCED()) ? 1 + Math.sin(t / 28 + n.seed) * 0.05 : 1;
+    const sel = this.selected.has(n.id) || n === this.hover;
+    // health halo (wide, soft)
+    let g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 3.2 * pulse);
+    g.addColorStop(0, `rgba(${cr},${cg},${cb},${faded ? .12 : .22})`); g.addColorStop(0.5, `rgba(${cr},${cg},${cb},${faded ? .04 : .08})`); g.addColorStop(1, "transparent");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.2 * pulse, 0, Math.PI * 2); ctx.fill();
+    // corona
+    g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 1.55);
+    g.addColorStop(0, `rgba(255,255,255,${faded ? .55 : .95})`); g.addColorStop(0.35, `rgba(${cr},${cg},${cb},${faded ? .55 : .9})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.55, 0, Math.PI * 2); ctx.fill();
+    // core
+    g = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, 0, x, y, r);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.55, `rgb(${Math.min(255, cr + 60)},${Math.min(255, cg + 60)},${Math.min(255, cb + 60)})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},.85)`);
+    ctx.fillStyle = sel ? "#ffffff" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    // diffraction spikes for the important systems
+    if (["PINNED", "FOCUS", "ACTIVE"].includes(n.importance) && !faded) {
+      ctx.strokeStyle = `rgba(255,255,255,${.18 * pulse})`; ctx.lineWidth = 1;
+      for (const a of [0, Math.PI / 2]) { ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r * 2.6, y + Math.sin(a) * r * 2.6); ctx.lineTo(x - Math.cos(a) * r * 2.6, y - Math.sin(a) * r * 2.6); ctx.stroke(); }
+    }
+    if (hs === "BLOCKED") { ctx.strokeStyle = `rgba(255,120,120,${.35 + .25 * Math.sin(t / 18)})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r * 1.9, 0, Math.PI * 2); ctx.stroke(); }
+    if (n.locked) { ctx.strokeStyle = "#dce5f0"; ctx.lineWidth = 1; ctx.strokeRect(x - 3, y - r - 10, 6, 5); }
+    if (n.importance === "PINNED") { ctx.fillStyle = "#f0c674"; ctx.beginPath(); ctx.arc(x + r * 0.95, y - r * 0.95, 2.6, 0, Math.PI * 2); ctx.fill(); }
+    if (sel) { ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
+    // progress arc: tasks done
+    if (n.tasks) { const f = (n.tasks_done || 0) / n.tasks; ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f); ctx.stroke(); }
+  }
+
+  drawCore(ctx, x, y, r, t) {
+    const pulse = REDUCED() ? 1 : 1 + Math.sin(t / 22) * 0.06;
+    let g = ctx.createRadialGradient(x, y, 0, x, y, r * 4 * pulse);
+    g.addColorStop(0, "rgba(159,220,255,.35)"); g.addColorStop(0.4, "rgba(79,195,247,.12)"); g.addColorStop(1, "transparent");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4 * pulse, 0, Math.PI * 2); ctx.fill();
+    g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.5, "#bfe8ff"); g.addColorStop(1, "rgba(79,195,247,.6)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(159,220,255,.35)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r * 1.8, t / 60, t / 60 + Math.PI * 1.3); ctx.stroke();
+  }
+
+  drawBody(ctx, n, x, y, r, t) {
+    const colour = KIND_COLOUR[n.kind] || "#6b7c93";
+    const sel = this.selected.has(n.id) || n === this.hover;
+    if (n.kind === "mission" && n.state === "active") { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4); g.addColorStop(0, "rgba(127,224,180,.35)"); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, Math.PI * 2); ctx.fill(); }
+    if (n.kind === "thought") { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5); g.addColorStop(0, `rgba(240,198,116,${.35 + .25 * Math.sin(t / 20 + n.seed)})`); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill(); }
+    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.6, colour); g.addColorStop(1, colour + "aa");
+    ctx.fillStyle = sel ? "#ffffff" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    if (n.kind === "capability") { ctx.strokeStyle = "rgba(143,161,194,.6)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0.3, Math.PI * 1.4); ctx.stroke(); }
+    if (n.kind === "mission" && ["blocked", "failed"].includes(n.state)) { ctx.strokeStyle = "rgba(255,120,120,.7)"; ctx.beginPath(); ctx.arc(x, y, r + 2, 0, Math.PI * 2); ctx.stroke(); }
+  }
+
   /* ---- interaction ---------------------------------------------------- */
-  hit(sx, sy) { const [x, y] = this.fromScreen(sx, sy); let best = null; for (const n of this.nodes) { if (!n.visible) continue; const d = Math.hypot(n.x - x, n.y - y); if (d < n.r + 6 / this.cam.z && (!best || n.depth > best.depth)) best = n; } return best; }
+  hit(sx, sy) {
+    const [x, y] = this.fromScreen(sx, sy); const lod = this.lod(); let best = null;
+    for (const n of this.nodes) {
+      if (!n.visible) continue;
+      const shown = n.kind === "project" || n.kind === "self" || n.kind === "knowledge" || (lod >= 1 && (n.kind === "capability" || n.sub)) || lod >= 2;
+      if (!shown) continue;
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d < n.r + 7 / this.cam.z && (!best || n.depth > best.depth)) best = n;
+    }
+    return best;
+  }
   find(text) { const q = String(text || "").toLowerCase(); return this.nodes.find((n) => n.visible && n.label.toLowerCase().includes(q)) || null; }
   focusText(text, open = false) {
     const n = this.find(text);
     if (!text) { this.dim = null; this.focusId = null; return; }
     if (!n) return;
     const keep = new Set([n.id]); for (const e of this.edges) { if (e.a === n) keep.add(e.b.id); if (e.b === n) keep.add(e.a.id); }
-    this.dim = keep; this.focusId = n.id; this.flyTo(n, 1.6);
+    this.dim = keep; this.focusId = n.id; this.flyTo(n, 1.7);
     if (open) this.opts.onSelect(n);
   }
-  flyTo(n, z) { const steps = state.ui.reducedMotion ? 1 : 24; const sx = this.cam.x, sy = this.cam.y, sz = this.cam.z; let i = 0; const ease = (t) => 1 - Math.pow(1 - t, 3); const go = () => { i += 1; const t = ease(i / steps); this.cam.x = sx + (n.x - sx) * t; this.cam.y = sy + (n.y - sy) * t; this.cam.z = sz + (z - sz) * t; if (i < steps) requestAnimationFrame(go); }; go(); this.settled = false; }
+  flyTo(n, z) {
+    const steps = REDUCED() ? 1 : 34; const sx = this.cam.x, sy = this.cam.y, sz = this.cam.z; let i = 0;
+    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const go = () => { i += 1; const t = ease(i / steps); this.cam.x = sx + (n.x - sx) * t; this.cam.y = sy + (n.y - sy) * t; this.cam.z = sz + (z - sz) * t; if (i < steps) requestAnimationFrame(go); };
+    go(); this.settled = false;
+  }
   bind() {
     const c = this.canvas;
     c.onmousemove = (e) => {
       const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
       if (this.drag) {
         const [x, y] = this.fromScreen(sx, sy);
-        if (this.drag.kind === "pan") { this.cam.x = this.drag.camX - (sx - this.drag.sx) / this.cam.z; this.cam.y = this.drag.camY - (sy - this.drag.sy) / this.cam.z; this.cam.vx = -(e.movementX) / this.cam.z * 0.3; this.cam.vy = -(e.movementY) / this.cam.z * 0.3; }
-        else if (this.drag.kind === "node") { for (const n of this.drag.nodes) { if (n.locked) continue; n.x = x + n.dx; n.y = y + n.dy; n.vx = n.vy = 0; } this.drag.moved = true; }
+        if (this.drag.kind === "pan") { this.cam.x = this.drag.camX - (sx - this.drag.sx) / this.cam.z; this.cam.y = this.drag.camY - (sy - this.drag.sy) / this.cam.z; this.cam.vx = -(e.movementX) / this.cam.z * 0.25; this.cam.vy = -(e.movementY) / this.cam.z * 0.25; }
+        else if (this.drag.kind === "node") { for (const n of this.drag.nodes) { if (n.locked) continue; n.x = x + n.dx; n.y = y + n.dy; n.tx = n.ty = undefined; n.vx = n.vy = 0; } this.drag.moved = true; }
         else if (this.drag.kind === "box") { this.box = { x: Math.min(this.drag.sx, sx), y: Math.min(this.drag.sy, sy), w: Math.abs(sx - this.drag.sx), h: Math.abs(sy - this.drag.sy) }; }
         this.settled = false; return;
       }
       this.hover = this.hit(sx, sy); c.style.cursor = this.hover ? "pointer" : "grab"; this.settled = false;
     };
     c.onmousedown = (e) => {
+      if (e.button === 2) return;
+      this.closeMenu();
       const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top; const n = this.hit(sx, sy);
       if (e.shiftKey && !n) { this.drag = { kind: "box", sx, sy }; return; }
       if (n && n.kind === "project") {
@@ -324,14 +487,43 @@ class Galaxy {
     };
     c.onmouseup = finish; c.onmouseleave = () => { if (this.drag?.kind === "pan") this.drag = null; this.hover = null; };
     c.ondblclick = (e) => { const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top); if (n?.kind === "project") views.open("projects", { id: n.id }); else if (n) this.focusText(n.label); };
-    c.onwheel = (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top; const [wx, wy] = this.fromScreen(sx, sy); const z = Math.max(0.45, Math.min(3.2, this.cam.z * (e.deltaY < 0 ? 1.12 : 0.89))); this.cam.z = z; const [nx, ny] = this.fromScreen(sx, sy); this.cam.x += wx - nx; this.cam.y += wy - ny; this.settled = false; };
-    this._onKey = (e) => { if (e.key === "Escape" && (this.dim || this.cam.z !== 1)) { this.dim = null; this.focusId = null; this.flyTo({ x: this.W() / 2, y: this.H() / 2 }, 1); e.stopPropagation(); } };
+    c.onwheel = (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top; const [wx, wy] = this.fromScreen(sx, sy); const z = Math.max(0.45, Math.min(3.4, this.cam.z * (e.deltaY < 0 ? 1.1 : 0.91))); this.cam.z = z; const [nx, ny] = this.fromScreen(sx, sy); this.cam.x += wx - nx; this.cam.y += wy - ny; this.settled = false; };
+    c.oncontextmenu = (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top); if (n && n.kind === "project") { if (!this.selected.has(n.id)) this.selected = new Set([n.id]); this.openMenu(n, e.clientX - r.left, e.clientY - r.top); } else this.closeMenu(); };
+    this._onKey = (e) => { if (e.key === "Escape") { if (this.menu) { this.closeMenu(); e.stopPropagation(); return; } if (this.dim || this.cam.z !== 1) { this.dim = null; this.focusId = null; this.flyTo({ x: this.W() / 2, y: this.H() / 2 }, 1); e.stopPropagation(); } } };
     window.addEventListener("keydown", this._onKey, true);
     this._onResize = () => this.resize(); window.addEventListener("resize", this._onResize);
   }
   lock(n, locked) { n.locked = locked; n.layout = { ...(n.layout || {}), x: n.x, y: n.y, state: locked ? "LOCKED" : "OWNER_POSITIONED" }; return api("/api/project/update", { id: n.id, layout: n.layout }); }
   release(n) { n.ownerPlaced = false; n.locked = false; n.layout = { state: "AUTO_POSITIONED" }; this.layout(false); return api("/api/project/update", { id: n.id, layout: { state: "AUTO_POSITIONED" } }); }
+
+  /* ---- context menu --------------------------------------------------- */
+  closeMenu() { if (this.menu) { this.menu.remove(); this.menu = null; } }
+  openMenu(n, sx, sy) {
+    this.closeMenu();
+    const p = n.data || {};
+    const reload = () => views.open("projects", {});
+    const item = (label, fn) => el("button", { text: label, onClick: async () => { this.closeMenu(); await fn(); } });
+    const menu = el("div", { class: "galaxy-menu" }, el("h6", { text: p.title || n.label }),
+      item("Focus", () => this.focusText(n.label)),
+      item("Open", () => views.open("projects", { id: n.id })),
+      item(p.importance === "PINNED" ? "Unpin" : "Pin", async () => { await api("/api/project/update", { id: n.id, importance: p.importance === "PINNED" ? "NORMAL" : "PINNED" }); reload(); }),
+      item(n.locked ? "Release position" : "Lock position", async () => { if (n.locked) await this.release(n); else await this.lock(n, true); reload(); }),
+      item(p.hidden ? "Unhide" : "Hide", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }),
+      item("Archive", async () => { await api("/api/project/update", { id: n.id, importance: "ARCHIVED" }); reload(); }),
+      el("div", { class: "sep" }), el("h6", { text: "Importance" }),
+      el("div", { class: "row" }, ...IMPORTANCE.map((i) => el("button", { class: i === (p.importance || n.importance) ? "on" : "", text: i.toLowerCase().replace("_", " "), onClick: async () => { this.closeMenu(); await api("/api/project/update", { id: n.id, importance: i }); reload(); } }))),
+      el("div", { class: "sep" }),
+      item("Create mission", () => chat.send(`Zeus, starte eine Mission für das Projekt „${p.title || n.label}“: nächster sinnvoller Schritt.`, "galaxy")),
+      item("Ask Zeus", () => chat.send(`Wie steht das Projekt „${p.title || n.label}“? Was blockiert es und was ist der nächste Schritt?`, "galaxy")),
+      item("Local graph", () => views.open("projects", { connected: p.title || n.label })));
+    const W = this.W(), H = this.H();
+    menu.style.left = Math.min(sx + 6, W - 210) + "px"; menu.style.top = Math.min(sy + 6, H - 330) + "px";
+    this.wrap.append(menu); this.menu = menu;
+  }
 }
+
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hash(s) { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) % 100000; }
 
 /* ---- inspector -------------------------------------------------------- */
 async function inspect(n, graph, reload) {
@@ -341,26 +533,36 @@ async function inspect(n, graph, reload) {
   if (n.kind === "knowledge") return views.open("knowledge");
   if (n.kind === "self") return views.open("missions");
   const p = n.data || {};
-  const detail = await api("/api/project", { id: n.id });
+  const [detail, knowledge] = await Promise.all([api("/api/project", { id: n.id }), api("/api/knowledge/graph", { query: (p.title || n.label || "").slice(0, 40), limit: 8 }).catch(() => ({}))]);
   const tasks = detail.tasks || [];
   const current = tasks.find((t) => ["active", "running", "working"].includes(String(t.status)));
   const blocked = tasks.filter((t) => ["blocked", "failed"].includes(String(t.status)));
   const next = tasks.find((t) => ["todo", "pending", "open", "planned"].includes(String(t.status)));
+  const done = tasks.filter((t) => ["done", "complete", "completed", "accepted"].includes(String(t.status))).length;
   const related = graph.edges.filter((e) => e.source === n.id || e.target === n.id).map((e) => graph.nodes.find((x) => x.id === (e.source === n.id ? e.target : e.source))).filter(Boolean);
-  const importance = el("select", {}, ...IMPORTANCE.map((i) => el("option", { value: i, text: i.toLowerCase(), selected: p.importance === i })));
+  const importance = el("select", {}, ...IMPORTANCE.map((i) => el("option", { value: i, text: i.toLowerCase().replace("_", " "), selected: (p.importance || n.importance) === i })));
   importance.onchange = async () => { await api("/api/project/update", { id: n.id, importance: importance.value }); reload(); };
   const note = el("input", { placeholder: "owner note…" });
+  const meta = detail.metadata || {};
+  const knowledgeNodes = (knowledge && knowledge.nodes) || [];
   views.inspect(p.title || n.label,
-    section("Status", kv("health", `${p.health?.state || "?"} — ${p.health?.reason || ""}`), kv("state", p.state), kv("importance", importance),
-      kv("goal", p.goal), kv("last activity", ago(p.updated_at)), kv("progress", p.tasks ? `${p.tasks_done}/${p.tasks} tasks` : "no tasks")),
-    section("Now", kv("current mission", current ? current.title : "—"), kv("blockers", blocked.length ? blocked.map((t) => t.title).join("; ") : "none"),
+    el("div", { class: "meta" }, badge(p.health?.state || "?", p.health?.state === "HEALTHY" ? "ok" : p.health?.state === "BLOCKED" ? "bad" : p.health?.state === "COMPLETE" ? "blue" : "warn"), " ", badge(p.importance || n.importance || "NORMAL", "dim"), " ", badge(p.state || detail.state || "", STATE_TONE[String(p.state).toLowerCase()] || "idle")),
+    tasks.length ? el("div", { class: "bar green", style: { margin: "6px 0 10px" } }, el("i", { style: { width: `${(done / tasks.length) * 100}%` } })) : null,
+    section("Goal", kv("goal", p.goal || detail.goal), kv("owner said", meta.owner_request), kv("parent", meta.parent_title), kv("deadline", meta.deadline)),
+    section("Status", kv("progress", tasks.length ? `${done}/${tasks.length} tasks` : "no tasks"), kv("health", `${p.health?.state || "?"} — ${p.health?.reason || ""}`), kv("importance", importance),
+      kv("last activity", ago(p.updated_at || detail.updated_at)), kv("created", (detail.created_at || "").slice(0, 10))),
+    section("Now", kv("current mission", current ? current.title : (related.find((r) => r.kind === "mission" && r.state === "active") || {}).label || "—"),
+      kv("blockers", blocked.length ? blocked.map((t) => t.title).join("; ") : (detail.blockers || []).map((b) => b.text).join("; ") || "none"),
       kv("next action", next ? next.title : "—"), kv("risks", p.health?.state === "AT_RISK" ? p.health.reason : "none known")),
     section("Connected", kv("missions", related.filter((r) => r.kind === "mission").map((r) => r.label).join("\n") || "—"),
+      kv("subprojects", related.filter((r) => r.kind === "project").map((r) => r.label).join(", ") || "—"),
       kv("capabilities", related.filter((r) => r.kind === "capability").map((r) => r.label).join(", ") || "—"),
-      kv("ZEUS thoughts", related.filter((r) => r.kind === "thought").map((r) => r.label).join("\n") || "—"),
-      kv("knowledge", "open the graph for related notes")),
+      kv("ZEUS thoughts", related.filter((r) => r.kind === "thought").map((r) => r.label).join("\n") || "—")),
+    section("Knowledge", knowledgeNodes.length ? el("div", {}, ...knowledgeNodes.slice(0, 6).map((k) => el("div", { class: "focus-row", onClick: () => views.open("knowledge", { q: k.title }) }, el("span", { class: "dot", style: { background: KIND_COLOUR.knowledge } }), el("span", { text: k.title })))) : el("div", { class: "empty", style: { padding: "2px 0" }, text: "no related notes yet" })),
+    (detail.artifacts || []).length ? section("Documents", ...detail.artifacts.slice(-6).map((a) => kv(a.kind, a.path))) : null,
+    (detail.decisions || []).length ? section("Decisions", ...detail.decisions.slice(-5).map((d) => kv((d.at || "").slice(0, 10), d.text))) : null,
+    (detail.acceptance || []).length ? section("Acceptance", ...detail.acceptance.slice(0, 5).map((a) => kv(a.satisfied ? "✓" : "·", a.text))) : null,
     (p.notes || []).length ? section("ZEUS notes", ...p.notes.map((x) => kv((x.at || "").slice(0, 10), x.title || x.text))) : null,
-    (detail.acceptance || []).length ? section("Recent decisions / acceptance", ...detail.acceptance.slice(0, 5).map((a) => kv(a.satisfied ? "✓" : "·", a.text))) : null,
     section("Owner notes", note, el("div", { class: "toolbar" }, button("Add note", async () => { if (note.value.trim()) { await api("/api/project/update", { id: n.id, note: note.value }); note.value = ""; } }))),
     el("div", { class: "toolbar" },
       button("Open", () => views.open("projects", { id: n.id }), "primary"),
@@ -369,8 +571,8 @@ async function inspect(n, graph, reload) {
       button(p.importance === "PINNED" ? "Unpin" : "Pin", async () => { await api("/api/project/update", { id: n.id, importance: p.importance === "PINNED" ? "NORMAL" : "PINNED" }); reload(); }),
       button("Archive", async () => { await api("/api/project/update", { id: n.id, importance: "ARCHIVED" }); reload(); }, "ghost"),
       button(p.hidden ? "Unhide" : "Hide", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }, "ghost"),
-      button("Create mission", () => chat.send(`Zeus, starte eine Mission für das Projekt „${p.title || n.label}“: ${next ? next.title : "nächster sinnvoller Schritt"}.`)),
-      button("Ask ZEUS", () => chat.send(`What is the state of the project "${p.title || n.label}"? What blocks it and what is next?`)),
+      button("Create mission", () => chat.send(`Zeus, starte eine Mission für das Projekt „${p.title || n.label}“: ${next ? next.title : "nächster sinnvoller Schritt"}.`, "galaxy")),
+      button("Ask ZEUS", () => chat.send(`Wie steht das Projekt „${p.title || n.label}“? Was blockiert es und was ist der nächste Schritt?`, "galaxy")),
       button("Local graph", () => views.open("projects", { connected: p.title || n.label }))));
 }
 
@@ -391,12 +593,14 @@ async function deep(pane, id) {
       badge(node.importance || "NORMAL", "dim"), badge(detail.state || "unknown", STATE_TONE[String(detail.state).toLowerCase()] || "idle"),
       el("span", { text: tasks.length ? `${done}/${tasks.length} tasks done` : "no tasks" }), el("span", { text: health.reason || "" })),
     tasks.length ? el("div", { class: "bar green", style: { marginTop: "8px" } }, el("i", { style: { width: `${(done / tasks.length) * 100}%` } })) : null));
-  // the local system: this project at the centre, its related bodies around
-  const canvas = el("canvas", { id: "constellation", class: "galaxy", style: { height: "34vh" } });
-  pane.append(canvas);
+  const wrap = el("div", { class: "galaxy-wrap" });
+  const canvas = el("canvas", { id: "constellation", class: "galaxy", style: { height: "36vh", minHeight: "260px" } });
+  wrap.append(canvas);
+  pane.append(wrap);
   const local = { nodes: graph.nodes.filter((n) => n.id === id || n.id === "zeus" || graph.edges.some((e) => (e.source === id && e.target === n.id) || (e.target === id && e.source === n.id))), edges: graph.edges.filter((e) => e.source === id || e.target === id) };
-  const centre = local.nodes.find((n) => n.id === id); if (centre) { centre.layout = { x: canvas.clientWidth / 2 || 450, y: 170, state: "LOCKED" }; }
-  galaxy = new Galaxy(canvas, local, { onSelect: (n) => inspect(n, graph, () => views.open("projects", { id })), mode: "GALAXY" });
+  const centre = local.nodes.find((n) => n.id === id); if (centre) { centre.layout = { x: (canvas.clientWidth || 900) / 2, y: 150, state: "LOCKED" }; }
+  galaxy = new Galaxy(canvas, wrap, local, { onSelect: (n) => inspect(n, graph, () => views.open("projects", { id })), mode: "GALAXY" });
+  galaxy.cam.z = 1.6;
   const answer = (q, a) => el("div", { class: "kv" }, el("span", { class: "k", text: q }), el("span", { class: "v", text: a }));
   pane.append(section("At a glance",
     answer("What are we doing", detail.goal || "—"),
@@ -406,10 +610,12 @@ async function deep(pane, id) {
     answer("Next", (tasks.find((t) => ["todo", "pending", "open", "planned"].includes(String(t.status))) || {}).title || "—")));
   if ((detail.acceptance || []).length) pane.append(section("Acceptance", ...detail.acceptance.map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: a.satisfied ? "✓" : "·" }), el("span", { class: "v", text: a.text })))));
   if (tasks.length) pane.append(section("Tasks / dependencies", dependencyGraph(tasks)));
+  if ((detail.decisions || []).length) pane.append(section("Decisions", ...detail.decisions.map((d) => el("div", { class: "kv" }, el("span", { class: "k", text: (d.at || "").slice(0, 10) }), el("span", { class: "v", text: d.text })))));
+  if ((detail.artifacts || []).length) pane.append(section("Documents", ...detail.artifacts.map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: a.kind }), el("span", { class: "v", text: a.path })))));
   pane.append(section("Timeline (from Activity and the mission stores)", timelineView(timeline.events || [])));
   pane.append(el("div", { class: "toolbar" },
-    button("Continue this project", () => chat.send(`Continue the project: ${detail.goal}`), "primary"),
-    button("Ask ZEUS about it", () => chat.send(`What is the state of the project "${detail.goal}"? What blocks it and what is next?`)),
+    button("Continue this project", () => chat.send(`Continue the project: ${detail.goal}`, "galaxy"), "primary"),
+    button("Ask ZEUS about it", () => chat.send(`Wie steht das Projekt „${detail.title || detail.goal}“? Was blockiert es und was ist der nächste Schritt?`, "galaxy")),
     button("Open graph", () => views.open("knowledge", { q: detail.goal || "" }))));
 }
 

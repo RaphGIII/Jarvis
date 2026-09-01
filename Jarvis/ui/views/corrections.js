@@ -92,7 +92,30 @@ export async function openDialog(receiptId) {
     ["Beleg", `${receiptId} · ${ctx.verified ? "verifiziert" : ctx.ok_flag ? "gelaufen, unverifiziert" : "fehlgeschlagen"}`],
   ];
   for (const [k, v] of rows) body.append(el("div", { class: "row" }, el("span", { class: "k", text: k }), el("span", { class: "v", text: v || "—" })));
-  const input = el("textarea", { rows: 3, placeholder: "z. B. „Ich meinte den Ordner notizen/“ oder „Nur diesmal …“ oder „Künftig immer …“" });
+  // What went wrong, in the owner's words. The category decides which
+  // system learns: MISHEARD -> the recogniser's vocabulary, WRONG_INTENT ->
+  // the router, WRONG_TARGET -> the resolver, WRONG_RESULT -> the verifier,
+  // PRONUNCIATION -> the lexicon. The protected personality never changes here.
+  const CATEGORIES = [
+    ["MISHEARD", "Falsch gehört", "z. B. „Starkfisch → Stockfish“ oder „ich meinte Stockfish“"],
+    ["WRONG_INTENT", "Falsch verstanden", "z. B. „Das war eine Frage, keine Aktion“"],
+    ["WRONG_TARGET", "Falsches Ziel", "z. B. „Ich meinte das Projekt Biochemie, nicht Bio“"],
+    ["WRONG_RESULT", "Falsches Ergebnis", "z. B. „Es lief nicht Rammstein, sondern etwas anderes“"],
+    ["INCOMPLETE", "Unvollständig", "z. B. „Die dritte Aufgabe fehlt“"],
+    ["PRONUNCIATION", "Aussprache", "z. B. „Sprich ‚Spotify‘ wie ‚Spottifai‘ aus“"],
+    ["OTHER", "Anderes", "ein Satz, was anders sein soll"],
+  ];
+  let category = "";
+  const chips = el("div", { class: "chips" });
+  const input = el("textarea", { rows: 3, placeholder: "Was war falsch? Ein Satz genügt." });
+  for (const [key, label, hint] of CATEGORIES) {
+    chips.append(el("button", { class: "chip", type: "button", text: label, title: hint, onClick: (ev) => {
+      category = key;
+      for (const c of chips.querySelectorAll(".chip")) c.classList.toggle("on", c === ev.currentTarget);
+      input.placeholder = hint;
+      input.focus();
+    } }));
+  }
   const guess = el("div", { class: "guess" });
   const classSel = el("select");
   const scopeSel = el("select");
@@ -106,12 +129,13 @@ export async function openDialog(receiptId) {
   const actions = el("div", { class: "row" });
   const save = async (rerun) => {
     const result = await api("/api/correction/save", {
-      what_was_wrong: input.value, receipt_id: receiptId, classification: classSel.value, scope: scopeSel.value, rerun,
+      what_was_wrong: input.value, receipt_id: receiptId, classification: category ? "" : classSel.value, scope: scopeSel.value, rerun, category,
     });
     if (result.ok) {
       $("panel").classList.remove("open");
-      addTurn("note", "", `Gelernt: ${result.correction.classification} · ${result.correction.scope.toLowerCase().replace(/_/g, " ")}` +
-        (result.rerun ? ` · erneut ausgeführt (${result.rerun.receipt_id || "…"})` : ""));
+      addTurn("note", "", `Gelernt: ${result.correction ? result.correction.classification : result.classification} · ${(result.correction ? result.correction.scope : result.scope || "").toLowerCase().replace(/_/g, " ")}` +
+        (result.vocabulary ? ` · „${result.vocabulary.heard}“ → „${result.vocabulary.meant}“` : "") +
+        (result.rerun ? ` · erneut ausgeführt` : ""));
     } else {
       guess.textContent = result.error || "nicht gespeichert";
     }
@@ -121,7 +145,7 @@ export async function openDialog(receiptId) {
     button("Jetzt korrigiert erneut ausführen", () => save(true)),
     button("Nur diesmal", () => { scopeSel.value = "THIS_REQUEST"; save(true); }),
   );
-  body.append(el("div", { class: "k", text: "Was war falsch?" }), input, guess, el("div", { class: "row" }, classSel, scopeSel), actions);
+  body.append(el("div", { class: "k", text: "Was war falsch?" }), chips, input, guess, el("details", {}, el("summary", { text: "Klasse und Reichweite (automatisch)" }), el("div", { class: "row" }, classSel, scopeSel)), actions);
   $("panelTitle").textContent = "Korrigieren";
   clear($("panelBody")).append(body);
   $("panel").classList.add("open");

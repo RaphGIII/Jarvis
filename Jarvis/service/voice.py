@@ -271,7 +271,23 @@ class VoiceService:
         self.bus = bus
         self.settings_path = Path(settings_path) if settings_path else None
         self.settings = settings or VoiceSettings.load(self.settings_path)
-        self.gate = UtteranceGate(self.settings)
+        # The evidence gate (audio energy, recogniser doubt, echo, replay) and
+        # the ledger that makes one utterance execute at most once.
+        from speech.normalize import Vocabulary
+        from speech.utterance import AcceptanceGate, GateSettings, UtteranceLedger
+
+        self.gate = AcceptanceGate(GateSettings(
+            min_words=int(self.settings.min_utterance_words), min_confidence=float(self.settings.min_utterance_confidence),
+            duplicate_window_seconds=float(self.settings.duplicate_window_seconds)))
+        self.ledger = UtteranceLedger()
+        #: The owner's heard->meant vocabulary, beside the voice settings.
+        self.vocabulary = Vocabulary(self.settings_path.with_name("vocabulary.json") if self.settings_path else None)
+        #: Speaking-state ownership: what ZEUS said and until when its audio
+        #: is estimated to be playing on the client.  The microphone path
+        #: uses this to tell the owner's speech from ZEUS hearing itself.
+        self._spoken: list[tuple[str, float]] = []
+        self.speaking_until = 0.0
+        self.last_speech_started = 0.0
         # The pronunciation pipeline: what is *spoken* may differ from what is
         # shown; the owner's lexicon lives beside the voice settings.
         from speech.pronounce import Lexicon, Pronouncer
@@ -308,7 +324,44 @@ class VoiceService:
             engine_status = {"available": False, "detail": str(exc), "voices": []}
         return {"settings": self.settings.to_dict(), "engine": engine_status, "cached_audio": len(self.store),
                 "settings_path": str(self.settings_path) if self.settings_path else "",
-                "rejected_utterances": list(self.gate.rejected[-10:])}
+                "rejected_utterances": list(self.gate.rejected[-10:]), "speaking": self.speaking,
+                "vocabulary": self.vocabulary.list()[-20:]}
+
+    # -- speaking state --------------------------------------------------
+
+    @property
+    def speaking(self) -> bool:
+        """Whether ZEUS's own audio is (estimated to be) coming out of the speaker."""
+
+        with self._lock:
+            if self._speaker is not None:
+                return True
+        return time.monotonic() < self.speaking_until
+
+    def note_spoken(self, text: str, seconds: float) -> None:
+        now = time.monotonic()
+        with self._lock:
+            start = max(now, self.speaking_until)
+            if self.speaking_until <= now:
+                self.last_speech_started = now
+            # 0.4 s of client-side latency before the first sample plays out
+            self.speaking_until = start + max(0.0, float(seconds)) + 0.4
+            self._spoken.append((str(text), now))
+            del self._spoken[:-30]
+
+    def spoken_recently(self, window_seconds: float = 45.0) -> list[tuple[str, float]]:
+        now = time.monotonic()
+        with self._lock:
+            return [(t, at) for t, at in self._spoken if now - at <= window_seconds]
+
+    def was_speaking_between(self, start: float, end: float) -> bool:
+        """Did estimated playback overlap the monotonic window [start, end]?"""
+
+        with self._lock:
+            began, until = self.last_speech_started, self.speaking_until
+        if until <= 0:
+            return False
+        return began <= end and until >= start
 
     def update_settings(self, changes: dict[str, Any]) -> dict[str, str]:
         """Apply and persist; returns what was refused (empty when everything took)."""
@@ -322,8 +375,14 @@ class VoiceService:
 
     # -- hearing ---------------------------------------------------------
 
-    def transcribe(self, wav: bytes, *, language: str = "") -> Transcript:
-        """Turn a posted utterance into text, announcing progress as it goes."""
+    def transcribe(self, wav: bytes, *, language: str = "", hotwords: str = "", announce: bool = True) -> Transcript:
+        """Turn a posted utterance into text, announcing progress as it goes.
+
+        The TRANSCRIPT event is *not* published here any more: what the
+        recogniser heard is not yet a request, and showing it before the
+        acceptance gate has ruled put rejected hallucinations on the owner's
+        screen.  The caller publishes it with the verdict.
+        """
 
         self.bus.publish(EventType.STATE, {"state": JarvisState.TRANSCRIBING.value, "detail": "listening"})
         try:
@@ -333,12 +392,15 @@ class VoiceService:
             return Transcript(text="")
 
         try:
-            transcript = self.engine.transcribe(audio, language=language or self.settings.language)
+            try:
+                transcript = self.engine.transcribe(audio, language=language or self.settings.language, hotwords=hotwords)
+            except TypeError:
+                transcript = self.engine.transcribe(audio, language=language or self.settings.language)
         except Exception as exc:
             self.bus.publish(EventType.ERROR, {"error": f"transcription failed: {exc}"})
             return Transcript(text="")
-
-        self.bus.publish(EventType.TRANSCRIPT, transcript.to_dict())
+        if not transcript.raw_text:
+            transcript.raw_text = transcript.text
         return transcript
 
     # -- speaking --------------------------------------------------------
@@ -377,6 +439,7 @@ class VoiceService:
 
         def publish(audio: Audio, phrase: Phrase) -> None:
             key = self.store.put(audio)
+            self.note_spoken(phrase.text, audio.seconds)
             self.bus.publish(
                 EventType.SPEECH,
                 {
@@ -410,6 +473,7 @@ class VoiceService:
 
         with self._lock:
             speaker = self._speaker
+            self.speaking_until = time.monotonic()
         if speaker is not None:
             speaker.interrupt()
         self.bus.publish(EventType.SPEECH, {"stop": True})
