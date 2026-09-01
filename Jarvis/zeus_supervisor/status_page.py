@@ -52,10 +52,15 @@ h1{margin:0 0 4px;font-size:22px;letter-spacing:.2em;color:#8fd3ff}
 
 
 class StatusPage:
-    def __init__(self, host: str, port: int, snapshot: Callable[[], dict[str, Any]]) -> None:
+    def __init__(self, host: str, port: int, snapshot: Callable[[], dict[str, Any]], *,
+                 on_stop: Callable[[], Any] | None = None, token: str = "") -> None:
         self.host = host
         self.port = port
         self.snapshot = snapshot
+        #: A held supervisor must remain stoppable from outside: ``POST
+        #: /api/quit`` (with the shared token) on this page ends it.
+        self.on_stop = on_stop
+        self.token = token
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -95,7 +100,28 @@ class StatusPage:
                 self.end_headers()
                 self.wfile.write(body)
 
-            do_POST = do_GET  # noqa: N815
+            def do_POST(self) -> None:  # noqa: N802
+                path = self.path.split("?", 1)[0]
+                if path in {"/api/quit", "/api/shutdown", "/api/stop"} and page.on_stop is not None:
+                    supplied = self.headers.get("X-Jarvis-Token", "")
+                    if not supplied and "token=" in self.path:
+                        supplied = self.path.split("token=", 1)[1].split("&", 1)[0]
+                    if page.token and supplied != page.token:
+                        body = b'{"error": "unauthorised"}'
+                        self.send_response(401)
+                    else:
+                        try:
+                            page.on_stop()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        body = b'{"ok": true, "supervisor": true, "stopping": true}'
+                        self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.do_GET()
 
         try:
             self._server = ThreadingHTTPServer((self.host, self.port), Handler)

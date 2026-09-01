@@ -47,6 +47,7 @@ def build(repository: Path, *, dist: Path | None = None, shortcuts: bool = False
         "--hidden-import", "zeus_supervisor.preflight",
         "--hidden-import", "zeus_supervisor.build", "--hidden-import", "zeus_supervisor.__main__",
         "--hidden-import", "zeus_supervisor.relaunch",
+        "--hidden-import", "zeus_supervisor.ollama",
         str(entry),
     ]
     icon = repository / "ui" / "zeus.ico"

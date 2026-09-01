@@ -215,19 +215,25 @@ class Doctor:
             from zeus_supervisor.preflight import Preflight, PreflightCache
 
             config = SupervisorConfig.load(self.repository)
+            # A diagnosis observes; it never starts services.  The supervisor
+            # owns Ollama's lifecycle and reports RUNNING / STARTING /
+            # UNAVAILABLE / FAILED / MISSING with the reason.
             report = Preflight(config, log=lambda _m: None,
-                               cache=PreflightCache(config.state_dir / "preflight_cache.json")).run(generation=False)
+                               cache=PreflightCache(config.state_dir / "preflight_cache.json")).run(generation=False, start_services=False)
         except Exception as exc:  # noqa: BLE001
             return _warn("ollama", f"preflight could not run: {exc}")
         failed = [c for c in report.checks if not c.ok and c.required]
         soft = [c for c in report.checks if not c.ok and not c.required]
         detail = ", ".join(f"{c.name}={'ok' if c.ok else 'FAIL'}" for c in report.checks)
+        state = report.ollama_state or ("RUNNING" if report.ollama_version else "UNAVAILABLE")
         if failed:
-            return _error("ollama", f"{failed[0].name}: {failed[0].detail}", failed[0].remedy, checks=detail)
+            return _error("ollama", f"{state}: {failed[0].name}: {failed[0].detail}", failed[0].remedy, checks=detail,
+                          state=state, reason=report.ollama_reason)
         if soft:
-            return _warn("ollama", f"{soft[0].name}: {soft[0].detail}", soft[0].remedy, checks=detail,
-                         version=report.ollama_version)
-        return _ok("ollama", f"Ollama {report.ollama_version}, models present", checks=detail, version=report.ollama_version)
+            return _warn("ollama", f"{state}: {soft[0].name}: {soft[0].detail}", soft[0].remedy, checks=detail,
+                         version=report.ollama_version, state=state, reason=report.ollama_reason)
+        return _ok("ollama", f"RUNNING: Ollama {report.ollama_version}, models present", checks=detail, version=report.ollama_version,
+                   state="RUNNING", reason=report.ollama_reason)
 
     def _gpu(self) -> Check:
         try:

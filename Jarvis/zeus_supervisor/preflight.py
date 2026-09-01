@@ -53,6 +53,9 @@ class PreflightReport:
     ollama_version: str = ""
     ollama_started_by_supervisor: bool = False
     ollama_pid: int = 0
+    #: RUNNING | STARTING | UNAVAILABLE | FAILED | MISSING, with the reason.
+    ollama_state: str = ""
+    ollama_reason: str = ""
 
     @property
     def ok(self) -> bool:
@@ -71,6 +74,8 @@ class PreflightReport:
             "revision": self.revision,
             "dirty": self.dirty,
             "ollama_version": self.ollama_version,
+            "ollama_state": self.ollama_state,
+            "ollama_reason": self.ollama_reason,
             "checks": [c.to_dict() for c in self.checks],
         }
 
@@ -158,13 +163,49 @@ class PreflightCache:
             pass
 
 
+def find_ollama_exe(explicit: str = "") -> str:
+    """The ``ollama`` binary: an explicit path, PATH, then the usual install dirs.  "" when absent."""
+
+    if explicit and Path(explicit).is_file():
+        return explicit
+    found = shutil.which("ollama")
+    if found:
+        return found
+    for candidate in (
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
+        Path("C:/Program Files/Ollama/ollama.exe"),
+        Path("/usr/local/bin/ollama"), Path("/usr/bin/ollama"),
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
 class Preflight:
-    def __init__(self, config: SupervisorConfig, *, log=print, cache: PreflightCache | None = None) -> None:
+    def __init__(self, config: SupervisorConfig, *, log=print, cache: PreflightCache | None = None, ollama: Any = None) -> None:
         self.config = config
         self.log = log
         self.cache = cache
+        self._ollama = ollama
+        #: Whether this run may start services (Ollama).  The supervisor's boot
+        #: does; a diagnostics read must never spawn anything.
+        self.start_services = True
 
-    def run(self, *, generation: bool = True) -> PreflightReport:
+    @property
+    def ollama(self) -> Any:
+        """The Ollama lifecycle object, shared with the supervisor when it passes one in."""
+
+        if self._ollama is None:
+            from .ollama import OllamaService
+
+            self._ollama = OllamaService(
+                url=self.config.ollama_url, exe_finder=lambda: find_ollama_exe(self.config.ollama_exe),
+                models_dir=self.config.ollama_models_dir, start_timeout=self.config.ollama_start_timeout,
+                spawn_cooldown=self.config.ollama_spawn_cooldown, max_spawns=self.config.ollama_max_spawns, log=self.log,
+            )
+        return self._ollama
+
+    def run(self, *, generation: bool = True, start_services: bool = True) -> PreflightReport:
         """The checks, in dependency order.
 
         ``generation`` (a real answer out of FAST_LOCAL) is the expensive one,
@@ -172,8 +213,17 @@ class Preflight:
         at boot the supervisor therefore skips it and lets the core's own
         generation be the evidence, which is what puts the window on screen
         30 seconds earlier.  ``zeus check`` still runs it.
+
+        ``start_services=False`` observes only: Ollama is reported as it is
+        and never started (diagnostics, a status read).
+
+        A check that raises is a failed check with the exception as its
+        detail -- never an exception out of the boot.  The live product hung
+        on exactly that: a cached binary check left a field unset, the server
+        check raised, and the frozen crash handler waited in a message box.
         """
 
+        self.start_services = start_services
         report = PreflightReport()
         steps = [
             self._check_python,
@@ -196,9 +246,16 @@ class Preflight:
             name = step.__name__.removeprefix("_check_").replace("_", ".", 1) if step.__name__ != "_check_ollama_binary" else "ollama.binary"
             check = cached.get(name)
             if check is not None:
-                check = Check(check.name, True, check.detail + " (cached)", "", required=check.required)
+                detail = check.detail
+                while detail.endswith(" (cached)"):
+                    detail = detail[: -len(" (cached)")]
+                check = Check(check.name, True, detail + " (cached)", "", required=check.required)
             else:
-                check = step(report)
+                try:
+                    check = step(report)
+                except Exception as exc:  # noqa: BLE001 - a broken check is a diagnosis, not a crash
+                    check = Check(name, False, f"check failed: {type(exc).__name__}: {exc}",
+                                  "This is a defect in the supervisor's preflight; the log has the details")
             check.seconds = round(time.monotonic() - started, 2)
             report.checks.append(check)
             self.log(f"  [{'ok' if check.ok else ('..' if not check.required else 'FAIL')}] {check.name}: {check.detail}")
@@ -240,63 +297,42 @@ class Preflight:
         return Check("repository", True, f"{report.revision[:12]}{' (uncommitted changes)' if report.dirty else ''} at {repo}")
 
     def _check_ollama_binary(self, report: PreflightReport) -> Check:
-        found = shutil.which("ollama")
-        if not found:
-            for candidate in (
-                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe",
-                Path("C:/Program Files/Ollama/ollama.exe"),
-            ):
-                if candidate.is_file():
-                    found = str(candidate)
-                    break
+        # The path is resolved again by whoever needs it (the service's
+        # exe_finder), never stored as a side effect of this check: a cached
+        # check must leave the later steps exactly as capable as a fresh one.
+        found = find_ollama_exe(self.config.ollama_exe)
         if not found:
             return Check("ollama.binary", False, "ollama is not installed",
                          "Install Ollama from https://ollama.com/download and restart ZEUS")
-        self._ollama_exe = found
         return Check("ollama.binary", True, found)
 
     def _server_up(self) -> str:
-        try:
-            data = _http_json(self.config.ollama_url + "/api/version", timeout=3)
-            return str(data.get("version", "?"))
-        except Exception:
-            return ""
+        return str(self.ollama.version() or "")
+
+    #: What the owner is told for each Ollama state, when it is not RUNNING.
+    OLLAMA_REMEDIES = {
+        "MISSING": "Install Ollama from https://ollama.com/download and start ZEUS again",
+        "STARTING": "Ollama is still starting; ZEUS keeps checking and continues by itself when it answers",
+        "FAILED": "Run `ollama serve` in a terminal and read the error it prints; ZEUS retries by itself when it answers",
+        "UNAVAILABLE": "Start Ollama (the tray app or `ollama serve`); ZEUS continues by itself when it answers",
+    }
 
     def _check_ollama_server(self, report: PreflightReport) -> Check:
-        version = self._server_up()
-        if version:
-            report.ollama_version = version
-            # A server that is already up serves whatever store it was started
-            # with. If that store lacks a required model the model check below
-            # says so, with the store that has it as the remedy.
-            return Check("ollama.server", True, f"already running, version {version}")
+        """RUNNING is the only pass.  Starting is bounded; nothing here raises or blocks past the timeout."""
 
-        env = dict(os.environ)
-        if self.config.ollama_models_dir:
-            env["OLLAMA_MODELS"] = self.config.ollama_models_dir
-        try:
-            process = subprocess.Popen(
-                [self._ollama_exe, "serve"], env=env,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-                creationflags=_no_window() | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            )
-        except OSError as exc:
-            return Check("ollama.server", False, f"could not start ollama serve: {exc}",
-                         "Start Ollama by hand and check its log")
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            version = self._server_up()
-            if version:
-                report.ollama_version = version
-                report.ollama_started_by_supervisor = True
-                report.ollama_pid = process.pid
-                store = self.config.ollama_models_dir or "its default store"
-                return Check("ollama.server", True, f"started (pid {process.pid}), version {version}, models from {store}")
-            if process.poll() is not None:
-                break
-            time.sleep(0.5)
-        return Check("ollama.server", False, "ollama serve did not come up within 30 s",
-                     "Run `ollama serve` in a terminal and read the error it prints")
+        service = self.ollama
+        status = service.ensure() if self.start_services else service.status()
+        report.ollama_state = status.state.value
+        report.ollama_reason = status.reason
+        if status.ok:
+            report.ollama_version = status.version
+            report.ollama_started_by_supervisor = bool(status.started_by_supervisor)
+            report.ollama_pid = int(status.pid or 0)
+            how = (f"started by ZEUS (pid {status.pid}), models from {self.config.ollama_models_dir or 'its default store'}"
+                   if status.started_by_supervisor else "already running")
+            return Check("ollama.server", True, f"RUNNING: version {status.version}, {how}")
+        return Check("ollama.server", False, f"{status.state.value}: {status.reason}",
+                     self.OLLAMA_REMEDIES.get(status.state.value, "Start Ollama and start ZEUS again"))
 
     def _check_ollama_version(self, report: PreflightReport) -> Check:
         version = report.ollama_version

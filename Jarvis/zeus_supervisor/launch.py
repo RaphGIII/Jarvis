@@ -22,7 +22,12 @@ def run() -> int:
         try:
             import ctypes
 
-            ctypes.windll.user32.MessageBoxW(None, f"ZEUS could not start.\n\n{text[-900:]}", "ZEUS", 0x10)  # type: ignore[attr-defined]
+            # A box that closes by itself: a blocking dialog on an unattended
+            # machine is indistinguishable from a hang.
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+            timeout_box = getattr(user32, "MessageBoxTimeoutW", None)
+            if timeout_box is not None:
+                timeout_box(None, f"ZEUS could not start.\n\n{text[-900:]}", "ZEUS", 0x10, 0, 30000)
         except Exception:
             pass
         return 1

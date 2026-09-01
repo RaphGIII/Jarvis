@@ -58,8 +58,22 @@ class Supervisor:
         self.known_good = KnownGoodStore(self.state_dir)
         self.control = ControlChannel(self.state_dir)
         self.lock = InstanceLock(self.state_dir)
-        self.status_page = StatusPage(config.host, config.port, self._status_snapshot)
         self.token = self._load_token()
+        self._stop = threading.Event()
+        self.status_page = StatusPage(config.host, config.port, self._status_snapshot, on_stop=self._stop.set, token=self.token)
+        # Ollama's lifecycle, owned here for the whole life of the supervisor:
+        # the preflight starts it (bounded), the watch loop notices when it
+        # dies and restarts it within a spawn budget, diagnostics read it.
+        from .ollama import OllamaService
+        from .preflight import find_ollama_exe
+
+        self.ollama = OllamaService(
+            url=config.ollama_url, exe_finder=lambda: find_ollama_exe(config.ollama_exe), models_dir=config.ollama_models_dir,
+            start_timeout=config.ollama_start_timeout, spawn_cooldown=config.ollama_spawn_cooldown,
+            max_spawns=config.ollama_max_spawns, log=self.log,
+        )
+        self._ollama_recovery: threading.Thread | None = None
+        self._ollama_was_running = False
         self.core: subprocess.Popen | None = None
         self.listener: subprocess.Popen | None = None
         self.phase = "starting"
@@ -69,7 +83,6 @@ class Supervisor:
         self.failures: list[float] = []
         self.preflight_report: PreflightReport | None = None
         self.last_health: dict[str, Any] = {}
-        self._stop = threading.Event()
         self._browser_opened = False
 
     # -- plumbing ------------------------------------------------------
@@ -98,6 +111,7 @@ class Supervisor:
             "remedy": self.remedy,
             "revision": self.revision,
             "known_good": self.known_good.load().to_dict(),
+            "ollama": self.ollama.to_dict(),
             "log": list(self._log_lines[-20:]),
         }
 
@@ -116,6 +130,7 @@ class Supervisor:
             "failures_in_window": len(self._recent_failures()),
             "frozen": bool(getattr(sys, "frozen", False)),
             "url": self.url,
+            "ollama": self.ollama.to_dict(),
         })
 
     def _load_token(self) -> str:
@@ -281,29 +296,30 @@ class Supervisor:
             except Exception:
                 pass
 
-        from .preflight import PreflightCache
-
         # No generation here: the core's READY is a real generation in the
         # process that will answer, and waiting for a second one first only
         # delayed the window.  Stable checks come from the fingerprint cache.
-        report = Preflight(self.config, log=self.log, cache=PreflightCache(self.state_dir / "preflight_cache.json")).run(
-            generation=bool(self.config.preflight_generation)
-        )
-        self.preflight_report = report
-        self.revision = report.revision
-        if not report.ok:
-            blocker = report.blocker
-            self._set("error", f"{blocker.name}: {blocker.detail}", blocker.remedy)
-            self._hold()
-            return 2
+        # A failed preflight holds *and keeps checking*: a slow or missing
+        # Ollama shows its state on the status page, and the boot continues
+        # by itself the moment the checks pass -- nothing freezes, nothing
+        # needs a hand unless the diagnosis says so.
+        if not self._preflight():
+            if not self._hold(retry=self._preflight):
+                return 2
+            self._set("starting", "preflight passed on retry; starting ZEUS")
 
         pending: ControlRequest | None = None
         while not self._stop.is_set():
             outcome = self._start_and_verify(pending)
             pending = None
             if outcome == "held":
-                self._hold()
-                return 2
+                # A boot loop: hold, but keep the door open -- when the
+                # preflight passes again later (Ollama back, models pulled)
+                # the failure window has expired and the boot resumes.
+                if not self._hold(retry=self._preflight):
+                    return 2
+                self.failures.clear()
+                continue
             if outcome == "stopped":
                 return 0
             # outcome == "healthy": watch the child until it exits
@@ -337,6 +353,29 @@ class Supervisor:
             self._set("restarting", f"ZEUS exited with code {code}; restarting")
             time.sleep(min(2.0 * len(self._recent_failures()), 10.0))
         return 0
+
+    def _preflight(self) -> bool:
+        """Run the preflight; True when ZEUS may start.  Never raises out of the boot."""
+
+        from .preflight import PreflightCache
+
+        try:
+            report = Preflight(self.config, log=self.log, cache=PreflightCache(self.state_dir / "preflight_cache.json"),
+                               ollama=self.ollama).run(generation=bool(self.config.preflight_generation))
+        except Exception as exc:  # noqa: BLE001 - the crash handler's message box is not a boot path
+            self.log(f"preflight raised: {type(exc).__name__}: {exc}")
+            self._set("error", f"preflight failed: {type(exc).__name__}: {exc}",
+                      "A defect in the supervisor's checks; the log has the traceback. ZEUS retries by itself.")
+            return False
+        self.preflight_report = report
+        if report.revision:
+            self.revision = report.revision
+        if report.ok:
+            self._ollama_was_running = bool(report.ollama_version)
+            return True
+        blocker = report.blocker
+        self._set("error", f"{blocker.name}: {blocker.detail}", blocker.remedy)
+        return False
 
     def _recent_failures(self) -> list[float]:
         cutoff = time.monotonic() - self.config.failure_window
@@ -541,6 +580,7 @@ class Supervisor:
 
         assert self.core is not None
         last_listener_start = time.monotonic()
+        last_ollama_check = time.monotonic()
         while not self._stop.is_set():
             code = self.core.poll()
             if code is not None:
@@ -550,8 +590,46 @@ class Supervisor:
                 self.log(f"listener exited with code {self.listener.returncode}; restarting it")
                 last_listener_start = time.monotonic()
                 self._launch_listener()
+            if time.monotonic() - last_ollama_check >= self.config.ollama_watch_interval:
+                last_ollama_check = time.monotonic()
+                self._watch_ollama()
             time.sleep(0.5)
         return EXIT_SHUTDOWN_REQUESTED
+
+    def _watch_ollama(self) -> None:
+        """Notice a dead Ollama and bring it back -- bounded, in the background, never a storm.
+
+        The check is ``/api/version`` (no model is touched).  Recovery runs
+        in one thread at a time and inherits the service's cool-down and
+        spawn budget, so a crashing Ollama is restarted a few times and then
+        reported FAILED on the status file instead of being respawned for
+        ever.  The core keeps running throughout: it reports its own
+        FAST_LOCAL as unavailable and recovers when Ollama answers again.
+        """
+
+        if self._ollama_recovery is not None and self._ollama_recovery.is_alive():
+            return
+        status = self.ollama.status()
+        if status.ok:
+            if not self._ollama_was_running:
+                self.log(f"ollama is back: version {status.version}")
+                self._write_status()
+            self._ollama_was_running = True
+            return
+        if self._ollama_was_running:
+            self.log(f"ollama is no longer answering ({status.state.value}: {status.reason}); recovering")
+        self._ollama_was_running = False
+        self._write_status()
+        if status.state.value in {"MISSING"}:
+            return
+
+        def recover() -> None:
+            result = self.ollama.ensure()
+            self.log(f"ollama recovery: {result.state.value}: {result.reason}")
+            self._write_status()
+
+        self._ollama_recovery = threading.Thread(target=recover, daemon=True, name="zeus-ollama-recovery")
+        self._ollama_recovery.start()
 
     def shutdown_children(self, *, core_only: bool = False) -> None:
         if self.core is not None and self.core.poll() is None:
@@ -621,10 +699,32 @@ class Supervisor:
 
     # -- hold ----------------------------------------------------------
 
-    def _hold(self) -> None:
-        """Stay up serving the diagnosis until told to stop."""
+    def _hold(self, *, retry: Any = None) -> bool:
+        """Stay up serving the diagnosis; retry the cause on a timer; stop when told.
+
+        Returns True when ``retry`` succeeded and the boot may continue,
+        False when the supervisor was asked to stop.  A held supervisor is
+        still a responsive one: the status page answers, ``/api/quit`` on it
+        (or a shutdown request in the control directory) ends it, and every
+        ``hold_retry_interval`` seconds the cause is checked again -- which is
+        how a supervisor started before Ollama comes up on its own once
+        Ollama is there.
+        """
 
         self.status_page.start()
-        self.log("holding; the status page shows the diagnosis")
+        self.log("holding; the status page shows the diagnosis" + ("; retrying every %.0fs" % self.config.hold_retry_interval if retry else ""))
+        last_try = time.monotonic()
         while not self._stop.is_set():
-            time.sleep(1.0)
+            request = self.control.take()
+            if request is not None and request.action == "shutdown":
+                self._set("stopped", f"shutdown requested while held: {request.reason}")
+                return False
+            if retry is not None and time.monotonic() - last_try >= self.config.hold_retry_interval:
+                last_try = time.monotonic()
+                try:
+                    if retry():
+                        return True
+                except Exception as exc:  # noqa: BLE001 - a retry that raises is just a failed retry
+                    self.log(f"retry raised: {type(exc).__name__}: {exc}")
+            time.sleep(0.5)
+        return False

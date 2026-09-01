@@ -115,15 +115,38 @@ def _frozen_main() -> int:
             log.write_text(text, encoding="utf-8")
         except OSError:
             pass
-        try:
-            import ctypes
-
-            ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
-                None, f"ZEUS could not start.\n\n{text[-900:]}\n\nSaved to {log}", "ZEUS", 0x10
-            )
-        except Exception:
-            pass
+        alert(f"ZEUS could not start.\n\n{text[-900:]}\n\nSaved to {log}")
         return 1
+
+
+def alert(text: str, *, seconds: int = 30) -> None:
+    """Show a message that goes away by itself.
+
+    A plain ``MessageBoxW`` blocks the process until someone clicks it; on an
+    unattended machine that turned a crash into a 12-minute "hang" with the
+    instance lock released underneath it.  ``MessageBoxTimeoutW`` shows the
+    same box and returns after ``seconds``.
+    """
+
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        timeout_box = getattr(user32, "MessageBoxTimeoutW", None)
+        if timeout_box is not None:
+            timeout_box(None, text, "ZEUS", 0x10, 0, int(seconds * 1000))
+            return
+        # No timeout variant: show it on a thread the exit does not wait for.
+        import threading
+
+        threading.Thread(target=lambda: user32.MessageBoxW(None, text, "ZEUS", 0x10), daemon=True).start()
+        import time as _time
+
+        _time.sleep(min(seconds, 5))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

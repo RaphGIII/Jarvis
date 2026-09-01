@@ -116,6 +116,20 @@ class SupervisorConfig:
     host: str = "127.0.0.1"
     ollama_url: str = DEFAULT_OLLAMA_URL
     ollama_models_dir: str = ""
+    #: An explicit ``ollama`` binary (else PATH and the usual install dirs).
+    ollama_exe: str = ""
+    #: Seconds a freshly started ``ollama serve`` gets to answer /api/version.
+    #: Measured on this machine: the Vulkan/CUDA device scan delays the bind
+    #: by 5-20 s on a cold start.
+    ollama_start_timeout: float = 45.0
+    #: Storm guard for restarts of a dying Ollama: seconds between spawns and
+    #: how many spawns one failure window may hold before it is reported FAILED.
+    ollama_spawn_cooldown: float = 30.0
+    ollama_max_spawns: int = 3
+    #: How often the running supervisor looks whether Ollama is still there.
+    ollama_watch_interval: float = 15.0
+    #: How often a held supervisor re-runs its preflight to recover by itself.
+    hold_retry_interval: float = 30.0
     #: Ollama versions known not to generate on this GPU.  Empty means none
     #: are known; the check is a real generation either way.
     ollama_incompatible_versions: tuple[str, ...] = ()
@@ -160,6 +174,8 @@ class SupervisorConfig:
             "port": self.port,
             "ollama_url": self.ollama_url,
             "ollama_models_dir": self.ollama_models_dir,
+            "ollama_exe": self.ollama_exe,
+            "ollama_start_timeout": self.ollama_start_timeout,
             "models": dict(self.models),
             "voice": self.voice,
             "speech_python": str(self.speech_python or ""),
@@ -183,13 +199,26 @@ class SupervisorConfig:
             except (OSError, ValueError):
                 data = {}
             if isinstance(data, dict):
-                for key in ("port", "host", "ollama_url", "ollama_models_dir", "ready_timeout",
+                for key in ("port", "host", "ollama_url", "ollama_models_dir", "ollama_exe", "ready_timeout",
                             "generation_timeout", "stop_timeout", "max_failures", "failure_window",
-                            "voice", "open_browser", "ollama_min_version", "preflight_generation"):
+                            "voice", "open_browser", "ollama_min_version", "preflight_generation",
+                            "ollama_start_timeout", "ollama_spawn_cooldown", "ollama_max_spawns",
+                            "ollama_watch_interval", "hold_retry_interval"):
                     if key in data:
                         setattr(config, key, type(getattr(config, key))(data[key]))
                 if isinstance(data.get("ollama_incompatible_versions"), list):
                     config.ollama_incompatible_versions = tuple(str(v) for v in data["ollama_incompatible_versions"])
+        # Environment overrides exist so the failure paths can be exercised
+        # against the real executable without touching the owner's config.
+        if os.environ.get("ZEUS_OLLAMA_URL", "").strip():
+            config.ollama_url = os.environ["ZEUS_OLLAMA_URL"].strip()
+        if os.environ.get("ZEUS_OLLAMA_EXE", "").strip():
+            config.ollama_exe = os.environ["ZEUS_OLLAMA_EXE"].strip()
+        if os.environ.get("ZEUS_OLLAMA_START_TIMEOUT", "").strip():
+            try:
+                config.ollama_start_timeout = float(os.environ["ZEUS_OLLAMA_START_TIMEOUT"])
+            except ValueError:
+                pass
         for key, value in overrides.items():
             if value is not None:
                 setattr(config, key, value)
