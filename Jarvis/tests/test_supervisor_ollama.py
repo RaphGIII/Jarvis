@@ -396,3 +396,31 @@ def test_preflight_failure_holds_and_recovers_instead_of_crashing(repo: Path, mo
     code = sup._main_loop()
     assert code == 0 and len(seen) == 3
     assert sup.phase in {"starting", "stopped"}
+
+
+def test_a_process_probe_that_raises_or_returns_garbage_never_fails_the_status():
+    """Live: tasklist's localised OEM message broke text decoding; the probe must never raise."""
+
+    def boom() -> bool:
+        raise UnicodeDecodeError("cp1252", b"\x81", 0, 1, "undefined")
+
+    world = World()
+    status = world.service(process_probe=boom).status()
+    assert status.state is OllamaState.UNAVAILABLE
+
+
+def test_the_real_windows_process_probe_decodes_bytes_itself(monkeypatch: pytest.MonkeyPatch):
+    import zeus_supervisor.ollama as mod
+
+    class Done:
+        def __init__(self, stdout: bytes | None) -> None:
+            self.stdout = stdout
+            self.returncode = 0
+
+    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: Done(b"INFO: Es werden keine Aufgaben ausgef\x81hrt, die den angegebenen Kriterien entsprechen.\r\n"))
+    assert mod._server_process_exists() is False
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: Done(b'"ollama.exe","219100","Console","2","36.220 K"\r\n'))
+    assert mod._server_process_exists() is True
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: Done(None))
+    assert mod._server_process_exists() is False
