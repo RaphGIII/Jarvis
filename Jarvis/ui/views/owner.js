@@ -72,8 +72,7 @@ export const view = {
           el("span", { class: "v" }, `${h.action || h.kind || "change"} · ${h.reason || ""} · ${(h.documents || []).join(", ")}`,
             h.audit_id ? button("Roll back", async () => { if (confirm(`Roll back ${h.audit_id}?`)) { await api("/api/owner/rollback", { audit_id: h.audit_id, confirm: true }); reload(); } }, "ghost danger") : null))) : [el("div", { class: "empty", text: "No owner changes recorded." })])),
       el("details", {}, el("summary", { text: "Geschützte Pfade" }),
-        el("div", { class: "kv" }, el("span", { class: "v mono", text: (data.protected_paths || []).join("
-") })))));
+        el("div", { class: "kv" }, el("span", { class: "v mono", text: (data.protected_paths || []).join("\n") })))));
 
     // 4 - DATA
     const backupStatus = el("span", { class: "empty", style: { padding: 0 } });

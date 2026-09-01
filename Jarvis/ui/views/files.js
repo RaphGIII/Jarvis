@@ -225,6 +225,7 @@ async function render(pane) {
   }
   const saved = cams.get(root || "");
   if (saved) Object.assign(galaxy.cam, saved);
+  window.zeusGalaxy = galaxy; // console/test access to the live scene
   search.oninput = () => galaxy?.focusText(search.value);
 
   // watch the current root live (D:\ and C:\ roots stay unwatched: too broad)

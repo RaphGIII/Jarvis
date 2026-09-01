@@ -34,6 +34,8 @@ function commands() {
   const list = [
     { type: "view", label: "Mission Control", sub: "active missions, SelfDev center", run: () => views.open("missions"), keys: "Ctrl+M" },
     { type: "view", label: "Projects", sub: "constellation and deep views", run: () => views.open("projects"), keys: "Ctrl+Shift+P" },
+    { type: "view", label: "Files", sub: "the real D: universe, live", run: () => views.open("files") },
+    { type: "view", label: "Persönlichkeit", sub: "behaviour, rules, learning", run: () => views.open("personality") },
     { type: "view", label: "Knowledge", sub: "graph, backlinks, search", run: () => views.open("knowledge") },
     { type: "view", label: "Knowledge graph (starfield)", sub: "spatial view", run: () => knowledge.openGraph("") },
     { type: "view", label: "Activity", sub: "the operation log", run: () => views.open("activity") },

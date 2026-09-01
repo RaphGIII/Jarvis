@@ -82,6 +82,7 @@ export const view = {
         } else { galaxy.focusText(n.label); }
       },
       mode: mode.value, filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "", level });
+    window.zeusGalaxy = galaxy; // console/test access to the live scene
     if (savedCam && !params.focus && !params.id) Object.assign(galaxy.cam, savedCam);
     const nP = graph.nodes.filter((n) => n.kind === "project").length, nM = graph.nodes.filter((n) => n.kind === "mission").length;
     counts.textContent = `${nP} project${nP === 1 ? "" : "s"} · ${nM} mission${nM === 1 ? "" : "s"} · ${graph.nodes.filter((n) => n.kind === "capability").length} capabilities · ${graph.nodes.filter((n) => n.kind === "thought").length} thoughts` + (graph.hidden ? ` · ${graph.hidden} hidden` : "");
@@ -153,6 +154,9 @@ export class Galaxy {
     this.applyFilters();
     this.resize(); this.bind();
     this.layout(true);
+    // the first resize can run before flex/grid has settled the canvas box
+    // (clientWidth 0 -> the 900px fallback); measure again on the next frame
+    requestAnimationFrame(() => { this.resize(); this.layout(true); });
     this.start();
   }
 

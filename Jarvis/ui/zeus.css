@@ -479,7 +479,7 @@ header.top { -webkit-app-region: no-drag; }
 /* ---- spatial views: an operating surface, not a dashboard page --------- */
 #app.spatial main.workspace { grid-template-columns: 0 1fr 0; }
 #app.spatial.inspecting main.workspace { grid-template-columns: 0 1fr var(--inspector); }
-#app.spatial aside.rail { display: none; }
+#app.spatial aside.rail { padding: 0; border: 0; min-width: 0; overflow: hidden; }
 #app.spatial .pane-head { display: none; }
 #app.spatial #workspacePane { padding: 0; overflow: hidden; animation: none; }
 #app.spatial header.top { padding: 7px 14px; border-bottom: 1px solid rgba(40,60,90,.35); background: rgba(4,7,14,.7); }
@@ -544,3 +544,10 @@ header.top { -webkit-app-region: no-drag; }
 /* labeled activity corrections: visible, not icon puzzles */
 .act-tool-link { font-size: 10.5px; letter-spacing: .04em; color: var(--dim); margin-left: 10px; text-decoration: none; border-bottom: 1px dotted rgba(120,150,200,.4); }
 .act-tool-link:hover { color: var(--blue); border-bottom-color: var(--blue); }
+
+/* spatial: give the surface a definite height chain (flex, not percentages) */
+#app.spatial #workspacePane { display: flex; flex-direction: column; }
+#app.spatial .galaxy-wrap { flex: 1 1 auto; height: auto; min-height: 0; }
+
+/* the canvas takes its width from LAYOUT, never from its own attribute */
+#constellation.galaxy { width: 100%; display: block; }
