@@ -159,3 +159,56 @@ def test_the_watchdog_reports_healthy_when_the_new_release_gets_ready(tmp_path, 
     assert code == 0
     receipts = [json.loads(l) for l in (state / "releases.jsonl").read_text().splitlines()]
     assert receipts[-1]["outcome"] == "healthy"
+
+
+def test_a_promotion_blocked_by_the_running_exe_is_staged_and_swapped_by_the_watchdog(repo, tmp_path):
+    """Windows: the running ZEUS.exe holds dist/ZEUS open, so the release manager cannot
+    rename it.  The candidate is staged; the relaunch watchdog swaps it after the old
+    supervisor exits; the previous release is kept."""
+
+    import sys
+
+    from zeus_supervisor import relaunch
+
+    rm = ReleaseManager(repo, dist=tmp_path / "dist")
+    first = rm.build_candidate(builder=fake_builder("A"))
+    rm.verify_candidate(first.candidate, runner=ok_runner)
+    assert rm.promote(first.candidate).outcome == "promoted"
+    second = rm.build_candidate(builder=fake_builder("B"))
+    rm.verify_candidate(second.candidate, runner=ok_runner)
+
+    state = repo / "data" / "jarvis" / "supervisor"
+    if sys.platform == "win32":
+        holder = (rm.known_good / "ZEUS.exe").open("rb")  # the "running" exe keeps its directory locked
+    else:
+        holder = None
+        original = Path.rename
+
+        def refuse(self, target):
+            if self == rm.known_good:
+                raise PermissionError("locked")
+            return original(self, target)
+
+        Path.rename = refuse  # type: ignore[assignment]
+    try:
+        staged = rm.promote(second.candidate)
+    finally:
+        if holder is not None:
+            holder.close()
+        else:
+            Path.rename = original  # type: ignore[assignment]
+    assert staged.outcome == "staged", staged.reason
+    assert (rm.staged / "ZEUS.exe").read_bytes()[:1] == b"B"
+    assert (rm.known_good / "ZEUS.exe").read_bytes()[:1] == b"A", "known-good untouched while locked"
+    assert rm.staged_pointer.is_file()
+
+    logs, receipts = [], []
+    previous = relaunch._swap_staged(state, logs.append, lambda outcome, **f: receipts.append((outcome, f)))
+    assert previous == rm.previous
+    assert (rm.known_good / "ZEUS.exe").read_bytes()[:1] == b"B"
+    assert (rm.previous / "ZEUS.exe").read_bytes()[:1] == b"A"
+    assert not rm.staged.exists() and not rm.staged_pointer.exists()
+    assert receipts and receipts[0][0] == "swapped"
+    assert json.loads((rm.known_good / "PROMOTED.json").read_text())["swapped_by"] == "relaunch watchdog"
+    # idempotent: nothing to swap the second time
+    assert relaunch._swap_staged(state, logs.append, lambda *a, **k: None) is None

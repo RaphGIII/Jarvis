@@ -313,7 +313,16 @@ class ReleaseManager:
                     # A previous release still running cannot be removed; park it.
                     self.previous.rename(self.dist / f"ZEUS.previous.{int(time.time())}")
             if self.known_good.exists():
-                self.known_good.rename(self.previous)
+                try:
+                    self.known_good.rename(self.previous)
+                except PermissionError:
+                    # Windows: the running ZEUS.exe holds its own directory
+                    # open, so the swap cannot happen while it runs.  Stage
+                    # the candidate beside it; the relaunch watchdog performs
+                    # the swap the moment the old supervisor has exited, then
+                    # starts the new release (and restores the previous one if
+                    # it never gets READY).  Nothing known-good is touched here.
+                    return self._record(self._stage(cand_root, out_dir, record))
             shutil.copytree(out_dir, self.known_good)
             (self.known_good / "PROMOTED.json").write_text(json.dumps({
                 "candidate": str(cand_root), "at": _now(), "revision": record.revision, "fingerprint": record.fingerprint,
@@ -332,6 +341,34 @@ class ReleaseManager:
         record.seconds = round(time.monotonic() - started, 1)
         self.log(f"release promote {record.outcome}: {record.reason}")
         return self._record(record)
+
+    @property
+    def staged(self) -> Path:
+        return self.dist / "ZEUS.staged"
+
+    @property
+    def staged_pointer(self) -> Path:
+        return self.repository / "data" / "jarvis" / "supervisor" / "control" / "staged.json"
+
+    def _stage(self, cand_root: Path, out_dir: Path, record: ReleaseRecord) -> ReleaseRecord:
+        """Copy the verified candidate to ``dist/ZEUS.staged`` and leave the swap to the watchdog."""
+
+        try:
+            if self.staged.exists():
+                shutil.rmtree(self.staged, ignore_errors=True)
+            shutil.copytree(out_dir, self.staged)
+            self.staged_pointer.parent.mkdir(parents=True, exist_ok=True)
+            self.staged_pointer.write_text(json.dumps({
+                "staged": str(self.staged), "known_good": str(self.known_good), "previous": str(self.previous),
+                "candidate": str(cand_root), "revision": record.revision, "fingerprint": record.fingerprint, "at": _now(),
+            }, indent=2), encoding="utf-8")
+            record.outcome = "staged"
+            record.reason = (f"the running ZEUS.exe holds {self.known_good}; candidate staged at {self.staged} "
+                             f"({record.fingerprint} @ {record.revision[:12]}) -- the relaunch watchdog swaps it in")
+        except OSError as exc:
+            record.outcome, record.reason = "failed", f"staging failed: {type(exc).__name__}: {exc}"[:400]
+        self.log(f"release promote {record.outcome}: {record.reason}")
+        return record
 
     def rollback(self, reason: str = "explicit rollback") -> ReleaseRecord:
         record = ReleaseRecord(kind="rollback", reason=reason)

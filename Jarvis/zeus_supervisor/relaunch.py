@@ -120,6 +120,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     waited = round(time.monotonic() - started, 1)
 
+    # A staged promotion (the running exe held its directory open, so the
+    # release manager could not swap): the old supervisor is gone now, the
+    # locks with it -- swap here, then start what is now known-good.
+    swapped = _swap_staged(state, log, receipt)
+    if swapped is not None:
+        previous = previous or swapped
+
     if not exe.is_file():
         log(f"{exe} does not exist")
         return _restore(previous, exe, log, receipt, "exe missing", args.port, token)
@@ -149,6 +156,61 @@ def main(argv: list[str] | None = None) -> int:
             break
         time.sleep(1.0)
     return _restore(previous, exe, log, receipt, f"not READY within {args.timeout:.0f}s", args.port, token)
+
+
+def _swap_staged(state: Path, log, receipt) -> Path | None:
+    """known-good -> previous, staged -> known-good, from ``<state>/control/staged.json``.
+
+    Returns the previous-release path when a swap happened, None otherwise.
+    A swap that fails leaves the known-good release in place (the rename is
+    attempted before anything is removed) and is recorded; the pointer is
+    removed either way so a failed staging is never retried blindly.
+    """
+
+    pointer = state / "control" / "staged.json"
+    if not pointer.is_file():
+        return None
+    try:
+        data = json.loads(pointer.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log(f"staged pointer unreadable: {exc}")
+        pointer.unlink(missing_ok=True)
+        return None
+    staged, known_good, previous = Path(data.get("staged", "")), Path(data.get("known_good", "")), Path(data.get("previous", ""))
+    try:
+        pointer.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if not (staged / "ZEUS.exe").is_file():
+        log(f"staged release missing at {staged}; not swapping")
+        receipt("swap_skipped", reason="staged release missing")
+        return None
+    try:
+        if previous.exists():
+            shutil.rmtree(previous, ignore_errors=True)
+            if previous.exists():
+                previous.rename(previous.parent / f"{previous.name}.{int(time.time())}")
+        if known_good.exists():
+            known_good.rename(previous)
+        staged.rename(known_good)
+        (known_good / "PROMOTED.json").write_text(json.dumps({
+            "candidate": data.get("candidate", ""), "at": _now(), "revision": data.get("revision", ""),
+            "fingerprint": data.get("fingerprint", ""), "previous": str(previous) if (previous / "ZEUS.exe").is_file() else "",
+            "swapped_by": "relaunch watchdog",
+        }, indent=2), encoding="utf-8")
+        log(f"swapped staged release into {known_good} (previous kept at {previous})")
+        receipt("swapped", revision=data.get("revision", ""), fingerprint=data.get("fingerprint", ""))
+        return previous
+    except OSError as exc:
+        log(f"could not swap the staged release: {exc}")
+        receipt("swap_failed", error=str(exc))
+        # put things back if the first rename half-happened
+        if not known_good.exists() and previous.exists():
+            try:
+                previous.rename(known_good)
+            except OSError:
+                pass
+        return None
 
 
 def _restore(previous: Path | None, exe: Path, log, receipt, reason: str, port: int, token: str) -> int:

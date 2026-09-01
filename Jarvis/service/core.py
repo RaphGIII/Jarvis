@@ -2878,7 +2878,9 @@ class JarvisCore:
 
         record = self.releases.promote(candidate)
         out = record.to_dict()
-        if record.outcome == "promoted" and relaunch:
+        # "staged": the running exe locks its directory (Windows); the swap is
+        # the relaunch watchdog's, which runs after this supervisor has exited.
+        if record.outcome in {"promoted", "staged"} and relaunch:
             exe = str(self.releases.known_good / "ZEUS.exe")
             previous = str(self.releases.previous) if (self.releases.previous / "ZEUS.exe").is_file() else ""
             out["relaunch"] = self.lifecycle.request_relaunch(
