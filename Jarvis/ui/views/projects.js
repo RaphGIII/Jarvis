@@ -41,14 +41,29 @@ const REDUCED = () => Boolean(state.ui.reducedMotion);
 
 let galaxy = null;
 let savedCam = null; // the owner's camera survives leaving the view
+let lastParams = null;   // what the parked scene was showing
+let lastDigest = "";     // fingerprint of the data the parked scene renders
+let isDeep = false;      // detail page (params.id) — never resumed, always fresh
+
+// a cheap stable fingerprint: enough to notice "the data changed while the
+// owner was away" without diffing graphs
+export function digestOf(obj) {
+  const s = JSON.stringify(obj);
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return s.length + ":" + h;
+}
 
 export const view = {
   id: "projects",
   title: "Projects",
   async mount(pane, params) {
+    lastParams = params;
+    isDeep = Boolean(params.id);
     if (params.id) return deep(pane, params.id);
     const everything = params.everything === "1" || params.everything === true;
     const [graph, overview] = await Promise.all([api("/api/projects/graph", { everything }), api("/api/projects/overview")]);
+    lastDigest = digestOf(graph.nodes?.map((n) => [n.id, n.updated_at, n.importance, n.health?.state]) || graph);
     const wrap = el("div", { class: "galaxy-wrap" });
     const canvas = el("canvas", { id: "constellation", class: "galaxy" });
     const search = el("input", { placeholder: "Focus… (project, mission, capability)", value: params.focus || params.q || "", style: { maxWidth: "240px" } });
@@ -86,7 +101,13 @@ export const view = {
       // this galaxy is one zoom level of a larger cosmos: pulling out past the
       // floor rises into the Files universe (drives), same engine, same space
       minZoom: 0.5,
-      onZoomOutBeyond: () => { savedCam = null; warp(canvas, "rise"); views.open("files", { path: "" }); } });
+      onZoomOutBeyond: () => {
+        savedCam = null; warp(canvas, "rise");
+        // the scene is parked, not destroyed: reset its camera so returning
+        // later doesn't resume at the zoom floor
+        if (galaxy) Object.assign(galaxy.cam, { x: 0, y: 0, z: 1, vx: 0, vy: 0 });
+        views.open("files", { path: "" });
+      } });
     window.zeusGalaxy = galaxy; // console/test access to the live scene
     if (savedCam && !params.focus && !params.id) Object.assign(galaxy.cam, savedCam);
     const nP = graph.nodes.filter((n) => n.kind === "project").length, nM = graph.nodes.filter((n) => n.kind === "mission").length;
@@ -97,6 +118,29 @@ export const view = {
     if (params.focus) galaxy.focusText(params.focus, true);
   },
   unmount() { if (galaxy) savedCam = { ...galaxy.cam }; galaxy?.destroy(); galaxy = null; },
+
+  /* keep-alive: leaving Projects parks the whole scene; coming back is
+     instant (same DOM, same camera, no refetch, no relayout). A background
+     check refetches the graph and forces a rebuild only if data changed. */
+  suspend() { galaxy?.stop(); },
+  resume(params) {
+    if (!galaxy || isDeep) return false;
+    const same = (k) => String(params[k] || "") === String(lastParams?.[k] || "");
+    if (params.id || params.focus || params.q) return false;
+    if (!same("everything") || !same("mode") || !same("filter") || !same("level")) return false;
+    lastParams = params;
+    galaxy.resize();
+    galaxy.start();
+    window.zeusGalaxy = galaxy;
+    const everything = params.everything === "1" || params.everything === true;
+    api("/api/projects/graph", { everything }).then((graph) => {
+      const digest = digestOf(graph.nodes?.map((n) => [n.id, n.updated_at, n.importance, n.health?.state]) || graph);
+      if (digest !== lastDigest && views.currentView()?.id === "projects") {
+        views.open("projects", params, { push: false, force: true });
+      }
+    }).catch(() => {});
+    return true;
+  },
 };
 
 /* The focus information lives in a drawer over the galaxy: one summary chip
@@ -319,7 +363,10 @@ export class Galaxy {
 
   start() { if (this.raf) return; const tick = () => { if (!this.settled || this.hasMotion()) this.step(); this.draw(); this.t += 1; this.raf = requestAnimationFrame(tick); }; this.raf = requestAnimationFrame(tick); }
   hasMotion() { return !REDUCED(); }
-  destroy() { cancelAnimationFrame(this.raf); this.raf = 0; this.closeMenu(); window.removeEventListener("keydown", this._onKey, true); window.removeEventListener("resize", this._onResize); }
+  // stop pauses the frame loop but keeps the whole scene (nodes, camera,
+  // layout) alive — the keep-alive views park with stop() and wake with start()
+  stop() { cancelAnimationFrame(this.raf); this.raf = 0; }
+  destroy() { this.stop(); this.closeMenu(); window.removeEventListener("keydown", this._onKey, true); window.removeEventListener("resize", this._onResize); }
 
   /* ---- drawing -------------------------------------------------------- */
   toScreen(n) { return [(n.x - this.cam.x) * this.cam.z + this.W() / 2 * (1 - this.cam.z), (n.y - this.cam.y) * this.cam.z + this.H() / 2 * (1 - this.cam.z)]; }

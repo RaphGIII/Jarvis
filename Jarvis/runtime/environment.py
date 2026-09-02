@@ -168,6 +168,7 @@ def probe_gpu() -> list[Fact]:
         completed = subprocess.run(
             [smi, "--query-gpu=name,memory.total", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=20, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return [Fact("gpu", f"unreadable: {type(exc).__name__}", "nvidia-smi", _now())]

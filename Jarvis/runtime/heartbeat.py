@@ -262,6 +262,7 @@ def _process_alive(pid: int) -> bool:
         try:
             completed = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 capture_output=True,
                 text=True,
                 # tasklist emits the console codepage, not the locale default;

@@ -151,6 +151,7 @@ def _read_pdf(path: Path, *, venv_python: Path | None = None) -> tuple[str, str]
         completed = subprocess.run(
             [str(interpreter), "-c", script, str(path)],
             capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return "", f"pdf extraction failed: {exc}"

@@ -314,7 +314,8 @@ def clipboard_write(payload: dict[str, Any], context: ToolContext) -> dict[str, 
         return {"ok": True, "dry_run": True, "would_write": len(text)}
     if sys.platform != "win32":
         return {"ok": False, "error": "clipboard is only implemented for Windows so far"}
-    completed = subprocess.run(["clip"], input=text, text=True, encoding="utf-8")
+    completed = subprocess.run(["clip"], input=text, text=True, encoding="utf-8",
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return {"ok": completed.returncode == 0, "characters": len(text)}
 
 
@@ -393,6 +394,7 @@ def _run(command: list[str], *, timeout: float = 30.0) -> dict[str, Any]:
         completed = subprocess.run(
             command, capture_output=True, text=True, timeout=timeout,
             encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except FileNotFoundError:
         return {"ok": False, "error": f"{command[0]} is not available"}

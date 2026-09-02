@@ -127,22 +127,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.token_file:
         token = Path(args.token_file).read_text(encoding="utf-8").strip()
 
-    # Process hygiene before anything starts: a worker or listener whose
-    # parent died with the last core would otherwise hold the microphone and
-    # the GPU next to the new ones.
-    try:
-        from service.processes import kill_orphans
-
-        swept = kill_orphans("worker") + kill_orphans("listener")
-    except Exception:  # noqa: BLE001
-        swept = []
-
     core = JarvisCore(persona_name=args.persona)
     # A planned restart saved the transcript; a fresh start finds nothing.
     resumed = core.lifecycle.restore_conversation()
     server = JarvisHTTPServer(core, host=args.host, port=args.port, token=token)
     url = server.start()
     core.lifecycle.mark("http", True, url)
+
+    # Process hygiene AFTER the port is bound: these are two PowerShell CIM
+    # sweeps that can take seconds, and while they ran before the bind the
+    # owner's window sat on a dead 127.0.0.1.  The invariant they protect --
+    # no orphan holds the microphone or GPU next to the NEW workers -- only
+    # matters before core.warm() starts those workers, which is still later.
+    try:
+        from service.processes import kill_orphans
+
+        swept = kill_orphans("worker") + kill_orphans("listener")
+    except Exception:  # noqa: BLE001
+        swept = []
 
     # Before warming, not after: warming loads a 4B model and the speech stack,
     # and the owner should be looking at the interface while that happens

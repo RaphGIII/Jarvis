@@ -22,6 +22,7 @@
 
 import { $, el, clear, kv, section, badge, button } from "../core/dom.js";
 import { api } from "../core/api.js";
+import * as bus from "../core/bus.js";
 import * as views from "../core/views.js";
 import * as chat from "./chat.js";
 import { Galaxy, warp } from "./projects.js";
@@ -57,17 +58,46 @@ let galaxy = null;
 let graphOverlay = null;
 let graphNode = null;
 let active = false;
+let suspended = false;   // parked by the view registry (keep-alive)
+let stale = false;       // knowledge changed while parked -> rebuild on return
+let lastMode = "";       // "" = galaxy, "list" = strata board
+let savedCam = null;     // the owner's camera survives leaving the view
 
 export const view = {
   id: "knowledge",
   title: "Wissen",
   async mount(pane, params) {
     active = true;
+    suspended = false;
+    stale = false;
+    lastMode = params.mode === "list" ? "list" : "";
     if (params.mode === "list") return mountList(pane, params);
     await mountGalaxy(pane, params);
   },
-  unmount() { active = false; galaxy?.destroy(); galaxy = null; },
+  unmount() {
+    active = false; suspended = false; stale = false;
+    if (galaxy) savedCam = { ...galaxy.cam };
+    galaxy?.destroy(); galaxy = null;
+  },
+
+  /* keep-alive: the Wissen galaxy survives tab switches; knowledge events
+     arriving while parked mark it stale so the return rebuilds only then. */
+  suspend() { suspended = true; galaxy?.stop(); },
+  resume(params) {
+    const mode = params.mode === "list" ? "list" : "";
+    if (mode !== lastMode || mode === "list") return false;
+    if (!galaxy || params.q) return false;
+    if (stale) { stale = false; return false; }
+    suspended = false;
+    galaxy.resize();
+    galaxy.start();
+    window.zeusGalaxy = galaxy;
+    return true;
+  },
 };
+
+// knowledge events while parked -> the scene is stale (bus is subscribed once)
+bus.on("knowledge", () => { if (suspended) stale = true; });
 
 /* ---- the Wissen galaxy (default) ------------------------------------- */
 
@@ -121,7 +151,11 @@ async function mountGalaxy(pane, params) {
 
   galaxy = new Galaxy(canvas, wrap, { nodes, edges }, {
     mode: "GALAXY", persistDrag: false, minZoom: 0.3,
-    onZoomOutBeyond: () => { warp(canvas, "rise"); views.open("files", { path: "" }); },
+    onZoomOutBeyond: () => {
+      warp(canvas, "rise");
+      if (galaxy) Object.assign(galaxy.cam, { x: 0, y: 0, z: 1, vx: 0, vy: 0 });
+      views.open("files", { path: "" });
+    },
     onSelect: (n) => select(n),
     onDoubleClick: (n) => select(n),
     onContext: (n, x, y) => contextMenu(n, x, y),
@@ -132,6 +166,7 @@ async function mountGalaxy(pane, params) {
     labelFor: (n, z, emphasized) => emphasized || n.r >= 11 || z >= 1.6 || (z >= 1.15 && n.r >= 7.5),
   });
   clusterDomains(galaxy);
+  if (savedCam && !params.q) Object.assign(galaxy.cam, savedCam);
   window.zeusGalaxy = galaxy;
   counts.textContent = `${kNodes.length} Wissensknoten · ${kEdges.length} Verknüpfungen · ${(lib.entries || []).length} Bibliothek` + (data.truncated ? " · gekürzt" : "");
   search.oninput = () => galaxy?.focusText(search.value);
@@ -234,7 +269,7 @@ function contextMenu(n, sx, sy) {
         if (!confirm(`„${d.node.title}“ endgültig aus dem Wissensgraphen löschen?`)) return;
         const r = await api("/api/knowledge/delete", { id: d.node.id, confirm: true });
         if (r.ok === false) alert(r.error || "nicht gelöscht");
-        views.open("knowledge", {}, { push: false });
+        views.open("knowledge", {}, { push: false, force: true });
       }, "danger"));
   } else if (d.isLibrary) {
     entries.push(
@@ -275,7 +310,7 @@ async function summarizePdf(absPath) {
     el("div", { class: "meta" }, badge("ECHT GESPEICHERT", "ok"), el("span", { text: ` ${r.pages} Seiten · ${r.chars} Zeichen gelesen` })),
     section("Zusammenfassung", el("pre", { class: "code", text: (r.summary || "").slice(0, 4000) })),
     section("Abgelegt", kv("datei", r.summary_file || "(nicht gespeichert)"), kv("wissensknoten", r.knowledge_node || "(keiner)")),
-    el("div", { class: "toolbar" }, button("Wissen neu laden", () => views.open("knowledge"), "primary")));
+    el("div", { class: "toolbar" }, button("Wissen neu laden", () => views.open("knowledge", {}, { force: true }), "primary")));
 }
 
 /* The ✎ drawer: the typed composer plus REAL library actions. */
@@ -295,20 +330,20 @@ function editDrawer(lib) {
       el("div", { class: "toolbar" }, folder, button("Ordner anlegen", async () => {
         const r = await api("/api/library/folder", { path: folder.value });
         status.textContent = r.ok ? `Ordner existiert real: ${r.path}` : (r.error || "fehlgeschlagen");
-        if (r.ok) { folder.value = ""; views.open("knowledge", {}, { push: false }); }
+        if (r.ok) { folder.value = ""; views.open("knowledge", {}, { push: false, force: true }); }
       }, "primary")),
       el("div", { class: "toolbar" }, noteFolder, noteTitle),
       noteText,
       el("div", { class: "toolbar" }, button("Notiz speichern (.md)", async () => {
         const r = await api("/api/library/note", { folder: noteFolder.value, title: noteTitle.value, text: noteText.value });
         status.textContent = r.ok ? `gespeichert: ${r.relative} (zurückgelesen: ja)` : (r.error || "fehlgeschlagen");
-        if (r.ok) { noteTitle.value = ""; noteText.value = ""; views.open("knowledge", {}, { push: false }); }
+        if (r.ok) { noteTitle.value = ""; noteText.value = ""; views.open("knowledge", {}, { push: false, force: true }); }
       }, "primary"),
         button("Bibliothek im Explorer", () => api("/api/fs/open", { path: lib.root || "D:\\ZEUS_Wissen" }))),
       el("div", { class: "toolbar" }, importPath, button("Importieren", async () => {
         const r = await api("/api/library/import", { source: importPath.value });
         status.textContent = r.ok ? `importiert: ${r.relative}` : (r.error || "fehlgeschlagen");
-        if (r.ok) { importPath.value = ""; views.open("knowledge", {}, { push: false }); }
+        if (r.ok) { importPath.value = ""; views.open("knowledge", {}, { push: false, force: true }); }
       })),
       el("div", { class: "toolbar" }, pdfPath, button("PDF lesen + zusammenfassen", async () => {
         if (!pdfPath.value.trim()) return;
@@ -316,7 +351,7 @@ function editDrawer(lib) {
       }))),
     el("div", { class: "focus-col", style: { minWidth: "320px" } },
       el("h5", { text: "Wissensgraph (Knoten, Verknüpfung, Ingest)" }),
-      composer(() => views.open("knowledge", {}, { push: false }))),
+      composer(() => views.open("knowledge", {}, { push: false, force: true }))),
   );
   panel.firstChild.append(status);
   const toggle = el("div", { class: "focus-toggle" }, el("b", { text: "✎ Wissen bearbeiten" }),
@@ -446,7 +481,7 @@ export async function inspectNode(node) {
         if (!confirm(`„${node.title}“ endgültig löschen?`)) return;
         const r = await api("/api/knowledge/delete", { id: node.id, confirm: true });
         if (r.ok === false) { alert(r.error || "nicht gelöscht"); return; }
-        views.closeInspector(); views.open("knowledge", {}, { push: false });
+        views.closeInspector(); views.open("knowledge", {}, { push: false, force: true });
       }, "ghost danger")),
   );
 }

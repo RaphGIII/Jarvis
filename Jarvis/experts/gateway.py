@@ -304,6 +304,7 @@ def _run(command: list[str], cwd: Path, *, timeout: float = 900.0) -> tuple[bool
             timeout=timeout,
             encoding="utf-8",
             errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except FileNotFoundError as exc:
         return False, f"command not found: {exc}"

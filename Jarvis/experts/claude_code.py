@@ -121,6 +121,7 @@ class ClaudeCodeExpert:
                 env=self._environment(),
                 encoding="utf-8",
                 errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return ProviderAvailability(False, f"could not run the claude CLI: {exc}")
@@ -179,6 +180,7 @@ class ClaudeCodeExpert:
                 env=self._environment(),
                 encoding="utf-8",
                 errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except subprocess.TimeoutExpired:
             return ExpertResult(

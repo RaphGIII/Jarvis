@@ -96,7 +96,14 @@ class HostProbe:
     """Reads what hardware is actually present, degrading gracefully."""
 
     def __init__(self, *, runner: Callable[..., subprocess.CompletedProcess] | None = None) -> None:
-        self._run = runner or subprocess.run
+        # CREATE_NO_WINDOW: this probe runs every few seconds behind /api/gpu;
+        # without the flag every nvidia-smi popped a console window on a
+        # windowed (no-console) parent — the startup "CMD storm", measured.
+        def _hidden_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+            kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return subprocess.run(*args, **kwargs)
+
+        self._run = runner or _hidden_run
 
     def detect(self) -> HostInfo:
         return HostInfo(

@@ -506,6 +506,10 @@ class JarvisCore:
                                    "understanding": understanding.to_dict(), "source": "intents", "text": text[:160]}, scope=scope)
         if self._handle_pending_confirmation(text, scope):
             return
+        if self._resume_open_target(text, scope):
+            return
+        if self._handle_alias_teach(text, scope):
+            return
         if understanding.top is TopIntent.CONVERSATION and self._resume_clarification(text, scope):
             return
         if understanding.top is TopIntent.CORRECTION:
@@ -569,7 +573,58 @@ class JarvisCore:
                 classification = Classification(Intent.ACTION, understanding.reason, matched="action-request", route=route)
             self._answer_by_executing(text, scope, classification, action_request=understanding.is_action_request)
             return
+        # freshness needs sources, not the local model's memory: "Was ist
+        # heute passiert?" is a question, but not one memory can answer
+        if self._FRESHNESS.search(text):
+            self._answer_by_research(text, scope)
+            return
+        # "Ich brauche Wikipedia." carries no action verb, but it names an
+        # openable thing with an intent cue: the semantic executor decides,
+        # never a routing table
+        if self._openable_wish(text):
+            if self._needs_confirmation(None, text, scope, side_effect=True):
+                return
+            from service.intent import Classification
+
+            wish = Classification(Intent.ACTION, "names an openable thing with an intent cue", matched="openable-wish", route=route)
+            self._answer_by_executing(text, scope, wish, action_request=True)
+            return
         self._answer_conversationally(text, scope)
+
+    _FRESHNESS = re.compile(
+        r"\b(was\s+ist\s+(?:heute|gerade|aktuell)\s+(?:in\s+der\s+welt\s+)?(?:passiert|los)"
+        r"|was\s+(?:heute|gerade)\s+in\s+der\s+welt\s+passiert"
+        r"|nachrichten\s+von\s+heute|neuigkeiten\s+von\s+heute"
+        r"|what\s+happened\s+today|today'?s\s+news)\b", re.I)
+
+    _WISH_CUE = re.compile(
+        r"\b(ich\s+brauche|ich\s+will|ich\s+moechte|ich\s+möchte|bring\s+mich|geh\s+auf|geh\s+zu|ab\s+zu"
+        r"|ich\s+muss\s+(?:auf|zu|in)|i\s+need|take\s+me\s+to|go\s+to)\b", re.I)
+
+    def _openable_wish(self, text: str) -> bool:
+        """A short non-question with an intent cue that names something openable."""
+
+        from service.aliases import fold
+        from service.intents import is_question
+        from service.websearch import known_site
+
+        if len(text.split()) > 9 or is_question(text) or not self._WISH_CUE.search(text):
+            return False
+        probe = fold(text).replace("-", " ")
+        try:
+            if self.aliases.matches(text):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        for token in probe.split():
+            if len(token) >= 4 and known_site(token):
+                return True
+        launcher = getattr(self, "_apps", None)
+        if launcher is not None and getattr(launcher, "_index", None):
+            for folded in launcher._index:
+                if len(folded) >= 4 and folded in probe:
+                    return True
+        return False
 
     # -- typed operations ------------------------------------------------
 
@@ -758,12 +813,37 @@ class JarvisCore:
             self._deliver(answer, scope=scope, backend="clock", context_text=f"[told the date: {now.date().isoformat()}]")
             return
         if action.operation == "app.open":
+            # an owner-taught alias outranks the app index: "Uni-Planer" may be
+            # a file, a URL or a project even when the sentence said "öffne"
+            try:
+                alias = self.aliases.get(action.target)
+            except Exception:  # noqa: BLE001
+                alias = None
+            if alias and alias.get("kind") != "app":
+                self._open_alias(alias, text, scope)
+                return
+            if alias and alias.get("kind") == "app":
+                action.target = str(alias.get("value") or action.target)
             self.state.set(JarvisState.WORKING, detail=f"öffne {action.target}", scope=scope)
             result = self.apps.launch(action.target)
             self.emit(EventType.TOOL, {"summary": f"app.open {action.target}: {'ok' if result.get('ok') else result.get('error', '')}",
                                        "result": result, "source": "apps"}, scope=scope)
             if not result.get("ok"):
+                # observe → replan, not dead-end: no such app, but the name may
+                # be a website everyone knows ("Öffne Wikipedia"), and if it is
+                # neither, ONE question turns the answer into a lasting alias.
+                from service.websearch import resolve_site
+
+                url, how = resolve_site(action.target)
+                if how in {"known", "url"}:
+                    self.emit(EventType.TOOL, {"summary": f"app.open «{action.target}» -> web.open {url} (recovered)",
+                                               "source": "semantic"}, scope=scope)
+                    self._open_web_target(action.target, text, scope)
+                    return
                 hint = result.get("candidates") or []
+                if not hint:
+                    self._ask_open_target(action.target, text, scope)
+                    return
                 answer = ((f"Ich finde keine App namens „{action.target}“." + (f" Meintest du: {', '.join(hint[:3])}?" if hint else "")) if de
                           else f"I cannot find an app called “{action.target}”." + (f" Did you mean: {', '.join(hint[:3])}?" if hint else ""))
                 self._deliver(answer, scope=scope, backend="apps", final_state=JarvisState.IDLE, context_text=f"[app.open failed: {result.get('error', '')}]")
@@ -779,17 +859,33 @@ class JarvisCore:
             self._deliver(answer, scope=scope, backend="apps", context_text=f"[app.open {app}: verified={result.get('process_verified')}, {result.get('seconds')}s]")
             return
         if action.operation == "web.open":
-            url = action.target
+            # the target may be a URL, a spoken site name ("Wikipedia") or an
+            # owner alias; _open_web_target resolves canonically and never
+            # leaves the owner on a dead end
             try:
-                import webbrowser
-
-                opened = webbrowser.open(url)
-            except Exception as exc:  # noqa: BLE001
-                opened = False
-                self.emit(EventType.TOOL, {"summary": f"web.open failed: {exc}", "source": "web"}, scope=scope)
-            answer = ((f"{url} ist im Browser geöffnet." if opened else f"Ich konnte {url} nicht öffnen.") if de
-                      else (f"{url} is open in the browser." if opened else f"I could not open {url}."))
-            self._deliver(answer, scope=scope, backend="web", context_text=f"[web.open {url}: {opened}]")
+                alias = self.aliases.get(action.target)
+            except Exception:  # noqa: BLE001
+                alias = None
+            if alias and alias.get("kind") not in {None, "url"}:
+                self._open_alias(alias, text, scope)
+                return
+            target = str(alias.get("value")) if alias else action.target
+            self._open_web_target(target, text, scope)
+            return
+        if action.operation in {"file.open", "folder.open"}:
+            try:
+                alias = self.aliases.get(action.target)
+            except Exception:  # noqa: BLE001
+                alias = None
+            if alias and alias.get("kind") in {"file", "folder"}:
+                self._open_alias(alias, text, scope)
+                return
+            if alias and alias.get("kind") == "url":
+                self._open_web_target(str(alias.get("value")), text, scope)
+                return
+            if self._open_path_target(action.target, scope=scope):
+                return
+            self._ask_open_target(action.target, text, scope)
             return
         if action.operation == "web.search":
             from service.websearch import search as web_search
@@ -821,6 +917,280 @@ class JarvisCore:
             self._deliver((f"{label} ist offen." if de else f"{label} is open."), scope=scope, backend="ui", context_text=f"[opened view {action.target}]")
             return
         self._deliver("Das kann ich nicht steuern." if de else "I cannot control that.", scope=scope, backend="ui")
+
+    # ------------------------------------------------------------------
+    # The semantic control plane
+    # ------------------------------------------------------------------
+
+    def _semantic_goal(self, text: str, scope: str, *, guidance: str = "") -> Any:
+        """One structured FAST_LOCAL call: the goal behind the words, or None.
+
+        The context the model sees is deterministic and small: installed apps,
+        project titles and owner aliases that lexically touch the request.
+        The model chooses from a CLOSED operation set (see service.semantic);
+        it can be wrong about the goal but it cannot invent a tool.
+        """
+
+        from brain.tiers import ModelTier
+        from service.aliases import fold
+
+        self.state.set(JarvisState.THINKING, detail="verstehe die Absicht", scope=scope)
+        probe = fold(text).replace("-", " ")
+        words = {w for w in probe.split() if len(w) >= 4}
+        apps_hint: list[str] = []
+        try:
+            for display in self.apps.names():
+                folded = fold(display)
+                if any(w in folded or folded in probe for w in words):
+                    apps_hint.append(display)
+                if len(apps_hint) >= 8:
+                    break
+        except Exception:  # noqa: BLE001
+            apps_hint = []
+        projects_hint: list[str] = []
+        try:
+            for p in self.list_projects():
+                title = str(p.get("title") or "")
+                folded = fold(title)
+                if folded and any(w in folded or folded in probe for w in words):
+                    projects_hint.append(title)
+                if len(projects_hint) >= 8:
+                    break
+        except Exception:  # noqa: BLE001
+            projects_hint = []
+        try:
+            aliases_hint = self.aliases.matches(text)
+        except Exception:  # noqa: BLE001
+            aliases_hint = []
+        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+        goal = self.semantic.plan(text, provider, apps=apps_hint, projects=projects_hint,
+                                  aliases=aliases_hint, guidance=guidance)
+        if goal is not None:
+            self.emit(EventType.TOOL,
+                      {"summary": f"semantic goal: {goal.operation} „{goal.target}“ ({goal.confidence:.2f}, {goal.elapsed_ms:.0f}ms)",
+                       "goal": goal.to_dict(), "source": "semantic", "text": text[:160]}, scope=scope)
+        return goal
+
+    def _dispatch_semantic_goal(self, goal: Any, text: str, scope: str, classification: Any) -> bool:
+        """Route one semantic goal to the typed dispatcher that owns it."""
+
+        from service.intents import ActionIntent
+
+        op = goal.operation
+        if op in {"delegate", "conversation"}:
+            return False
+        if goal.confidence < 0.5 and op != "clarify":
+            return False
+        de = self.language.startswith("de")
+        if op == "clarify":
+            question = goal.question or ("Was genau soll ich tun?" if de else "What exactly should I do?")
+            self._deliver(question, scope=scope, backend="semantic", final_state=JarvisState.WAITING,
+                          context_text=f"[semantic clarification: {goal.reason[:120]}]")
+            return True
+        if op in {"web.open", "web.search", "app.open", "file.open", "folder.open",
+                  "system.open_view", "system.tell_time", "system.tell_date"}:
+            intent = ActionIntent(op, verb="open" if op.endswith(".open") else "read",
+                                  object_type=op.split(".", 1)[0], target=goal.target,
+                                  confidence=goal.confidence,
+                                  success_criteria=["the goal is observably reached"],
+                                  reason=f"semantic: {goal.reason[:120]}")
+            self._answer_by_system_control(intent, text, scope)
+            return True
+        if op == "project.open":
+            intent = ActionIntent("project.open", verb="open", object_type="project",
+                                  target=goal.target or "__last__", confidence=goal.confidence,
+                                  reason=f"semantic: {goal.reason[:120]}")
+            self._answer_by_project_operation(intent, text, scope)
+            return True
+        if op == "music.control":
+            self._answer_musically(text, scope, classification)
+            return True
+        if op == "knowledge.search":
+            self._answer_from_records(text, scope, classification)
+            return True
+        if op == "research":
+            self._answer_by_research(goal.target or text, scope)
+            return True
+        if op == "capability.missing":
+            self._answer_by_acquisition(text, scope)
+            return True
+        return False
+
+    # -- resolving "open X" when X is not what it first seemed -----------
+
+    def _open_web_target(self, name: str, text: str, scope: str) -> None:
+        """Open a site by NAME: canonical URL first, a results page as last resort."""
+
+        from service.websearch import resolve_site
+
+        de = self.language.startswith("de")
+        url, how = resolve_site(name)
+        if not url:
+            self._ask_open_target(name, text, scope)
+            return
+        try:
+            import webbrowser
+
+            opened = webbrowser.open(url)
+        except Exception as exc:  # noqa: BLE001
+            opened = False
+            self.emit(EventType.TOOL, {"summary": f"web.open failed: {exc}", "source": "web"}, scope=scope)
+        self.emit(EventType.TOOL, {"summary": f"web.open {url} ({how}): {opened}", "source": "web"}, scope=scope)
+        if not opened:
+            self._deliver((f"Ich konnte {url} nicht öffnen." if de else f"I could not open {url}."),
+                          scope=scope, backend="web", final_state=JarvisState.ERROR,
+                          context_text=f"[web.open {url}: failed]")
+            return
+        if how == "search":
+            answer = (f"„{name}“ kenne ich nicht als Adresse – ich habe dir die Suchergebnisse dazu geöffnet." if de
+                      else f"I do not know “{name}” as an address – I opened the search results for it.")
+        else:
+            answer = (f"{url} ist im Browser geöffnet." if de else f"{url} is open in the browser.")
+        self._deliver(answer, scope=scope, backend="web", context_text=f"[web.open {url} ({how}): ok]")
+
+    def _open_path_target(self, path: str, *, name: str = "", scope: str = "") -> bool:
+        """Open a real file or folder in the OS shell; True only if it exists."""
+
+        from pathlib import Path as _P
+
+        de = self.language.startswith("de")
+        p = _P(str(path))
+        if not p.exists():
+            return False
+        try:
+            os.startfile(str(p))  # noqa: S606 - deliberate: open in the associated app
+        except OSError as exc:
+            self._deliver((f"Öffnen von {p} ist fehlgeschlagen: {exc}" if de else f"Opening {p} failed: {exc}"),
+                          scope=scope, backend="fs", final_state=JarvisState.ERROR,
+                          context_text=f"[open {p}: {exc}]")
+            return True
+        kind = "Ordner" if p.is_dir() else "Datei"
+        label = name or p.name
+        self.emit(EventType.TOOL, {"summary": f"{'folder' if p.is_dir() else 'file'}.open {p}", "source": "fs"}, scope=scope)
+        self._deliver((f"{kind} „{label}“ ist geöffnet ({p})." if de else f"Opened “{label}” ({p})."),
+                      scope=scope, backend="fs", context_text=f"[opened {p}]")
+        return True
+
+    def _open_alias(self, alias: dict[str, Any], text: str, scope: str) -> None:
+        """Open whatever an owner-taught alias points at."""
+
+        kind, value, name = alias.get("kind"), str(alias.get("value") or ""), str(alias.get("name") or "")
+        if kind == "url":
+            self._open_web_target(value, text, scope)
+            return
+        if kind in {"file", "folder"}:
+            if not self._open_path_target(value, name=name, scope=scope):
+                de = self.language.startswith("de")
+                self._deliver((f"„{name}“ zeigt auf {value}, aber das existiert nicht mehr. Wo liegt es jetzt?" if de
+                               else f"“{name}” points at {value}, but it no longer exists. Where is it now?"),
+                              scope=scope, backend="fs", final_state=JarvisState.WAITING)
+                self._pending_open = {"name": name, "text": text}
+            return
+        if kind == "app":
+            from service.intents import ActionIntent
+
+            self._answer_by_system_control(ActionIntent("app.open", verb="open", object_type="app", target=value,
+                                                        confidence=0.9, reason=f"alias {name}"), text, scope)
+            return
+        if kind == "project":
+            from service.intents import ActionIntent
+
+            self._answer_by_project_operation(ActionIntent("project.open", verb="open", object_type="project",
+                                                           target=value, confidence=0.9, reason=f"alias {name}"), text, scope)
+            return
+
+    def _ask_open_target(self, name: str, text: str, scope: str) -> None:
+        """No dead end: one question, and the answer is remembered as an alias."""
+
+        de = self.language.startswith("de")
+        self._pending_open = {"name": name, "text": text}
+        self._deliver((f"Ich finde „{name}“ nicht eindeutig. Wo finde ich es – ein Pfad oder eine Webadresse?" if de
+                       else f"I cannot resolve “{name}”. Where do I find it – a path or a web address?"),
+                      scope=scope, backend="semantic", final_state=JarvisState.WAITING,
+                      context_text=f"[asked where to find {name}; the answer becomes an alias]")
+
+    def _resume_open_target(self, text: str, scope: str) -> bool:
+        """The owner answered "where is X": open it and remember the alias."""
+
+        pending = getattr(self, "_pending_open", None)
+        if not pending:
+            return False
+        self._pending_open = None
+        from service.aliases import classify_target
+
+        kind, value = classify_target(text.strip())
+        if not kind:
+            return False  # not a location: handle the message normally
+        name = str(pending.get("name") or "")
+        de = self.language.startswith("de")
+        if kind in {"file", "folder"}:
+            from pathlib import Path as _P
+
+            if not _P(value).exists():
+                self._deliver((f"{value} existiert nicht – hast du dich vertippt?" if de
+                               else f"{value} does not exist – a typo?"),
+                              scope=scope, backend="fs", final_state=JarvisState.WAITING)
+                self._pending_open = pending
+                return True
+            kind = "folder" if _P(value).is_dir() else "file"
+        try:
+            self.aliases.learn(name, kind, value)
+            learned = True
+        except Exception:  # noqa: BLE001
+            learned = False
+        self.emit(EventType.TOOL, {"summary": f"alias learned: „{name}“ = {kind} {value}" if learned else "alias not learned",
+                                   "source": "aliases"}, scope=scope)
+        if kind == "url":
+            self._open_web_target(value, text, scope)
+        else:
+            self._open_path_target(value, name=name, scope=scope)
+        if learned:
+            self._deliver((f"Gemerkt: „{name}“ heißt ab jetzt {value}." if de
+                           else f"Remembered: “{name}” now means {value}."),
+                          scope=scope, backend="aliases", context_text=f"[alias {name} -> {kind} {value}]")
+        return True
+
+    def _handle_alias_teach(self, text: str, scope: str) -> bool:
+        """"Wenn ich 'Lernplan' sage, meine ich D:\\...": persist the lesson."""
+
+        from service.aliases import classify_target, parse_teach
+
+        pair = parse_teach(text)
+        if not pair:
+            return False
+        name, value = pair
+        de = self.language.startswith("de")
+        kind, norm = classify_target(value)
+        if not kind:
+            # not a path or URL: an installed app or a project?
+            try:
+                _, app_id, _ = self.apps.resolve(value)
+            except Exception:  # noqa: BLE001
+                app_id = ""
+            if app_id:
+                kind, norm = "app", value
+            else:
+                titles = {str(p.get("title") or "").lower() for p in self.list_projects()}
+                if value.lower() in titles:
+                    kind, norm = "project", value
+        if not kind:
+            self._deliver((f"Ich kann „{value}“ nicht zuordnen. Gib mir einen Pfad, eine Webadresse, einen App- oder Projektnamen." if de
+                           else f"I cannot classify “{value}”. Give me a path, a web address, an app or a project name."),
+                          scope=scope, backend="aliases", final_state=JarvisState.WAITING)
+            return True
+        if kind in {"file", "folder"}:
+            from pathlib import Path as _P
+
+            if not _P(norm).exists():
+                self._deliver((f"{norm} existiert nicht – so merke ich es mir nicht." if de
+                               else f"{norm} does not exist – I will not remember it like that."),
+                              scope=scope, backend="aliases", final_state=JarvisState.WAITING)
+                return True
+        self.aliases.learn(name, kind, norm)
+        self.emit(EventType.TOOL, {"summary": f"alias learned: „{name}“ = {kind} {norm}", "source": "aliases"}, scope=scope)
+        self._deliver((f"Gemerkt: „{name}“ = {norm}." if de else f"Remembered: “{name}” = {norm}."),
+                      scope=scope, backend="aliases", context_text=f"[alias {name} -> {kind} {norm}]")
+        return True
 
     def _answer_correction(self, text: str, scope: str, action: Any) -> None:
         """"Nein, ich meinte Stockfish": classify the correction and act on it.
@@ -954,9 +1324,14 @@ class JarvisCore:
                 # with the Spotify provider.  A fresh id and the goal's own
                 # terms as keywords make the build the only outcome, and let
                 # the next request find what was built.
+                from capabilities.registry import ADDRESS_TERMS, BOILERPLATE
                 from development.experience import terms as goal_terms
 
-                words = [w for w in goal_terms(goal) if w not in {"lerne", "lern", "learn", "wie", "man", "how", "to"}]
+                # German function words must never become keywords: a stored
+                # "einer" once matched "Öffne Wikipedia" to a word counter.
+                words = [w for w in goal_terms(goal)
+                         if w not in {"lerne", "lern", "learn", "wie", "man", "how", "to"}
+                         and w not in BOILERPLATE and w not in ADDRESS_TERMS]
                 cid = "learned." + "_".join(words[:3])[:48] if words else f"learned.{mission.mission_id}"
                 result = acq.run(goal, capability_id=cid, keywords=words[:12])
                 for step in getattr(result, "steps", [])[-12:]:
@@ -1950,6 +2325,17 @@ class JarvisCore:
                     return
             except Exception as exc:  # noqa: BLE001 - composition is an attempt; the single-action path remains
                 self.emit(EventType.DIAGNOSTIC, {"composition": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
+        # The semantic control plane: FAST_LOCAL reads the goal behind the
+        # words and picks ONE tool from a closed set.  This replaces lexical
+        # guessing as the primary intelligence — the legacy planner below
+        # remains the fallback for file writing and everything "delegate".
+        try:
+            goal = self._semantic_goal(text, scope, guidance="\n".join(guidance_lines(relevant)))
+        except Exception as exc:  # noqa: BLE001 - no semantics, the legacy path remains
+            goal = None
+            self.emit(EventType.DIAGNOSTIC, {"semantic": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
+        if goal is not None and self._dispatch_semantic_goal(goal, text, scope, classification):
+            return
         try:
             provider = self.kernel.provider(ModelTier.FAST_LOCAL)
             plan = self.actions.plan(text, provider, guidance="\n".join(guidance_lines(relevant)))
@@ -3709,6 +4095,26 @@ class JarvisCore:
 
             self._apps = AppLauncher(cache_path=Path(self.kernel.state_root) / "apps_index.json")
         return self._apps
+
+    @property
+    def aliases(self) -> Any:
+        """Owner-taught names: "Uni-Planer" → a real path, app, url or project."""
+
+        if getattr(self, "_aliases", None) is None:
+            from service.aliases import AliasStore
+
+            self._aliases = AliasStore(Path(self.kernel.state_root) / "owner" / "aliases.json")
+        return self._aliases
+
+    @property
+    def semantic(self) -> Any:
+        """The semantic control plane: FAST_LOCAL turns words into one typed goal."""
+
+        if getattr(self, "_semantic", None) is None:
+            from service.semantic import SemanticPlanner
+
+            self._semantic = SemanticPlanner()
+        return self._semantic
 
     @property
     def library(self) -> Any:

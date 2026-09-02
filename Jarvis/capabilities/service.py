@@ -951,6 +951,7 @@ class CapabilityService:
             completed = subprocess.run(
                 [sys.executable, str(run_dir / "runner.py")],
                 cwd=str(source),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -1031,6 +1032,7 @@ class CapabilityService:
             completed = subprocess.run(
                 command,
                 cwd=str(cwd),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

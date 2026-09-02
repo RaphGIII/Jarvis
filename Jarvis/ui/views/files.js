@@ -33,6 +33,8 @@ const MAX_EXPANDED = 10;
 
 let galaxy = null;
 let active = false;
+let suspended = false;         // parked by the view registry (keep-alive)
+let stale = false;             // fs changed while parked -> rebuild on return
 let root = null;               // current path, null = drives overview
 let expanded = new Set();      // paths expanded in place
 let watching = null;
@@ -52,6 +54,8 @@ export const view = {
   title: "Files",
   async mount(pane, params) {
     active = true;
+    suspended = false;
+    stale = false;
     // an explicit empty path is the universe (drives) level; only a missing
     // parameter falls back to the last root the owner was in
     root = "path" in params ? (params.path || null) : store("zeus.files.root", "D:\\") || null;
@@ -61,7 +65,7 @@ export const view = {
       // ESC = one level up (drive → drives → close); the engine's own ESC
       // (menu close, zoom reset) keeps precedence via its guards below
       view._esc = (e) => {
-        if (!active || e.key !== "Escape" || !galaxy) return;
+        if (!active || suspended || e.key !== "Escape" || !galaxy) return;
         if (galaxy.menu || galaxy.dim) return;
         if (Math.abs(galaxy.cam.z - 1) > 0.15) return;
         e.stopPropagation();
@@ -72,11 +76,34 @@ export const view = {
   },
   unmount() {
     active = false;
+    suspended = false;
+    stale = false;
     if (galaxy) cams.set(root || "", { ...galaxy.cam });
     galaxy?.destroy(); galaxy = null;
     document.body.classList.remove("galaxy-full");
     clearInterval(zoomTimer); zoomTimer = 0;
     if (watching) { api("/api/fs/unwatch", { path: watching }).catch(() => {}); watching = null; }
+  },
+
+  /* keep-alive: the universe survives leaving the tab. The backend watch
+     stays armed while parked, so changes on disk mark the scene stale and
+     the return rebuilds only then. */
+  suspend() {
+    suspended = true;
+    galaxy?.stop();
+    clearInterval(zoomTimer); zoomTimer = 0;
+  },
+  resume(params) {
+    if (!galaxy) return false;
+    const want = "path" in params ? (params.path || null) : root;
+    if (String(want || "") !== String(root || "")) return false;
+    if (stale) { stale = false; return false; }
+    suspended = false;
+    galaxy.resize();
+    galaxy.start();
+    armZoomPoll();
+    window.zeusGalaxy = galaxy;
+    return true;
   },
 };
 
@@ -84,8 +111,9 @@ function onFsEvent(payload) {
   if (!active || !payload || !payload.fs || payload._replay) return;
   const changed = payload.changed || [];
   if (root && !changed.some((c) => String(c.path || "").toLowerCase().startsWith(root.toLowerCase()))) return;
+  if (suspended) { stale = true; return; }
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => { if (active) views.open("files", { path: root || "" }, { push: false }); }, 400);
+  refreshTimer = setTimeout(() => { if (active && !suspended) views.open("files", { path: root || "" }, { push: false, force: true }); }, 400);
 }
 
 /* ---- building the galaxy from real listings --------------------------- */
@@ -307,16 +335,7 @@ async function render(pane) {
   if (root && root.length > 3) { const r = await api("/api/fs/watch", { path: root }); if (r.ok) watching = root; }
 
   // zoom drives depth: close over a folder expands it, far away collapses
-  clearInterval(zoomTimer);
-  zoomTimer = setInterval(() => {
-    if (!galaxy || !active) return;
-    if (galaxy.cam.z <= COLLAPSE_ZOOM) { collapseAll(); return; }
-    if (galaxy.cam.z >= ENTER_ZOOM) {
-      const target = galaxy.hover || galaxy.byId.get([...galaxy.selected][0]);
-      if (target?.data?.isGalaxyLink) { enterProjects(); return; }
-      if (target?.data?.isFs && target.data.type === "dir" && !target.sub) expandInPlace(target);
-    }
-  }, 350);
+  armZoomPoll();
 
   // project ↔ folder links: real workspaces only
   try {
@@ -330,6 +349,19 @@ async function render(pane) {
   } catch {}
 }
 
+function armZoomPoll() {
+  clearInterval(zoomTimer);
+  zoomTimer = setInterval(() => {
+    if (!galaxy || !active || suspended) return;
+    if (galaxy.cam.z <= COLLAPSE_ZOOM) { collapseAll(); return; }
+    if (galaxy.cam.z >= ENTER_ZOOM) {
+      const target = galaxy.hover || galaxy.byId.get([...galaxy.selected][0]);
+      if (target?.data?.isGalaxyLink) { enterProjects(); return; }
+      if (target?.data?.isFs && target.data.type === "dir" && !target.sub) expandInPlace(target);
+    }
+  }, 350);
+}
+
 function go(path) {
   if (galaxy) {
     cams.set(root || "", { ...galaxy.cam });
@@ -337,7 +369,8 @@ function go(path) {
     const rising = !path || (root && String(root).toLowerCase().startsWith(String(path).toLowerCase()));
     warp(galaxy.canvas, rising ? "rise" : "dive");
   }
-  root = path;
+  // root is NOT set here: mount derives it from params, and resume() must
+  // still see the OLD root to know the parked scene doesn't match this path
   views.open("files", { path: path || "" });
 }
 
@@ -390,7 +423,7 @@ function inspectEntry(n) {
       button("Im Explorer öffnen", () => api("/api/fs/open", { path: d.path })),
       button("Pfad kopieren", () => navigator.clipboard?.writeText(d.path)),
       n.projectRef ? button("Projekt öffnen", () => views.open("projects", { id: n.projectRef.id })) : null,
-      button(pins.has(d.path.toLowerCase()) ? "Loslösen" : "Anheften", () => { togglePin(d.path); views.open("files", { path: root || "" }, { push: false }); }),
+      button(pins.has(d.path.toLowerCase()) ? "Loslösen" : "Anheften", () => { togglePin(d.path); views.open("files", { path: root || "" }, { push: false, force: true }); }),
       button("Zeus fragen", () => chat.send(`Was liegt in „${d.path}“ und wofür nutze ich es?`, "galaxy"))));
 }
 
@@ -407,8 +440,8 @@ function contextMenu(n, sx, sy) {
     d.type === "dir" ? item("Galaxie betreten", () => go(d.path)) : null,
     item("Im Explorer öffnen", () => api("/api/fs/open", { path: d.path })),
     item("Pfad kopieren", () => navigator.clipboard?.writeText(d.path)),
-    item(pins.has(d.path.toLowerCase()) ? "Loslösen" : "Anheften", () => { togglePin(d.path); views.open("files", { path: root || "" }, { push: false }); }),
-    item("Ausblenden (nur visuell)", () => { toggleHide(d.path); views.open("files", { path: root || "" }, { push: false }); }),
+    item(pins.has(d.path.toLowerCase()) ? "Loslösen" : "Anheften", () => { togglePin(d.path); views.open("files", { path: root || "" }, { push: false, force: true }); }),
+    item("Ausblenden (nur visuell)", () => { toggleHide(d.path); views.open("files", { path: root || "" }, { push: false, force: true }); }),
     item("Inspizieren", () => inspectEntry(n)),
     item("Zeus fragen", () => chat.send(`Was liegt in „${d.path}“ und wofür nutze ich es?`, "galaxy")));
   menu.style.left = Math.min(sx + 6, galaxy.W() - 210) + "px";

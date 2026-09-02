@@ -81,3 +81,69 @@ def search(query: str, *, limit: int = MAX_RESULTS) -> dict[str, Any]:
     if not results:
         return {"ok": False, "error": "keine Ergebnisse gefunden (oder die Ergebnisseite hat sich geändert)", "query": query}
     return {"ok": True, "query": query, "results": results}
+
+
+# --------------------------------------------------------------------------
+# Canonical URLs for spoken site names
+# --------------------------------------------------------------------------
+
+#: "Öffne Wikipedia" names a site, not a URL.  The canonical map turns the
+#: obvious names into their real addresses deterministically; anything with a
+#: dot is treated as an address; everything else opens a results page — the
+#: browser shows something useful either way, never a dead end.
+KNOWN_SITES = {
+    "wikipedia": "https://de.wikipedia.org", "wiki": "https://de.wikipedia.org",
+    "google": "https://www.google.com", "youtube": "https://www.youtube.com",
+    "github": "https://github.com", "gmail": "https://mail.google.com",
+    "google maps": "https://maps.google.com", "maps": "https://maps.google.com",
+    "amazon": "https://www.amazon.de", "ebay": "https://www.ebay.de",
+    "reddit": "https://www.reddit.com", "stack overflow": "https://stackoverflow.com",
+    "stackoverflow": "https://stackoverflow.com",
+    "chatgpt": "https://chatgpt.com", "openai": "https://openai.com",
+    "anthropic": "https://www.anthropic.com", "claude": "https://claude.ai",
+    "netflix": "https://www.netflix.com", "twitch": "https://www.twitch.tv",
+    "twitter": "https://x.com", "x": "https://x.com",
+    "instagram": "https://www.instagram.com", "facebook": "https://www.facebook.com",
+    "whatsapp": "https://web.whatsapp.com", "whatsapp web": "https://web.whatsapp.com",
+    "outlook": "https://outlook.live.com", "linkedin": "https://www.linkedin.com",
+    "dropbox": "https://www.dropbox.com", "google drive": "https://drive.google.com",
+    "drive": "https://drive.google.com", "translate": "https://translate.google.com",
+    "google translate": "https://translate.google.com", "deepl": "https://www.deepl.com",
+    "spotify": "https://open.spotify.com", "spotify web": "https://open.spotify.com",
+    "chess": "https://www.chess.com", "chess com": "https://www.chess.com",
+    "lichess": "https://lichess.org", "amboss": "https://www.amboss.com/de",
+    "doccheck": "https://www.doccheck.com", "duden": "https://www.duden.de",
+    "leo": "https://www.leo.org", "pubmed": "https://pubmed.ncbi.nlm.nih.gov",
+    "moodle": "https://moodle.org", "discord": "https://discord.com/app",
+    "twitter x": "https://x.com", "bing": "https://www.bing.com",
+    "duckduckgo": "https://duckduckgo.com", "tagesschau": "https://www.tagesschau.de",
+    "spiegel": "https://www.spiegel.de", "zeit": "https://www.zeit.de",
+    "heise": "https://www.heise.de", "hackernews": "https://news.ycombinator.com",
+    "hacker news": "https://news.ycombinator.com",
+}
+
+
+def resolve_site(name: str) -> tuple[str, str]:
+    """(url, how) for a spoken website name.
+
+    how: "url" (was already an address), "known" (canonical map),
+    "search" (unknown name — a results page for it, never a dead end).
+    """
+
+    raw = str(name or "").strip().strip(" .!?\"'„“”")
+    if not raw:
+        return "", ""
+    if re.match(r"^https?://", raw, re.I):
+        return raw, "url"
+    if re.match(r"^(?:www\.)?[\w-]{2,}(?:\.[a-z]{2,})+(?:/\S*)?$", raw, re.I):
+        return "https://" + raw, "url"
+    key = re.sub(r"\s+", " ", raw.lower().replace("-", " ").replace(".", " ")).strip()
+    for probe in (key, key.replace(" ", "")):
+        if probe in KNOWN_SITES:
+            return KNOWN_SITES[probe], "known"
+    return ENDPOINT + "?" + urllib.parse.urlencode({"q": raw, "setlang": "de"}), "search"
+
+
+def known_site(name: str) -> bool:
+    url, how = resolve_site(name)
+    return how in {"known", "url"}

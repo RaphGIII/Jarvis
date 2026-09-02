@@ -43,6 +43,17 @@ fix fixed fixes fixing implement implementing improve improved make making
 missing new provider rebuild rebuilding rebuilt reusable repair repaired
 repairing reimplement replace replacing rewrite rewriting version versions
 work working thing something anything everything currently what which
+
+aber alle allem allen aller alles auch auf aus bei beim damit dann dass dein
+deine deinem deinen deiner dem den denn der des dessen dich die dies diese
+diesem diesen dieser dieses dir doch dort durch ein eine einem einen einer
+eines einfach einmal etwas fuer gegen gerne haben habe hast hat hatte hier
+ich ihm ihn ihr ihre ihrem ihren ihrer im in ist jede jedem jeden jeder jedes
+kann kannst kein keine keinem keinen keiner koennen koennte lerne lernen mach
+mache machen macht mal man mehr mein meine meinem meinen meiner mich mir mit
+muss nach nicht noch nur oder ohne schon sehr sein seine seinem seinen seiner
+sich sie sind so soll sollen sollte um und uns unser unter viel vom von vor
+war waren was wenn werde werden wie wieder wird wurde zu zum zur
 """.split())
 
 #: The old private name, kept because the module has been imported under it.

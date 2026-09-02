@@ -229,7 +229,8 @@ def _restore(previous: Path | None, exe: Path, log, receipt, reason: str, port: 
     except Exception:  # noqa: BLE001
         pass
     if sys.platform == "win32":
-        subprocess.run(["taskkill", "/F", "/IM", "ZEUS.exe"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "ZEUS.exe"], capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     time.sleep(2.0)
     current = exe.parent
     failed = current.parent / f"ZEUS.failed.{int(time.time())}"

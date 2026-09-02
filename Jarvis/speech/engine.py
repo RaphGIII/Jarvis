@@ -137,6 +137,9 @@ class SpeechEngine:
             cwd=root,
             env=env,
             bufsize=1,
+            # a background worker must never own a console window (the parent
+            # is windowed, so without this flag Windows allocates a fresh one)
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         self._process = process
         return process

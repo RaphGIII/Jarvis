@@ -229,6 +229,7 @@ def _invoke(command: str, *, app: str = "") -> dict[str, Any]:
              "-File", str(_script_path()), "-App", app, "-Command", command],
             capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
             encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"the media session did not answer within {TIMEOUT_SECONDS:.0f}s"}
@@ -303,6 +304,7 @@ def launch_uri(uri: str) -> tuple[bool, str]:
              f"Start-Process '{uri.replace(chr(39), '')}'"],
             capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
             encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return False, f"{type(exc).__name__}: {exc}"

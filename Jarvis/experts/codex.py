@@ -101,6 +101,7 @@ class CodexExpert:
                 [self.executable, "--version"],
                 capture_output=True, text=True, timeout=30,
                 env=self._environment(), encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return ProviderAvailability(False, f"could not run the codex CLI: {exc}")
@@ -151,6 +152,7 @@ class CodexExpert:
                 capture_output=True, text=True,
                 timeout=max(30.0, job.max_seconds),
                 env=self._environment(), encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except subprocess.TimeoutExpired:
             return ExpertResult(

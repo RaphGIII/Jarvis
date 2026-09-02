@@ -172,6 +172,7 @@ def observe_anywhere(seconds: float = DEFAULT_WINDOW) -> PlaybackEvidence:
              f"'{seconds}']))"],
             capture_output=True, text=True, timeout=max(30.0, seconds * 6),
             encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return PlaybackEvidence(detail=f"audio probe failed: {exc}")
@@ -243,7 +244,7 @@ def _run_command(command: str) -> "Callable[[], Any]":
     def start() -> None:
         # Popen, not run: the point is to measure while it plays, and a
         # blocking call would only return once the sound had finished.
-        subprocess.Popen(command, shell=True)
+        subprocess.Popen(command, shell=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     return start
 

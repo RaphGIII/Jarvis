@@ -123,6 +123,12 @@ class AppLauncher:
         self._indexed_at = now
         return self._index
 
+    def names(self) -> list[str]:
+        """Display names of everything installed (index built/cached on demand)."""
+
+        self.index()
+        return list(self._names.values())
+
     def resolve(self, query: str) -> tuple[str, str, list[str]]:
         """(display name, AppID or '', candidate display names)."""
 
