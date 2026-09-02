@@ -918,6 +918,9 @@ class JarvisCore:
             label = names.get(action.target, action.target)
             self._deliver((f"{label} ist offen." if de else f"{label} is open."), scope=scope, backend="ui", context_text=f"[opened view {action.target}]")
             return
+        if action.operation == "image.generate":
+            self._answer_image_generate(action.target or text, scope)
+            return
         if action.operation == "calendar.create":
             self._answer_calendar_create(text or action.target, scope)
             return
@@ -1094,7 +1097,7 @@ class JarvisCore:
                 return True
         if op in {"web.open", "web.search", "app.open", "file.open", "folder.open",
                   "system.open_view", "system.tell_time", "system.tell_date",
-                  "calendar.create", "calendar.query"}:
+                  "calendar.create", "calendar.query", "image.generate"}:
             intent = ActionIntent(op, verb="open" if op.endswith(".open") else "read",
                                   object_type=op.split(".", 1)[0], target=goal.target,
                                   confidence=goal.confidence,
@@ -4243,6 +4246,79 @@ class JarvisCore:
 
             self._apps = AppLauncher(cache_path=Path(self.kernel.state_root) / "apps_index.json")
         return self._apps
+
+    @property
+    def imagegen(self) -> Any:
+        """Local image generation (SD-Turbo in its own venv/process)."""
+
+        if getattr(self, "_imagegen", None) is None:
+            from service.imagegen import ImageGenerator
+
+            self._imagegen = ImageGenerator()
+        return self._imagegen
+
+    def _answer_image_generate(self, prompt: str, scope: str) -> None:
+        """Generate a real image locally; nothing is claimed before the file exists."""
+
+        de = self.language.startswith("de")
+        ready = self.imagegen.available()
+        if not ready.get("ok"):
+            self._deliver((f"Bildgenerierung ist noch nicht eingerichtet: {ready.get('error')}" if de
+                           else f"Image generation is not set up: {ready.get('error')}"),
+                          scope=scope, backend="imagegen", final_state=JarvisState.ERROR)
+            return
+        if self.imagegen.busy:
+            self._deliver("Es läuft gerade schon eine Bildgenerierung — gleich danach." if de
+                          else "A generation is already running — right after it.", scope=scope, backend="imagegen")
+            return
+
+        def work() -> None:
+            self.state.set(JarvisState.WORKING, detail="Bildmodell wird geladen", scope=scope)
+            evicted = False
+            try:
+                # single-GPU resource rule: if free VRAM is too tight for the
+                # pipeline, unload the chat model FIRST and say so — the next
+                # chat turn pays one reload instead of the generation failing
+                from service.imagegen import NEEDED_VRAM_MIB
+
+                usage = self.gpu_usage()
+                total = int(usage.get("memory_total_mib") or 0)
+                free = total - int(usage.get("memory_used_mib") or 0) if total else 0
+                if free and free < NEEDED_VRAM_MIB:
+                    from brain.tiers import ModelTier
+
+                    provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                    if hasattr(provider, "unload"):
+                        provider.unload()
+                        evicted = True
+                        self.emit(EventType.TOOL, {"summary": f"image: {free} MiB frei < {NEEDED_VRAM_MIB} — FAST_LOCAL entladen",
+                                                   "source": "imagegen"}, scope=scope)
+            except Exception:  # noqa: BLE001 - resource management must not block the attempt
+                pass
+            result = self.imagegen.generate(prompt)
+            self.emit(EventType.TOOL, {"summary": (f"image.generate ok: {result.get('file')} ({result.get('generate_seconds')}s gen, "
+                                                   f"{result.get('vram_peak_mib')} MiB)") if result.get("ok")
+                                                  else f"image.generate failed: {result.get('error', '')[:160]}",
+                                       "result": result, "source": "imagegen"}, scope=scope)
+            if not result.get("ok"):
+                self._deliver((f"Das Bild ist nicht entstanden: {result.get('error', '')[:200]}" if de
+                               else f"The image was not created: {result.get('error', '')[:200]}"),
+                              scope=scope, backend="imagegen", final_state=JarvisState.ERROR)
+                return
+            self.emit(EventType.NOTIFICATION, {"kind": "image", "file": result.get("file"), "text": ""}, scope=scope)
+            try:
+                os.startfile(str(result.get("file")))  # noqa: S606 - show the real image
+            except OSError:
+                pass
+            note = (" (Das Sprachmodell wurde dafür kurz entladen; die nächste Antwort lädt es neu.)" if evicted and de else "")
+            self._deliver((f"Bild erzeugt: {result.get('file')} — {result.get('generate_seconds')}s Generierung, "
+                           f"Modell {result.get('model', '').split('/')[-1]}, Seed {result.get('seed')}." + note) if de else
+                          (f"Image created: {result.get('file')} — {result.get('generate_seconds')}s generation, "
+                           f"model {result.get('model', '').split('/')[-1]}, seed {result.get('seed')}." + note),
+                          scope=scope, backend="imagegen",
+                          context_text=f"[image generated: {result.get('file')}]")
+
+        threading.Thread(target=work, daemon=True, name="image-generate").start()
 
     @property
     def speech_corpus(self) -> Any:

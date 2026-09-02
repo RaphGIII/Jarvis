@@ -340,6 +340,12 @@ class JarvisHTTPServer:
                 models=str(body.get("models", "small")), limit=int(body.get("limit", 0) or 0),
                 held_out_only=bool(body.get("held_out_only", False))),
             "/api/corpus/reports": lambda _: self.core.corpus_reports(),
+            # local image generation: a real file or an honest error
+            "/api/image/generate": lambda body: self.core.imagegen.generate(
+                str(body.get("prompt", "")), negative=str(body.get("negative", "")),
+                size=str(body.get("size", "512x512")), steps=int(body.get("steps", 2) or 2),
+                seed=int(body.get("seed", -1) if str(body.get("seed", "")).strip() not in {"", "None"} else -1)),
+            "/api/image/status": lambda _: {**self.core.imagegen.available(), "busy": self.core.imagegen.busy},
             "/api/feedback": lambda body: self.core.feedback(
                 str(body.get("kind", "response")), rating=str(body.get("rating", "")), category=str(body.get("category", "")),
                 text=str(body.get("text", "")), request_id=str(body.get("request_id", "")),

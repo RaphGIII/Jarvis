@@ -435,7 +435,7 @@ _VIEWS = {
     "kalender": "calendar", "calendar": "calendar", "termine": "calendar",
     "capabilities": "capabilities", "faehigkeiten": "capabilities", "fähigkeiten": "capabilities", "release": "release",
 }
-_OPEN_VIEW = re.compile(r"\b(oeffne|öffne|zeig(?:e)?\s+mir|zeig|geh\s+(?:zu|in)|open|show\s+me|show|go\s+to)\b\s*(?:die|das|den|the|meine|my)?\s*(?P<view>[\w\s]+?)\s*(?:an|auf|bitte)?\s*[.!]?$", re.I)
+_OPEN_VIEW = re.compile(r"\b(oeffne|öffne|zeig(?:e)?\s+mir|zeig|geh\s+(?:zu|in)|open|show\s+me|show|go\s+to)\b\s*(?:die|das|den|dem|the|mein(?:e[nmrs]?)?|unser(?:e[nmrs]?)?|my|our)?\s*(?P<view>[\w\s\-]+?)\s*(?:an|auf|bitte)?\s*[.!]?$", re.I)
 _STOP = re.compile(r"^\s*(stopp?|halt|stop|abbrechen|cancel|sei\s+still|ruhe|be\s+quiet|shut\s+up|hoer\s+auf|hör\s+auf)\b", re.I)
 _SCREENSHOT = re.compile(r"\b(screenshot|bildschirmfoto|bildschirmaufnahme|screen\s+capture)\b", re.I)
 
@@ -592,6 +592,16 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
         return Understanding(TopIntent.SELF_DEVELOPMENT, f"router: {top_value}", is_action_request=action_request)
     if top_value == "capability_acquisition":
         return Understanding(TopIntent.MISSION, "asks to acquire an ability", is_action_request=action_request)
+
+    if is_action_request(text):
+        from service.imagegen import parse_image_request
+
+        image_prompt = parse_image_request(text)
+        if image_prompt:
+            image = ActionIntent("image.generate", verb="create", object_type="image", target=image_prompt,
+                                 confidence=0.85, success_criteria=["a real image file exists"],
+                                 reason="asks for a generated image")
+            return Understanding(TopIntent.SYSTEM_CONTROL, image.reason, image, is_action_request=True)
 
     calendar = parse_calendar_operation(text)
     if calendar is not None:

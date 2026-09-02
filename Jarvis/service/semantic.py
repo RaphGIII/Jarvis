@@ -40,6 +40,7 @@ OPERATIONS = (
     "knowledge.search",
     "calendar.create",
     "calendar.query",
+    "image.generate",
     "clarify",
     "capability.missing",
     "delegate",
@@ -93,6 +94,7 @@ Werkzeuge:
 - knowledge.search: im gespeicherten Wissen von ZEUS suchen. target = Suchbegriff.
 - calendar.create: einen Termin eintragen. target = die Anfrage wörtlich. "Leg morgen Nachmittag zwei Stunden fürs Physikum frei." -> calendar.create.
 - calendar.query: nach Terminen fragen. target = die Frage wörtlich.
+- image.generate: ein Bild lokal erzeugen. target = die Bildbeschreibung. "Erzeuge mir ein Bild von einem Adler." -> image.generate "ein Adler".
 - clarify: WIRKLICH mehrdeutig - stelle GENAU EINE kurze Frage (Feld question).
 - capability.missing: eine echte Handlung, für die es hier kein Werkzeug gibt (Gerät steuern, Datei konvertieren, E-Mail senden ...). target = das Ziel.
 - delegate: etwas ERSTELLEN oder ÄNDERN (Datei, Notiz, Projekt, Code) - der Ausführungsplaner übernimmt. target = "".
