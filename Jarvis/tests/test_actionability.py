@@ -215,7 +215,17 @@ def test_no_i_meant_after_a_spoken_request_learns_vocabulary_and_reruns(tmp_path
     messages = [e.payload["text"] for e in events if e.type is EventType.MESSAGE]
     assert any("Verstanden" in m and "Stockfish" in m for m in messages), messages
     assert any(row["meant"] == "Stockfish" and row["heard"] == "starkfisch" for row in core.voice.vocabulary.list())
-    reruns = [e.payload for e in events if e.type is EventType.USER_MESSAGE and (e.payload.get("meta") or {}).get("source") == "correction_rerun"]
+    def rerun_events(rows):
+        return [e.payload for e in rows if e.type is EventType.USER_MESSAGE and (e.payload.get("meta") or {}).get("source") == "correction_rerun"]
+
+    reruns = rerun_events(events)
+    # the rerun is dispatched right AFTER the confirmation message that ask()
+    # stops at — under load it can land a beat later; poll the bus history
+    deadline = time.time() + 5
+    while not reruns and time.time() < deadline:
+        time.sleep(0.2)
+        with core.bus.subscribe(replay=True) as sub:
+            reruns = rerun_events(sub.drain())
     assert reruns and "Stockfish" in reruns[0]["text"]
     # and the normaliser applies it from now on
     assert core._normalizer().apply("Öffne das Starkfisch Projekt").text.startswith("Öffne das Stockfish")

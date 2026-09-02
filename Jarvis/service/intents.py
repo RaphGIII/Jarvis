@@ -437,6 +437,18 @@ _VIEWS = {
 _OPEN_VIEW = re.compile(r"\b(oeffne|öffne|zeig(?:e)?\s+mir|zeig|geh\s+(?:zu|in)|open|show\s+me|show|go\s+to)\b\s*(?:die|das|den|the|meine|my)?\s*(?P<view>[\w\s]+?)\s*(?:an|auf|bitte)?\s*[.!]?$", re.I)
 _STOP = re.compile(r"^\s*(stopp?|halt|stop|abbrechen|cancel|sei\s+still|ruhe|be\s+quiet|shut\s+up|hoer\s+auf|hör\s+auf)\b", re.I)
 _SCREENSHOT = re.compile(r"\b(screenshot|bildschirmfoto|bildschirmaufnahme|screen\s+capture)\b", re.I)
+
+# --- deterministic basics: time, date, apps, websites, web search ---------
+_TIME_Q = re.compile(r"\b(wie\s*sp(?:ae|ä)t|wie\s*viel\s+uhr|wieviel\s+uhr|uhrzeit|what\s+time)\b", re.I)
+_DATE_Q = re.compile(r"\b(welche[rs]?\s+(?:tag|datum)|welches\s+datum|was\s+f(?:ue|ü)r\s+ein\s+tag|datum\s+(?:ist\s+)?heute|der\s+wievielte|what(?:'s|\s+is)\s+the\s+date|today'?s\s+date)\b", re.I)
+_URL = re.compile(r"(?:https?://)?(?:www\.)?[\w-]{2,}(?:\.[a-z]{2,})+(?:/\S*)?", re.I)
+_WEB_SEARCH = re.compile(
+    r"(?:\b(?:such\w*|finde?|google\w*|recherchier\w*|search)\b.*?\b(?:im\s+internet|im\s+netz|im\s+web|online|the\s+web)\b"
+    r"|\b(?:such\w*|google\w*|recherchier\w*)\b(?:\s+(?:mal|bitte|mir|doch))*\s+nach\b"
+    r"|\bwas\s+gibt\s+es\s+neues\b|\bwas\s+ist\s+aktuell\s+los\b|\baktuelle\s+nachrichten\b)", re.I)
+_SEARCH_QUERY = re.compile(r"\b(?:nach|zu|(?:ue|ü)ber|about|for|von)\b\s+(?P<q>.+?)\s*[.!?]?$", re.I)
+#: "öffne <X>" where X is not a view: a file-ish word keeps it away from apps.
+_FILEISH = re.compile(r"\b(datei|ordner|verzeichnis|folder|file|pdf|dokument|bild|foto|video)\b", re.I)
 _KNOWLEDGE_SAVE = re.compile(r"\b(speicher\w*|sicher\w*|leg\w*|notier\w*|merk\w*|save|store|note|remember)\b.*\b(knowledge|wissen|wissensgraph|knowledge\s+graph)\b|\b(knowledge|wissen)\b.*\b(speicher\w*|ablegen|save|store)\b", re.I)
 
 
@@ -447,6 +459,23 @@ def parse_system_control(text: str) -> ActionIntent | None:
     if _SCREENSHOT.search(body) and is_action_request(text):
         return ActionIntent("screenshot.capture", verb="capture", object_type="screenshot", confidence=0.85,
                             success_criteria=["an image file exists"], reason="asks for a screenshot")
+    # time and date are questions, not imperatives: answered deterministically
+    if _TIME_Q.search(body) and len(body.split()) <= 8:
+        return ActionIntent("system.tell_time", verb="read", object_type="system", confidence=0.95,
+                            success_criteria=["the current time is stated"], reason="asks for the time")
+    if _DATE_Q.search(body) and len(body.split()) <= 9:
+        return ActionIntent("system.tell_date", verb="read", object_type="system", confidence=0.9,
+                            success_criteria=["today's date is stated"], reason="asks for the date")
+    # web search: an explicit search phrasing wins over app/view opening
+    if _WEB_SEARCH.search(body):
+        m = _SEARCH_QUERY.search(body)
+        query = (m.group("q") if m else _WEB_SEARCH.sub("", body)).strip(" .!?\"'„“”")
+        query = re.sub(r"\b(im\s+internet|im\s+netz|im\s+web|online)\b", "", query, flags=re.I).strip()
+        if not query and ("neues" in fold(body) or "aktuell" in fold(body) or "nachrichten" in fold(body)):
+            query = "aktuelle Nachrichten"
+        if query:
+            return ActionIntent("web.search", verb="search", object_type="web", target=query, confidence=0.85,
+                                success_criteria=["real results with sources are shown"], reason="asks to search the web")
     if _PROJECT_WORD.search(body):
         return None
     m = _OPEN_VIEW.search(body)
@@ -456,6 +485,21 @@ def parse_system_control(text: str) -> ActionIntent | None:
             if fold(key) == name or name.endswith(fold(key)):
                 return ActionIntent("system.open_view", verb="open", object_type="view", target=view, confidence=0.9,
                                     success_criteria=[f"the {view} view is open"], reason=f"asks to open {view}")
+    # not a view: a URL opens the browser, anything else is an application —
+    # deterministically, so "Öffne Spotify" never waits for a model plan
+    if _OPEN.search(body) and is_action_request(text) and not _FILEISH.search(body):
+        url = _URL.search(body)
+        if url:
+            target = url.group(0)
+            if not target.lower().startswith("http"):
+                target = "https://" + target
+            return ActionIntent("web.open", verb="open", object_type="web", target=target, confidence=0.9,
+                                success_criteria=["the browser shows the site"], reason="asks to open a website")
+        if m:
+            candidate = m.group("view").strip(" .!?")
+            if candidate and len(candidate.split()) <= 4 and fold(candidate) not in {"tuer", "fenster"}:
+                return ActionIntent("app.open", verb="open", object_type="app", target=candidate, confidence=0.8,
+                                    success_criteria=["a matching process is running"], reason=f"asks to open the application {candidate}")
     return None
 
 
@@ -523,7 +567,7 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
 
     control = parse_system_control(text)
     if control is not None:
-        return Understanding(TopIntent.SYSTEM_CONTROL if control.object_type in {"system", "view"} else TopIntent.ACTION, control.reason, control, is_action_request=True)
+        return Understanding(TopIntent.SYSTEM_CONTROL if control.object_type in {"system", "view", "app", "web"} else TopIntent.ACTION, control.reason, control, is_action_request=True)
 
     project = parse_project_operation(text, project_titles=project_titles)
     if project is not None:

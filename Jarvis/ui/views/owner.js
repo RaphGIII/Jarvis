@@ -10,6 +10,7 @@
 
 import { el, clear, kv, section, badge, button } from "../core/dom.js";
 import { api } from "../core/api.js";
+import { state, setPref } from "../core/state.js";
 import * as views from "../core/views.js";
 import * as authgate from "../core/authgate.js";
 
@@ -97,10 +98,93 @@ export const view = {
       button("Backup prüfen", async () => { const r = await api("/api/backup/verify", {}); backupStatus.textContent = r.ok === false ? (r.error || "fehlgeschlagen") : `geprüft: ${r.detail || r.result || "ok"}`; }),
       backupStatus)));
 
+    // 5 - VOICE: the two switches that matter here; depth lives in the studio
+    const voice = await api("/api/voice", {}).catch(() => ({}));
+    const vToggle = (label, key) => {
+      const input = el("input", { type: "checkbox", checked: Boolean(voice[key]) });
+      input.onchange = async () => { const r = await api("/api/voice", { [key]: input.checked }); if (r.ok === false) { alert(r.error || "nicht gespeichert"); input.checked = !input.checked; } };
+      return el("label", { class: "empty", style: { padding: 0, cursor: "pointer", display: "inline-flex", gap: "6px" } }, input, " " + label);
+    };
+    pane.append(section("Stimme / Voice",
+      el("div", { class: "toolbar" },
+        vToggle("Voice aktiv (Wakeword hört zu)", "enabled"),
+        vToggle("Antworten sprechen", "speak_replies"),
+        button("Voice Studio (Stimme, Wake, Lexikon)", () => views.open("voice"), "ghost"))));
+
+    // 6 - TOOLS & FÄHIGKEITEN / WISSEN: the owner's doors into those worlds
+    pane.append(section("Tools & Fähigkeiten", el("div", { class: "toolbar" },
+      button("Fähigkeiten öffnen", () => views.open("capabilities"), "ghost"),
+      button("Missionen öffnen", () => views.open("missions"), "ghost"),
+      button("Aktivität öffnen", () => views.open("activity"), "ghost"))));
+    pane.append(section("Wissen & Studium", el("div", { class: "toolbar" },
+      button("Wissens-Galaxie öffnen", () => views.open("knowledge"), "ghost"),
+      button("Bibliothek im Explorer (D:\\ZEUS_Wissen)", () => api("/api/fs/open", { path: "D:\\ZEUS_Wissen" }), "ghost"))));
+
+    // 7 - ERSCHEINUNGSBILD: real, device-local preferences (applied instantly)
+    const motion = el("input", { type: "checkbox", checked: Boolean(state.ui.reducedMotion) });
+    motion.onchange = () => { setPref("reducedMotion", motion.checked); document.body.classList.toggle("reduced-motion", motion.checked); };
+    const cosmos = el("input", { type: "checkbox", checked: state.ui.cosmosMotion !== false });
+    cosmos.onchange = () => { setPref("cosmosMotion", cosmos.checked); };
+    pane.append(section("Erscheinungsbild",
+      el("div", { class: "meta", text: "Gilt für dieses Gerät (lokal gespeichert), sofort wirksam." }),
+      el("div", { class: "toolbar" },
+        el("label", { class: "empty", style: { padding: 0, cursor: "pointer", display: "inline-flex", gap: "6px" } }, motion, " reduzierte Bewegung (alles statisch)"),
+        el("label", { class: "empty", style: { padding: 0, cursor: "pointer", display: "inline-flex", gap: "6px" } }, cosmos, " Sternenhintergrund lebt (drift & twinkle)"))));
+
+    // 8 - BEOBACHTUNG & MUSTER: opt-in, auditierbar, nur Vorschläge
+    const obs = await api("/api/observer/status", {}).catch(() => ({}));
+    const obsToggle = el("input", { type: "checkbox", checked: Boolean(obs.enabled) });
+    const obsStatus = el("span", { class: "empty", style: { padding: 0 }, text: obs.enabled ? `aktiv · ${obs.samples ?? 0} Beobachtungen` : "aus" });
+    obsToggle.onchange = async () => {
+      const r = await api("/api/observer/enable", { enabled: obsToggle.checked });
+      obsStatus.textContent = r.enabled ? `aktiv · ${r.samples ?? 0} Beobachtungen` : "aus";
+    };
+    const patternsBox = el("div");
+    pane.append(section("Beobachtung & Muster (Vorschau)",
+      el("div", { class: "meta", text: "Opt-in. Zeichnet NUR Prozessname + Fenstertitel auf (keine Screenshots, keine Tasten, kein Netz); alles landet auditierbar in einer lesbaren Datei. ZEUS macht daraus Vorschläge – nie eigenmächtige Aktionen." }),
+      el("div", { class: "toolbar" },
+        el("label", { class: "empty", style: { padding: 0, cursor: "pointer", display: "inline-flex", gap: "6px" } }, obsToggle, " Bildschirm-Nutzung beobachten"),
+        obsStatus,
+        button("Muster anzeigen", async () => {
+          clear(patternsBox);
+          const p = await api("/api/observer/patterns", {});
+          if (!p.ok || !p.samples) { patternsBox.append(el("div", { class: "empty", text: p.enabled ? "Noch zu wenig beobachtet." : "Beobachtung ist aus." })); return; }
+          for (const a of p.top_apps || []) patternsBox.append(kv(a.exe, `${a.minutes} min im Vordergrund (letzte ${p.window_hours}h)`));
+          for (const s of p.suggestions || []) patternsBox.append(el("div", { class: "kv" }, el("span", { class: "k" }, badge("VORSCHLAG", "amber")), el("span", { class: "v", text: s.text })));
+        }, "ghost")),
+      patternsBox));
+
     pane.append(el("div", { class: "toolbar" },
       button("Verhalten, Regeln & Lernen → Persönlichkeit", () => views.open("personality"), "ghost")));
   },
 };
+
+/* ---- the one edit flow: propose → diff → password → apply → persist ---
+   Every editable owner surface goes through this, so a change either lands
+   (and survives the reload) or is rejected — never silently dropped. The
+   earlier flow proposed and reloaded, which reset the inputs while the
+   proposal waited unseen at the bottom of the page. */
+export async function proposeAndApply(changes, reason, { unlockCore = false } = {}) {
+  const propose = (token) => api("/api/owner/propose", {
+    changes, reason: reason || "owner change", ...(unlockCore ? { unlock_core: true, authorization: token } : {}) });
+  const proposed = unlockCore ? await authgate.withAuth("PERSONALITY_EDIT", propose) : await propose("");
+  if (proposed.ok === false || !proposed.transaction) return { ok: false, error: proposed.error || "Vorschlag abgelehnt" };
+  const t = proposed.transaction;
+  const diff = (t.diff || []).map((d) => `• ${d.document}.${d.key}: ${short(d.from)} → ${short(d.to)}`).join("\n") || "(keine sichtbare Änderung)";
+  if (!confirm(`Diese Änderung anwenden?\n\n${diff}\n\nDanach folgt die Passwort-Freigabe.`)) {
+    await api("/api/owner/reject", { transaction_id: t.transaction_id });
+    return { ok: false, error: "abgebrochen — nichts geändert" };
+  }
+  const applied = await authgate.withAuth("PERSONALITY_EDIT", (token) =>
+    api("/api/owner/approve", { transaction_id: t.transaction_id, confirm: true, authorization: token }));
+  if (applied.ok === false || applied.error) return { ok: false, error: applied.error || "nicht angewendet" };
+  return { ok: true, record: applied.record, identity_note: applied.identity_note || "" };
+}
+
+function short(value) {
+  const s = typeof value === "string" ? value : JSON.stringify(value);
+  return s === undefined ? "—" : (s.length > 48 ? s.slice(0, 45) + "…" : s);
+}
 
 /* ---- identity: name, wake word, tagline, role — the operative self --- */
 function identityPanel(doc, reload) {
@@ -118,13 +202,14 @@ function identityPanel(doc, reload) {
     el("div", { class: "meta", text: "Wird nach Bestätigung wirksam: Name & Tagline sofort; das gesprochene Wake Word zusätzlich nur, wenn ein Wake-Modell für das Wort existiert (die Antwort sagt es dir ehrlich)." }),
     grid,
     el("div", { class: "toolbar" }, reason,
-      button("Identität vorschlagen", async () => {
+      button("Identität ändern (Diff → Passwort → anwenden)", async () => {
         const changes = {};
         for (const [key, was, input] of inputs) if (input.value.trim() !== String(was)) changes[key] = input.value.trim();
         if (!Object.keys(changes).length) { status.textContent = "nichts geändert"; return; }
-        const r = await api("/api/owner/propose", { changes: { identity: changes }, reason: reason.value || "identity" });
-        status.textContent = r.ok === false ? (r.error || "abgelehnt") : `vorgeschlagen ${r.transaction?.transaction_id} — unten bestätigen`;
-        if (r.ok !== false) reload();
+        const r = await proposeAndApply({ identity: changes }, reason.value || "identity");
+        if (!r.ok) { status.textContent = r.error; return; }
+        if (r.identity_note) alert(r.identity_note);
+        reload(); // the reload now shows the PERSISTED values, not a reset
       }, "primary"),
       status));
   return box;
@@ -208,16 +293,16 @@ export async function personalityPanel(reload) {
   language.onchange = () => { changed.language = language.value; };
   const reason = el("input", { placeholder: "Why? (recorded in the audit)" });
   const status = el("div", { class: "empty" });
-  const propose = button("Propose these preferences", async () => {
-    if (!Object.keys(changed).length) { status.textContent = "nothing changed"; return; }
-    const r = await api("/api/owner/propose", { changes: { personality: { preferences: changed } }, reason: reason.value || "personality preferences" });
-    status.textContent = r.ok === false ? (r.error || "refused") : `proposed ${r.transaction?.transaction_id} — confirm below`;
-    if (r.ok !== false) reload();
+  const propose = button("Anwenden (Diff → Passwort)", async () => {
+    if (!Object.keys(changed).length) { status.textContent = "nichts geändert"; return; }
+    const r = await proposeAndApply({ personality: { preferences: changed } }, reason.value || "personality preferences");
+    status.textContent = r.ok ? "angewendet ✓" : r.error;
+    if (r.ok) reload();
   }, "primary");
-  const reset = button("Reset to defaults", async () => {
-    const r = await api("/api/owner/propose", { changes: { personality: { preferences: p.defaults?.preferences || {} } }, reason: "reset personality preferences to defaults" });
-    status.textContent = r.ok === false ? (r.error || "refused") : `reset proposed ${r.transaction?.transaction_id} — confirm below`;
-    if (r.ok !== false) reload();
+  const reset = button("Auf Standard zurücksetzen", async () => {
+    const r = await proposeAndApply({ personality: { preferences: p.defaults?.preferences || {} } }, "reset personality preferences to defaults");
+    status.textContent = r.ok ? "zurückgesetzt ✓" : r.error;
+    if (r.ok) reload();
   });
   const core = p.core || {};
   const coreBox = el("div", { class: "core-lock" },
@@ -263,11 +348,9 @@ function editCore(core, reload) {
       }
       if (!Object.keys(next).length) { alert("nothing changed"); return; }
       // the protected core: the security gate asks for the manually typed
-      // password and mints a scoped PERSONALITY_EDIT token for this call
-      const r = await authgate.withAuth("PERSONALITY_EDIT", (token) =>
-        api("/api/owner/propose", { changes: { personality: { core: next } }, reason: reason.value || "personality core",
-                                    unlock_core: true, authorization: token }));
-      if (r.ok === false || r.error) { alert(r.error || "refused"); return; }
+      // password; proposal AND application in one confirmed flow
+      const r = await proposeAndApply({ personality: { core: next } }, reason.value || "personality core", { unlockCore: true });
+      if (!r.ok) { alert(r.error); return; }
       reload();
     }, "primary")));
 }
@@ -294,8 +377,8 @@ function editDocument(name, doc, reload) {
         if (JSON.stringify(next) !== JSON.stringify(value)) changes[key] = next;
       }
       if (!Object.keys(changes).length) { alert("nothing changed"); return; }
-      const r = await api("/api/owner/propose", { changes: { [name]: changes }, reason: reason.value || "owner settings" });
-      if (r.ok === false || r.error) { alert(r.error || "refused"); return; }
+      const r = await proposeAndApply({ [name]: changes }, reason.value || "owner settings");
+      if (!r.ok) { alert(r.error); return; }
       reload();
     }, "primary")));
 }

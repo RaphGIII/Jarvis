@@ -11,7 +11,7 @@ import { state, setPref } from "./state.js";
 const registry = new Map();
 // Spatial views are an environment, not a page: no rail, no pane header,
 // the surface takes everything below the thin top bar.
-const SPATIAL = new Set(["projects", "files"]);
+const SPATIAL = new Set(["projects", "files", "knowledge"]);
 let current = null;         // {id, params, view}
 let inspectorOpen = false;
 

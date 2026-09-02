@@ -43,6 +43,17 @@
       "licence": "",
       "source": "",
       "notes": ""
+    },
+    {
+      "id": "de_DE-thorsten-high",
+      "name": "de DE-thorsten-high",
+      "language": "de-DE",
+      "gender": "",
+      "engine": "piper",
+      "model_path": "D:\\Jarvis_recovery_20260823\\repo\\Jarvis\\data\\voices\\de_DE-thorsten-high.onnx",
+      "licence": "",
+      "source": "",
+      "notes": ""
     }
   ]
 }

@@ -407,8 +407,11 @@ export class Galaxy {
       else if (n.kind === "self") this.drawCore(ctx, x, y, r, t);
       else this.drawBody(ctx, n, x, y, r, t);
       ctx.globalAlpha = 1;
-      // labels arrive later than bodies: names first, detail labels near
-      const wantedLabel = n.kind === "project" || n.kind === "self" || detail > 0.55 || emphasized;
+      // labels arrive later than bodies: names first, detail labels near.
+      // A view with hundreds of same-kind bodies (Wissen) supplies labelFor
+      // to keep the sky readable: names appear on approach, not all at once.
+      const wantedLabel = this.opts.labelFor ? this.opts.labelFor(n, z, emphasized)
+        : (n.kind === "project" || n.kind === "self" || detail > 0.55 || emphasized);
       if (wantedLabel && !dimmed) labels.push({ n, x, y: y + r + 5, size: n.kind === "self" ? 12 : n.kind === "project" ? (n.sub ? 10 : 11.5) : 9.5, text: n.kind === "capability" ? `${n.label}` : n.label });
     }
     // labels without collisions (priority: self, systems, then the rest)

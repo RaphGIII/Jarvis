@@ -744,6 +744,75 @@ class JarvisCore:
             self.stop_current(reason="owner")
             self.state.set(JarvisState.IDLE)
             return
+        if action.operation == "system.tell_time":
+            now = datetime.now()
+            answer = (f"Es ist {now.strftime('%H:%M')} Uhr." if de else f"It is {now.strftime('%H:%M')}.")
+            self._deliver(answer, scope=scope, backend="clock", context_text=f"[told the time: {now.strftime('%H:%M:%S')}]")
+            return
+        if action.operation == "system.tell_date":
+            now = datetime.now()
+            days = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+            months = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+            answer = (f"Heute ist {days[now.weekday()]}, der {now.day}. {months[now.month - 1]} {now.year}." if de
+                      else f"Today is {now.strftime('%A, %B %d, %Y')}.")
+            self._deliver(answer, scope=scope, backend="clock", context_text=f"[told the date: {now.date().isoformat()}]")
+            return
+        if action.operation == "app.open":
+            self.state.set(JarvisState.WORKING, detail=f"öffne {action.target}", scope=scope)
+            result = self.apps.launch(action.target)
+            self.emit(EventType.TOOL, {"summary": f"app.open {action.target}: {'ok' if result.get('ok') else result.get('error', '')}",
+                                       "result": result, "source": "apps"}, scope=scope)
+            if not result.get("ok"):
+                hint = result.get("candidates") or []
+                answer = ((f"Ich finde keine App namens „{action.target}“." + (f" Meintest du: {', '.join(hint[:3])}?" if hint else "")) if de
+                          else f"I cannot find an app called “{action.target}”." + (f" Did you mean: {', '.join(hint[:3])}?" if hint else ""))
+                self._deliver(answer, scope=scope, backend="apps", final_state=JarvisState.IDLE, context_text=f"[app.open failed: {result.get('error', '')}]")
+                return
+            app = result.get("app", action.target)
+            if result.get("already_running"):
+                answer = (f"{app} läuft bereits – ich habe es in den Vordergrund geholt." if de else f"{app} is already running – brought to the front.")
+            elif result.get("process_verified"):
+                answer = (f"{app} ist geöffnet ({result.get('process')})." if de else f"{app} is open ({result.get('process')}).")
+            else:
+                answer = (f"{app} wurde gestartet; einen passenden Prozess sehe ich noch nicht – manche Apps laufen unter anderem Namen." if de
+                          else f"{app} was launched; I do not see a matching process yet – some apps run under a different name.")
+            self._deliver(answer, scope=scope, backend="apps", context_text=f"[app.open {app}: verified={result.get('process_verified')}, {result.get('seconds')}s]")
+            return
+        if action.operation == "web.open":
+            url = action.target
+            try:
+                import webbrowser
+
+                opened = webbrowser.open(url)
+            except Exception as exc:  # noqa: BLE001
+                opened = False
+                self.emit(EventType.TOOL, {"summary": f"web.open failed: {exc}", "source": "web"}, scope=scope)
+            answer = ((f"{url} ist im Browser geöffnet." if opened else f"Ich konnte {url} nicht öffnen.") if de
+                      else (f"{url} is open in the browser." if opened else f"I could not open {url}."))
+            self._deliver(answer, scope=scope, backend="web", context_text=f"[web.open {url}: {opened}]")
+            return
+        if action.operation == "web.search":
+            from service.websearch import search as web_search
+
+            self.state.set(JarvisState.RESEARCHING, detail=f"suche: {action.target}", scope=scope)
+            result = web_search(action.target)
+            self.emit(EventType.TOOL, {"summary": f"web.search „{action.target}“: {len(result.get('results', []))} Treffer" if result.get("ok") else f"web.search fehlgeschlagen: {result.get('error')}",
+                                       "result": result, "source": "websearch"}, scope=scope)
+            if not result.get("ok"):
+                answer = ((f"Die Internetsuche ist gerade nicht erreichbar: {result.get('error')}" if result.get("offline")
+                           else f"Ich habe dazu nichts gefunden: {result.get('error')}") if de
+                          else f"Web search failed: {result.get('error')}")
+                self._deliver(answer, scope=scope, backend="websearch", final_state=JarvisState.IDLE,
+                              context_text="[web.search failed; said so instead of guessing]")
+                return
+            rows = result.get("results", [])
+            lines = [f"• {r['title']} — {r['snippet'][:140]}".rstrip(" —") for r in rows[:4]]
+            sources = ", ".join(r["url"].split("/")[2] for r in rows[:4])
+            answer = ((f"Dazu habe ich im Internet gefunden:\n" + "\n".join(lines) + f"\n\nQuellen: {sources}") if de
+                      else ("Found on the web:\n" + "\n".join(lines) + f"\n\nSources: {sources}"))
+            self._deliver(answer, scope=scope, backend="websearch",
+                          context_text=f"[web.search {action.target}: {len(rows)} real results, sources {sources}]")
+            return
         if action.operation == "system.open_view":
             self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": action.target, "params": {}, "text": ""}, scope=scope)
             names = {"projects": "Projekte", "missions": "Mission Control", "activity": "Activity", "knowledge": "Knowledge", "corrections": "Korrekturen",
@@ -3632,6 +3701,36 @@ class JarvisCore:
         return self._fs
 
     @property
+    def apps(self) -> Any:
+        """Deterministic app launching (Start Menu + Store apps, cached index)."""
+
+        if getattr(self, "_apps", None) is None:
+            from service.apps import AppLauncher
+
+            self._apps = AppLauncher(cache_path=Path(self.kernel.state_root) / "apps_index.json")
+        return self._apps
+
+    @property
+    def library(self) -> Any:
+        """The knowledge library: real folders and files under one owner-visible root."""
+
+        if getattr(self, "_library", None) is None:
+            from service.library import Library
+
+            self._library = Library()
+        return self._library
+
+    @property
+    def observer(self) -> Any:
+        """Opt-in desktop observation: foreground app + title, never pixels."""
+
+        if getattr(self, "_observer", None) is None:
+            from service.observer import DesktopObserver
+
+            self._observer = DesktopObserver(Path(self.kernel.state_root))
+        return self._observer
+
+    @property
     def security(self) -> Any:
         """The Owner Security Gate.  Deterministic code; no model ever touches it."""
 
@@ -4773,6 +4872,78 @@ class JarvisCore:
 
         self.emit(EventType.KNOWLEDGE, result)
         return result
+
+    # -- the knowledge library and PDFs --------------------------------
+
+    def pdf_extract(self, path: str, *, max_pages: int = 60, max_chars: int = 60_000) -> dict[str, Any]:
+        """Real text out of a real PDF, bounded; says when a PDF has no text layer."""
+
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            return {"ok": False, "error": "pypdf ist nicht installiert"}
+        source = Path(str(path or "").strip('" ')).expanduser()
+        if not source.is_file() or source.suffix.lower() != ".pdf":
+            return {"ok": False, "error": f"keine PDF-Datei: {path}"}
+        try:
+            reader = PdfReader(str(source))
+            pages = len(reader.pages)
+            chunks: list[str] = []
+            total = 0
+            for page in reader.pages[:max_pages]:
+                text = page.extract_text() or ""
+                chunks.append(text)
+                total += len(text)
+                if total >= max_chars:
+                    break
+        except Exception as exc:  # noqa: BLE001 - a broken PDF is data, not a crash
+            return {"ok": False, "error": f"PDF nicht lesbar: {type(exc).__name__}: {exc}"}
+        text = "\n\n".join(chunks)[:max_chars].strip()
+        if not text:
+            return {"ok": False, "error": "die PDF enthält keinen extrahierbaren Text (vermutlich nur gescannte Bilder)",
+                    "pages": pages, "path": str(source)}
+        return {"ok": True, "path": str(source), "pages": pages, "pages_read": min(pages, max_pages),
+                "chars": len(text), "text": text}
+
+    def pdf_summarize(self, path: str, *, save: bool = True, to_knowledge: bool = True) -> dict[str, Any]:
+        """Extract → summarize with the local model → save the summary as a real
+        Markdown file in the library → put it into the knowledge graph."""
+
+        from brain.tiers import ModelTier
+
+        extracted = self.pdf_extract(path)
+        if not extracted.get("ok"):
+            return extracted
+        source = Path(extracted["path"])
+        # the PDF itself lands on the shelf so Explorer shows what ZEUS read
+        imported = self.library.import_file(str(source)) if save else {"ok": False}
+        prompt = ("Fasse das folgende Dokument strukturiert auf Deutsch zusammen: zuerst 2-3 Sätze Kernaussage, "
+                  "dann die wichtigsten Punkte als knappe Liste. Erfinde nichts, was nicht im Text steht.\n\n"
+                  f"DOKUMENT ({source.name}, {extracted['pages']} Seiten):\n{extracted['text'][:16000]}")
+        try:
+            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+            try:
+                summary = provider.generate(prompt, system="Du bist ein präziser Zusammenfasser. Nur Inhalte aus dem Dokument.")
+            except TypeError:
+                summary = provider.generate(prompt)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"Zusammenfassung fehlgeschlagen: {exc}", **{k: v for k, v in extracted.items() if k != "text"}}
+        summary = str(summary or "").strip()
+        if not summary:
+            return {"ok": False, "error": "das Modell hat keine Zusammenfassung geliefert", "path": str(source)}
+        out: dict[str, Any] = {"ok": True, "path": str(source), "pages": extracted["pages"], "chars": extracted["chars"],
+                               "summary": summary, "imported": imported.get("relative", "")}
+        if save:
+            body = f"# {source.stem} – Zusammenfassung\n\nQuelle: {source.name} · {extracted['pages']} Seiten · erzeugt {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{summary}\n"
+            saved = self.library.save_summary(imported.get("relative", source.stem), body)
+            out["summary_file"] = saved.get("relative", "") if saved.get("ok") else ""
+            out["summary_saved"] = bool(saved.get("ok"))
+        if to_knowledge:
+            node = self.knowledge_create(f"{source.stem} (PDF-Zusammenfassung)", summary[:4000], type="document",
+                                         provenance=str(source), links=[{"target": "Studium", "relation": "part_of"}])
+            out["knowledge_node"] = node.get("node_id", "") if node.get("ok") else ""
+        self.emit(EventType.KNOWLEDGE, {"pdf_summarized": source.name, "summary_file": out.get("summary_file", "")})
+        return out
 
     def graph_operation(
         self, request: str, *, selected: str = "", confirm: bool = False

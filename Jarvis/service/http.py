@@ -76,6 +76,12 @@ class JarvisHTTPServer:
         self.port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True, name="jarvis-http")
         self._thread.start()
+        # the desktop observer resumes with the server IF the owner enabled
+        # it; constructing it is cheap and its thread runs only when opted in
+        try:
+            self.core.observer
+        except Exception:  # noqa: BLE001 - a stub core in tests has no state root
+            pass
         return self.url
 
     def stop(self) -> None:
@@ -230,6 +236,24 @@ class JarvisHTTPServer:
                 original_request=str(body.get("original_request", "")), rerun=bool(body.get("rerun", False)),
                 category=str(body.get("category", "")),
             ),
+            # The knowledge library: REAL files under one owner-visible root.
+            "/api/library/tree": lambda _: self.core.library.tree(),
+            "/api/library/folder": lambda body: self.core.library.create_folder(str(body.get("path", ""))),
+            "/api/library/note": lambda body: self.core.library.write_note(
+                str(body.get("folder", "")), str(body.get("title", "")), str(body.get("text", ""))),
+            "/api/library/import": lambda body: self.core.library.import_file(
+                str(body.get("source", "")), folder=str(body.get("folder", ""))),
+            "/api/library/move": lambda body: self.core.library.move(str(body.get("path", "")), str(body.get("into", ""))),
+            "/api/library/read": lambda body: self.core.library.read_note(str(body.get("path", ""))),
+            "/api/pdf/extract": lambda body: self.core.pdf_extract(str(body.get("path", ""))),
+            "/api/pdf/summarize": lambda body: self.core.pdf_summarize(
+                str(body.get("path", "")), save=bool(body.get("save", True)), to_knowledge=bool(body.get("to_knowledge", True))),
+            "/api/app/open": lambda body: self.core.apps.launch(str(body.get("name", ""))),
+            # Desktop observation: opt-in, owner-controlled, fully auditable.
+            "/api/observer/status": lambda _: self.core.observer.status(),
+            "/api/observer/enable": lambda body: self.core.observer.set_enabled(bool(body.get("enabled", False))),
+            "/api/observer/patterns": lambda body: self.core.observer.patterns(
+                since_hours=float(body.get("since_hours", 72) or 72)),
             "/api/fs/roots": lambda _: self.core.fs.roots(),
             "/api/fs/list": lambda body: self.core.fs.list(str(body.get("path", "")), hidden=bool(body.get("hidden", False)),
                                                             files=bool(body.get("files", True))),

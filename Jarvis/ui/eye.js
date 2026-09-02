@@ -74,8 +74,6 @@ class JarvisEye {
     // Loudness from the microphone or the speech pipeline, 0..1. Lets the eye
     // pulse with the actual voice rather than a decorative sine wave.
     this.energy = 0;
-    this.blink = 0;
-    this.nextBlink = 2 + Math.random() * 5;
     this.lastFrame = performance.now();
     this.running = false;
 
@@ -271,12 +269,8 @@ class JarvisEye {
     for (const pulse of this.pulses) pulse.t += dt * 0.85;
     this.pulses = this.pulses.filter((pulse) => pulse.t < 1);
 
-    this.nextBlink -= dt;
-    if (this.nextBlink <= 0) {
-      this.blink = 1;
-      this.nextBlink = 3 + Math.random() * 7;
-    }
-    this.blink = Math.max(0, this.blink - dt * 6.5);
+    // (the blink is gone: an aperture that never closes reads as PRESENCE,
+    // and the owner found the lid animation distracting)
   }
 
   draw() {
@@ -296,7 +290,6 @@ class JarvisEye {
 
     const breath = 1 + Math.sin(this.phase * 2.0) * this.live.breathe + this.energy * 0.10;
     const jitter = () => (Math.random() - 0.5) * this.live.jitter * unit * 0.035;
-    const lidClose = this.blink * 0.92;
 
     // The ripple briefly swells and settles the whole assembly, so a state
     // change is felt as one movement rather than seen as a colour swap.
@@ -326,26 +319,20 @@ class JarvisEye {
 
     if (this.glitch > 0.01) this.drawGlitchBands(ctx, unit);
 
-    if (lidClose > 0.001) {
-      ctx.fillStyle = "#05070c";
-      const h = unit * lidClose;
-      ctx.fillRect(-unit, -unit, unit * 2, h);
-      ctx.fillRect(-unit, unit - h, unit * 2, h);
-    }
-
     ctx.restore();
   }
 
   /* ---- layers ----------------------------------------------------------- */
 
   drawHalo(ctx, unit, hue, glow) {
-    const halo = ctx.createRadialGradient(0, 0, unit * 0.05, 0, 0, unit * 0.98);
-    halo.addColorStop(0, `hsla(${hue}, 90%, 60%, ${0.20 * glow})`);
-    halo.addColorStop(0.45, `hsla(${hue}, 90%, 50%, ${0.07 * glow})`);
+    // stronger presence: a brighter inner bloom and a wider, still-soft falloff
+    const halo = ctx.createRadialGradient(0, 0, unit * 0.05, 0, 0, unit * 0.99);
+    halo.addColorStop(0, `hsla(${hue}, 92%, 62%, ${0.32 * glow})`);
+    halo.addColorStop(0.4, `hsla(${hue}, 90%, 52%, ${0.12 * glow})`);
     halo.addColorStop(1, "hsla(0, 0%, 0%, 0)");
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(0, 0, unit * 0.98, 0, Math.PI * 2);
+    ctx.arc(0, 0, unit * 0.99, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -472,8 +459,8 @@ class JarvisEye {
     for (const pulse of this.pulses) {
       const t = pulse.inward ? 1 - pulse.t : pulse.t;
       const fade = Math.sin(pulse.t * Math.PI);
-      ctx.strokeStyle = `hsla(${hue}, 95%, 72%, ${0.30 * fade * glow})`;
-      ctx.lineWidth = Math.max(1, unit * 0.006 * (1 + fade));
+      ctx.strokeStyle = `hsla(${hue}, 95%, 72%, ${0.42 * fade * glow})`;
+      ctx.lineWidth = Math.max(1, unit * 0.008 * (1 + fade));
       ctx.beginPath();
       ctx.arc(0, 0, unit * (0.28 + t * 0.64), 0, Math.PI * 2);
       ctx.stroke();

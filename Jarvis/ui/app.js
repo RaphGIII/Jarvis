@@ -41,23 +41,63 @@ let reconnectDelay = 500;
 
 const VIEW_MODULES = [missions, projects, files, knowledge, personality, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
 
-/* The cosmos behind the shell: a static star field painted once (and on
-   resize). No animation loop — depth for free, GPU untouched. */
-function paintCosmos() {
+/* The cosmos behind the shell: a LIVING star field — slow drift, quiet
+   twinkle — throttled to ~24fps over a few hundred dots, so depth costs
+   almost nothing. Honest about restraint: with reduced motion (or the
+   owner's cosmosMotion preference off, or a hidden tab) it paints once and
+   stands still. */
+const cosmos = { stars: [], w: 0, h: 0, raf: 0, last: 0 };
+
+function seedCosmos() {
   const canvas = $("cosmos");
   if (!canvas) return;
-  const w = (canvas.width = window.innerWidth), h = (canvas.height = window.innerHeight);
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, w, h);
+  cosmos.w = canvas.width = window.innerWidth;
+  cosmos.h = canvas.height = window.innerHeight;
   let seed = 9;
   const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  for (let i = 0; i < 340; i++) {
-    const x = rnd() * w, y = rnd() * h, d = rnd();
-    const warm = rnd() > 0.86;
-    ctx.fillStyle = warm ? `rgba(255,226,190,${0.12 + d * 0.4})` : `rgba(175,200,240,${0.1 + d * 0.42})`;
-    ctx.beginPath(); ctx.arc(x, y, 0.4 + d * 1.1, 0, Math.PI * 2); ctx.fill();
+  cosmos.stars = Array.from({ length: 360 }, () => ({
+    x: rnd() * cosmos.w, y: rnd() * cosmos.h, d: rnd(),
+    warm: rnd() > 0.86, tw: rnd() * 6.28, sp: 0.02 + rnd() * 0.05,
+    vx: (rnd() - 0.5) * 2.2, vy: (rnd() - 0.5) * 1.4, // px per SECOND — a drift, not a flight
+  }));
+}
+
+function cosmosAlive() {
+  return !state.ui.reducedMotion && state.ui.cosmosMotion !== false;
+}
+
+function drawCosmos(t) {
+  const canvas = $("cosmos");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, cosmos.w, cosmos.h);
+  for (const s of cosmos.stars) {
+    const tw = cosmosAlive() ? 0.7 + 0.3 * Math.sin(t * s.sp * 4 + s.tw) : 1;
+    const a = (s.warm ? 0.12 + s.d * 0.4 : 0.1 + s.d * 0.42) * tw;
+    ctx.fillStyle = s.warm ? `rgba(255,226,190,${a})` : `rgba(175,200,240,${a})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 0.4 + s.d * 1.1, 0, Math.PI * 2); ctx.fill();
   }
 }
+
+function tickCosmos(now) {
+  cosmos.raf = requestAnimationFrame(tickCosmos);
+  if (document.hidden || !cosmosAlive()) return;
+  if (now - cosmos.last < 42) return; // ~24fps is plenty for a twinkle
+  const dt = Math.min(0.2, (now - cosmos.last) / 1000) || 0.04;
+  cosmos.last = now;
+  for (const s of cosmos.stars) {
+    s.x = (s.x + s.vx * dt + cosmos.w) % cosmos.w;
+    s.y = (s.y + s.vy * dt + cosmos.h) % cosmos.h;
+  }
+  drawCosmos(now / 1000);
+}
+
+function paintCosmos() {
+  seedCosmos();
+  drawCosmos(0);
+  if (!cosmos.raf) cosmos.raf = requestAnimationFrame(tickCosmos);
+}
+bus.on("state:ui", () => { if (!cosmosAlive()) drawCosmos(0); });
 
 function startJarvis() {
   if (new URLSearchParams(location.search).has("tv")) {

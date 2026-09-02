@@ -237,7 +237,9 @@ aside.rail button:hover { color: var(--text); background: var(--bg-soft); }
 aside.rail button[aria-pressed="true"] { color: var(--blue); background: #0b1a26; }
 aside.rail button .n { margin-left: auto; color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
-section.pane { min-width: 0; display: flex; flex-direction: column; }
+/* min-height: 0 is what makes #workspacePane actually scroll: without it the
+   grid track grows with the content and pushes everything below the fold */
+section.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pane-head { display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-bottom: 1px solid var(--line-soft); }
 .pane-head h2 { margin: 0; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: var(--text); font-weight: 600; }
 #breadcrumb { font-size: 12px; color: var(--dim); display: flex; gap: 6px; }
@@ -525,6 +527,8 @@ header.top { -webkit-app-region: no-drag; }
 .focus-drawer .focus-toggle b { color: var(--text); font-weight: 600; }
 .focus-drawer .focus-panel { margin: 0 0 8px; background: rgba(8,13,24,.92); backdrop-filter: blur(10px); box-shadow: 0 16px 48px rgba(0,0,0,.5); }
 .focus-drawer[data-open="false"] .focus-panel { display: none; }
+/* the Wissen edit drawer: two working columns, wide enough for real inputs */
+.kedit .focus-panel { grid-template-columns: repeat(2, minmax(300px, 1fr)); max-height: 62vh; overflow: auto; }
 
 /* ---- personality control centre: the behaviour hierarchy ---------------- */
 .pflow-wrap { padding: 18px 0 8px; }
