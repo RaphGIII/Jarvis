@@ -88,6 +88,12 @@ def test_the_core_is_refused_without_an_explicit_unlock(tmp_path):
 def test_the_core_service_never_passes_unlock_from_a_non_ui_origin(tmp_path):
     core = JarvisCore(kernel=StubKernel())
     core._owner = OwnerCore(tmp_path)
+    # isolate the security gate too: on a machine where the real owner has
+    # set a password, the un-isolated gate would answer needs_auth first and
+    # this test would stop testing the origin check
+    from owner.security_gate import SecurityGate
+
+    core._security = SecurityGate(tmp_path / "auth.json")
     refused = core.owner_propose({"personality": {"core": {"character": ["x"]}}}, reason="selfdev", origin="selfdev", unlock_core=True)
     assert refused["ok"] is False and refused.get("protected")
 

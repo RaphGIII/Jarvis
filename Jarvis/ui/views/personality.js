@@ -51,6 +51,7 @@ export const view = {
         node("VERHALTEN", [
           `Initiative ${prefs.initiative ?? 50} · Humor ${prefs.humour ?? 50}`,
           `Detailtiefe ${prefs.technical_depth ?? 50} · Wärme ${prefs.warmth ?? 50}`,
+          `Direktheit ${prefs.directness ?? 60} · Nüchternheit ${prefs.sobriety ?? 50}`,
           "Ehrlichkeit: fest verdrahtet",
         ])),
       el("div", { class: "pjoin" }),

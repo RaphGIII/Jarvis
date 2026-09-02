@@ -25,7 +25,7 @@
 
 import { $, el, clear, kv, section, badge, button, ago, seconds } from "../core/dom.js";
 import { api } from "../core/api.js";
-import { state, setPref } from "../core/state.js";
+import { state } from "../core/state.js";
 import * as views from "../core/views.js";
 import * as chat from "./chat.js";
 
@@ -52,7 +52,6 @@ export const view = {
     const wrap = el("div", { class: "galaxy-wrap" });
     const canvas = el("canvas", { id: "constellation", class: "galaxy" });
     const search = el("input", { placeholder: "Focus… (project, mission, capability)", value: params.focus || params.q || "", style: { maxWidth: "240px" } });
-    const mode = el("select", {}, ...MODES.map((m) => el("option", { value: m, text: m.toLowerCase(), selected: (params.mode || state.ui.galaxyMode || "GALAXY") === m })));
     const everyToggle = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } }, el("input", { type: "checkbox", checked: everything }), " show everything");
     const counts = el("span", { class: "empty", style: { padding: 0 } });
     const chips = el("span", { class: "galaxy-toolbar", style: { display: "inline-flex", gap: "4px" } });
@@ -60,13 +59,15 @@ export const view = {
     let level = params.level || "ALL";
     for (const l of levels) chips.append(el("button", { class: "chip" + (level === l ? " on" : ""), text: l.toLowerCase(), onClick: (ev) => {
       level = l; for (const c of chips.querySelectorAll(".chip")) c.classList.toggle("on", c === ev.currentTarget); galaxy?.setLevel(level); } }));
-    // immersive: everything floats OVER the galaxy; nothing frames it
-    const toolbar = el("div", { class: "toolbar galaxy-overlay" }, search, mode, chips, everyToggle, counts);
+    // immersive: everything floats OVER the galaxy; nothing frames it.
+    // The alternative layout modes stay reachable via ?mode=… but the select
+    // is gone: one strong default view beats six half-views in a dropdown.
+    const toolbar = el("div", { class: "toolbar galaxy-overlay" }, search, chips, everyToggle, counts);
     const legend = el("div", { class: "galaxy-legend" },
       el("span", { style: { "--c": HEALTH_COLOUR.HEALTHY }, text: "healthy" }), el("span", { style: { "--c": HEALTH_COLOUR.AT_RISK }, text: "at risk" }),
       el("span", { style: { "--c": HEALTH_COLOUR.BLOCKED }, text: "blocked" }), el("span", { style: { "--c": KIND_COLOUR.mission }, text: "mission" }),
       el("span", { style: { "--c": KIND_COLOUR.capability }, text: "capability" }), el("span", { style: { "--c": KIND_COLOUR.knowledge }, text: "knowledge" }));
-    const hint = el("div", { class: "galaxy-hint", text: "doppelklick eintauchen · ziehen · rad zoom · rechtsklick menü · esc zurück" });
+    const hint = el("div", { class: "galaxy-hint", text: "rauszoomen → universum · doppelklick eintauchen · ziehen · rechtsklick menü · esc zurück" });
     wrap.append(toolbar, canvas, legend, hint);
     wrap.append(focusDrawer(overview, graph, params));
     pane.append(wrap);
@@ -81,14 +82,17 @@ export const view = {
           galaxy.dim = keep; galaxy.focusId = n.id; galaxy.flyTo(n, 2.05);
         } else { galaxy.focusText(n.label); }
       },
-      mode: mode.value, filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "", level });
+      mode: params.mode || "GALAXY", filter: params.filter || "", uses: params.uses || "", idleDays: Number(params.idle_days || 0), connected: params.connected || "", level,
+      // this galaxy is one zoom level of a larger cosmos: pulling out past the
+      // floor rises into the Files universe (drives), same engine, same space
+      minZoom: 0.5,
+      onZoomOutBeyond: () => { savedCam = null; warp(canvas, "rise"); views.open("files", { path: "" }); } });
     window.zeusGalaxy = galaxy; // console/test access to the live scene
     if (savedCam && !params.focus && !params.id) Object.assign(galaxy.cam, savedCam);
     const nP = graph.nodes.filter((n) => n.kind === "project").length, nM = graph.nodes.filter((n) => n.kind === "mission").length;
     counts.textContent = `${nP} project${nP === 1 ? "" : "s"} · ${nM} mission${nM === 1 ? "" : "s"} · ${graph.nodes.filter((n) => n.kind === "capability").length} capabilities · ${graph.nodes.filter((n) => n.kind === "thought").length} thoughts` + (graph.hidden ? ` · ${graph.hidden} hidden` : "");
     search.oninput = () => galaxy.focusText(search.value);
     if (search.value) galaxy.focusText(search.value);
-    mode.onchange = () => { setPref("galaxyMode", mode.value); galaxy.setMode(mode.value); };
     everyToggle.firstChild.onchange = (e) => views.open("projects", { ...params, everything: e.target.checked ? "1" : "" });
     if (params.focus) galaxy.focusText(params.focus, true);
   },
@@ -166,7 +170,7 @@ export class Galaxy {
       const n = { ...raw, x: W / 2, y: H / 2, vx: 0, vy: 0, r: 6, depth: 1, fixed: false, locked: false, ownerPlaced: false, visible: true, seed: hash(raw.id) };
       if (n.kind === "project") {
         const w = IMPORTANCE_WEIGHT[n.importance] || 0.6;
-        n.r = 9 + w * 16 + Math.min(9, (n.tasks || 0) * 0.5); n.depth = 1;
+        n.r = raw.baseR || 9 + w * 16 + Math.min(9, (n.tasks || 0) * 0.5); n.depth = 1;
         const layout = n.layout || {};
         if (layout.state === "OWNER_POSITIONED" || layout.state === "LOCKED") { n.x = layout.x; n.y = layout.y; n.ownerPlaced = true; n.locked = layout.state === "LOCKED"; }
       } else if (n.kind === "self") { n.r = 14; n.depth = 1; n.x = W / 2; n.y = H / 2; n.fixed = true; }
@@ -203,7 +207,11 @@ export class Galaxy {
 
   W() { return this.canvas.clientWidth || 900; }
   H() { return this.canvas.clientHeight || 480; }
-  resize() { this.canvas.width = this.W() * devicePixelRatio; this.canvas.height = this.H() * devicePixelRatio; this.settled = false; this.frames = 0; }
+  resize() {
+    const w = Math.round(this.W() * devicePixelRatio), h = Math.round(this.H() * devicePixelRatio);
+    if (this.canvas.width === w && this.canvas.height === h) return; // no-op resizes must not loop the observer
+    this.canvas.width = w; this.canvas.height = h; this.settled = false; this.frames = 0;
+  }
 
   /* ---- layout: systems on a golden-angle spiral, relaxed apart --------- */
   layout(initial) {
@@ -211,7 +219,7 @@ export class Galaxy {
     const systems = this.nodes.filter((n) => n.kind === "project" && n.visible && !n.sub);
     const zeus = this.byId.get("zeus");
     const place = (n, x, y) => { if (!n.ownerPlaced && !n.locked) { if (initial || this.mode !== "GALAXY") { n.x = x; n.y = y; } else { n.tx = x; n.ty = y; } } };
-    const systemRadius = (n) => n.r + 22 + Math.min(70, 14 * this.childrenOf(n).length);
+    const systemRadius = (n) => n.r + 30 + Math.min(96, 16 * this.childrenOf(n).length);
     if (this.mode === "GALAXY") {
       systems.sort((a, b) => (IMPORTANCE_WEIGHT[b.importance] || 0) - (IMPORTANCE_WEIGHT[a.importance] || 0) || (a.seed - b.seed));
       const cx = W / 2, cy = H / 2, golden = Math.PI * (3 - Math.sqrt(5));
@@ -228,7 +236,7 @@ export class Galaxy {
         for (const a of systems) for (const b of systems) {
           if (a === b) continue;
           const ax = a.tx ?? a.x, ay = a.ty ?? a.y, bx = b.tx ?? b.x, by = b.ty ?? b.y;
-          const dx = ax - bx, dy = ay - by, d = Math.max(1, Math.hypot(dx, dy)), min = systemRadius(a) + systemRadius(b) + 28;
+          const dx = ax - bx, dy = ay - by, d = Math.max(1, Math.hypot(dx, dy)), min = systemRadius(a) + systemRadius(b) + 44;
           if (d < min) {
             const push = (min - d) / 2, ux = dx / d, uy = dy / d;
             if (!a.ownerPlaced && !a.locked) { if (initial) { a.x += ux * push; a.y += uy * push; } else { a.tx = (a.tx ?? a.x) + ux * push; a.ty = (a.ty ?? a.y) + uy * push; } moved = true; }
@@ -271,7 +279,7 @@ export class Galaxy {
         const siblings = this.childrenOf(n.parent).filter((c) => c.kind === n.kind && Boolean(c.sub) === Boolean(n.sub));
         const idx = Math.max(0, siblings.indexOf(n));
         const ring = n.sub ? 1 : n.kind === "mission" ? 2 : n.kind === "thought" ? 2.6 : 3;
-        const d = n.parent.r + 14 + ring * 15 + (idx % 2) * 5;
+        const d = n.parent.r + 18 + ring * 19 + (idx % 2) * 6;
         const a = (idx / Math.max(1, siblings.length)) * Math.PI * 2 + (n.seed % 100) / 100 * 0.6;
         n.orbit = { a, d, speed: (0.05 + (n.seed % 5) * 0.012) * (n.kind === "mission" && n.state === "active" ? 1.8 : 1) * (n.sub ? 0.4 : 1), tilt: 0.62 };
         n.x = n.parent.x + Math.cos(a) * d; n.y = n.parent.y + Math.sin(a) * d * n.orbit.tilt;
@@ -341,6 +349,8 @@ export class Galaxy {
     }
     // particle drift
     for (const m of this.motes) { ctx.fillStyle = `rgba(150,190,240,${m.a})`; ctx.beginPath(); ctx.arc(m.x * W, m.y * H, m.s, 0, Math.PI * 2); ctx.fill(); }
+    // under-layer (category nebulas in the File universe) sits behind bodies
+    if (this.opts.drawUnder) this.opts.drawUnder(ctx, this);
     // knowledge nebula
     const k = this.byId.get("knowledge");
     if (k && k.visible) {
@@ -421,6 +431,9 @@ export class Galaxy {
     const faded = ["DORMANT", "ARCHIVED", "LOW_PRIORITY", "TEST"].includes(n.importance);
     const pulse = (["ACTIVE", "FOCUS", "PINNED"].includes(n.importance) && !REDUCED()) ? 1 + Math.sin(t / 28 + n.seed) * 0.05 : 1;
     const sel = this.selected.has(n.id) || n === this.hover;
+    // planetary ring: seeded per body so it is stable; larger bodies only
+    const ringed = (n.ringed ?? (n.seed % 5 === 0)) && r > 8;
+    const ringTilt = 0.26 + (n.seed % 37) / 130, ringRot = ((n.seed % 63) / 100) - 0.31;
     // health halo (wide, soft)
     let g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 3.2 * pulse);
     g.addColorStop(0, `rgba(${cr},${cg},${cb},${faded ? .12 : .22})`); g.addColorStop(0.5, `rgba(${cr},${cg},${cb},${faded ? .04 : .08})`); g.addColorStop(1, "transparent");
@@ -429,10 +442,29 @@ export class Galaxy {
     g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 1.55);
     g.addColorStop(0, `rgba(255,255,255,${faded ? .55 : .95})`); g.addColorStop(0.35, `rgba(${cr},${cg},${cb},${faded ? .55 : .9})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.55, 0, Math.PI * 2); ctx.fill();
+    // the far half of the ring passes BEHIND the body
+    if (ringed) {
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${faded ? .12 : .22})`; ctx.lineWidth = Math.max(1, r * 0.10);
+      ctx.beginPath(); ctx.ellipse(x, y, r * 1.8, r * 1.8 * ringTilt, ringRot, Math.PI, Math.PI * 2); ctx.stroke();
+    }
     // core
     g = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, 0, x, y, r);
     g.addColorStop(0, "#ffffff"); g.addColorStop(0.55, `rgb(${Math.min(255, cr + 60)},${Math.min(255, cg + 60)},${Math.min(255, cb + 60)})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},.85)`);
     ctx.fillStyle = sel ? "#ffffff" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    // terminator: a soft shadow on the side away from the light gives the
+    // disc a sphere's face instead of a flat dot
+    if (r > 5 && !sel) {
+      ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
+      g = ctx.createRadialGradient(x - r * 0.55, y - r * 0.55, r * 0.2, x, y, r * 1.45);
+      g.addColorStop(0, "rgba(3,6,14,0)"); g.addColorStop(0.68, "rgba(3,6,14,0)"); g.addColorStop(1, "rgba(3,6,14,.55)");
+      ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      ctx.restore();
+    }
+    // the near half of the ring passes IN FRONT
+    if (ringed) {
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${faded ? .2 : .4})`; ctx.lineWidth = Math.max(1, r * 0.10);
+      ctx.beginPath(); ctx.ellipse(x, y, r * 1.8, r * 1.8 * ringTilt, ringRot, 0, Math.PI); ctx.stroke();
+    }
     // diffraction spikes for the important systems
     if (["PINNED", "FOCUS", "ACTIVE"].includes(n.importance) && !faded) {
       ctx.strokeStyle = `rgba(255,255,255,${.18 * pulse})`; ctx.lineWidth = 1;
@@ -465,6 +497,12 @@ export class Galaxy {
     const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
     g.addColorStop(0, "#ffffff"); g.addColorStop(0.6, colour); g.addColorStop(1, colour + "aa");
     ctx.fillStyle = sel ? "#ffffff" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    // even the small moons get a face: a hint of shadow away from the light
+    if (r > 4 && !sel) {
+      ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
+      ctx.fillStyle = "rgba(3,6,14,.4)"; ctx.beginPath(); ctx.arc(x + r * 0.55, y + r * 0.55, r, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
     if (n.kind === "capability") { ctx.strokeStyle = "rgba(143,161,194,.6)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0.3, Math.PI * 1.4); ctx.stroke(); }
     if (n.kind === "mission" && ["blocked", "failed"].includes(n.state)) { ctx.strokeStyle = "rgba(255,120,120,.7)"; ctx.beginPath(); ctx.arc(x, y, r + 2, 0, Math.PI * 2); ctx.stroke(); }
   }
@@ -491,9 +529,12 @@ export class Galaxy {
     if (open) this.opts.onSelect(n);
   }
   flyTo(n, z) {
+    // centres the GIVEN POINT: the camera origin is the world point at the
+    // top-left, so centring n means flying to n minus half a screen
+    const tx = n.x - this.W() / 2, ty = n.y - this.H() / 2;
     const steps = REDUCED() ? 1 : 34; const sx = this.cam.x, sy = this.cam.y, sz = this.cam.z; let i = 0;
     const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-    const go = () => { i += 1; const t = ease(i / steps); this.cam.x = sx + (n.x - sx) * t; this.cam.y = sy + (n.y - sy) * t; this.cam.z = sz + (z - sz) * t; if (i < steps) requestAnimationFrame(go); };
+    const go = () => { i += 1; const t = ease(i / steps); this.cam.x = sx + (tx - sx) * t; this.cam.y = sy + (ty - sy) * t; this.cam.z = sz + (z - sz) * t; if (i < steps) requestAnimationFrame(go); };
     go(); this.settled = false;
   }
   bind() {
@@ -543,16 +584,36 @@ export class Galaxy {
       if (n && this.opts.onDoubleClick) { this.opts.onDoubleClick(n); return; }
       if (n?.kind === "project") views.open("projects", { id: n.id }); else if (n) this.focusText(n.label);
     };
-    c.onwheel = (e) => { e.preventDefault(); const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top; const [wx, wy] = this.fromScreen(sx, sy); const z = Math.max(0.45, Math.min(3.4, this.cam.z * (e.deltaY < 0 ? 1.1 : 0.91))); this.cam.z = z; const [nx, ny] = this.fromScreen(sx, sy); this.cam.x += wx - nx; this.cam.y += wy - ny; this.settled = false; };
+    c.onwheel = (e) => {
+      e.preventDefault();
+      const r = c.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
+      const minZ = this.opts.minZoom ?? 0.45, maxZ = this.opts.maxZoom ?? 3.4;
+      const [wx, wy] = this.fromScreen(sx, sy);
+      // semantic zoom: pressing on past the floor is a deliberate gesture and
+      // rises to the next larger level (folder → drive → universe → …)
+      if (e.deltaY > 0 && this.cam.z <= minZ + 0.001) {
+        this._outPressure = (this._outPressure || 0) + 1;
+        if (this._outPressure >= 3 && this.opts.onZoomOutBeyond) { this._outPressure = 0; this.opts.onZoomOutBeyond(); return; }
+      } else this._outPressure = 0;
+      const z = Math.max(minZ, Math.min(maxZ, this.cam.z * (e.deltaY < 0 ? 1.1 : 0.91)));
+      this.cam.z = z; const [nx, ny] = this.fromScreen(sx, sy); this.cam.x += wx - nx; this.cam.y += wy - ny; this.settled = false;
+    };
     c.oncontextmenu = (e) => {
       e.preventDefault();
       const r = c.getBoundingClientRect(); const n = this.hit(e.clientX - r.left, e.clientY - r.top);
       if (n && this.opts.onContext) { if (!this.selected.has(n.id)) this.selected = new Set([n.id]); this.opts.onContext(n, e.clientX - r.left, e.clientY - r.top); return; }
       if (n && n.kind === "project") { if (!this.selected.has(n.id)) this.selected = new Set([n.id]); this.openMenu(n, e.clientX - r.left, e.clientY - r.top); } else this.closeMenu();
     };
-    this._onKey = (e) => { if (e.key === "Escape") { if (this.menu) { this.closeMenu(); e.stopPropagation(); return; } if (this.dim || this.cam.z !== 1) { this.dim = null; this.focusId = null; this.flyTo({ x: this.W() / 2, y: this.H() / 2 }, 1); e.stopPropagation(); } } };
+    // stopImmediatePropagation: the File view's own ESC handler sits on the
+    // same window node and would otherwise see the menu already closed and
+    // navigate up one level on the same keypress
+    this._onKey = (e) => { if (e.key === "Escape") { if (this.menu) { this.closeMenu(); e.stopImmediatePropagation(); return; } if (this.dim || this.cam.z !== 1) { this.dim = null; this.focusId = null; this.flyTo({ x: this.W() / 2, y: this.H() / 2 }, 1); e.stopImmediatePropagation(); } } };
     window.addEventListener("keydown", this._onKey, true);
     this._onResize = () => this.resize(); window.addEventListener("resize", this._onResize);
+    // NO ResizeObserver on the canvas: its backing-store writes feed back
+    // into an auto-height flex chain and inflate the canvas without bound.
+    // Layout-driven size changes are avoided instead (the inspector floats
+    // over space rather than shrinking it).
   }
   /* ---- dynamic sub-graphs (the File Galaxy's semantic zoom) ----------- */
   addGraph(nodes, edges, { around = null } = {}) {
@@ -579,7 +640,7 @@ export class Galaxy {
       const siblings = this.childrenOf(n.parent).filter((c) => c.kind === n.kind && Boolean(c.sub) === Boolean(n.sub));
       const idx = Math.max(0, siblings.indexOf(n));
       const ring = n.sub ? 1 : n.kind === "capability" ? 2.2 : 1.6;
-      const d = n.parent.r + 14 + ring * 15 + (idx % 3) * 6;
+      const d = n.parent.r + 18 + ring * 19 + (idx % 3) * 7;
       const a = (idx / Math.max(1, siblings.length)) * Math.PI * 2 + (n.seed % 100) / 100 * 0.6;
       n.orbit = { a, d, speed: (0.05 + (n.seed % 5) * 0.012) * (n.sub ? 0.4 : 0.8), tilt: 0.62 };
       n.x = n.parent.x + Math.cos(a) * d; n.y = n.parent.y + Math.sin(a) * d * n.orbit.tilt;
@@ -638,6 +699,28 @@ export class Galaxy {
   }
 }
 
+/* A brief cinematic hand-over between zoom levels: the outgoing canvas is
+   frozen as a ghost that scales past the viewer (dive) or shrinks away
+   (rise) while the next level mounts underneath. Decoration only — it must
+   never be able to block navigation. */
+export function warp(canvas, direction = "rise") {
+  if (REDUCED() || !canvas || !canvas.width) return;
+  try {
+    const ghost = document.createElement("canvas");
+    ghost.width = canvas.width; ghost.height = canvas.height;
+    ghost.getContext("2d").drawImage(canvas, 0, 0);
+    const r = canvas.getBoundingClientRect();
+    Object.assign(ghost.style, {
+      position: "fixed", left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px",
+      zIndex: 60, pointerEvents: "none", opacity: "1",
+      transition: "transform 420ms cubic-bezier(.55,0,.18,1), opacity 420ms cubic-bezier(.55,0,.18,1)",
+    });
+    document.body.append(ghost);
+    requestAnimationFrame(() => { ghost.style.opacity = "0"; ghost.style.transform = direction === "dive" ? "scale(1.65)" : "scale(0.5)"; });
+    setTimeout(() => ghost.remove(), 470);
+  } catch { /* a failed ghost is a skipped effect, nothing more */ }
+}
+
 function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 function hash(s) { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0) % 100000; }
 
@@ -665,7 +748,8 @@ async function inspect(n, graph, reload) {
     el("div", { class: "meta" }, badge(p.health?.state || "?", p.health?.state === "HEALTHY" ? "ok" : p.health?.state === "BLOCKED" ? "bad" : p.health?.state === "COMPLETE" ? "blue" : "warn"), " ", badge(p.importance || n.importance || "NORMAL", "dim"), " ", badge(p.state || detail.state || "", STATE_TONE[String(p.state).toLowerCase()] || "idle")),
     tasks.length ? el("div", { class: "bar green", style: { margin: "6px 0 10px" } }, el("i", { style: { width: `${(done / tasks.length) * 100}%` } })) : null,
     section("Goal", kv("goal", p.goal || detail.goal), kv("owner said", meta.owner_request), kv("parent", meta.parent_title), kv("deadline", meta.deadline)),
-    section("Status", kv("progress", tasks.length ? `${done}/${tasks.length} tasks` : "no tasks"), kv("health", `${p.health?.state || "?"} — ${p.health?.reason || ""}`), kv("importance", importance),
+    section("Status", kv("progress", tasks.length ? `${done}/${tasks.length} tasks` : "no tasks"), kv("health", `${p.health?.state || "?"} — ${p.health?.reason || ""}`),
+      el("div", { class: "kv" }, el("span", { class: "k", text: "importance" }), el("span", { class: "v" }, importance)),
       kv("last activity", ago(p.updated_at || detail.updated_at)), kv("created", (detail.created_at || "").slice(0, 10))),
     section("Now", kv("current mission", current ? current.title : (related.find((r) => r.kind === "mission" && r.state === "active") || {}).label || "—"),
       kv("blockers", blocked.length ? blocked.map((t) => t.title).join("; ") : (detail.blockers || []).map((b) => b.text).join("; ") || "none"),

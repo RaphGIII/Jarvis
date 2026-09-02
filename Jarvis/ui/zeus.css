@@ -40,6 +40,16 @@ body.reduced-motion { --t-micro: 0ms; --t-panel: 0ms; --t-space: 0ms; --t-hero: 
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); overflow: hidden; }
+/* cosmic depth behind the whole shell: two faint nebulae in CSS, the fine
+   star field painted once onto #cosmos by app.js (static, costs no frames) */
+body {
+  background:
+    radial-gradient(ellipse 62% 44% at 72% 16%, rgba(80, 70, 160, .085), transparent 62%),
+    radial-gradient(ellipse 55% 48% at 16% 78%, rgba(40, 95, 150, .07), transparent 65%),
+    radial-gradient(ellipse at 50% 42%, #0a111e 0%, #060a14 55%, #030510 100%);
+}
+#cosmos { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
+#app { position: relative; z-index: 1; }
 a { color: var(--blue); }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #1b2636; border-radius: 4px; }
@@ -419,6 +429,10 @@ pre.code { background: #080d15; border: 1px solid var(--line); border-radius: va
 .galaxy-menu button { display: block; width: 100%; text-align: left; padding: 6px 9px; font-size: 12.5px; background: transparent; border: 0; color: var(--text); border-radius: 6px; cursor: pointer; }
 .galaxy-menu button:hover { background: rgba(79,195,247,.12); color: #dff2ff; }
 .galaxy-menu .sep { height: 1px; margin: 5px 4px; background: var(--line-soft); }
+/* the travel-or-open decision: two strong actions, nothing else competing */
+.galaxy-menu.choice { min-width: 220px; }
+.galaxy-menu.choice button { font-size: 13px; padding: 8px 10px; }
+.galaxy-menu.choice button:first-of-type { color: #dff2ff; }
 .galaxy-menu .row { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 6px 6px; }
 .galaxy-menu .row button { width: auto; padding: 3px 8px; font-size: 10.5px; letter-spacing: .06em; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--dim); }
 .galaxy-menu .row button.on { color: #0b1220; background: var(--blue); border-color: var(--blue); }
@@ -478,13 +492,24 @@ header.top { -webkit-app-region: no-drag; }
 
 /* ---- spatial views: an operating surface, not a dashboard page --------- */
 #app.spatial main.workspace { grid-template-columns: 0 1fr 0; }
-#app.spatial.inspecting main.workspace { grid-template-columns: 0 1fr var(--inspector); }
+/* spatial: the inspector FLOATS over space instead of shrinking it — the
+   canvas keeps its size (a double-click's second click still lands where the
+   first did) and the surface stays fullscreen */
+#app.spatial.inspecting main.workspace { grid-template-columns: 0 1fr 0; }
+#app.spatial aside.inspector.open {
+  position: absolute; top: 0; right: 0; bottom: 0; width: var(--inspector); z-index: 20;
+  background: rgba(7, 11, 18, .93); backdrop-filter: blur(10px);
+  border-left: 1px solid rgba(70, 95, 135, .35); box-shadow: -18px 0 50px rgba(0, 0, 0, .45);
+}
+#app.spatial main.workspace { position: relative; }
 #app.spatial aside.rail { padding: 0; border: 0; min-width: 0; overflow: hidden; }
 #app.spatial .pane-head { display: none; }
 #app.spatial #workspacePane { padding: 0; overflow: hidden; animation: none; }
 #app.spatial header.top { padding: 7px 14px; border-bottom: 1px solid rgba(40,60,90,.35); background: rgba(4,7,14,.7); }
 #app.spatial .galaxy-wrap { margin: 0; height: 100%; }
-#app.spatial #constellation.galaxy { height: 100%; min-height: 0; border-radius: 0; display: block; }
+/* absolute: the canvas fills the wrap but its own backing-store size can
+   never feed back into the layout (that feedback once inflated it to 6757px) */
+#app.spatial #constellation.galaxy { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; border-radius: 0; display: block; }
 #app.spatial section.pane { position: relative; }
 
 /* floating toolbar over the galaxy */

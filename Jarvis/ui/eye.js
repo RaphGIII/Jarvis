@@ -384,8 +384,10 @@ class JarvisEye {
       // Parallax: the nearer rings drift further from centre as the assembly
       // turns, which is what stops this reading as a flat diagram.
       const drift = unit * 0.012 * orbit.depth;
+      const ox = Math.cos(angle * 0.7) * drift;
+      const oy = Math.sin(angle * 0.9) * drift;
       ctx.save();
-      ctx.translate(Math.cos(angle * 0.7) * drift, Math.sin(angle * 0.9) * drift);
+      ctx.translate(ox, oy);
       ctx.rotate(angle);
       ctx.scale(1, orbit.squash);
       ctx.lineWidth = Math.max(1, unit * orbit.width);
@@ -396,6 +398,25 @@ class JarvisEye {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
+      // Electrons: one or two quanta riding each shell, Bohr-style. Drawn
+      // outside the squashed transform so they stay round; their position is
+      // the ellipse point rotated by the ring's own angle.
+      if (detail > 0.4) {
+        const R = unit * orbit.r * this.live.tension;
+        const ca = Math.cos(angle), sa = Math.sin(angle);
+        const count = 1 + (i % 2);
+        for (let e = 0; e < count; e++) {
+          const th = this.spinAngle * (0.9 + Math.abs(orbit.speed) * 2.4) * (orbit.speed < 0 ? -1 : 1) + e * Math.PI + i * 2.1;
+          const lx = Math.cos(th) * R, ly = Math.sin(th) * R * orbit.squash;
+          const ex = ox + lx * ca - ly * sa, ey = oy + lx * sa + ly * ca;
+          const a = (0.30 + 0.45 * orbit.depth) * this.live.rings * glow;
+          const er = Math.max(1, unit * 0.014 * (0.7 + orbit.depth * 0.5));
+          ctx.fillStyle = stroke(70, a * 0.35);
+          ctx.beginPath(); ctx.arc(ex, ey, er * 2.6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = stroke(86, a);
+          ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.fill();
+        }
+      }
     }
   }
 

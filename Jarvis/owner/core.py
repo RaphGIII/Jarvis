@@ -57,6 +57,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "assistant_name": "Zeus",
         "wake_word": "Zeus",
         "tagline": "personal AI",
+        "role": "Persönliches KI-Betriebssystem seines Owners",
+        "self_description": "",
     },
     # Two layers.  ``core`` is the protected character of ZEUS -- it can only
     # change through an owner transaction that explicitly unlocks it.  The
@@ -99,6 +101,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
             "technical_depth": 60,
             "warmth": 50,
             "initiative": 50,
+            "directness": 60,
+            "small_talk": 40,
+            "uncertainty_disclosure": 70,
+            "correction_ack": 60,
+            "sobriety": 50,
             "spoken_answer_length": "short",
             "address": "du",
             "language": "auto",
@@ -298,9 +305,15 @@ class OwnerCore:
             + d(prefs.get("proactivity"), "do not volunteer observations", "mention a genuinely useful observation when it is relevant", "actively point out risks, connections and next steps") + "; "
             + d(prefs.get("technical_depth"), "keep technical detail minimal unless asked", "technical detail when it helps", "technical detail is welcome") + "; "
             + d(prefs.get("warmth"), "matter-of-fact", "warm but not effusive", "warm and personal") + "; "
-            + d(prefs.get("initiative"), "wait for instructions", "suggest the next step when it is obvious", "take initiative on obvious next steps") + ".",
+            + d(prefs.get("initiative"), "wait for instructions", "suggest the next step when it is obvious", "take initiative on obvious next steps") + "; "
+            + d(prefs.get("directness"), "cushion difficult messages", "be direct without being harsh", "be blunt and direct; never soften a finding") + "; "
+            + d(prefs.get("small_talk"), "keep small talk minimal and steer back to the point", "brief, natural small talk when the owner starts it", "engage warmly in small talk when the owner starts it") + "; "
+            + d(prefs.get("uncertainty_disclosure"), "give your best answer without hedging", "mention real uncertainty briefly", "always state uncertainty and its source explicitly") + "; "
+            + d(prefs.get("correction_ack"), "apply corrections silently", "acknowledge a correction in a few words", "confirm explicitly what was learned from each correction") + "; "
+            + d(prefs.get("sobriety"), "a relaxed, lively register is fine", "keep an even, composed register", "strictly sober and matter-of-fact; no embellishment") + ".",
             f"Spoken answers: {'one or two short sentences' if str(prefs.get('spoken_answer_length', 'short')) == 'short' else 'a few sentences'}.",
             f"Address the owner as '{prefs.get('address', 'du')}'." if prefs.get("address") else "",
+            f"Preferred answer language: {prefs.get('language')}." if prefs.get("language") and prefs.get("language") != "auto" else "",
         ]
         return [("core", core_text), ("preferences", "\n".join(l for l in pref_lines if l))]
 

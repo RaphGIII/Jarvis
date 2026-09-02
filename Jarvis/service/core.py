@@ -3909,8 +3909,10 @@ class JarvisCore:
             if denied is not None:
                 return denied
         record = self.owner.approve(transaction_id, approved_by="owner-ui")
-        self.emit(EventType.NOTIFICATION, {"text": "owner core changed", "kind": "owner_change", "record": record})
-        return {"ok": True, "record": record}
+        note = self._sync_identity(record)
+        self.emit(EventType.NOTIFICATION, {"text": "owner core changed" + (f" — {note}" if note else ""),
+                                           "kind": "owner_change", "record": record})
+        return {"ok": True, "record": record, **({"identity_note": note} if note else {})}
 
     def owner_reject(self, transaction_id: str) -> dict[str, Any]:
         return {"ok": self.owner.reject(transaction_id)}
@@ -3919,8 +3921,52 @@ class JarvisCore:
         if not confirm:
             return {"ok": False, "error": "explicit confirmation is required to roll back the owner core"}
         record = self.owner.rollback(audit_id, approved_by="owner-ui")
+        self._sync_identity(record)
         self.emit(EventType.NOTIFICATION, {"text": "owner core rolled back", "kind": "owner_rollback", "record": record})
         return {"ok": True, "record": record}
+
+    def _sync_identity(self, record: dict[str, Any]) -> str:
+        """An approved owner change to the identity document becomes OPERATIVE.
+
+        ``core.identity`` loads ``config/identity.json`` at boot; without this
+        bridge, editing the owner identity document would be a diary entry.
+        After an approved transaction that touches ``identity``, the operative
+        fields are written to that file and the process-wide identity is
+        swapped, so name/tagline follow immediately.  The wake word stays
+        honest about hardware: the returned note says when no wake model
+        exists for the new word (the old model keeps listening until then).
+        """
+
+        docs = ({d.get("document") for d in record.get("diff", [])}
+                | set(record.get("documents") or []) | set(record.get("restored") or []))
+        if "identity" not in docs:
+            return ""
+        try:
+            from dataclasses import replace as _replace
+
+            from core import identity as identity_mod
+
+            doc = self.owner.read("identity")
+            fields = {k: str(doc[k]) for k in ("product_name", "assistant_name", "wake_word", "tagline") if doc.get(k)}
+            if not fields:
+                return ""
+            path = Path(__file__).resolve().parent.parent / "config" / "identity.json"
+            current: dict[str, Any] = {}
+            if path.is_file():
+                try:
+                    current = json.loads(path.read_text(encoding="utf-8")) or {}
+                except ValueError:
+                    current = {}
+            current.update(fields)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+            updated = _replace(identity_mod.current(), **fields)
+            identity_mod.set_current(updated)
+            self.identity = updated
+            self.persona_name = updated.assistant_name
+            return updated.wake_word_note()
+        except Exception as exc:  # noqa: BLE001 - the transaction itself succeeded; report, don't fail
+            return f"identity sync failed: {exc}"
 
     def _restore_missions(self) -> int:
         """Count the missions a restart left resumable, and say so.

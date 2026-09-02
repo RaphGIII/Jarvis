@@ -41,12 +41,32 @@ let reconnectDelay = 500;
 
 const VIEW_MODULES = [missions, projects, files, knowledge, personality, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
 
+/* The cosmos behind the shell: a static star field painted once (and on
+   resize). No animation loop — depth for free, GPU untouched. */
+function paintCosmos() {
+  const canvas = $("cosmos");
+  if (!canvas) return;
+  const w = (canvas.width = window.innerWidth), h = (canvas.height = window.innerHeight);
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  let seed = 9;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 340; i++) {
+    const x = rnd() * w, y = rnd() * h, d = rnd();
+    const warm = rnd() > 0.86;
+    ctx.fillStyle = warm ? `rgba(255,226,190,${0.12 + d * 0.4})` : `rgba(175,200,240,${0.1 + d * 0.42})`;
+    ctx.beginPath(); ctx.arc(x, y, 0.4 + d * 1.1, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 function startJarvis() {
   if (new URLSearchParams(location.search).has("tv")) {
     document.body.classList.add("tv");
     document.documentElement.requestFullscreen?.().catch(() => {});
   }
   if (state.ui.reducedMotion) document.body.classList.add("reduced-motion");
+  paintCosmos();
+  window.addEventListener("resize", () => paintCosmos());
 
   eye = new JarvisEye($("eye"));
   eye.start();
@@ -307,7 +327,11 @@ async function refreshGpu() {
 
 // A script error is shown, not swallowed: a blank pane with a console line
 // nobody reads is the failure mode this replaces.
-window.addEventListener("error", (e) => toast(`UI error: ${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`, "bad"));
+window.addEventListener("error", (e) => {
+  // the ResizeObserver loop warning is a benign browser notice, not a fault
+  if (String(e.message || "").includes("ResizeObserver loop")) return;
+  toast(`UI error: ${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`, "bad");
+});
 window.addEventListener("unhandledrejection", (e) => toast(`UI error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`, "bad"));
 
 window.startJarvis = startJarvis;

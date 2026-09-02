@@ -15,13 +15,26 @@ import * as authgate from "../core/authgate.js";
 
 const DOCS = ["identity", "policy", "spending", "security"];
 const DIALS = [
-  ["conciseness", "Conciseness", "long-form", "very short"],
-  ["formality", "Formality", "informal", "formal"],
-  ["humour", "Humour", "none", "dry, often"],
-  ["proactivity", "Proactivity", "only when asked", "points things out"],
-  ["technical_depth", "Technical depth", "minimal", "detailed"],
-  ["warmth", "Conversational warmth", "matter-of-fact", "warm"],
-  ["initiative", "Initiative", "waits", "takes the next step"],
+  ["conciseness", "Gesprächslänge", "ausführlich", "sehr knapp"],
+  ["formality", "Formalität", "locker", "formell"],
+  ["humour", "Humor", "keiner", "trocken, öfter"],
+  ["proactivity", "Proaktivität", "nur auf Nachfrage", "weist aktiv hin"],
+  ["technical_depth", "Technische Tiefe", "minimal", "detailliert"],
+  ["warmth", "Wärme", "sachlich", "warm"],
+  ["initiative", "Initiative", "wartet", "geht den nächsten Schritt"],
+  ["directness", "Direktheit", "abfedernd", "schonungslos direkt"],
+  ["small_talk", "Smalltalk", "minimal", "gern, wenn du anfängst"],
+  ["uncertainty_disclosure", "Unsicherheit offenlegen", "beste Antwort, kein Hedging", "immer explizit"],
+  ["correction_ack", "Korrekturverhalten", "still übernehmen", "explizit bestätigen"],
+  ["sobriety", "Nüchternheit", "lebendig", "streng sachlich"],
+];
+const IDENTITY_FIELDS = [
+  ["assistant_name", "Name des Assistenten", "Zeus"],
+  ["wake_word", "Wake Word", "Zeus"],
+  ["tagline", "Tagline", "personal AI"],
+  ["role", "Rolle / Selbstbild", "Persönliches KI-Betriebssystem"],
+  ["self_description", "Kurzbeschreibung", "…"],
+  ["product_name", "Produktname", "ZEUS"],
 ];
 
 export const view = {
@@ -31,6 +44,9 @@ export const view = {
     const data = await api("/api/owner");
     if (data.ok === false) { pane.append(el("div", { class: "empty", text: data.error || "owner core unavailable" })); return; }
     const reload = () => views.open("owner");
+
+    // 0 - IDENTITY: who ZEUS is, directly editable (proposal → confirm → audit)
+    pane.append(section("Identität", identityPanel(data.documents?.identity || {}, reload)));
 
     // 1 - SECURITY: who may change ZEUS at all
     pane.append(section("Sicherheit", await securityPanel(reload)));
@@ -85,6 +101,34 @@ export const view = {
       button("Verhalten, Regeln & Lernen → Persönlichkeit", () => views.open("personality"), "ghost")));
   },
 };
+
+/* ---- identity: name, wake word, tagline, role — the operative self --- */
+function identityPanel(doc, reload) {
+  const box = el("div");
+  const inputs = [];
+  const grid = el("div", { class: "dials" });
+  for (const [key, label, placeholder] of IDENTITY_FIELDS) {
+    const input = el("input", { value: doc[key] ?? "", placeholder, style: { width: "100%" } });
+    inputs.push([key, doc[key] ?? "", input]);
+    grid.append(el("div", { class: "dial" }, el("div", { class: "dial-head" }, el("span", { class: "dial-label", text: label })), input));
+  }
+  const reason = el("input", { placeholder: "Warum? (landet im Audit)" });
+  const status = el("span", { class: "empty", style: { padding: 0 } });
+  box.append(
+    el("div", { class: "meta", text: "Wird nach Bestätigung wirksam: Name & Tagline sofort; das gesprochene Wake Word zusätzlich nur, wenn ein Wake-Modell für das Wort existiert (die Antwort sagt es dir ehrlich)." }),
+    grid,
+    el("div", { class: "toolbar" }, reason,
+      button("Identität vorschlagen", async () => {
+        const changes = {};
+        for (const [key, was, input] of inputs) if (input.value.trim() !== String(was)) changes[key] = input.value.trim();
+        if (!Object.keys(changes).length) { status.textContent = "nichts geändert"; return; }
+        const r = await api("/api/owner/propose", { changes: { identity: changes }, reason: reason.value || "identity" });
+        status.textContent = r.ok === false ? (r.error || "abgelehnt") : `vorgeschlagen ${r.transaction?.transaction_id} — unten bestätigen`;
+        if (r.ok !== false) reload();
+      }, "primary"),
+      status));
+  return box;
+}
 
 /* ---- the Owner Security Center ------------------------------------- */
 export async function securityPanel(reload) {
@@ -159,6 +203,9 @@ export async function personalityPanel(reload) {
   spokenLength.onchange = () => { changed.spoken_answer_length = spokenLength.value; };
   const address = el("select", {}, ...["du", "Sie", "you"].map((v) => el("option", { value: v, text: `address: ${v}`, selected: (prefs.address || "du") === v })));
   address.onchange = () => { changed.address = address.value; };
+  const language = el("select", {}, ...[["auto", "Sprache: automatisch"], ["Deutsch", "Sprache: Deutsch"], ["English", "Sprache: English"]]
+    .map(([v, t]) => el("option", { value: v, text: t, selected: (prefs.language || "auto") === v })));
+  language.onchange = () => { changed.language = language.value; };
   const reason = el("input", { placeholder: "Why? (recorded in the audit)" });
   const status = el("div", { class: "empty" });
   const propose = button("Propose these preferences", async () => {
@@ -189,7 +236,7 @@ export async function personalityPanel(reload) {
   const history = (p.history || []).slice().reverse().slice(0, 10).map((h) => kv((h.at || h.applied_at || "").slice(0, 19), `${h.action || "change"} · ${h.reason || ""}` + (h.audit_id ? ` · ${h.audit_id}` : "")));
   box.append(
     el("div", { class: "meta" }, badge("EFFECTIVE", "ok"), el("span", { text: `version ${p.version} · order: identity → core → honesty → preferences → conversation context → task style` })),
-    el("div", { class: "toolbar" }, spokenLength, address),
+    el("div", { class: "toolbar" }, spokenLength, address, language),
     dials,
     el("div", { class: "toolbar" }, reason, propose, reset, status),
     coreBox, el("div", { class: "toolbar" }, unlock),

@@ -39,13 +39,17 @@ MAX_CHILD_COUNT = 500
 CACHE_TTL = 20.0
 DEBOUNCE_SECONDS = 0.6
 
-#: Visual clustering of top-level folders.  Metadata only.
+#: Visual clustering of top-level folders.  Metadata only.  Order matters:
+#: the first category whose hint matches wins, so the specific ones
+#: (AI_MODELS, TOOLS) come before the broad ones (DEVELOPMENT, SYSTEM).
 CATEGORY_HINTS = (
+    ("AI_MODELS", ("model", "llm", "dataset", "weights", "checkpoint", "huggingface", "ollama", "whisper", "stable-diff")),
     ("PROJECTS", ("project", "projekt", "repo", "repos", "src", "source", "workspace", "jarvis", "zeus", "dev ", "code")),
-    ("DEVELOPMENT", ("dev", "development", "tools", "sdk", "python", "node", "git", "build", "ollama")),
     ("GAMES", ("game", "spiele", "steam", "epic", "gog", "riot", "battle")),
     ("MEDIA", ("media", "musik", "music", "video", "film", "movie", "bilder", "foto", "photo", "picture", "obs")),
     ("DOCUMENTS", ("dokument", "document", "doc", "uni", "studium", "schule", "paper", "buch", "book", "notizen")),
+    ("TOOLS", ("tool", "utils", "utility", "portable", "scripts")),
+    ("DEVELOPMENT", ("dev", "development", "sdk", "python", "node", "git", "build")),
     ("SYSTEM", ("windows", "system", "program", "programme", "temp", "tmp", "cache", "$recycle", "recovery", "intel", "nvidia", "drivers", "perflogs")),
 )
 
