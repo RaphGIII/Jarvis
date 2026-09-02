@@ -416,9 +416,22 @@ class CapabilityService:
             return matches[0]
 
         if self.memory is not None:
+            # The graph is a candidate SOURCE, never the decision: its fuzzy
+            # text search once matched a light-switch request to the Spotify
+            # provider (live, 2026-09-02).  A graph candidate must still share
+            # at least one content word with what it declares itself to be for.
+            from capabilities.registry import ADDRESS_TERMS, BOILERPLATE
+
+            goal_terms = self.registry._terms(goal) - BOILERPLATE - ADDRESS_TERMS
             for node in self.memory.known_capabilities(goal, limit=3):
                 manifest = self.registry.get(node.title)
-                if manifest is not None and manifest.status == "active":
+                if manifest is None or manifest.status != "active":
+                    continue
+                subject = self.registry._terms(manifest.capability_id.replace(".", " "))
+                for keyword in manifest.creation_metadata.get("keywords") or []:
+                    subject |= self.registry._terms(str(keyword))
+                subject -= BOILERPLATE | ADDRESS_TERMS
+                if goal_terms & subject:
                     return manifest
         return None
 

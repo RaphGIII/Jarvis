@@ -1074,7 +1074,11 @@ class JarvisCore:
         op = goal.operation
         if op in {"delegate", "conversation"}:
             return False
-        if goal.confidence < 0.5 and op != "clarify":
+        # low confidence must not silently fall back to lexical guessing: for
+        # capability.missing the uncertainty IS the finding ("I have no tool
+        # for this") — offer to build it instead of dropping to the legacy
+        # planner, which is where the Spotify-for-a-light-switch answers live
+        if goal.confidence < 0.5 and op not in {"clarify", "capability.missing"}:
             return False
         de = self.language.startswith("de")
         if op == "clarify":
@@ -1121,7 +1125,17 @@ class JarvisCore:
             self._answer_by_research(goal.target or text, scope)
             return True
         if op == "capability.missing":
-            self._answer_by_acquisition(text, scope)
+            if goal.confidence >= 0.5:
+                self._answer_by_acquisition(text, scope)
+                return True
+            # honest and forward-looking, never a dead end: name the gap and
+            # offer the acquisition; a yes re-enters as an explicit "lerne"
+            target = goal.target or text
+            self._pending = {"action": None, "text": f"Lerne: {target}"}
+            self._deliver((f"Dafür habe ich noch keine Fähigkeit ({target}). Soll ich versuchen, sie zu lernen?" if de
+                           else f"I have no capability for that yet ({target}). Should I try to learn it?"),
+                          scope=scope, backend="semantic", final_state=JarvisState.WAITING,
+                          context_text=f"[missing capability offered for acquisition: {target[:120]}]")
             return True
         return False
 
@@ -2233,8 +2247,15 @@ class JarvisCore:
             self.receipts.record(receipt)
             self._session_receipts.append(receipt)
             self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()}, scope=scope)
-            self._deliver(f"{receipt.detail}\n\nreceipt {receipt.id}", scope=scope, backend=capability_id,
-                          context_text=f"[capability {capability_id}: missing input {unmet}]", final_state=JarvisState.WAITING)
+            # the raw contract line ("… needs file_path and the request does
+            # not say which") belongs in Activity, not in the conversation
+            de = self.language.startswith("de")
+            slots = ", ".join(unmet)
+            self._deliver((f"Dafür fehlt mir noch eine Angabe ({slots}). Sag sie mir, dann führe ich es aus." if de
+                           else f"One detail is missing for that ({slots}). Tell me and I will run it."),
+                          scope=scope, backend=capability_id,
+                          context_text=f"[capability {capability_id}: missing input {unmet}; receipt {receipt.id}]",
+                          final_state=JarvisState.WAITING)
             return
         try:
             execution = self.capabilities.execute(capability_id, payload)
