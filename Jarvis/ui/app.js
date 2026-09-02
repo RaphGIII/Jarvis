@@ -30,6 +30,7 @@ import * as capabilities from "./views/capabilities.js";
 import * as voiceStudio from "./views/voice.js";
 import * as chessTool from "./views/chess.js";
 import * as thoughts from "./views/thoughts.js";
+import * as calendar from "./views/calendar.js";
 import * as palette from "./views/palette.js";
 import * as mic from "./voice/mic.js";
 import * as playback from "./voice/playback.js";
@@ -39,7 +40,7 @@ let stream = null;
 let lastSeq = 0;
 let reconnectDelay = 500;
 
-const VIEW_MODULES = [missions, projects, files, knowledge, personality, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
+const VIEW_MODULES = [missions, projects, files, knowledge, calendar, personality, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
 
 /* The cosmos behind the shell: a LIVING star field — slow drift, quiet
    twinkle — throttled to ~24fps over a few hundred dots, so depth costs

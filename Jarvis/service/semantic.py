@@ -38,6 +38,8 @@ OPERATIONS = (
     "system.tell_time",
     "system.tell_date",
     "knowledge.search",
+    "calendar.create",
+    "calendar.query",
     "clarify",
     "capability.missing",
     "delegate",
@@ -86,9 +88,11 @@ Werkzeuge:
 - folder.open: einen Ordner öffnen/zeigen. target = Pfad oder sein Name. "Zeig mir den Ordner mit meinen Uni-Sachen." -> folder.open "Uni-Sachen".
 - project.open: ein ZEUS-Projekt öffnen. Nur wenn eines aus der Projektliste gemeint ist. target = Projektname.
 - music.control: Musik abspielen, pausieren, weiter, lauter. target = was geschehen/gespielt werden soll. "Spiel Rammstein." -> music.control "Rammstein abspielen".
-- system.open_view: eine ZEUS-Ansicht öffnen (projects, files, knowledge, missions, activity, owner, voice). target = Ansicht.
+- system.open_view: eine ZEUS-Ansicht öffnen (projects, files, knowledge, missions, activity, owner, voice). target = Ansicht. "Zeig mir meine Dateien/Projekte." -> system.open_view "files"/"projects".
 - system.tell_time: Uhrzeit sagen. system.tell_date: Datum sagen. target = "".
 - knowledge.search: im gespeicherten Wissen von ZEUS suchen. target = Suchbegriff.
+- calendar.create: einen Termin eintragen. target = die Anfrage wörtlich. "Leg morgen Nachmittag zwei Stunden fürs Physikum frei." -> calendar.create.
+- calendar.query: nach Terminen fragen. target = die Frage wörtlich.
 - clarify: WIRKLICH mehrdeutig - stelle GENAU EINE kurze Frage (Feld question).
 - capability.missing: eine echte Handlung, für die es hier kein Werkzeug gibt (Gerät steuern, Datei konvertieren, E-Mail senden ...). target = das Ziel.
 - delegate: etwas ERSTELLEN oder ÄNDERN (Datei, Notiz, Projekt, Code) - der Ausführungsplaner übernimmt. target = "".
@@ -98,6 +102,7 @@ Regeln:
 - Bekannte Websites (Wikipedia, YouTube, GitHub, Amazon ...) sind web.open - NIEMALS app.open, außer die Liste installierter Apps enthält sie.
 - Bei "öffne X": entscheide semantisch, ob X Website, App, Datei, Ordner oder Projekt ist. Nutze die Kontextlisten.
 - Mehrschritt ("Öffne Spotify und spiel Rammstein"): wähle das dominante Ziel (hier music.control).
+- target MUSS wörtlich aus der Anfrage oder den Kontextlisten stammen - NIEMALS erfunden.
 - Erfinde keine Pfade und keine Ziele. Ist der Ort unbekannt, aber das Ziel klar, wähle das Werkzeug trotzdem - die Ausführung fragt nach dem Ort.
 - confidence ehrlich: über 0.85 nur, wenn die Absicht eindeutig ist.
 - reason: ein kurzer Satz.

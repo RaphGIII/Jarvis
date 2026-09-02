@@ -508,6 +508,8 @@ class JarvisCore:
             return
         if self._resume_open_target(text, scope):
             return
+        if self._resume_calendar(text, scope):
+            return
         if self._handle_alias_teach(text, scope):
             return
         if understanding.top is TopIntent.CONVERSATION and self._resume_clarification(text, scope):
@@ -916,7 +918,97 @@ class JarvisCore:
             label = names.get(action.target, action.target)
             self._deliver((f"{label} ist offen." if de else f"{label} is open."), scope=scope, backend="ui", context_text=f"[opened view {action.target}]")
             return
+        if action.operation == "calendar.create":
+            self._answer_calendar_create(text or action.target, scope)
+            return
+        if action.operation == "calendar.query":
+            self._answer_calendar_query(text or action.target, scope)
+            return
         self._deliver("Das kann ich nicht steuern." if de else "I cannot control that.", scope=scope, backend="ui")
+
+    # ------------------------------------------------------------------
+    # Calendar
+    # ------------------------------------------------------------------
+
+    def _answer_calendar_create(self, text: str, scope: str) -> None:
+        """Enter a real event; a missing piece becomes ONE question, not a guess."""
+
+        from service.calendar import parse_event
+
+        de = self.language.startswith("de")
+        proposal = parse_event(text)
+        self.emit(EventType.TOOL, {"summary": f"calendar parse: {proposal['title'] or '?'} @ {proposal['start'] or '?'}"
+                                              + (f" (missing: {', '.join(proposal['missing'])})" if proposal["missing"] else ""),
+                                   "proposal": proposal, "source": "calendar"}, scope=scope)
+        if proposal["missing"]:
+            need = proposal["missing"]
+            if "date" in need or "time" in need:
+                question = ("Wann soll der Termin sein — Tag und Uhrzeit?" if de else "When should the event be — day and time?")
+            else:
+                question = ("Wie soll der Termin heißen?" if de else "What should the event be called?")
+            self._pending_calendar = {"text": text}
+            self._deliver(question, scope=scope, backend="calendar", final_state=JarvisState.WAITING,
+                          context_text=f"[calendar: asked for {', '.join(need)}]")
+            return
+        event = self.calendar.create(title=proposal["title"], start=proposal["start"], end=proposal["end"],
+                                     timezone=proposal["timezone"], source="chat")
+        stored = self.calendar.get(event["id"])  # verified: read back from disk
+        satisfied = stored is not None and stored["title"] == proposal["title"]
+        self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if satisfied else 'NOT satisfied'} — calendar.create {event['id']}",
+                                   "event": event, "source": "calendar"}, scope=scope)
+        self.emit(EventType.NOTIFICATION, {"kind": "calendar", "event": event, "text": ""}, scope=scope)
+        start_dt = datetime.fromisoformat(event["start"])
+        minutes = int((datetime.fromisoformat(event["end"]) - start_dt).total_seconds() // 60)
+        when = start_dt.strftime("%d.%m.%Y um %H:%M")
+        self._deliver((f"Eingetragen: „{event['title']}“ am {when} ({minutes} Min.)." if de
+                       else f"Entered: “{event['title']}” on {when} ({minutes} min)."),
+                      scope=scope, backend="calendar",
+                      final_state=JarvisState.IDLE if satisfied else JarvisState.ERROR,
+                      context_text=f"[calendar event {event['id']} persisted]")
+
+    def _answer_calendar_query(self, text: str, scope: str) -> None:
+        from datetime import timedelta
+
+        de = self.language.startswith("de")
+        now = datetime.now().astimezone()
+        lowered = text.lower()
+        if "heute" in lowered or "today" in lowered:
+            lo, hi, label = now.replace(hour=0, minute=0, second=0, microsecond=0), now.replace(hour=23, minute=59, second=59), ("heute" if de else "today")
+        elif "morgen" in lowered or "tomorrow" in lowered:
+            d = now + timedelta(days=1)
+            lo, hi, label = d.replace(hour=0, minute=0, second=0, microsecond=0), d.replace(hour=23, minute=59, second=59), ("morgen" if de else "tomorrow")
+        else:
+            lo, hi, label = now, now + timedelta(days=7), ("in den nächsten 7 Tagen" if de else "in the next 7 days")
+        events = self.calendar.list(start=lo.isoformat(), end=hi.isoformat())
+        if not events:
+            self._deliver((f"Keine Termine {label}." if de else f"No events {label}."), scope=scope, backend="calendar",
+                          context_text=f"[calendar query: 0 events {label}]")
+            return
+        lines = [(f"Deine Termine {label}:" if de else f"Your events {label}:")]
+        for e in events[:8]:
+            start = datetime.fromisoformat(e["start"])
+            lines.append(f"• {start.strftime('%a %d.%m. %H:%M')} — {e['title']}" + (f" ({e['location']})" if e.get("location") else ""))
+        self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": "calendar", "params": {}, "text": ""}, scope=scope)
+        self._deliver("\n".join(lines), scope=scope, backend="calendar",
+                      context_text=f"[calendar query: {len(events)} events {label}]")
+
+    def _resume_calendar(self, text: str, scope: str) -> bool:
+        """The owner answered the calendar question: combine and enter."""
+
+        pending = getattr(self, "_pending_calendar", None)
+        if not pending:
+            return False
+        self._pending_calendar = None
+        from service.calendar import parse_event
+        from service.intents import is_action_request
+
+        if is_action_request(text) and "uhr" not in text.lower():
+            return False  # a new request, not an answer
+        combined = f"{pending['text']} {text}"
+        if parse_event(combined)["missing"]:
+            return False  # still not enough: handle the message normally
+        self._answer_calendar_create(combined, scope)
+        return True
 
     # ------------------------------------------------------------------
     # The semantic control plane
@@ -987,8 +1079,22 @@ class JarvisCore:
             self._deliver(question, scope=scope, backend="semantic", final_state=JarvisState.WAITING,
                           context_text=f"[semantic clarification: {goal.reason[:120]}]")
             return True
+        # a target the model INVENTED (not in the owner's words, not an alias,
+        # not resolvable) must never be acted on: asking about the invention
+        # ("Wo finde ich 'notizen'?") is worse than asking about the request
+        if op in {"web.open", "app.open", "file.open", "folder.open", "project.open"} and goal.target:
+            if not self._target_grounded(op, goal.target, text):
+                self.emit(EventType.TOOL, {"summary": f"semantic target „{goal.target}“ is not grounded in the request; asking",
+                                           "source": "semantic"}, scope=scope)
+                what = {"web.open": "Welche Seite", "app.open": "Welches Programm", "file.open": "Welche Datei",
+                        "folder.open": "Welchen Ordner", "project.open": "Welches Projekt"}[op]
+                self._deliver((f"{what} genau soll ich öffnen?" if de else "What exactly should I open?"),
+                              scope=scope, backend="semantic", final_state=JarvisState.WAITING,
+                              context_text=f"[ungrounded semantic target {goal.target!r} for {op}]")
+                return True
         if op in {"web.open", "web.search", "app.open", "file.open", "folder.open",
-                  "system.open_view", "system.tell_time", "system.tell_date"}:
+                  "system.open_view", "system.tell_time", "system.tell_date",
+                  "calendar.create", "calendar.query"}:
             intent = ActionIntent(op, verb="open" if op.endswith(".open") else "read",
                                   object_type=op.split(".", 1)[0], target=goal.target,
                                   confidence=goal.confidence,
@@ -1014,6 +1120,43 @@ class JarvisCore:
         if op == "capability.missing":
             self._answer_by_acquisition(text, scope)
             return True
+        return False
+
+    def _target_grounded(self, op: str, target: str, text: str) -> bool:
+        """Whether a semantic target is anchored in reality rather than invented."""
+
+        from service.aliases import fold
+
+        folded_target, folded_text = fold(target).replace("-", " "), fold(text).replace("-", " ")
+        if folded_target and folded_target in folded_text:
+            return True
+        try:
+            if self.aliases.get(target):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        if op == "web.open":
+            from service.websearch import known_site
+
+            return known_site(target)
+        if op == "app.open":
+            try:
+                return bool(self.apps.resolve(target)[1])
+            except Exception:  # noqa: BLE001
+                return False
+        if op == "project.open":
+            try:
+                titles = {str(p.get("title") or "").lower() for p in self.list_projects()}
+            except Exception:  # noqa: BLE001
+                titles = set()
+            return target.lower() in titles
+        if op in {"file.open", "folder.open"}:
+            from pathlib import Path as _P
+
+            try:
+                return _P(target).exists()
+            except OSError:
+                return False
         return False
 
     # -- resolving "open X" when X is not what it first seemed -----------
@@ -2920,8 +3063,13 @@ class JarvisCore:
             names += self.voice.vocabulary.meant_terms()[-10:]
         except Exception:  # noqa: BLE001
             pass
+        try:
+            # owner-taught aliases are exactly the words the owner will say
+            names += [str(e.get("name") or "") for e in self.aliases.all().values()][:8]
+        except Exception:  # noqa: BLE001
+            pass
         names += list(BUILTIN_ENTITIES)
-        return entity_hints(names, limit=28)
+        return entity_hints(names, limit=32)
 
     def _normalizer(self) -> Any:
         from speech.normalize import Normalizer
@@ -4095,6 +4243,82 @@ class JarvisCore:
 
             self._apps = AppLauncher(cache_path=Path(self.kernel.state_root) / "apps_index.json")
         return self._apps
+
+    @property
+    def speech_corpus(self) -> Any:
+        """The owner speech corpus: verified recordings for STT evaluation."""
+
+        if getattr(self, "_speech_corpus", None) is None:
+            from speech.corpus import SpeechCorpus
+
+            self._speech_corpus = SpeechCorpus(Path(self.kernel.state_root) / "speech_corpus")
+        return self._speech_corpus
+
+    def corpus_benchmark(self, *, models: str = "small", limit: int = 0, held_out_only: bool = False) -> dict[str, Any]:
+        """Run the STT benchmark over the owner corpus in the speech venv, async."""
+
+        from speech.engine import venv_python
+
+        python = venv_python()
+        if python is None:
+            return {"ok": False, "error": "no speech virtualenv (.venv-speech) — the benchmark needs faster-whisper"}
+        if not self.speech_corpus.list():
+            return {"ok": False, "error": "Der Korpus ist leer — erst Sätze aufnehmen (Voice Studio → Spracherkennung trainieren)."}
+        if getattr(self, "_benchmark_running", False):
+            return {"ok": False, "error": "a benchmark is already running"}
+        out = Path(self.kernel.state_root) / "speech_corpus" / f"benchmark_{time.strftime('%Y%m%dT%H%M%S')}.json"
+        command = [str(python), "-m", "speech.benchmark", "--corpus", str(self.speech_corpus.root),
+                   "--models", models, "--out", str(out)]
+        if limit:
+            command += ["--limit", str(int(limit))]
+        if held_out_only:
+            command += ["--held-out-only"]
+        self._benchmark_running = True
+
+        def work() -> None:
+            try:
+                root = str(Path(__file__).resolve().parent.parent)
+                completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                           cwd=root, timeout=3600,
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                ok = completed.returncode == 0 and out.is_file()
+                detail = (completed.stdout or completed.stderr or "")[-400:]
+                self.emit(EventType.NOTIFICATION,
+                          {"kind": "stt_benchmark", "ok": ok, "path": str(out) if ok else "",
+                           "text": ("STT-Benchmark fertig: " + out.name) if ok else f"STT-Benchmark fehlgeschlagen: {detail[:200]}"})
+            except Exception as exc:  # noqa: BLE001
+                self.emit(EventType.NOTIFICATION, {"kind": "stt_benchmark", "ok": False,
+                                                   "text": f"STT-Benchmark fehlgeschlagen: {exc}"})
+            finally:
+                self._benchmark_running = False
+
+        threading.Thread(target=work, daemon=True, name="stt-benchmark").start()
+        return {"ok": True, "started": True, "out": str(out), "models": models}
+
+    def corpus_reports(self) -> dict[str, Any]:
+        reports = []
+        try:
+            for path in sorted((Path(self.kernel.state_root) / "speech_corpus").glob("benchmark_*.json")):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    reports.append({"path": str(path), "started_at": data.get("started_at"),
+                                    "utterances": data.get("utterances"),
+                                    "summaries": [r.get("summary") for r in data.get("results", [])]})
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            pass
+        return {"ok": True, "reports": reports, "running": bool(getattr(self, "_benchmark_running", False))}
+
+    @property
+    def calendar(self) -> Any:
+        """The local-first calendar: real persisted events, .ics in and out."""
+
+        if getattr(self, "_calendar", None) is None:
+            from service.calendar import CalendarStore
+
+            self._calendar = CalendarStore(Path(self.kernel.state_root) / "calendar" / "events.json")
+        return self._calendar
 
     @property
     def aliases(self) -> Any:

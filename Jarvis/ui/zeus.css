@@ -262,6 +262,25 @@ aside.inspector header { display: flex; align-items: center; gap: 10px; padding:
 aside.inspector header strong { flex: 1; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-soft); }
 #inspectorBody { padding: 14px 16px 30px; font-size: 13px; }
 
+/* ---- calendar -------------------------------------------------------- */
+.cal-title { margin: 0 6px; font-size: 15px; letter-spacing: .08em; color: var(--text); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 10px; }
+.cal-head { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--faint); text-align: center; padding: 4px 0; }
+.cal-cell { min-height: 78px; border: 1px solid var(--line-soft); border-radius: 8px; padding: 4px 6px; cursor: pointer; background: rgba(10, 18, 32, .55); transition: border-color .2s ease; }
+.cal-cell:hover { border-color: #24354b; }
+.cal-cell.dim { opacity: .38; }
+.cal-cell.today { border-color: var(--blue-deep); box-shadow: inset 0 0 14px rgba(60, 140, 255, .08); }
+.cal-cell.sel { border-color: var(--blue); }
+.cal-day { font-size: 11px; color: var(--dim); }
+.cal-cell.today .cal-day { color: var(--blue); font-weight: 600; }
+.cal-chip { font-size: 10.5px; color: #9fdcff; background: rgba(63, 169, 255, .1); border-radius: 4px; padding: 1px 5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-chip.more { color: var(--dim); background: none; }
+.cal-agenda { margin-top: 16px; }
+.cal-agenda h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-soft); }
+.cal-row { display: flex; gap: 12px; align-items: baseline; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); cursor: pointer; font-size: 13px; }
+.cal-row:hover { background: rgba(63, 169, 255, .05); }
+.cal-row b { font-weight: 600; color: var(--blue); font-size: 12px; min-width: 88px; }
+
 /* ---- shared components --------------------------------------------- */
 
 .empty { color: var(--dim); font-size: 13px; line-height: 1.6; padding: 20px 0; }

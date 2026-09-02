@@ -432,6 +432,7 @@ _VIEWS = {
     "knowledge": "knowledge", "wissen": "knowledge", "wissensgraph": "knowledge",
     "korrekturen": "corrections", "corrections": "corrections", "diagnose": "diagnostics", "diagnostics": "diagnostics",
     "einstellungen": "owner", "owner": "owner", "voice studio": "voice", "sprachstudio": "voice", "gedanken": "thoughts", "thoughts": "thoughts",
+    "kalender": "calendar", "calendar": "calendar", "termine": "calendar",
     "capabilities": "capabilities", "faehigkeiten": "capabilities", "fähigkeiten": "capabilities", "release": "release",
 }
 _OPEN_VIEW = re.compile(r"\b(oeffne|öffne|zeig(?:e)?\s+mir|zeig|geh\s+(?:zu|in)|open|show\s+me|show|go\s+to)\b\s*(?:die|das|den|the|meine|my)?\s*(?P<view>[\w\s]+?)\s*(?:an|auf|bitte)?\s*[.!]?$", re.I)
@@ -503,6 +504,33 @@ def parse_system_control(text: str) -> ActionIntent | None:
     return None
 
 
+# --- calendar: create and query, deterministically ------------------------
+_CALENDAR_WORD = re.compile(r"\b(termin\w*|kalender|calendar)\b|\berinnere?\s+mich\b", re.I)
+_CALENDAR_ENTER = re.compile(r"\btrag\w*\b.*\bein\b|\beintragen\b|\berinnere?\s+mich\b", re.I)
+_CALENDAR_QUERY = re.compile(r"\b(welche|wann|was|zeig\w*|liste?|habe?\s+ich)\b.*\b(termin\w*|kalender)\b"
+                             r"|\btermin\w*\b.*\b(heute|morgen|diese\s+woche|anstehen|n(?:ae|ä)chste)\b", re.I)
+
+
+def parse_calendar_operation(text: str) -> ActionIntent | None:
+    body = _VOCATIVE.sub("", (text or "").strip(), count=1)
+    entering = bool(_CALENDAR_ENTER.search(body))
+    if not _CALENDAR_WORD.search(body) and not entering:
+        return None
+    if _CALENDAR_QUERY.search(body) or (is_question(text) and not entering):
+        return ActionIntent("calendar.query", verb="read", object_type="calendar", target=body,
+                            confidence=0.8, success_criteria=["real events are listed"],
+                            reason="asks about calendar events")
+    if entering or (is_action_request(text) and _CALENDAR_WORD.search(body)):
+        # "Öffne den Kalender" belongs to system.open_view, not to event entry
+        if _OPEN.search(body) and not entering:
+            return None
+        return ActionIntent("calendar.create", verb="create", object_type="calendar", target=body,
+                            confidence=0.85, consequence=Consequence.HARMLESS,
+                            success_criteria=["the event persists and is listed"],
+                            reason="asks to enter a calendar event")
+    return None
+
+
 def parse_knowledge_operation(text: str) -> ActionIntent | None:
     body = _VOCATIVE.sub("", (text or "").strip(), count=1)
     if _KNOWLEDGE_SAVE.search(body) and is_action_request(text):
@@ -565,9 +593,13 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
     if top_value == "capability_acquisition":
         return Understanding(TopIntent.MISSION, "asks to acquire an ability", is_action_request=action_request)
 
+    calendar = parse_calendar_operation(text)
+    if calendar is not None:
+        return Understanding(TopIntent.SYSTEM_CONTROL, calendar.reason, calendar, is_action_request=True)
+
     control = parse_system_control(text)
     if control is not None:
-        return Understanding(TopIntent.SYSTEM_CONTROL if control.object_type in {"system", "view", "app", "web"} else TopIntent.ACTION, control.reason, control, is_action_request=True)
+        return Understanding(TopIntent.SYSTEM_CONTROL if control.object_type in {"system", "view", "app", "web", "calendar"} else TopIntent.ACTION, control.reason, control, is_action_request=True)
 
     project = parse_project_operation(text, project_titles=project_titles)
     if project is not None:

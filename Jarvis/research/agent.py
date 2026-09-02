@@ -409,9 +409,17 @@ class ResearchAgent:
         if self.brain is None:
             return f"{len(findings)} finding(s) from {len({f.source_url for f in findings})} source(s)"
         joined = "\n".join(f"- {item.claim}" for item in findings[:12])
+        # The model must know what "today" is: without the date it read
+        # findings dated 2026-09-02 ON 2026-09-02 and concluded "nothing
+        # happened today, these are only reports from September 2" — live.
+        from datetime import date
+
         prompt = (
+            f"Today is {date.today().isoformat()}. "
             "Answer the question in two or three sentences using ONLY the findings below. "
-            "Do not add anything they do not say. If they are insufficient, say so.\n\n"
+            "Findings dated today ARE about today. "
+            "Do not add anything they do not say. If they are insufficient, say so. "
+            "Answer in the question's language.\n\n"
             f"Question: {question}\n\nFindings:\n{joined}\n"
         )
         try:

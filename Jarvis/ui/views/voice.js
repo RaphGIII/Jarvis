@@ -99,9 +99,113 @@ export const view = {
     }))));
 
     pane.append(section("Train the wake word", wizard(wake, renderWake)));
+    pane.append(section("Spracherkennung trainieren (Owner-Korpus)", await corpusWizard()));
     pane.append(section("Pronunciation (spoken form only — the written text never changes)", await pronunciation()));
   },
 };
+
+/* ---- the owner speech corpus: verified recordings, then real numbers ----
+   The owner reads a phrase, records it, CONFIRMS the transcript (that typed
+   confirmation is the ground truth — the whole point), and the entry lands
+   in data/jarvis/speech_corpus.  The benchmark replays the corpus through
+   candidate Whisper models and reports WER/CER/entity accuracy/latency. */
+async function corpusWizard() {
+  const box = el("div");
+  const [phrasesOut, listOut] = await Promise.all([api("/api/corpus/phrases"), api("/api/corpus/list")]);
+  const phrases = phrasesOut.phrases || [];
+  let idx = (listOut.count || 0) % Math.max(1, phrases.length);
+
+  const stats = el("div", { class: "meta" });
+  const phraseBox = el("div", { class: "title", style: { fontSize: "15px", margin: "8px 0" } });
+  const catBadge = el("span");
+  const transcript = el("textarea", { rows: 2, style: { width: "100%", maxWidth: "560px" },
+                                      placeholder: "Was du WIRKLICH gesagt hast (Ground Truth) — korrigieren, falls abgewichen" });
+  const meter = el("div", { class: "bar", style: { width: "220px" } }, el("i", { style: { width: "0%" } }));
+  const seconds = el("select", {}, ...[3, 5, 8, 12].map((s) => el("option", { value: s, text: `${s} s`, selected: s === 5 })));
+  const heldOut = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } },
+                     el("input", { type: "checkbox" }), " Held-out (nur fürs Messen, nie fürs Training)");
+  const note = el("span", { class: "empty", style: { padding: 0 } });
+  let lastWav = null;
+  let player = null;
+
+  const renderStats = (data) => {
+    clear(stats);
+    const cats = Object.entries(data.by_category || {}).map(([k, v]) => `${k}: ${v}`).join(" · ");
+    stats.append(el("span", { text: `${data.count || 0} Aufnahmen (davon ${data.held_out || 0} held-out)` + (cats ? ` · ${cats}` : "") }));
+  };
+  renderStats(listOut);
+
+  const showPhrase = () => {
+    const p = phrases[idx % phrases.length] || { category: "", text: "" };
+    phraseBox.textContent = `„${p.text}“`;
+    clear(catBadge); catBadge.append(badge(p.category.toUpperCase(), "dim"));
+    transcript.value = p.text;
+  };
+  showPhrase();
+
+  const record = button("● Aufnehmen", async (ev) => {
+    const b = ev.currentTarget;
+    b.disabled = true; b.textContent = "… nimmt auf";
+    try {
+      lastWav = await mic.recordClip(Number(seconds.value), (level) => { meter.firstChild.style.width = `${Math.round(level * 100)}%`; });
+      meter.firstChild.style.width = "0%";
+      note.textContent = `aufgenommen (${Math.round(lastWav.byteLength / 1024)} KB) — anhören, Transkript prüfen, speichern`;
+      if (player) player.remove();
+      player = el("audio", { controls: true, src: URL.createObjectURL(new Blob([lastWav], { type: "audio/wav" })) });
+      playerSlot.append(player);
+    } catch (e) {
+      note.textContent = `Mikrofon nicht verfügbar: ${e.message || e}`;
+    }
+    b.disabled = false; b.textContent = "● Aufnehmen";
+  }, "primary");
+
+  const save = button("Speichern & weiter", async () => {
+    if (!lastWav) { note.textContent = "Erst aufnehmen."; return; }
+    if (!transcript.value.trim()) { note.textContent = "Das bestätigte Transkript darf nicht leer sein."; return; }
+    // chunked: a spread over 100k+ bytes overflows the argument stack
+    const bytes = new Uint8Array(lastWav);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    const b64 = btoa(bin);
+    const p = phrases[idx % phrases.length] || { category: "" };
+    const r = await api("/api/corpus/add", { audio: b64, ext: "wav", ground_truth: transcript.value.trim(),
+                                             category: p.category, device: "voice-studio", held_out: heldOut.firstChild.checked });
+    if (r.ok === false) { note.textContent = r.error || "nicht gespeichert"; return; }
+    lastWav = null; if (player) { player.remove(); player = null; }
+    idx += 1; showPhrase();
+    note.textContent = "gespeichert ✓";
+    renderStats(await api("/api/corpus/list"));
+  }, "primary");
+
+  const skip = button("Andere Phrase", () => { idx += 1; showPhrase(); });
+  const playerSlot = el("span");
+
+  const models = el("input", { value: "small,base", style: { maxWidth: "220px" }, title: "faster-whisper Modelle, kommagetrennt (z.B. small,base,medium,large-v3-turbo)" });
+  const benchNote = el("div", { class: "empty" });
+  const bench = button("Benchmark starten", async () => {
+    const r = await api("/api/corpus/benchmark", { models: models.value.trim() || "small" });
+    benchNote.textContent = r.ok ? `läuft… Ergebnis: ${r.out}` : (r.error || "nicht gestartet");
+  });
+  const reportsBtn = button("Berichte", async () => {
+    const r = await api("/api/corpus/reports");
+    clear(benchNote);
+    if (!(r.reports || []).length) { benchNote.textContent = r.running ? "Benchmark läuft noch…" : "Noch keine Berichte."; return; }
+    for (const rep of r.reports.slice(-4)) {
+      for (const s of rep.summaries || []) {
+        if (!s) continue;
+        benchNote.append(el("div", { text: `${rep.started_at} · ${s.model}: WER ${s.wer != null ? (s.wer * 100).toFixed(1) + "%" : "?"} · CER ${s.cer != null ? (s.cer * 100).toFixed(1) + "%" : "?"} · Entities ${s.entity_accuracy != null ? (s.entity_accuracy * 100).toFixed(0) + "%" : "—"} · Median ${s.median_latency_seconds ?? "?"}s · ${s.utterances} Sätze` }));
+      }
+    }
+  });
+
+  box.append(stats, el("div", {}, catBadge, phraseBox),
+             el("div", { class: "toolbar" }, record, seconds, meter, playerSlot),
+             el("div", { class: "field" }, el("label", { text: "Bestätigtes Transkript (Ground Truth)" }), transcript),
+             el("div", { class: "toolbar" }, save, skip, heldOut, note),
+             el("div", { class: "toolbar", style: { marginTop: "10px" } }, models, bench, reportsBtn),
+             benchNote);
+  return box;
+}
 
 async function pronunciation() {
   const box = el("div");

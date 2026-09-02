@@ -82,7 +82,54 @@ class JarvisHTTPServer:
             self.core.observer
         except Exception:  # noqa: BLE001 - a stub core in tests has no state root
             pass
+        self._start_reminders()
         return self.url
+
+    def _start_reminders(self) -> None:
+        """A minute-beat that turns due calendar reminders into notifications."""
+
+        if getattr(self, "_reminder_thread", None) is not None:
+            return
+
+        def beat() -> None:
+            import time as _time
+
+            while self._server is not None:
+                try:
+                    for event in self.core.calendar.due_reminders():
+                        start = str(event.get("start", ""))[11:16]
+                        self.core.emit(EventType.NOTIFICATION,
+                                       {"kind": "reminder", "event": event,
+                                        "text": f"Erinnerung: „{event.get('title', '')}“ um {start} Uhr."})
+                except Exception:  # noqa: BLE001 - a reminder must never kill the beat
+                    pass
+                _time.sleep(60)
+
+        self._reminder_thread = threading.Thread(target=beat, daemon=True, name="calendar-reminders")
+        self._reminder_thread.start()
+
+    @staticmethod
+    def _corpus_phrases() -> dict[str, Any]:
+        from speech.corpus import PHRASES
+
+        return {"ok": True, "phrases": [{"category": c, "text": t} for c, t in PHRASES]}
+
+    def _calendar_export(self, path: str) -> dict[str, Any]:
+        from pathlib import Path as _P
+
+        target = _P(path) if path else _P(self.core.kernel.state_root) / "calendar" / "zeus-kalender.ics"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.core.calendar.export_ics(), encoding="utf-8")
+        return {"ok": True, "path": str(target)}
+
+    def _calendar_import(self, path: str) -> dict[str, Any]:
+        from pathlib import Path as _P
+
+        source = _P(path)
+        if not source.is_file():
+            return {"ok": False, "error": f"keine Datei: {path}"}
+        count = self.core.calendar.import_ics(source.read_text(encoding="utf-8", errors="replace"))
+        return {"ok": True, "imported": count}
 
     def stop(self) -> None:
         if self._server is not None:
@@ -261,6 +308,38 @@ class JarvisHTTPServer:
             "/api/fs/watch": lambda body: self.core.fs.watch(str(body.get("path", ""))),
             "/api/fs/unwatch": lambda body: self.core.fs.unwatch(str(body.get("path", ""))),
             "/api/fs/status": lambda _: {"ok": True, **self.core.fs.status()},
+            # The calendar: local-first, every mutation persisted immediately.
+            "/api/calendar/list": lambda body: {"ok": True, "events": self.core.calendar.list(
+                start=str(body.get("start", "")), end=str(body.get("end", "")), query=str(body.get("query", "")))},
+            "/api/calendar/create": lambda body: {"ok": True, "event": self.core.calendar.create(
+                title=str(body.get("title", "")), start=str(body.get("start", "")), end=str(body.get("end", "")),
+                timezone=str(body.get("timezone", "")), location=str(body.get("location", "")),
+                notes=str(body.get("notes", "")), project_id=str(body.get("project_id", "")),
+                reminder_minutes=(int(body["reminder_minutes"]) if str(body.get("reminder_minutes", "")).strip() not in {"", "None"} else None),
+                source=str(body.get("source", "ui")))},
+            "/api/calendar/update": lambda body: (lambda ev: {"ok": ev is not None, "event": ev})(
+                self.core.calendar.update(str(body.get("id", "")), **{k: v for k, v in (body.get("changes") or {}).items()})),
+            "/api/calendar/delete": lambda body: {"ok": self.core.calendar.delete(str(body.get("id", "")))},
+            "/api/calendar/export": lambda body: self._calendar_export(str(body.get("path", ""))),
+            "/api/calendar/import": lambda body: self._calendar_import(str(body.get("path", ""))),
+            # The owner speech corpus: verified recordings, and the benchmark
+            # that turns them into WER/CER/latency numbers on this machine.
+            "/api/corpus/phrases": lambda _: self._corpus_phrases(),
+            "/api/corpus/list": lambda _: {"ok": True, **self.core.speech_corpus.stats(),
+                                           "entries": [{k: v for k, v in e.items() if k != "audio"} | {"audio_name": Path(e["audio"]).name}
+                                                       for e in self.core.speech_corpus.list()]},
+            "/api/corpus/add": lambda body: {"ok": True, "entry": {
+                **self.core.speech_corpus.add_base64(str(body.get("audio", "")), ext=str(body.get("ext", "webm")),
+                                                     ground_truth=str(body.get("ground_truth", "")),
+                                                     category=str(body.get("category", "")),
+                                                     device=str(body.get("device", "")),
+                                                     conditions=str(body.get("conditions", "")),
+                                                     held_out=bool(body.get("held_out", False)))}},
+            "/api/corpus/delete": lambda body: {"ok": self.core.speech_corpus.delete(str(body.get("id", "")))},
+            "/api/corpus/benchmark": lambda body: self.core.corpus_benchmark(
+                models=str(body.get("models", "small")), limit=int(body.get("limit", 0) or 0),
+                held_out_only=bool(body.get("held_out_only", False))),
+            "/api/corpus/reports": lambda _: self.core.corpus_reports(),
             "/api/feedback": lambda body: self.core.feedback(
                 str(body.get("kind", "response")), rating=str(body.get("rating", "")), category=str(body.get("category", "")),
                 text=str(body.get("text", "")), request_id=str(body.get("request_id", "")),

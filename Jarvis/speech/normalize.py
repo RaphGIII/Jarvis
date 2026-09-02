@@ -37,7 +37,7 @@ BUILTIN_ENTITIES = (
     "Zeus", "Spotify", "GitHub", "Stockfish", "SelfDev", "Mission Control", "Knowledge", "Ollama", "Whisper",
     "Piper", "Python", "PowerShell", "Windows", "Chrome", "Screenshot", "Playlist", "Physikum", "Biochemie",
     "Anatomie", "Physiologie", "Repository", "Capability", "Worktree", "Supervisor", "Listener", "Wakeword",
-    "Voice Studio", "Galaxy", "Timer", "Rammstein",
+    "Voice Studio", "Galaxy", "Timer", "Rammstein", "Wikipedia", "YouTube", "Kalender", "Termin",
 )
 
 
