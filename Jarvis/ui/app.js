@@ -270,8 +270,13 @@ function wireShell() {
     chat.reset();
     await api("/api/new", {});
   };
-  // the shell is fullscreen and frameless: these are the window's real
-  // controls, backed by Win32 through the core (never fake CSS buttons)
+  // the shell's own window controls, backed by Win32 through the core.  In the
+  // default native windowed/maximized shell Chromium already draws a title bar
+  // with min/max/close, so these would be redundant — hide them unless the
+  // window is genuinely frameless (immersive fullscreen/kiosk, no OS chrome).
+  const frameless = window.innerHeight >= (screen.height - 2);
+  const winctl = document.querySelector(".winctl");
+  if (winctl && !frameless) winctl.hidden = true;
   $("btnWinMin").onclick = () => api("/api/window", { action: "minimize", reason: "owner" });
   $("btnWinHide").onclick = () => api("/api/window", { action: "hide", reason: "owner" });
 
