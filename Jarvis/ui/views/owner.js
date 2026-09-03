@@ -178,7 +178,7 @@ export const view = {
     };
     await renderTvStatus();
     pane.append(section("Geräte — Fernseher (LG webOS)",
-      el("div", { class: "meta", text: "Suche findet webOS-TVs im Heimnetz (SSDP). Beim Koppeln zeigt der Fernseher selbst eine Bestätigung — erst dein OK dort schließt die Kopplung ab. Für „Zeig dich auf dem Fernseher“ muss ZEUS im LAN erreichbar sein (ZEUS_LAN=1)." }),
+      el("div", { class: "meta", text: "Suche nutzt SSDP + SSAP-Port-Scan + ARP im Heimnetz. Beim Koppeln zeigt der Fernseher selbst eine Bestätigung — erst dein OK dort schließt die Kopplung ab. Für „Zeig dich auf dem Fernseher“ muss ZEUS im LAN erreichbar sein (ZEUS_LAN=1)." }),
       el("div", { class: "toolbar" },
         button("TVs suchen", async () => {
           clear(tvBox);
@@ -186,7 +186,24 @@ export const view = {
           const r = await api("/api/tv/discover", {});
           clear(tvBox);
           const tvs = (r.tvs || []).filter((t) => t.ip);
-          if (!tvs.length) { tvBox.append(el("div", { class: "empty", text: "Kein webOS-TV gefunden. Ist der Fernseher an und im selben Netz?" })); return; }
+          if (!tvs.length) {
+            // §19: never just "not found" — show the network diagnostics
+            const d = await api("/api/tv/diagnostics", {});
+            const m = Object.assign({}, ...(d.methods || []));
+            tvBox.append(el("div", { class: "empty", text: "Kein webOS-TV im Netz von diesem PC gefunden." }));
+            tvBox.append(el("div", { class: "meta" },
+              el("span", { text: `Interface: ${d.self_ip} · Subnetz ${d.subnet}` }),
+              el("span", { text: `SSDP-Antworten: ${m.ssdp?.replies ?? "?"} ${m.ssdp?.note ? "(" + m.ssdp.note + ")" : ""}` }),
+              el("span", { text: `SSAP-Ports (3000/3001) offen: ${m.ssap_port_sweep?.ssap_hosts ?? "?"} von ${m.ssap_port_sweep?.hosts_scanned ?? "?"} Hosts` }),
+              el("span", { text: `Nachbargeräte (ARP): ${m.arp?.neighbours ?? "?"}` })));
+            if ((d.rejected || []).length) {
+              tvBox.append(el("div", { class: "meta", text: "Geräte im Netz (keins ist ein LG-TV):" }));
+              for (const rej of d.rejected.slice(0, 10)) tvBox.append(el("div", { class: "kv" },
+                el("span", { class: "k", text: rej.ip }), el("span", { class: "v", text: `${rej.mac || "?"} — ${rej.reason}` })));
+            }
+            tvBox.append(el("div", { class: "remedy", text: "Wahrscheinliche Ursache: Der TV hängt an einem anderen WLAN/Subnetz als dieser PC, oder AP-Isolation trennt beide, oder „Mobile TV On / LG Connect Apps“ ist im TV-Netzwerkmenü aus. Prüfe: gleiches WLAN wie der PC (192.168.0.x), AP-Isolation aus, und TV-Einstellungen → Verbindung → „Mobile TV On“ ein." }));
+            return;
+          }
           for (const t of tvs) {
             tvBox.append(el("div", { class: "kv" },
               el("span", { class: "k", text: t.name || t.ip }),

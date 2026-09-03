@@ -44,43 +44,159 @@ _MANIFEST = {
 }
 
 
-def discover(timeout: float = 4.0) -> list[dict[str, Any]]:
-    """webOS TVs on this LAN, via SSDP M-SEARCH.  Empty list = none answered."""
+#: SSAP WebSocket ports a webOS TV listens on when network control is enabled.
+SSAP_PORTS = (3000, 3001)
+#: LG Electronics OUI prefixes (lowercased, no separators) — a secondary hint.
+LG_OUI = frozenset({
+    "00e091", "001e75", "001c62", "0019e3", "a816b2", "b81db4", "cc2d8c",
+    "dc0b34", "e8f2e2", "c4366c", "202267", "38d40b", "700514", "b4e62a",
+    "a06faa", "d013fd", "6cdd6c", "48594e", "8c3c4a", "c49a02", "a009ed",
+    "34fcb9", "e85b5b", "58a2b5", "10683f", "2c598a", "88c9d0", "f80cf3",
+})
 
-    message = "\r\n".join([
-        "M-SEARCH * HTTP/1.1", f"HOST: {SSDP_ADDR[0]}:{SSDP_ADDR[1]}",
-        'MAN: "ssdp:discover"', "MX: 3", f"ST: {SSDP_ST}", "", ""]).encode()
-    found: dict[str, dict[str, Any]] = {}
+
+def _local_ipv4() -> tuple[str, str]:
+    """(the PC's LAN IP, its /24 prefix like '192.168.0.')."""
+
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(timeout)
-        sock.sendto(message, SSDP_ADDR)
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                data, addr = sock.recvfrom(4096)
-            except socket.timeout:
-                break
-            headers = {k.lower(): v for k, v in
-                       (line.split(":", 1) for line in data.decode("utf-8", "replace").splitlines() if ":" in line)}
-            ip = addr[0]
-            entry = {"ip": ip, "location": headers.get("location", "").strip(),
-                     "server": headers.get("server", "").strip(), "name": ""}
-            found[ip] = entry
-        sock.close()
-    except OSError as exc:
-        return [{"error": f"SSDP fehlgeschlagen: {exc}"}]
-    for entry in found.values():
-        if entry["location"]:
-            try:
-                with urllib.request.urlopen(entry["location"], timeout=3) as response:
-                    xml = response.read(20000).decode("utf-8", "replace")
-                m = re.search(r"<friendlyName>(.*?)</friendlyName>", xml)
-                if m:
-                    entry["name"] = m.group(1)
-            except OSError:
-                pass
-    return list(found.values())
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip, ip.rsplit(".", 1)[0] + "."
+    except OSError:
+        return "", ""
+
+
+def _tcp_open(ip: str, port: int, timeout: float = 0.6) -> bool:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        return s.connect_ex((ip, port)) == 0
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _arp_table() -> dict[str, str]:
+    import subprocess
+
+    try:
+        raw = subprocess.run(["arp", "-a"], capture_output=True, timeout=8,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, Exception):  # noqa: BLE001
+        return {}
+    text = (raw or b"").decode("utf-8", "replace")
+    out: dict[str, str] = {}
+    for m in re.finditer(r"(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2}", text):
+        line = m.group(0)
+        ip = line.split()[0]
+        mac = re.search(r"([0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2}", line).group(0).replace("-", ":").lower()
+        out[ip] = mac
+    return out
+
+
+def _ssdp(timeout: float = 3.0) -> dict[str, dict[str, str]]:
+    """M-SEARCH bound to the LAN interface; often blocked by the host firewall."""
+
+    self_ip, _ = _local_ipv4()
+    found: dict[str, dict[str, str]] = {}
+    for st in (SSDP_ST, "urn:dial-multiscreen-org:service:dial:1", "ssdp:all"):
+        message = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n"
+                   'MAN: "ssdp:discover"\r\nMX: 2\r\nST: ' + st + "\r\n\r\n").encode()
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if self_ip:
+                try:
+                    sock.bind((self_ip, 0))
+                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(self_ip))
+                except OSError:
+                    pass
+            sock.settimeout(timeout)
+            sock.sendto(message, SSDP_ADDR)
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    data, addr = sock.recvfrom(4096)
+                except socket.timeout:
+                    break
+                headers = {k.lower(): v.strip() for k, v in
+                           (line.split(":", 1) for line in data.decode("utf-8", "replace").splitlines() if ":" in line)}
+                found.setdefault(addr[0], {}).update({"server": headers.get("server", ""), "location": headers.get("location", "")})
+            sock.close()
+        except OSError:
+            continue
+    return found
+
+
+def diagnostics(timeout: float = 4.0) -> dict[str, Any]:
+    """A full, honest discovery report (§ show why each candidate was accepted/rejected)."""
+
+    import concurrent.futures as cf
+
+    self_ip, prefix = _local_ipv4()
+    report: dict[str, Any] = {"self_ip": self_ip, "subnet": (prefix + "0/24") if prefix else "?",
+                              "methods": [], "candidates": [], "rejected": []}
+    if not prefix:
+        report["error"] = "keine LAN-IPv4-Adresse gefunden"
+        return report
+
+    # method 1: SSDP
+    ssdp = _ssdp(timeout=3.0)
+    report["methods"].append({"ssdp": {"replies": len(ssdp), "note": "vom Host-Firewall oft blockiert" if not ssdp else ""}})
+
+    # method 2: subnet SSAP-port sweep (the reliable one)
+    hosts = [prefix + str(i) for i in range(1, 255) if prefix + str(i) != self_ip]
+    ssap_open: dict[str, list[int]] = {}
+    with cf.ThreadPoolExecutor(max_workers=80) as ex:
+        futs = {ex.submit(_tcp_open, ip, p): (ip, p) for ip in hosts for p in SSAP_PORTS}
+        for fut in cf.as_completed(futs):
+            ip, p = futs[fut]
+            if fut.result():
+                ssap_open.setdefault(ip, []).append(p)
+    report["methods"].append({"ssap_port_sweep": {"hosts_scanned": len(hosts), "ssap_hosts": len(ssap_open)}})
+
+    # method 3: ARP table + OUI (populate it first with a light ping sweep)
+    import subprocess
+
+    with cf.ThreadPoolExecutor(max_workers=80) as ex:
+        list(ex.map(lambda ip: subprocess.run(["ping", "-n", "1", "-w", "400", ip], stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)), hosts))
+    arp = _arp_table()
+    report["methods"].append({"arp": {"neighbours": len([ip for ip in arp if ip.startswith(prefix)])}})
+
+    # build candidates: SSAP port open (strong) or LG OUI (secondary)
+    seen = set()
+    for ip in sorted(set(list(ssap_open) + list(ssdp) + [i for i in arp if i.startswith(prefix)]),
+                     key=lambda x: int(x.split(".")[-1])):
+        mac = arp.get(ip, "")
+        oui = mac.replace(":", "")[:6]
+        ssap = ssap_open.get(ip, [])
+        server = ssdp.get(ip, {}).get("server", "")
+        is_lg_mac = oui in LG_OUI
+        webos = bool(ssap) or "webos" in server.lower() or is_lg_mac
+        entry = {"ip": ip, "mac": mac, "ssap_ports": ssap, "ssdp_server": server,
+                 "lg_oui": is_lg_mac, "webos_likely": webos}
+        if webos:
+            report["candidates"].append(entry)
+        else:
+            report["rejected"].append({**entry, "reason": "kein SSAP-Port, keine LG-Kennung"})
+        seen.add(ip)
+    report["found"] = len(report["candidates"])
+    return report
+
+
+def discover(timeout: float = 4.0) -> list[dict[str, Any]]:
+    """webOS TV candidates on this LAN (SSAP port + LG OUI + SSDP).  [] = none."""
+
+    diag = diagnostics(timeout=timeout)
+    out = []
+    for c in diag.get("candidates", []):
+        out.append({"ip": c["ip"], "mac": c.get("mac", ""), "name": c.get("ssdp_server", "") or "webOS-Gerät",
+                    "ssap": bool(c.get("ssap_ports")), "location": ""})
+    return out
 
 
 class TVService:

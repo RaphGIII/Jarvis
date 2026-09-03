@@ -382,6 +382,7 @@ class JarvisHTTPServer:
             "/api/conversation/delete": lambda body: {"ok": self.core.conversations.delete(str(body.get("id", "")))},
             # LG webOS TV: discovery, pairing (TV-side confirmation), control
             "/api/tv/discover": lambda _: {"ok": True, "tvs": __import__("service.tv", fromlist=["discover"]).discover()},
+            "/api/tv/diagnostics": lambda _: {"ok": True, **__import__("service.tv", fromlist=["diagnostics"]).diagnostics()},
             "/api/tv/status": lambda _: self.core.tv.status(),
             "/api/tv/pair": lambda body: self.core.tv.pair(str(body.get("ip", "")), name=str(body.get("name", ""))),
             "/api/tv/command": lambda body: self._tv_command(str(body.get("action", "")), body),
