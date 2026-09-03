@@ -362,7 +362,24 @@ function updateVeil(rd, health) {
     veilLifted = true;
     veil.classList.add("lifting");
     setTimeout(() => { veil.hidden = true; }, 950);
+    idlePreload();
   }
+}
+
+/* Idle warming (§P1): once interactive and the browser reports idle time,
+   prefetch what the owner opens most — the responses prime the server-side
+   caches so the first Projects/Calendar click is warm.  One shot, low cost,
+   never during visible work. */
+let preloaded = false;
+function idlePreload() {
+  if (preloaded) return;
+  preloaded = true;
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 4000));
+  idle(() => {
+    api("/api/projects/overview").catch(() => {});
+    api("/api/calendar/list", { start: new Date().toISOString(), end: new Date(Date.now() + 7 * 864e5).toISOString() });
+    api("/api/jobs");
+  }, { timeout: 15000 });
 }
 
 let uptimeAt = 0;

@@ -76,7 +76,25 @@ class JobBoard:
         self.history_path = Path(history_path) if history_path else None
         self._emit = emit or (lambda payload: None)
         self._jobs: dict[str, Job] = {}
+        self._history_cache: list[dict[str, Any]] | None = None
         self._lock = threading.Lock()
+
+    def _history_tail(self, limit: int = 12) -> list[dict[str, Any]]:
+        """Finished jobs from before this process: results survive restarts."""
+
+        if self._history_cache is None:
+            rows: list[dict[str, Any]] = []
+            if self.history_path is not None and self.history_path.is_file():
+                try:
+                    for line in self.history_path.read_text(encoding="utf-8").splitlines()[-60:]:
+                        try:
+                            rows.append(json.loads(line))
+                        except ValueError:
+                            continue
+                except OSError:
+                    pass
+            self._history_cache = rows
+        return self._history_cache[-limit:]
 
     # -- lifecycle -------------------------------------------------------
 
@@ -164,9 +182,11 @@ class JobBoard:
 
     def recent(self, limit: int = 12) -> list[dict[str, Any]]:
         with self._lock:
-            done = [j for j in self._jobs.values() if j.state in DONE_STATES]
-        done.sort(key=lambda j: j.finished_at, reverse=True)
-        return [j.to_dict() for j in done[:limit]]
+            done = [j.to_dict() for j in self._jobs.values() if j.state in DONE_STATES]
+        seen = {j["job_id"] for j in done}
+        done += [row for row in self._history_tail(limit) if row.get("job_id") not in seen]
+        done.sort(key=lambda j: j.get("finished_at") or 0, reverse=True)
+        return done[:limit]
 
     def snapshot(self) -> dict[str, Any]:
         return {"active": self.active(), "recent": self.recent()}

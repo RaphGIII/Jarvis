@@ -453,8 +453,19 @@ _FILEISH = re.compile(r"\b(datei|ordner|verzeichnis|folder|file|pdf|dokument|bil
 _KNOWLEDGE_SAVE = re.compile(r"\b(speicher\w*|sicher\w*|leg\w*|notier\w*|merk\w*|save|store|note|remember)\b.*\b(knowledge|wissen|wissensgraph|knowledge\s+graph)\b|\b(knowledge|wissen)\b.*\b(speicher\w*|ablegen|save|store)\b", re.I)
 
 
+_CANCEL_JOB = re.compile(r"\b(stopp?e?|brich|abbrechen|cancel)\b.{0,30}\b(bild\w*|generierung|erzeugung|jobs?|auftr(?:ag|äge))\b"
+                         r"|\b(bild\w*|generierung)\b.{0,20}\b(abbrechen|stopp\w*)\b"
+                         r"|\bstopp?\s+alles\b", re.I)
+
+
 def parse_system_control(text: str) -> ActionIntent | None:
     body = _VOCATIVE.sub("", (text or "").strip(), count=1)
+    m = _CANCEL_JOB.search(body)
+    if m:
+        target = "all" if re.search(r"\balles\b", body, re.I) else "image"
+        return ActionIntent("job.cancel", verb="stop", object_type="job", target=target, confidence=0.9,
+                            success_criteria=["the named work is cancelled or honestly reported as uncancellable"],
+                            reason=f"asks to cancel {target} work")
     if _STOP.match(body) and len(body.split()) <= 4:
         return ActionIntent("system.stop", verb="stop", object_type="system", confidence=0.95, success_criteria=["speech and the current answer stop"], reason="stop")
     if _SCREENSHOT.search(body) and is_action_request(text):
@@ -715,7 +726,7 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
 
     control = parse_system_control(text)
     if control is not None:
-        return Understanding(TopIntent.SYSTEM_CONTROL if control.object_type in {"system", "view", "app", "web", "calendar"} else TopIntent.ACTION, control.reason, control, is_action_request=True)
+        return Understanding(TopIntent.SYSTEM_CONTROL if control.object_type in {"system", "view", "app", "web", "calendar", "job"} else TopIntent.ACTION, control.reason, control, is_action_request=True)
 
     project = parse_project_operation(text, project_titles=project_titles)
     if project is not None:

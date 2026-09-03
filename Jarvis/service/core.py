@@ -937,6 +937,9 @@ class JarvisCore:
         if action.operation == "tv.control":
             self._answer_tv_control(action, scope)
             return
+        if action.operation == "job.cancel":
+            self._answer_job_cancel(action, scope)
+            return
         if action.operation == "calendar.create":
             self._answer_calendar_create(text or action.target, scope)
             return
@@ -944,6 +947,39 @@ class JarvisCore:
             self._answer_calendar_query(text or action.target, scope)
             return
         self._deliver("Das kann ich nicht steuern." if de else "I cannot control that.", scope=scope, backend="ui")
+
+    def _answer_job_cancel(self, action: Any, scope: str) -> None:
+        """"Stop die Bilderzeugung": distinct from stopping speech (§55)."""
+
+        de = self.language.startswith("de")
+        wanted = action.target or "image"
+        active = self.jobs.active()
+        matching = [j for j in active if wanted == "all" or j.get("kind") == wanted]
+        if not matching:
+            self._deliver(("Da läuft gerade nichts, was ich abbrechen könnte." if de
+                           else "Nothing matching is running."), scope=scope, backend="jobs")
+            return
+        if wanted == "all" and len(matching) > 1:
+            names = ", ".join(j["title"] for j in matching[:4])
+            self._pending = {"action": None, "text": "Stopp die Bilderzeugung"}
+            self._deliver((f"Es laufen {len(matching)} Arbeiten ({names}). Wirklich alle abbrechen?" if de
+                           else f"{len(matching)} jobs are running. Cancel all of them?"),
+                          scope=scope, backend="jobs", final_state=JarvisState.WAITING)
+            return
+        cancelled, uncancellable = [], []
+        for j in matching:
+            if self.jobs.cancel(j["job_id"]):
+                cancelled.append(j["title"])
+            else:
+                uncancellable.append(j)
+        lines = []
+        if cancelled:
+            lines.append(("Abgebrochen: " if de else "Cancelled: ") + ", ".join(cancelled))
+        for j in uncancellable:
+            lines.append((f"„{j['title']}“ steckt mitten in „{j.get('phase', '')}“ und lässt sich nicht mehr sauber stoppen — es ist gleich fertig." if de
+                          else f"“{j['title']}” is mid-{j.get('phase', '')} and will finish shortly."))
+        self._deliver("\n".join(lines), scope=scope, backend="jobs",
+                      context_text=f"[job cancel: {len(cancelled)} cancelled, {len(uncancellable)} running out]")
 
     # ------------------------------------------------------------------
     # The living-room TV
@@ -4793,8 +4829,12 @@ class JarvisCore:
                                                    f"({(result.get('timings') or {}).get('total', '?')}s, {result.get('vram_peak_mib')} MiB peak)")
                                                   if result.get("ok") else f"image.generate failed: {result.get('error', '')[:160]}",
                                        "result": result, "job_id": job.job_id, "source": "imagegen"}, scope=scope)
-            if result.get("cancelled"):
+            if result.get("cancelled") or self.jobs.cancelled(job.job_id):
+                # cancelled mid-flight: the file (if any) stays on disk, but
+                # nothing is announced as if it had been asked for
                 self.jobs.fail(job.job_id, "abgebrochen")
+                self.emit(EventType.TOOL, {"summary": f"image job {job.job_id} cancelled; result suppressed",
+                                           "source": "imagegen"}, scope=scope)
                 return
             if not result.get("ok"):
                 self.jobs.fail(job.job_id, str(result.get("error", ""))[:300])
