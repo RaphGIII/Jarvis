@@ -110,7 +110,9 @@ function startJarvis() {
   window.addEventListener("resize", () => paintCosmos());
 
   eye = new JarvisEye($("eye"));
+  window.zeusEye = eye; // settings and tests reach the live eye here
   eye.start();
+  import("./core/themes.js").then((themes) => themes.apply(state.ui.theme || "COSMOS", eye, state.ui.animIntensity || "NORMAL"));
   if (window.ResizeObserver) new ResizeObserver(() => eye.resize()).observe($("eye"));
   else window.addEventListener("resize", () => eye.resize());
 

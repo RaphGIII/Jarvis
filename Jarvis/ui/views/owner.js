@@ -125,11 +125,87 @@ export const view = {
     motion.onchange = () => { setPref("reducedMotion", motion.checked); document.body.classList.toggle("reduced-motion", motion.checked); };
     const cosmos = el("input", { type: "checkbox", checked: state.ui.cosmosMotion !== false });
     cosmos.onchange = () => { setPref("cosmosMotion", cosmos.checked); };
+    const themesMod = await import("../core/themes.js");
+    const applyLook = () => {
+      themesMod.apply(state.ui.theme || "COSMOS", window.zeusEye || null, state.ui.animIntensity || "NORMAL");
+    };
+    const themeSel = el("select", {},
+      ...Object.entries(themesMod.THEMES).map(([key, t]) =>
+        el("option", { value: key, text: t.label, selected: (state.ui.theme || "COSMOS") === key })));
+    themeSel.onchange = () => { setPref("theme", themeSel.value); applyLook(); };
+    const intSel = el("select", {},
+      ...Object.keys(themesMod.INTENSITY).map((key) =>
+        el("option", { value: key, text: key, selected: (state.ui.animIntensity || "NORMAL") === key })));
+    intSel.onchange = () => { setPref("animIntensity", intSel.value); applyLook(); };
     pane.append(section("Erscheinungsbild",
       el("div", { class: "meta", text: "Gilt für dieses Gerät (lokal gespeichert), sofort wirksam." }),
       el("div", { class: "toolbar" },
+        el("label", { class: "empty", style: { padding: 0 } }, "Theme ", themeSel),
+        el("label", { class: "empty", style: { padding: 0 } }, "Animations-Intensität ", intSel)),
+      el("div", { class: "toolbar" },
         el("label", { class: "empty", style: { padding: 0, cursor: "pointer", display: "inline-flex", gap: "6px" } }, motion, " reduzierte Bewegung (alles statisch)"),
         el("label", { class: "empty", style: { padding: 0, cursor: "pointer", display: "inline-flex", gap: "6px" } }, cosmos, " Sternenhintergrund lebt (drift & twinkle)"))));
+
+    // 7b - STANDARD-PFADE & NAMEN: wohin Erzeugtes fällt und wie es heißt
+    const defs = await api("/api/defaults", {}).catch(() => ({ defaults: {} }));
+    const defsBox = el("div");
+    const DEF_LABELS = {
+      image_dir: "Generierte Bilder → Ordner", image_name: "Bild-Namensschema ({date} {time} {slug})",
+      pdf_summary_dir: "PDF-Zusammenfassungen → Ordner", pdf_summary_name: "PDF-Namensschema ({original})",
+      knowledge_dir: "Neues Wissen → Ordner", export_dir: "Exporte → Ordner",
+      screenshot_dir: "Screenshots → Ordner", project_root: "Neue Projekte → Arbeitsverzeichnis",
+    };
+    const defNote = el("span", { class: "empty", style: { padding: 0 } });
+    for (const [key, label] of Object.entries(DEF_LABELS)) {
+      const input = el("input", { value: defs.defaults?.[key] || "", style: { minWidth: "320px" } });
+      input.onchange = async () => {
+        const r = await api("/api/defaults/set", { key, value: input.value.trim() });
+        defNote.textContent = r.ok ? `gespeichert: ${label}` : (r.error || "nicht gespeichert");
+      };
+      defsBox.append(el("div", { class: "field" }, el("label", { text: label }), input));
+    }
+    pane.append(section("Standard-Pfade & Namen (Erzeugtes)",
+      el("div", { class: "meta", text: "Wohin generierte Dateien fallen und wie sie benannt werden. Eine explizite Angabe in deiner Anfrage gewinnt immer. Leer = eingebauter Standard." }),
+      defsBox, defNote));
+
+    // 7c - GERÄTE: der LG-Fernseher (echtes webOS-Protokoll, LAN)
+    const tvBox = el("div");
+    const tvStatusLine = el("span", { class: "empty", style: { padding: 0 } });
+    const renderTvStatus = async () => {
+      const s = await api("/api/tv/status", {});
+      tvStatusLine.textContent = s.paired ? `gekoppelt: ${s.name || s.ip} (${s.ip}${s.mac ? ", MAC bekannt" : ""})` : "kein TV gekoppelt";
+      return s;
+    };
+    await renderTvStatus();
+    pane.append(section("Geräte — Fernseher (LG webOS)",
+      el("div", { class: "meta", text: "Suche findet webOS-TVs im Heimnetz (SSDP). Beim Koppeln zeigt der Fernseher selbst eine Bestätigung — erst dein OK dort schließt die Kopplung ab. Für „Zeig dich auf dem Fernseher“ muss ZEUS im LAN erreichbar sein (ZEUS_LAN=1)." }),
+      el("div", { class: "toolbar" },
+        button("TVs suchen", async () => {
+          clear(tvBox);
+          tvBox.append(el("div", { class: "empty", text: "suche…" }));
+          const r = await api("/api/tv/discover", {});
+          clear(tvBox);
+          const tvs = (r.tvs || []).filter((t) => t.ip);
+          if (!tvs.length) { tvBox.append(el("div", { class: "empty", text: "Kein webOS-TV gefunden. Ist der Fernseher an und im selben Netz?" })); return; }
+          for (const t of tvs) {
+            tvBox.append(el("div", { class: "kv" },
+              el("span", { class: "k", text: t.name || t.ip }),
+              el("span", { class: "v" },
+                el("span", { text: `${t.ip} ` }),
+                button("Koppeln", async (ev) => {
+                  ev.currentTarget.textContent = "warte auf TV-Bestätigung…";
+                  const p = await api("/api/tv/pair", { ip: t.ip, name: t.name || "" });
+                  ev.currentTarget.textContent = p.ok ? "gekoppelt ✓" : (p.error || "fehlgeschlagen");
+                  renderTvStatus();
+                }, "primary"))));
+          }
+        }, "primary"),
+        tvStatusLine),
+      el("div", { class: "toolbar" },
+        button("Test: Toast auf dem TV", async () => { const r = await api("/api/tv/command", { action: "toast", message: "ZEUS ist verbunden." }); tvStatusLine.textContent = r.ok ? "Toast gesendet ✓" : (r.error || "fehlgeschlagen"); }),
+        button("Zeig ZEUS auf dem TV", async () => { const r = await api("/api/tv/command", { action: "show_zeus" }); tvStatusLine.textContent = r.ok ? `TV zeigt ${r.url || "ZEUS"}` : (r.error || "fehlgeschlagen"); }),
+        button("TV aus", async () => { const r = await api("/api/tv/command", { action: "power_off" }); tvStatusLine.textContent = r.ok ? "ausgeschaltet" : (r.error || "fehlgeschlagen"); })),
+      tvBox));
 
     // 8 - BEOBACHTUNG & MUSTER: opt-in, auditierbar, nur Vorschläge
     const obs = await api("/api/observer/status", {}).catch(() => ({}));

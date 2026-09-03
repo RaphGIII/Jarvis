@@ -506,6 +506,8 @@ class JarvisCore:
                                    "understanding": understanding.to_dict(), "source": "intents", "text": text[:160]}, scope=scope)
         if self._handle_pending_confirmation(text, scope):
             return
+        if self._handle_coach(text, scope):
+            return
         if self._resume_open_target(text, scope):
             return
         if self._resume_fs(text, scope):
@@ -932,6 +934,9 @@ class JarvisCore:
         if action.operation == "web.read_summary":
             self._answer_web_summary(action, text, scope)
             return
+        if action.operation == "tv.control":
+            self._answer_tv_control(action, scope)
+            return
         if action.operation == "calendar.create":
             self._answer_calendar_create(text or action.target, scope)
             return
@@ -939,6 +944,73 @@ class JarvisCore:
             self._answer_calendar_query(text or action.target, scope)
             return
         self._deliver("Das kann ich nicht steuern." if de else "I cannot control that.", scope=scope, backend="ui")
+
+    # ------------------------------------------------------------------
+    # The living-room TV
+    # ------------------------------------------------------------------
+
+    def _answer_tv_control(self, action: Any, scope: str) -> None:
+        de = self.language.startswith("de")
+        sub = action.target
+        status = self.tv.status()
+        if not status.get("paired") and sub != "power_on":
+            self._deliver(("Es ist noch kein Fernseher gekoppelt. Unter Owner → Geräte kannst du deinen LG suchen und koppeln." if de
+                           else "No TV is paired yet. Pair your LG under Owner → Devices."),
+                          scope=scope, backend="tv", final_state=JarvisState.WAITING)
+            return
+        self.state.set(JarvisState.WORKING, detail=f"TV: {sub}", scope=scope)
+        apps = {"youtube": "youtube.leanback.v4", "netflix": "netflix", "spotify": "spotify-beehive",
+                "amazon": "amazon", "prime": "amazon", "disney": "com.disney.disneyplus-prod"}
+        if sub == "show_zeus":
+            # the TV needs the PC's LAN address — and the server must actually
+            # be LAN-bound (opt-in via ZEUS_LAN=1; loopback is the default for
+            # a reason).  No fake success against a dead URL.
+            url = str(self.lifecycle.stages.get("http", {}).get("detail", "")) or "http://127.0.0.1:8420"
+            if "127.0.0.1" in url and os.environ.get("ZEUS_LAN", "").strip() not in {"1", "true"}:
+                self._deliver(("ZEUS ist gerade nur auf diesem PC erreichbar (127.0.0.1) — der Fernseher käme nicht dran. "
+                               "Setze die Umgebungsvariable ZEUS_LAN=1 und starte ZEUS neu, dann funktioniert die TV-Anzeige im Heimnetz." if de
+                               else "ZEUS is bound to this PC only (127.0.0.1). Set ZEUS_LAN=1 and restart to enable the LAN TV display."),
+                              scope=scope, backend="tv", final_state=JarvisState.WAITING,
+                              context_text="[tv show_zeus refused: server is loopback-only]")
+                return
+            try:
+                import socket as _s
+
+                probe = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+                probe.connect(("8.8.8.8", 80))
+                lan_ip = probe.getsockname()[0]
+                probe.close()
+                url = url.replace("127.0.0.1", lan_ip).replace("localhost", lan_ip)
+            except OSError:
+                pass
+            result = self.tv.show_zeus(url)
+        elif sub == "power_on":
+            result = self.tv.power_on()
+        elif sub == "power_off":
+            result = self.tv.power_off()
+        elif sub in {"volume_up", "volume_down"}:
+            result = self.tv.volume_step(sub == "volume_up")
+        elif sub == "mute":
+            result = self.tv.mute(True)
+        elif sub == "open_app":
+            wanted = str(action.arguments.get("app", "")).strip()
+            app_id = apps.get(wanted.lower())
+            result = self.tv.launch_app(app_id) if app_id else self.tv.open_url("https://" + wanted.lower().replace(" ", "") + ".com")
+        else:
+            result = {"ok": False, "error": f"unbekannt: {sub}"}
+        self.emit(EventType.TOOL, {"summary": f"tv.{sub}: {'ok' if result.get('ok') else result.get('error', '')[:100]}",
+                                   "result": {k: v for k, v in result.items() if k != "payload"}, "source": "tv"}, scope=scope)
+        if result.get("ok"):
+            words = {"show_zeus": "ZEUS ist auf dem Fernseher.", "power_off": "Fernseher ist aus.",
+                     "power_on": "Einschalt-Signal gesendet — ob er angeht, hängt vom Netzwerk-Standby des TVs ab.",
+                     "volume_up": "Lauter.", "volume_down": "Leiser.", "mute": "Stumm.",
+                     "open_app": "Läuft auf dem Fernseher."}
+            self._deliver(words.get(sub, "Erledigt."), scope=scope, backend="tv",
+                          context_text=f"[tv {sub}: ok]")
+        else:
+            self._deliver((f"Der Fernseher hat nicht reagiert: {result.get('error', '')[:120]}" if de
+                           else f"The TV did not respond: {result.get('error', '')[:120]}"),
+                          scope=scope, backend="tv", final_state=JarvisState.ERROR)
 
     # ------------------------------------------------------------------
     # Web reading: the follow-up knows what "davon" means
@@ -5346,6 +5418,87 @@ class JarvisCore:
         if archived:
             self._summarize_conversation_async(archived["id"])
         return {"ok": True, "cleared": True, "archived": archived["id"] if archived else ""}
+
+    @property
+    def coach(self) -> Any:
+        """The language coach: sessions, learner model, spaced repetition."""
+
+        if getattr(self, "_coach", None) is None:
+            from service.coach import LanguageCoach
+
+            self._coach = LanguageCoach(Path(self.kernel.state_root) / "coach")
+        return self._coach
+
+    _COACH_START = re.compile(r"\b(?:lass\s+uns|wir\s+(?:ueben|üben)|(?:ueben|üben)\s+wir|ich\s+will\s+.{0,20})?\s*"
+                              r"(?:(?P<min>\d{1,3})\s*minuten\s+)?"
+                              r"(?P<lang>franz(?:oe|ö)sisch|englisch|spanisch|italienisch|latein|french|english|spanish)\s+"
+                              r"(?:ueben|üben|lernen|trainieren|practice)\b", re.I)
+    _COACH_END = re.compile(r"\b((?:uebung|übung)\s+beenden|aufh(?:oe|ö)ren|training\s+beenden|stopp?\s*,?\s*(?:uebung|übung)|genug\s+ge(?:uebt|übt))\b", re.I)
+
+    def _handle_coach(self, text: str, scope: str) -> bool:
+        """Session mode: while an exercise runs, every turn goes to the coach."""
+
+        from brain.tiers import ModelTier
+        from service.coach import LANGUAGES
+
+        active = self.coach.session is not None
+        if not active:
+            m = self._COACH_START.search(text)
+            if not m:
+                return False
+            language = LANGUAGES.get(m.group("lang").lower())
+            if not language:
+                return False
+            minutes = int(m.group("min") or 10)
+            started = self.coach.start(language, minutes=minutes)
+            self.emit(EventType.TOOL, {"summary": f"coach session started: {language}, {minutes}min, Thema {started.get('topic')}",
+                                       "source": "coach"}, scope=scope)
+            self._deliver(started["text"], scope=scope, backend="coach",
+                          context_text=f"[coach session started: {language}]")
+            return True
+        # a session is running: end phrases close it, everything else is a turn
+        if self._COACH_END.search(text) or re.match(r"^\s*(stopp?|stop|beenden|fertig)\s*[.!]?\s*$", text, re.I):
+            self._finish_coach(scope)
+            return True
+        self.state.set(JarvisState.THINKING, detail="bewerte deine Antwort", scope=scope)
+        try:
+            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+            result = self.coach.evaluate_turn(provider, text)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": str(exc)}
+        if not result.get("ok"):
+            self._deliver(f"Die Bewertung ist gerade nicht durchgekommen ({result.get('error', '')[:80]}) — sag den Satz einfach nochmal.",
+                          scope=scope, backend="coach", final_state=JarvisState.WAITING)
+            return True
+        self._deliver(result["text"], scope=scope, backend="coach",
+                      context_text=f"[coach turn score {result.get('score')}]")
+        if result.get("done"):
+            self._finish_coach(scope)
+        return True
+
+    def _finish_coach(self, scope: str) -> None:
+        summary = self.coach.finish()
+        if not summary.get("ok"):
+            return
+        try:
+            self.library.create_folder("Sprachen")
+            self.library.write_note("Sprachen", f"{summary['language']}-Übung {time.strftime('%Y-%m-%d %H%M')}",
+                                    summary.get("summary_note", ""))
+        except Exception:  # noqa: BLE001 - the summary text still reaches the owner
+            pass
+        self.emit(EventType.TOOL, {"summary": f"coach session finished: {summary.get('record', {})}", "source": "coach"}, scope=scope)
+        self._deliver(summary["text"], scope=scope, backend="coach",
+                      context_text="[coach session finished; summary saved to Wissen/Sprachen]")
+
+    @property
+    def tv(self) -> Any:
+        """The paired LG webOS TV (SSAP over the LAN)."""
+
+        if getattr(self, "_tv", None) is None:
+            from service.tv import TVService
+
+            self._tv = TVService(Path(self.kernel.state_root) / "owner" / "tv.json")
+        return self._tv
 
     @property
     def conversations(self) -> Any:

@@ -135,13 +135,25 @@ async function corpusWizard() {
   };
   renderStats(listOut);
 
+  let currentCategory = "";
   const showPhrase = () => {
     const p = phrases[idx % phrases.length] || { category: "", text: "" };
+    currentCategory = p.category;
     phraseBox.textContent = `„${p.text}“`;
     clear(catBadge); catBadge.append(badge(p.category.toUpperCase(), "dim"));
     transcript.value = p.text;
   };
   showPhrase();
+
+  const custom = el("input", { placeholder: "Eigene Phrase eintippen…", style: { minWidth: "240px" } });
+  const useCustom = button("Eigene verwenden", () => {
+    const t = custom.value.trim();
+    if (!t) return;
+    currentCategory = "eigene";
+    phraseBox.textContent = `„${t}“`;
+    clear(catBadge); catBadge.append(badge("EIGENE", "dim"));
+    transcript.value = t;
+  });
 
   const record = button("● Aufnehmen", async (ev) => {
     const b = ev.currentTarget;
@@ -167,9 +179,8 @@ async function corpusWizard() {
     let bin = "";
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     const b64 = btoa(bin);
-    const p = phrases[idx % phrases.length] || { category: "" };
     const r = await api("/api/corpus/add", { audio: b64, ext: "wav", ground_truth: transcript.value.trim(),
-                                             category: p.category, device: "voice-studio", held_out: heldOut.firstChild.checked });
+                                             category: currentCategory, device: "voice-studio", held_out: heldOut.firstChild.checked });
     if (r.ok === false) { note.textContent = r.error || "nicht gespeichert"; return; }
     lastWav = null; if (player) { player.remove(); player = null; }
     idx += 1; showPhrase();
@@ -202,6 +213,7 @@ async function corpusWizard() {
              el("div", { class: "toolbar" }, record, seconds, meter, playerSlot),
              el("div", { class: "field" }, el("label", { text: "Bestätigtes Transkript (Ground Truth)" }), transcript),
              el("div", { class: "toolbar" }, save, skip, heldOut, note),
+             el("div", { class: "toolbar" }, custom, useCustom),
              el("div", { class: "toolbar", style: { marginTop: "10px" } }, models, bench, reportsBtn),
              benchNote);
   return box;

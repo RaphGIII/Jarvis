@@ -37,7 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m jarvis.serve", description="Run the Jarvis core service and web interface."
     )
-    parser.add_argument("--host", default="127.0.0.1", help="interface to bind (default: loopback only)")
+    parser.add_argument("--host", default=("0.0.0.0" if os.environ.get("ZEUS_LAN", "").strip() in {"1", "true"} else "127.0.0.1"),
+                        help="interface to bind (default: loopback only; ZEUS_LAN=1 binds the home network for the TV display)")
     parser.add_argument("--port", type=int, default=8420, help="port (0 picks a free one)")
     parser.add_argument("--token", default="", help="shared token; generated when omitted")
     parser.add_argument("--token-file", default="", help="read the shared token from this file (the supervisor's way)")

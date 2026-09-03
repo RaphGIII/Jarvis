@@ -1,0 +1,294 @@
+{
+  "note": "SYNTHETIC Piper voice — latency/RAM/cold-start real; accuracy indicative only, NOT owner WER",
+  "at": "2026-09-03T03:00:54",
+  "engines": [
+    {
+      "summary": {
+        "model": "small",
+        "device": "cpu int8",
+        "load_seconds": 4.8,
+        "ram_delta_mib": 347,
+        "median_latency_s": 3.33,
+        "max_latency_s": 3.73,
+        "synthetic_wer": 0.17,
+        "synthetic_cer": 0.109,
+        "synthetic_entity_acc": 0.75,
+        "utterances": 10
+      },
+      "rows": [
+        {
+          "truth": "Öffne Wikipedia und zeig mir den Artikel über Photosynthese.",
+          "hyp": "Öffne Wikipedia und zeig mir den Artikel über Fotosynthese.",
+          "latency_s": 3.73,
+          "wer": 0.111,
+          "cer": 0.038,
+          "entities": 1.0
+        },
+        {
+          "truth": "Trag morgen um vierzehn Uhr einen Termin für die Bibliothek ein.",
+          "hyp": "Tragt morgen um 14 Uhr einen Termin für die Bibliothek ein.",
+          "latency_s": 3.33,
+          "wer": 0.182,
+          "cer": 0.167,
+          "entities": 1.0
+        },
+        {
+          "truth": "Wie viele Unterordner hat mein Jarvis-Ordner auf Laufwerk D?",
+          "hyp": "Wie viele Unterordner hat man javisordner auf laufwerkd?",
+          "latency_s": 3.61,
+          "wer": 0.5,
+          "cer": 0.06,
+          "entities": null
+        },
+        {
+          "truth": "Spiel Rammstein auf Spotify und mach etwas leiser.",
+          "hyp": "Spiel Rammstein auf Spotify und mach etwas leiser.",
+          "latency_s": 3.39,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": 1.0
+        },
+        {
+          "truth": "Die Glykolyse findet im Zytoplasma statt und liefert ATP.",
+          "hyp": "Die Glucolöse findet im Zytoplasma statt und liefert ATP.",
+          "latency_s": 3.63,
+          "wer": 0.111,
+          "cer": 0.083,
+          "entities": null
+        },
+        {
+          "truth": "Der Server antwortet auf Port achtundvierzig zwanzig.",
+          "hyp": "Der Server antwortet auf Port 4820.",
+          "latency_s": 3.24,
+          "wer": 0.286,
+          "cer": 0.457,
+          "entities": null
+        },
+        {
+          "truth": "Erstelle ein Bild von einem Adler über den Alpen.",
+          "hyp": "Erstelle ein Bild von einem Adler über den Alpen.",
+          "latency_s": 3.27,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": null
+        },
+        {
+          "truth": "Zeus, was läuft gerade im Hintergrund?",
+          "hyp": "Zoys, was läuft gerade im Hintergrund?",
+          "latency_s": 3.3,
+          "wer": 0.167,
+          "cer": 0.062,
+          "entities": 0.0
+        },
+        {
+          "truth": "Nächsten Dienstag habe ich von neun bis elf Vorlesung.",
+          "hyp": "Nächsten Dienstag habe ich von 9 bis 11 Vorlesung.",
+          "latency_s": 3.31,
+          "wer": 0.222,
+          "cer": 0.152,
+          "entities": null
+        },
+        {
+          "truth": "Fass mir den wichtigsten Artikel von heute zusammen.",
+          "hyp": "erfasst mir den wichtigsten Artikel von heute zusammen.",
+          "latency_s": 3.24,
+          "wer": 0.125,
+          "cer": 0.068,
+          "entities": null
+        }
+      ]
+    },
+    {
+      "summary": {
+        "model": "base",
+        "device": "cpu int8",
+        "load_seconds": 11.9,
+        "ram_delta_mib": 146,
+        "median_latency_s": 1.15,
+        "max_latency_s": 1.26,
+        "synthetic_wer": 0.312,
+        "synthetic_cer": 0.134,
+        "synthetic_entity_acc": 0.375,
+        "utterances": 10
+      },
+      "rows": [
+        {
+          "truth": "Öffne Wikipedia und zeig mir den Artikel über Photosynthese.",
+          "hyp": "Öffne wie die Pedia und zeig mit den Artikel über Fotosynthese.",
+          "latency_s": 1.23,
+          "wer": 0.556,
+          "cer": 0.113,
+          "entities": 0.0
+        },
+        {
+          "truth": "Trag morgen um vierzehn Uhr einen Termin für die Bibliothek ein.",
+          "hyp": "Tagmorgung und 14 Uhr einen Termin für die Bibliothek ein.",
+          "latency_s": 1.18,
+          "wer": 0.364,
+          "cer": 0.222,
+          "entities": 1.0
+        },
+        {
+          "truth": "Wie viele Unterordner hat mein Jarvis-Ordner auf Laufwerk D?",
+          "hyp": "Wie viele Unterordner hat man ja wie Sortner auf Laufeck D?",
+          "latency_s": 1.13,
+          "wer": 0.5,
+          "cer": 0.16,
+          "entities": null
+        },
+        {
+          "truth": "Spiel Rammstein auf Spotify und mach etwas leiser.",
+          "hyp": "Spielramstein auf Spotify und mache etwas leise.",
+          "latency_s": 1.08,
+          "wer": 0.5,
+          "cer": 0.071,
+          "entities": 0.5
+        },
+        {
+          "truth": "Die Glykolyse findet im Zytoplasma statt und liefert ATP.",
+          "hyp": "Die Glucolüse findet im Zytoplasmer statt und liefert ATP.",
+          "latency_s": 1.23,
+          "wer": 0.222,
+          "cer": 0.125,
+          "entities": null
+        },
+        {
+          "truth": "Der Server antwortet auf Port achtundvierzig zwanzig.",
+          "hyp": "Der Server antwortet auf port 4820.",
+          "latency_s": 1.09,
+          "wer": 0.286,
+          "cer": 0.457,
+          "entities": null
+        },
+        {
+          "truth": "Erstelle ein Bild von einem Adler über den Alpen.",
+          "hyp": "Erstelle ein Bild von einem Adler über den Alpen.",
+          "latency_s": 1.11,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": null
+        },
+        {
+          "truth": "Zeus, was läuft gerade im Hintergrund?",
+          "hyp": "Zwei ist, was läuft gerade im Hintergrund.",
+          "latency_s": 1.26,
+          "wer": 0.333,
+          "cer": 0.125,
+          "entities": 0.0
+        },
+        {
+          "truth": "Nächsten Dienstag habe ich von neun bis elf Vorlesung.",
+          "hyp": "Nächsten Dienstag habe ich von neuen bis elf Vorlesung.",
+          "latency_s": 1.15,
+          "wer": 0.111,
+          "cer": 0.022,
+          "entities": null
+        },
+        {
+          "truth": "Fass mir den wichtigsten Artikel von heute zusammen.",
+          "hyp": "Fast mit den wichtigsten Artikel von heute zusammen.",
+          "latency_s": 1.15,
+          "wer": 0.25,
+          "cer": 0.045,
+          "entities": null
+        }
+      ]
+    },
+    {
+      "summary": {
+        "model": "medium",
+        "device": "cpu int8",
+        "load_seconds": 86.5,
+        "ram_delta_mib": 761,
+        "median_latency_s": 9.68,
+        "max_latency_s": 10.54,
+        "synthetic_wer": 0.145,
+        "synthetic_cer": 0.107,
+        "synthetic_entity_acc": 0.875,
+        "utterances": 10
+      },
+      "rows": [
+        {
+          "truth": "Öffne Wikipedia und zeig mir den Artikel über Photosynthese.",
+          "hyp": "Öffne Wikipedia und zeige mir den Artikel über Photosynthese.",
+          "latency_s": 10.54,
+          "wer": 0.111,
+          "cer": 0.019,
+          "entities": 1.0
+        },
+        {
+          "truth": "Trag morgen um vierzehn Uhr einen Termin für die Bibliothek ein.",
+          "hyp": "Betrag morgen um 14 Uhr einen Termin für die Bibliothek ein.",
+          "latency_s": 9.62,
+          "wer": 0.182,
+          "cer": 0.185,
+          "entities": 1.0
+        },
+        {
+          "truth": "Wie viele Unterordner hat mein Jarvis-Ordner auf Laufwerk D?",
+          "hyp": "Wie viele Unterordner hat man ja wie Sorten auf Laufwerk D?",
+          "latency_s": 9.68,
+          "wer": 0.4,
+          "cer": 0.16,
+          "entities": null
+        },
+        {
+          "truth": "Spiel Rammstein auf Spotify und mach etwas leiser.",
+          "hyp": "Spiel Rammstein auf Sport TV und mach etwas leiser.",
+          "latency_s": 9.65,
+          "wer": 0.25,
+          "cer": 0.095,
+          "entities": 0.5
+        },
+        {
+          "truth": "Die Glykolyse findet im Zytoplasma statt und liefert ATP.",
+          "hyp": "Die Glykolyse findet im Zytoplasma statt und liefert ATP.",
+          "latency_s": 9.79,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": null
+        },
+        {
+          "truth": "Der Server antwortet auf Port achtundvierzig zwanzig.",
+          "hyp": "Der Server antwortet auf Port 4820.",
+          "latency_s": 9.43,
+          "wer": 0.286,
+          "cer": 0.457,
+          "entities": null
+        },
+        {
+          "truth": "Erstelle ein Bild von einem Adler über den Alpen.",
+          "hyp": "Erstelle ein Bild von einem Adler über den Alpen.",
+          "latency_s": 9.78,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": null
+        },
+        {
+          "truth": "Zeus, was läuft gerade im Hintergrund?",
+          "hyp": "Zeus, was läuft gerade im Hintergrund?",
+          "latency_s": 9.37,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": 1.0
+        },
+        {
+          "truth": "Nächsten Dienstag habe ich von neun bis elf Vorlesung.",
+          "hyp": "Nächsten Dienstag habe ich von 9 bis 11 Vorlesung.",
+          "latency_s": 9.68,
+          "wer": 0.222,
+          "cer": 0.152,
+          "entities": null
+        },
+        {
+          "truth": "Fass mir den wichtigsten Artikel von heute zusammen.",
+          "hyp": "Fass mir den wichtigsten Artikel von heute zusammen.",
+          "latency_s": 9.55,
+          "wer": 0.0,
+          "cer": 0.0,
+          "entities": null
+        }
+      ]
+    }
+  ]
+}

@@ -108,6 +108,26 @@ class JarvisHTTPServer:
         self._reminder_thread = threading.Thread(target=beat, daemon=True, name="calendar-reminders")
         self._reminder_thread.start()
 
+    def _tv_command(self, action: str, body: dict[str, Any]) -> dict[str, Any]:
+        tv = self.core.tv
+        if action == "power_on":
+            return tv.power_on()
+        if action == "power_off":
+            return tv.power_off()
+        if action == "volume":
+            return tv.volume(int(body.get("level", 10) or 10))
+        if action == "mute":
+            return tv.mute(bool(body.get("muted", True)))
+        if action == "launch_app":
+            return tv.launch_app(str(body.get("app_id", "")))
+        if action == "open_url":
+            return tv.open_url(str(body.get("url", "")))
+        if action == "toast":
+            return tv.toast(str(body.get("message", "")))
+        if action == "show_zeus":
+            return tv.show_zeus(self.url)
+        return {"ok": False, "error": f"unbekannte TV-Aktion {action!r}"}
+
     @staticmethod
     def _corpus_phrases() -> dict[str, Any]:
         from speech.corpus import PHRASES
@@ -360,6 +380,11 @@ class JarvisHTTPServer:
                 self.core.conversations.get(str(body.get("id", "")))),
             "/api/conversation/restore": lambda body: self.core.conversation_restore(str(body.get("id", ""))),
             "/api/conversation/delete": lambda body: {"ok": self.core.conversations.delete(str(body.get("id", "")))},
+            # LG webOS TV: discovery, pairing (TV-side confirmation), control
+            "/api/tv/discover": lambda _: {"ok": True, "tvs": __import__("service.tv", fromlist=["discover"]).discover()},
+            "/api/tv/status": lambda _: self.core.tv.status(),
+            "/api/tv/pair": lambda body: self.core.tv.pair(str(body.get("ip", "")), name=str(body.get("name", ""))),
+            "/api/tv/command": lambda body: self._tv_command(str(body.get("action", "")), body),
             "/api/feedback": lambda body: self.core.feedback(
                 str(body.get("kind", "response")), rating=str(body.get("rating", "")), category=str(body.get("category", "")),
                 text=str(body.get("text", "")), request_id=str(body.get("request_id", "")),

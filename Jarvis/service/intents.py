@@ -504,6 +504,41 @@ def parse_system_control(text: str) -> ActionIntent | None:
     return None
 
 
+# --- the living-room TV: real commands for the paired LG ------------------
+_TV_WORD = re.compile(r"\b(fernseher|fernsehers|tv)\b", re.I)
+
+
+def parse_tv_operation(text: str) -> ActionIntent | None:
+    body = _VOCATIVE.sub("", (text or "").strip(), count=1)
+    if not _TV_WORD.search(body):
+        return None
+    folded = fold(body)
+    sub = ""
+    arguments: dict[str, Any] = {}
+    if re.search(r"\bzeig\w*\b.{0,20}\b(dich|zeus)\b|\b(dich|zeus)\b.{0,30}\bfernseher\b", body, re.I) and "zeig" in folded:
+        sub = "show_zeus"
+    elif re.search(r"\b(aus|ausschalten|abschalten)\b", folded):
+        sub = "power_off"
+    elif re.search(r"\b(an|anschalten|einschalten)\b", folded):
+        sub = "power_on"
+    elif "lauter" in folded:
+        sub = "volume_up"
+    elif "leiser" in folded:
+        sub = "volume_down"
+    elif re.search(r"\bstumm|mute\b", folded):
+        sub = "mute"
+    else:
+        m = re.search(r"\b(?:oeffne|öffne|starte?|open)\s+(?P<app>[\w .+-]{2,30}?)\s+(?:am|auf\s+dem)\s+(?:fernseher|tv)\b", body, re.I)
+        if m:
+            sub = "open_app"
+            arguments["app"] = m.group("app").strip()
+    if not sub:
+        return None
+    return ActionIntent("tv.control", verb="control", object_type="tv", target=sub, arguments=arguments,
+                        confidence=0.85, success_criteria=["the TV acknowledged the command"],
+                        reason=f"asks the TV to {sub}")
+
+
 # --- web follow-up: "fass mir den Inhalt zusammen" refers to SOMETHING ----
 _SUMMARIZE = re.compile(r"\bfass\w*\b.{0,80}\bzusammen\b|\bzusammenfass\w*\b|\bsummar(?:y|ize|ise)\b", re.I)
 _SUMMARY_REF = re.compile(r"\b(davon|daraus|inhalt\w*|artikel|seite|ergebnis\w*|treffer|link|meldung\w*|nachricht\w*|wichtigste\w*)\b|https?://", re.I)
@@ -661,6 +696,10 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
                                  confidence=0.85, success_criteria=["a real image file exists"],
                                  reason="asks for a generated image")
             return Understanding(TopIntent.SYSTEM_CONTROL, image.reason, image, is_action_request=True)
+
+    tv_op = parse_tv_operation(text)
+    if tv_op is not None:
+        return Understanding(TopIntent.SYSTEM_CONTROL, tv_op.reason, tv_op, is_action_request=True)
 
     web_summary = parse_web_summary(text)
     if web_summary is not None:
