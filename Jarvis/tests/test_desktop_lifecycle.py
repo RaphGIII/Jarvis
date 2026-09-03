@@ -193,11 +193,14 @@ def test_a_restart_leaves_the_window_but_a_shutdown_closes_it(tmp_path, win, mon
 def test_readiness_levels_are_separate(tmp_path):
     core = FakeCore(tmp_path)
     life = Lifecycle(core)
-    assert life.readiness() == {"UI_READY": False, "CORE_READY": False, "AI_READY": False, "VOICE_READY": False, "FULL_READY": False}
+    assert life.readiness() == {"UI_READY": False, "CORE_READY": False, "AI_READY": False, "VOICE_READY": False,
+                                "INTERACTIVE_READY": False, "FULL_READY": False}
     life.mark("http", True, "http://127.0.0.1:8420/")
     assert life.readiness()["UI_READY"] and not life.readiness()["AI_READY"] and not life.ready
+    assert not life.readiness()["INTERACTIVE_READY"]  # the veil stays until the model answers
     life.mark("fast_local", True, "OK")
     assert life.ready and life.readiness()["AI_READY"] and not life.readiness()["FULL_READY"]
+    assert life.readiness()["INTERACTIVE_READY"]      # usable now; voice keeps warming behind it
     life.mark("voice", True); life.mark("recogniser", True)
     assert life.readiness()["FULL_READY"]
 

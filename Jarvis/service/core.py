@@ -5478,10 +5478,17 @@ class JarvisCore:
     def _handle_coach(self, text: str, scope: str) -> bool:
         """Session mode: while an exercise runs, every turn goes to the coach."""
 
+        # cheap gate first: never CONSTRUCT the coach (it touches the state
+        # root) for ordinary messages — stub cores in tests have neither
+        if getattr(self, "_coach", None) is None and not self._COACH_START.search(text):
+            return False
         from brain.tiers import ModelTier
         from service.coach import LANGUAGES
 
-        active = self.coach.session is not None
+        try:
+            active = self.coach.session is not None
+        except Exception:  # noqa: BLE001 - no state root, no coach
+            return False
         if not active:
             m = self._COACH_START.search(text)
             if not m:
