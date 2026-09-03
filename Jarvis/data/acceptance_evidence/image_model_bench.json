@@ -1,0 +1,84 @@
+{
+  "gpu": "NVIDIA GeForce GTX 1070",
+  "at": "2026-09-03T18:46:36",
+  "results": [
+    {
+      "config": "turbo",
+      "model": "stabilityai/sd-turbo",
+      "steps": 3,
+      "cfg": 0.0,
+      "load_s": 291.9,
+      "rows": [
+        {
+          "prompt": "blackhole",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\blackhole_turbo.png",
+          "gen_s": 10.9,
+          "vram_mib": 3359
+        },
+        {
+          "prompt": "heart",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\heart_turbo.png",
+          "gen_s": 1.5,
+          "vram_mib": 3359
+        },
+        {
+          "prompt": "station",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\station_turbo.png",
+          "gen_s": 1.5,
+          "vram_mib": 3359
+        },
+        {
+          "prompt": "logo",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\logo_turbo.png",
+          "gen_s": 1.5,
+          "vram_mib": 3359
+        },
+        {
+          "prompt": "car",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\car_turbo.png",
+          "gen_s": 1.5,
+          "vram_mib": 3359
+        }
+      ]
+    },
+    {
+      "config": "sd15",
+      "model": "runwayml/stable-diffusion-v1-5",
+      "steps": 25,
+      "cfg": 7.5,
+      "load_s": 355.4,
+      "rows": [
+        {
+          "prompt": "blackhole",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\blackhole_sd15.png",
+          "gen_s": 16.9,
+          "vram_mib": 2937
+        },
+        {
+          "prompt": "heart",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\heart_sd15.png",
+          "gen_s": 16.2,
+          "vram_mib": 2937
+        },
+        {
+          "prompt": "station",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\station_sd15.png",
+          "gen_s": 16.2,
+          "vram_mib": 2937
+        },
+        {
+          "prompt": "logo",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\logo_sd15.png",
+          "gen_s": 16.3,
+          "vram_mib": 2937
+        },
+        {
+          "prompt": "car",
+          "file": "D:\\ZEUS_Wissen\\Bilder\\benchmark\\car_sd15.png",
+          "gen_s": 16.3,
+          "vram_mib": 2937
+        }
+      ]
+    }
+  ]
+}

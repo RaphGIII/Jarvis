@@ -5983,11 +5983,14 @@ class JarvisCore:
         for p in shown:
             nodes.append({"id": p["id"], "kind": "project", "label": p["title"] or p["goal"][:40], "importance": p["importance"], "health": p["health"],
                           "state": p["state"], "tasks": p["tasks"], "tasks_done": p["tasks_done"], "layout": p.get("layout", {}), "updated_at": p["updated_at"], "data": p})
-        for fam in overview["internal"]:
-            if not everything and fam["latest_state"].lower() in {"completed", "paused", "draft"} and fam["count"] > 1:
-                pass  # collapsed by default: one node per family below
-            nodes.append({"id": f"cap:{fam['capability_id']}", "kind": "capability", "label": fam["capability_id"], "attempts": fam["count"],
-                          "state": fam["latest_state"], "collapsed": True, "data": fam})
+        # §8: the DEFAULT far view is owner projects only — capabilities,
+        # acquisition/selfdev families and thoughts are internal system work
+        # and belong to a deeper layer, revealed by the "show everything"
+        # toggle.  They cluttered the universe as first-class peers.
+        if everything:
+            for fam in overview["internal"]:
+                nodes.append({"id": f"cap:{fam['capability_id']}", "kind": "capability", "label": fam["capability_id"], "attempts": fam["count"],
+                              "state": fam["latest_state"], "collapsed": True, "data": fam})
         titles = {n["id"]: n["label"].lower() for n in nodes if n["kind"] == "project"}
         # Subprojects orbit their parent: an explicit owner hierarchy, never inferred from words.
         for p in shown:
@@ -5995,6 +5998,10 @@ class JarvisCore:
                 edges.append({"source": p["parent_id"], "target": p["id"], "type": "subproject_of", "active": False})
         for m in overview["missions"]:
             if m.get("system") == "acquisition":
+                continue
+            # by default only ACTIVE missions orbit the universe; finished
+            # internal missions are history, not first-class systems
+            if not everything and m["state"] not in {"active", "waiting", "blocked", "running", "executing"}:
                 continue
             parent = next((pid for pid, t in titles.items() if t and t in str(m.get("goal", "")).lower()), None)
             nodes.append({"id": m["id"], "kind": "mission", "label": m["title"], "state": m["state"], "system": m["system"], "updated_at": m.get("updated", ""), "data": m})
@@ -6004,18 +6011,19 @@ class JarvisCore:
                 for pid, t in titles.items():
                     if any(w in n["label"] for w in t.split() if len(w) > 4):
                         edges.append({"source": pid, "target": n["id"], "type": "uses", "active": False})
-        try:
-            for t in self.thoughts.store.list():
-                if t.status == "DISMISSED":
-                    continue
-                ids = t.context.get("project_ids") or ([t.context["project_id"]] if t.context.get("project_id") else [])
-                if not ids:
-                    continue
-                nodes.append({"id": t.thought_id, "kind": "thought", "label": t.title, "type": t.type, "importance": t.importance, "data": t.to_dict()})
-                for pid in ids:
-                    edges.append({"source": pid, "target": t.thought_id, "type": "thought", "active": t.status in {"NEW", "IMPORTANT"}})
-        except Exception:  # noqa: BLE001
-            pass
+        if everything:
+            try:
+                for t in self.thoughts.store.list():
+                    if t.status == "DISMISSED":
+                        continue
+                    ids = t.context.get("project_ids") or ([t.context["project_id"]] if t.context.get("project_id") else [])
+                    if not ids:
+                        continue
+                    nodes.append({"id": t.thought_id, "kind": "thought", "label": t.title, "type": t.type, "importance": t.importance, "data": t.to_dict()})
+                    for pid in ids:
+                        edges.append({"source": pid, "target": t.thought_id, "type": "thought", "active": t.status in {"NEW", "IMPORTANT"}})
+            except Exception:  # noqa: BLE001
+                pass
         try:
             stats = self.knowledge_stats()
             if stats.get("ok") and int(stats.get("nodes", 0)) > 0:
