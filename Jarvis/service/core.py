@@ -926,7 +926,7 @@ class JarvisCore:
             self._deliver((f"{label} ist offen." if de else f"{label} is open."), scope=scope, backend="ui", context_text=f"[opened view {action.target}]")
             return
         if action.operation == "image.generate":
-            self._answer_image_generate(action.target or text, scope)
+            self._answer_image_generate(action.target or text, scope, original_text=text)
             return
         if action.operation in {"fs.count", "fs.largest", "fs.list", "fs.open", "fs.search", "fs.info"}:
             self._answer_fs_operation(action, text, scope)
@@ -4887,7 +4887,9 @@ class JarvisCore:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _answer_image_generate(self, prompt: str, scope: str) -> None:
+    _IMG_MODE = re.compile(r"\b(schnell|draft|entwurf|quick)\b", re.I), re.compile(r"\b(hohe?r?\s+qualit(?:ae|ä)t|beste?\s+qualit(?:ae|ä)t|hochwertig|quality|realistischer|detailliert(?:er)?)\b", re.I)
+
+    def _answer_image_generate(self, prompt: str, scope: str, *, mode: str = "", original_text: str = "") -> None:
         """Generate a real image locally, as a visible Job, with an immediate ack.
 
         The pipeline that fixes the live "25 s became minutes" failure:
@@ -4909,9 +4911,19 @@ class JarvisCore:
                           else "A generation is already running — right after it.", scope=scope, backend="imagegen")
             return
 
-        from service.imagegen import PHASE_LABELS
+        from service.imagegen import DEFAULT_MODE, PHASE_LABELS, expand_prompt
 
-        job = self.jobs.create(f"Bild: {prompt[:60]}", kind="image", scope=scope, cancellable=True,
+        # mode: explicit, or inferred from words like "schnell" / "realistischer"
+        probe = f"{original_text} {prompt}"
+        if not mode:
+            fast_re, quality_re = self._IMG_MODE
+            mode = "FAST" if fast_re.search(probe) else ("QUALITY" if quality_re.search(probe) else DEFAULT_MODE)
+        expanded = expand_prompt(prompt)
+        self.emit(EventType.TOOL, {"summary": f"image mode {mode}; prompt expanded",
+                                   "original": expanded["original"], "effective": expanded["prompt"][:200],
+                                   "negative": expanded["negative"][:120], "source": "imagegen"}, scope=scope)
+
+        job = self.jobs.create(f"Bild ({mode}): {prompt[:50]}", kind="image", scope=scope, cancellable=True,
                                phase="in der Warteschlange")
         cold = not self.imagegen.model_loaded
         ack = (("Bin dran — ich erzeuge das Bild." + (" Beim ersten Mal lädt das Modell noch, das dauert etwas länger." if cold else ""))
@@ -4955,12 +4967,16 @@ class JarvisCore:
 
             self.jobs.phase(job.job_id, "Modell wird vorbereitet", state="WAITING_FOR_RESOURCE")
             result = self.imagegen.generate(
-                prompt,
+                expanded["prompt"],
+                negative=expanded["negative"],
+                mode=mode,
                 output_dir=self.defaults.get("image_dir"),
                 name_template=self.defaults.get("image_name"),
                 on_phase=on_phase,
                 cancel_check=lambda: self.jobs.cancelled(job.job_id),
             )
+            result["prompt_original"] = expanded["original"]
+            result["mode"] = mode
             t_generated = time.time()
 
             # restore the conversation model the MOMENT the GPU is free — the

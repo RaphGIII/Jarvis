@@ -31,6 +31,7 @@ from pathlib import Path
 DEFAULT_MODEL = os.environ.get("ZEUS_IMAGE_MODEL", "stabilityai/sd-turbo")
 
 _pipe = None
+_pipe_model = ""
 _torch = None
 
 
@@ -39,9 +40,9 @@ def _say(payload: dict) -> None:
     sys.stdout.flush()
 
 
-def _ensure_pipe(notify) -> None:
-    global _pipe, _torch
-    if _pipe is not None:
+def _ensure_pipe(model: str, notify) -> None:
+    global _pipe, _pipe_model, _torch
+    if _pipe is not None and _pipe_model == model:
         return
     os.environ.setdefault("HF_HOME", r"D:\JarvisLocal\hf_cache")
     notify("loading_model")
@@ -49,9 +50,20 @@ def _ensure_pipe(notify) -> None:
     from diffusers import AutoPipelineForText2Image
 
     _torch = torch
+    if _pipe is not None:
+        # switching models: free the old one first (8 GB is tight)
+        try:
+            _pipe.to("cpu")
+            del _pipe
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+        _pipe = None
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    _pipe = AutoPipelineForText2Image.from_pretrained(DEFAULT_MODEL, torch_dtype=dtype, safety_checker=None)
+    _pipe = AutoPipelineForText2Image.from_pretrained(model, torch_dtype=dtype, safety_checker=None)
     _pipe.enable_attention_slicing()
+    _pipe_model = model
 
 
 def _generate(req: dict) -> dict:
@@ -68,7 +80,8 @@ def _generate(req: dict) -> dict:
     except ValueError:
         return {"event": "result", "id": rid, "ok": False, "error": f"bad size {req.get('size')!r}"}
     try:
-        _ensure_pipe(notify)
+        model = str(req.get("model") or DEFAULT_MODEL)
+        _ensure_pipe(model, notify)
         torch = _torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
         if device == "cuda":
@@ -80,9 +93,13 @@ def _generate(req: dict) -> dict:
             seed = int.from_bytes(os.urandom(4), "little")
         notify("generating")
         generator = torch.Generator(device=device).manual_seed(seed)
+        # turbo/LCM models want cfg 0; real SD wants CFG (7-8) to FOLLOW the
+        # prompt -- guidance_scale 0 is exactly why sd-turbo drew a park for
+        # "black hole".  The caller passes the right cfg for the model.
+        cfg = float(req.get("cfg", 0.0))
         image = _pipe(prompt=str(req.get("prompt", "")), negative_prompt=str(req.get("negative", "")) or None,
                       width=width, height=height, num_inference_steps=max(1, int(req.get("steps", 2))),
-                      guidance_scale=0.0, generator=generator).images[0]
+                      guidance_scale=cfg, generator=generator).images[0]
         notify("saving")
         out = Path(str(req.get("out", "")))
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -95,9 +112,9 @@ def _generate(req: dict) -> dict:
         timings["total"] = round(time.monotonic() - started, 2)
         ok = out.is_file() and out.stat().st_size > 0
         return {"event": "result", "id": rid, "ok": ok, "file": str(out),
-                "bytes": out.stat().st_size if ok else 0, "model": DEFAULT_MODEL,
+                "bytes": out.stat().st_size if ok else 0, "model": model,
                 "device": device, "seed": seed, "width": width, "height": height,
-                "steps": max(1, int(req.get("steps", 2))), "vram_peak_mib": vram,
+                "steps": max(1, int(req.get("steps", 2))), "cfg": cfg, "vram_peak_mib": vram,
                 "timings": timings,
                 "error": "" if ok else "the file was not written"}
     except Exception as exc:  # noqa: BLE001 - the caller needs the reason

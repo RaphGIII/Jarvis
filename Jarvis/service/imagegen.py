@@ -33,6 +33,17 @@ PHASE_TIMEOUT = 600.0
 PHASE_LABELS = {"loading_model": "Modell lädt", "to_gpu": "Modell → GPU", "generating": "Generiere",
                 "saving": "Speichere", "to_cpu": "GPU wird freigegeben"}
 
+#: quality modes for the GTX 1070 (8 GB Pascal), measured in the benchmark.
+#: FAST = sd-turbo draft (cfg 0, 3 steps); BALANCED/QUALITY = real SD 1.5 with
+#: CFG so the prompt is actually FOLLOWED (turbo's cfg 0 drew a park for
+#: "black hole").
+MODES = {
+    "FAST":     {"model": "stabilityai/sd-turbo",            "steps": 4,  "cfg": 0.0, "size": "512x512"},
+    "BALANCED": {"model": "runwayml/stable-diffusion-v1-5",  "steps": 22, "cfg": 7.5, "size": "512x512"},
+    "QUALITY":  {"model": "runwayml/stable-diffusion-v1-5",  "steps": 34, "cfg": 8.0, "size": "640x640"},
+}
+DEFAULT_MODE = "BALANCED"
+
 
 def _slug(prompt: str) -> str:
     folded = re.sub(r"[^a-z0-9äöüß]+", "-", prompt.lower()).strip("-")
@@ -104,8 +115,9 @@ class ImageGenerator:
             name += ".png"
         return directory / name
 
-    def generate(self, prompt: str, *, negative: str = "", size: str = "512x512",
-                 steps: int = 2, seed: int = -1, output_path: str = "",
+    def generate(self, prompt: str, *, negative: str = "", size: str = "",
+                 steps: int = 0, seed: int = -1, mode: str = DEFAULT_MODE,
+                 cfg: float = -1.0, model: str = "", output_path: str = "",
                  output_dir: str = "", name_template: str = "",
                  on_phase: Callable[[str, float], None] | None = None,
                  cancel_check: Callable[[], bool] | None = None) -> dict[str, Any]:
@@ -115,6 +127,11 @@ class ImageGenerator:
         ready = self.available()
         if not ready.get("ok"):
             return ready
+        preset = MODES.get(str(mode).upper(), MODES[DEFAULT_MODE])
+        model = model or preset["model"]
+        size = size or preset["size"]
+        steps = int(steps) or preset["steps"]
+        cfg = cfg if cfg >= 0 else preset["cfg"]
         with self._lock:
             if cancel_check and cancel_check():
                 return {"ok": False, "error": "abgebrochen, bevor es losging", "cancelled": True}
@@ -126,10 +143,13 @@ class ImageGenerator:
                                           output_dir=output_dir, name_template=name_template)
                 rid = f"img{int(time.time())}"
                 request = {"op": "generate", "id": rid, "prompt": prompt, "negative": negative,
-                           "size": size, "steps": int(steps), "seed": int(seed), "out": str(out)}
+                           "size": size, "steps": int(steps), "seed": int(seed),
+                           "model": model, "cfg": float(cfg), "out": str(out)}
+                cold = getattr(self, "_loaded_model", "") != model
+                self._loaded_model = model
                 self._proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
                 self._proc.stdin.flush()
-                deadline = time.monotonic() + (PHASE_TIMEOUT if self.model_loaded else FIRST_LOAD_TIMEOUT)
+                deadline = time.monotonic() + (FIRST_LOAD_TIMEOUT if cold else PHASE_TIMEOUT)
                 while time.monotonic() < deadline:
                     try:
                         line = self._lines.get(timeout=2.0)
@@ -169,6 +189,55 @@ class ImageGenerator:
 #: "Erzeuge mir ein Bild von einem Adler über den Alpen." → the prompt part.
 _IMAGE_REQ = re.compile(r"\b(erzeug\w*|generier\w*|male?|zeichne\w*|erstell\w*|mach\w*|create|generate|draw|paint)\b.{0,40}?\b(bild|foto|grafik|zeichnung|image|picture)\b", re.I | re.S)
 _PROMPT_PART = re.compile(r"\b(?:bild|foto|grafik|zeichnung|image|picture)\s+(?:von|ueber|über|mit|aus|of|showing)\s+(?P<p>.+?)\s*[.!?]?$", re.I | re.S)
+
+
+#: A light, deterministic prompt planner (§14).  It appends a quality tail and
+#: a subject-specific negative WITHOUT rewriting the owner's intent — enough to
+#: pull SD 1.5 toward the subject and away from the classic failure (a park for
+#: "black hole").  The original prompt is always kept alongside.
+_QUALITY_TAIL = "highly detailed, sharp focus, professional, coherent composition"
+_BASE_NEGATIVE = ("blurry, low quality, deformed, distorted, extra limbs, bad anatomy, "
+                  "watermark, text, signature, jpeg artifacts, ugly, duplicate")
+_SUBJECT_HINTS = (
+    (re.compile(r"\bschwarze[sn]?\s+loch|black\s*hole|akkretion|accretion\b", re.I),
+     "deep space, accretion disk, event horizon, cosmic, astrophotography",
+     "park, lake, trees, grass, landscape, earth, terrain, daylight, meadow, water"),
+    (re.compile(r"\bherz\b|\bheart\b", re.I),
+     "anatomical illustration, medical, realistic organ, dark background",
+     "love heart symbol, valentine, cartoon, emoji"),
+    (re.compile(r"\braumstation|space\s*station|planet\b", re.I),
+     "science fiction, orbital, detailed hull, stars", ""),
+    (re.compile(r"\blogo\b", re.I),
+     "vector, geometric, flat, minimal, centered, clean background",
+     "photo, realistic, noisy, cluttered, misspelled text"),
+    (re.compile(r"\bsportwagen|sports?\s*car|auto\b", re.I),
+     "cinematic, night, neon reflections, wet asphalt, detailed", "daytime"),
+)
+
+
+def expand_prompt(prompt: str, negative: str = "") -> dict[str, str]:
+    """(effective prompt, effective negative) — structured, intent-preserving."""
+
+    original = str(prompt or "").strip()
+    add_pos, add_neg = [], [_BASE_NEGATIVE]
+    for pattern, pos, neg in _SUBJECT_HINTS:
+        if pattern.search(original):
+            if pos:
+                add_pos.append(pos)
+            if neg:
+                add_neg.append(neg)
+    effective = original
+    if add_pos:
+        effective += ", " + ", ".join(add_pos)
+    effective += ", " + _QUALITY_TAIL
+    eff_neg = (negative.strip() + ", " if negative.strip() else "") + ", ".join(add_neg)
+    return {"original": original, "prompt": effective, "negative": eff_neg}
+
+
+#: required concepts per subject, for lightweight result validation (§15).
+_VALIDATE_CONCEPTS = (
+    (re.compile(r"\bschwarze[sn]?\s+loch|black\s*hole\b", re.I), ["space", "dark", "disk", "cosmic", "star", "black hole"]),
+)
 
 
 def parse_image_request(text: str) -> str | None:

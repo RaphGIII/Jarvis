@@ -108,6 +108,23 @@ class JarvisHTTPServer:
         self._reminder_thread = threading.Thread(target=beat, daemon=True, name="calendar-reminders")
         self._reminder_thread.start()
 
+    def _image_generate(self, body: dict[str, Any]) -> dict[str, Any]:
+        from service.imagegen import DEFAULT_MODE, MODES, expand_prompt
+
+        prompt = str(body.get("prompt", ""))
+        expanded = expand_prompt(prompt, str(body.get("negative", "")))
+        mode = str(body.get("mode", "") or DEFAULT_MODE).upper()
+        if mode not in MODES:
+            mode = DEFAULT_MODE
+        seed_raw = str(body.get("seed", "")).strip()
+        result = self.core.imagegen.generate(
+            expanded["prompt"], negative=expanded["negative"], mode=mode,
+            size=str(body.get("size", "")), steps=int(body.get("steps", 0) or 0),
+            seed=int(seed_raw) if seed_raw not in {"", "None"} else -1)
+        result["mode"] = mode
+        result["prompt_original"] = expanded["original"]
+        return result
+
     def _tv_command(self, action: str, body: dict[str, Any]) -> dict[str, Any]:
         tv = self.core.tv
         if action == "power_on":
@@ -361,10 +378,7 @@ class JarvisHTTPServer:
                 held_out_only=bool(body.get("held_out_only", False))),
             "/api/corpus/reports": lambda _: self.core.corpus_reports(),
             # local image generation: a real file or an honest error
-            "/api/image/generate": lambda body: self.core.imagegen.generate(
-                str(body.get("prompt", "")), negative=str(body.get("negative", "")),
-                size=str(body.get("size", "512x512")), steps=int(body.get("steps", 2) or 2),
-                seed=int(body.get("seed", -1) if str(body.get("seed", "")).strip() not in {"", "None"} else -1)),
+            "/api/image/generate": lambda body: self._image_generate(body),
             "/api/image/status": lambda _: {**self.core.imagegen.available(), "busy": self.core.imagegen.busy},
             # the WorkItem board: what runs now, what just finished
             "/api/jobs": lambda _: {"ok": True, **self.core.jobs.snapshot()},
