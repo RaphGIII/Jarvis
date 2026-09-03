@@ -42,6 +42,9 @@ OPERATIONS = (
     "calendar.query",
     "image.generate",
     "fs.count",
+    "fs.largest",
+    "fs.list",
+    "fs.open",
     "web.read_summary",
     "clarify",
     "capability.missing",
@@ -97,7 +100,11 @@ Werkzeuge:
 - calendar.create: einen Termin eintragen. target = die Anfrage wörtlich. "Leg morgen Nachmittag zwei Stunden fürs Physikum frei." -> calendar.create.
 - calendar.query: nach Terminen fragen. target = die Frage wörtlich.
 - image.generate: ein Bild lokal erzeugen. target = die Bildbeschreibung. "Erzeuge mir ein Bild von einem Adler." -> image.generate "ein Adler".
-- fs.count: Ordner/Dateien auf der Festplatte zählen. target = Ordnername oder Pfad. "Wie viele Unterordner hat mein Jarvis-Ordner?" -> fs.count "Jarvis". Du HAST vollen Dateisystem-Zugriff.
+- fs.count: Ordner/Dateien zählen. target = Ordnername oder Pfad. "Wie viele Unterordner hat mein Jarvis-Ordner?" -> fs.count "Jarvis". Du HAST vollen Dateisystem-Zugriff.
+- fs.largest: den größten Ordner/die größte Datei finden. target = Pfad oder Laufwerk. "Welcher Ordner auf D: ist am größten?" -> fs.largest "D:\\".
+- fs.list: den direkten Inhalt eines Ordners zeigen. target = Pfad, Name oder "dein Repo". "Was ist direkt in deinem Repo?" -> fs.list "dein Repo".
+- fs.open: einen Ordner im Explorer öffnen. target = Pfad, Name oder "dein Repo".
+- Dateisystem-Fragen (Ordner, Dateien, Größe, "dein Repo", Laufwerk D:) sind IMMER fs.*-Werkzeuge — NIEMALS screen/capture/file.read. Behaupte nie fehlenden Zugriff.
 - web.read_summary: einen Artikel aus den letzten Suchergebnissen (oder eine URL) WIRKLICH lesen und zusammenfassen. target = Bezug oder URL.
 - clarify: WIRKLICH mehrdeutig - stelle GENAU EINE kurze Frage (Feld question).
 - capability.missing: eine echte Handlung, für die es hier kein Werkzeug gibt (Gerät steuern, Datei konvertieren, E-Mail senden ...). target = das Ziel.

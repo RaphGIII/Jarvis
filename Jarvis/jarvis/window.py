@@ -177,16 +177,20 @@ def window_command(
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
     ]
-    # ZEUS is an operating environment, not a browser page: the default shell
-    # is FULLSCREEN -- no Windows title bar, no visible frame.  The page draws
-    # its own thin top bar with minimize/hide controls.  ZEUS_WINDOW_MODE
-    # still overrides per device: kiosk, maximized, windowed (the old look).
-    mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower() or "fullscreen"
+    # ZEUS is an operating environment, not a browser page.  The default shell
+    # is a NATIVE borderless MAXIMIZED window: no Windows title bar, no visible
+    # frame -- but NOT the browser Fullscreen API.  --start-fullscreen made
+    # Edge show its "Vollbildmodus beenden" toast on every launch; the frame is
+    # instead removed by Win32 after the window appears (service.desktop
+    # _style_frameless).  The window is launched maximized so the borderless
+    # restyle has a full-size window to strip.  ZEUS_WINDOW_MODE overrides per
+    # device: fullscreen (old kiosk-style immersive), kiosk, windowed.
+    mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower() or "borderless"
     if mode == "kiosk":
         command.append("--kiosk")
     elif mode == "fullscreen":
         command.append("--start-fullscreen")
-    elif mode == "maximized":
+    else:  # borderless (default) and maximized both launch maximized
         command.append("--start-maximized")
     return command
 

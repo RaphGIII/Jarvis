@@ -928,7 +928,7 @@ class JarvisCore:
         if action.operation == "image.generate":
             self._answer_image_generate(action.target or text, scope)
             return
-        if action.operation in {"fs.count", "fs.search", "fs.info"}:
+        if action.operation in {"fs.count", "fs.largest", "fs.list", "fs.open", "fs.search", "fs.info"}:
             self._answer_fs_operation(action, text, scope)
             return
         if action.operation == "web.read_summary":
@@ -1189,23 +1189,45 @@ class JarvisCore:
         return {"ok": True, "path": str(p), "dirs": dirs, "files": files,
                 "count": dirs if what == "dirs" else files}
 
+    @property
+    def system_context(self) -> Any:
+        """Deterministic self-knowledge: repo/data/model roots ZEUS resolves by."""
+
+        if getattr(self, "_system_context", None) is None:
+            from service.system_context import SystemContext
+
+            self._system_context = SystemContext(state_root=Path(self.kernel.state_root))
+        return self._system_context
+
     def _answer_fs_operation(self, action: Any, text: str, scope: str) -> None:
         de = self.language.startswith("de")
         args = dict(action.arguments or {})
+        op = action.operation
         what = args.get("what") or "dirs"
         path = str(args.get("path") or "")
-        name = str(args.get("name") or action.target or "")
+        name = str(args.get("name") or "")
         drive = str(args.get("drive") or "")
-        self.state.set(JarvisState.WORKING, detail=f"zähle in {path or name}", scope=scope)
-        if not path:
-            # an alias the owner taught wins outright
+        self_ref = bool(args.get("self_ref"))
+        self.state.set(JarvisState.WORKING, detail=f"Dateisystem: {op}", scope=scope)
+
+        # 1) a "dein Repo / deine Modelle" phrase resolves to a real path directly
+        if not path and self_ref:
+            key, resolved = self.system_context.resolve_self_reference(text)
+            if resolved:
+                path = resolved
+                self.emit(EventType.TOOL, {"summary": f"self-reference {key} -> {resolved}", "source": "fs"}, scope=scope)
+
+        # 2) an owner-taught alias wins for a named folder
+        if not path and name:
             try:
                 alias = self.aliases.get(name)
             except Exception:  # noqa: BLE001
                 alias = None
             if alias and alias.get("kind") == "folder":
                 path = str(alias.get("value"))
-        if not path:
+
+        # 3) resolve a bare name against the real filesystem (search + clarify)
+        if not path and name:
             candidates = self._fs_candidates(name, drive=drive)
             self.emit(EventType.TOOL, {"summary": f"fs resolve „{name}“: {len(candidates)} Kandidat(en)",
                                        "candidates": candidates, "source": "fs"}, scope=scope)
@@ -1216,14 +1238,38 @@ class JarvisCore:
                 self._pending_open = {"name": name, "text": text}
                 return
             if len(candidates) > 1:
-                # several plausible folders: ONE precise question, then run
                 self._pending_fs = {"action": action, "candidates": candidates, "text": text}
-                listing = " oder ".join(f"„{c}“" for c in candidates[:3])
-                self._deliver((f"Meinst du {listing}?" if de else f"Do you mean {listing}?"),
+                listing = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(candidates[:5]))
+                self._deliver((f"Ich finde {len(candidates)} passende Ordner:\n{listing}\nWelchen meinst du?" if de
+                               else f"I find {len(candidates)} matching folders:\n{listing}\nWhich one?"),
                               scope=scope, backend="fs", final_state=JarvisState.WAITING,
                               context_text=f"[fs disambiguation among {len(candidates)}]")
                 return
             path = candidates[0]
+
+        # 4) a drive root with no name ("größter Ordner auf D:")
+        if not path and drive:
+            path = drive
+        if not path:
+            self._deliver(("Welchen Ordner meinst du? Nenn mir einen Pfad, einen Namen oder „dein Repo“." if de
+                           else "Which folder? Give me a path, a name, or say “your repo”."),
+                          scope=scope, backend="fs", final_state=JarvisState.WAITING)
+            return
+
+        if op == "fs.open":
+            if self._open_path_target(path, name=name or Path(path).name, scope=scope):
+                return
+            self._deliver((f"{path} existiert nicht (mehr)." if de else f"{path} does not exist."),
+                          scope=scope, backend="fs", final_state=JarvisState.WAITING)
+            return
+        if op == "fs.largest":
+            self._answer_fs_largest(path, what, scope)
+            return
+        if op == "fs.list":
+            self._answer_fs_list(path, scope)
+            return
+
+        # fs.count
         result = self._fs_count(path, what)
         self.emit(EventType.TOOL, {"summary": f"fs.count {path}: {result}", "source": "fs"}, scope=scope)
         if not result.get("ok"):
@@ -1237,6 +1283,101 @@ class JarvisCore:
                        else f"“{result['path']}” has {result['count']} direct {label}."),
                       scope=scope, backend="fs",
                       context_text=f"[fs.count {result['path']}: {result['dirs']} dirs, {result['files']} files]")
+
+    def _answer_fs_list(self, path: str, scope: str) -> None:
+        de = self.language.startswith("de")
+        try:
+            entries = sorted(os.scandir(path), key=lambda e: (not e.is_dir(), e.name.lower()))
+        except OSError as exc:
+            self._deliver((f"Ich kann „{path}“ nicht lesen: {exc}" if de else f"I cannot read “{path}”: {exc}"),
+                          scope=scope, backend="fs", final_state=JarvisState.ERROR)
+            return
+        dirs = [e.name for e in entries if e.is_dir()]
+        files = [e.name for e in entries if e.is_file()]
+        lines = [(f"Direkt in „{path}“:" if de else f"Directly in “{path}”:")]
+        if dirs:
+            lines.append(("Ordner: " if de else "Folders: ") + ", ".join(dirs[:20]) + (" …" if len(dirs) > 20 else ""))
+        if files:
+            lines.append(("Dateien: " if de else "Files: ") + ", ".join(files[:20]) + (" …" if len(files) > 20 else ""))
+        if not dirs and not files:
+            lines.append("(leer)" if de else "(empty)")
+        self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": "files", "params": {"path": path}, "text": ""}, scope=scope)
+        self._deliver("\n".join(lines), scope=scope, backend="fs",
+                      context_text=f"[fs.list {path}: {len(dirs)} dirs, {len(files)} files]")
+
+    def _answer_fs_largest(self, path: str, what: str, scope: str) -> None:
+        """The largest direct child of a folder — recursive sizing runs as a job."""
+
+        de = self.language.startswith("de")
+        try:
+            children = [e for e in os.scandir(path) if (e.is_dir() if what == "dirs" else e.is_file())]
+        except OSError as exc:
+            self._deliver((f"Ich kann „{path}“ nicht lesen: {exc}" if de else f"I cannot read “{path}”: {exc}"),
+                          scope=scope, backend="fs", final_state=JarvisState.ERROR)
+            return
+        if not children:
+            self._deliver((f"In „{path}“ liegen keine {'Ordner' if what == 'dirs' else 'Dateien'}." if de
+                           else f"“{path}” has no {'folders' if what == 'dirs' else 'files'}."),
+                          scope=scope, backend="fs")
+            return
+        job = self.jobs.create(f"Größe berechnen: {path}", kind="index", scope=scope)
+        self._deliver((f"Bin dran — ich rechne die Größe der {len(children)} Einträge in „{path}“ aus. Bei vielen Dateien dauert das einen Moment." if de
+                       else f"On it — measuring the {len(children)} entries in “{path}”. This can take a moment."),
+                      scope=scope, backend="fs", final_state=JarvisState.WORKING)
+
+        def work() -> None:
+            def dir_size(root: str) -> int:
+                total = 0
+                stack = [root]
+                seen = 0
+                while stack:
+                    if self.jobs.cancelled(job.job_id):
+                        return total
+                    cur = stack.pop()
+                    try:
+                        with os.scandir(cur) as it:
+                            for e in it:
+                                try:
+                                    if e.is_symlink():
+                                        continue
+                                    if e.is_dir(follow_symlinks=False):
+                                        stack.append(e.path)
+                                    else:
+                                        total += e.stat(follow_symlinks=False).st_size
+                                except OSError:
+                                    continue
+                    except OSError:
+                        continue
+                    seen += 1
+                    if seen % 200 == 0:
+                        self.jobs.phase(job.job_id, f"gemessen: {seen} Ordner", progress=None)
+                return total
+            sizes = []
+            for i, e in enumerate(children):
+                if self.jobs.cancelled(job.job_id):
+                    self.jobs.fail(job.job_id, "abgebrochen")
+                    return
+                self.jobs.phase(job.job_id, f"{e.name}", progress=(i + 1) / max(1, len(children)))
+                try:
+                    size = dir_size(e.path) if what == "dirs" else e.stat().st_size
+                except OSError:
+                    size = 0
+                sizes.append((e.name, e.path, size))
+            sizes.sort(key=lambda t: t[2], reverse=True)
+            self.jobs.complete(job.job_id, {"top": [{"name": n, "bytes": s} for n, _p, s in sizes[:5]]})
+            top = sizes[0]
+            gib = top[2] / (1 << 30)
+            unit = f"{gib:.1f} GB" if gib >= 1 else f"{top[2] / (1 << 20):.0f} MB"
+            rest = ", ".join(f"{n} ({(s / (1 << 30)):.1f} GB)" if s >= (1 << 30) else f"{n} ({(s / (1 << 20)):.0f} MB)"
+                             for n, _p, s in sizes[1:4])
+            kind = ("Ordner" if what == "dirs" else "Datei") if de else ("folder" if what == "dirs" else "file")
+            self.emit(EventType.TOOL, {"summary": f"fs.largest {path}: {top[0]} = {unit}", "source": "fs"}, scope=scope)
+            self._deliver((f"Der größte direkte {kind} in „{path}“ ist „{top[0]}“ mit {unit}." + (f"\nDahinter: {rest}." if rest else "") if de
+                           else f"The largest {kind} in “{path}” is “{top[0]}” at {unit}." + (f"\nNext: {rest}." if rest else "")),
+                          scope=scope, backend="fs",
+                          context_text=f"[fs.largest {path}: {top[0]} {unit}]")
+
+        threading.Thread(target=work, daemon=True, name=f"fs-largest-{job.job_id[-6:]}").start()
 
     def _resume_fs(self, text: str, scope: str) -> bool:
         """The owner picked one of the offered folders (by name, path or number)."""
@@ -1440,6 +1581,25 @@ class JarvisCore:
                               scope=scope, backend="semantic", final_state=JarvisState.WAITING,
                               context_text=f"[ungrounded semantic target {goal.target!r} for {op}]")
                 return True
+        if op in {"fs.count", "fs.largest", "fs.list", "fs.open"}:
+            # prefer the deterministic parser's rich arguments; fall back to the
+            # planner's target, resolved the same way (path / name / self-ref)
+            from service.intents import parse_fs_operation
+
+            parsed = parse_fs_operation(text)
+            if parsed is not None and parsed.operation == op:
+                self._answer_fs_operation(parsed, text, scope)
+                return True
+            tgt = goal.target or ""
+            self_ref = bool(re.search(r"\b(dein|deine|your|own)\b", tgt, re.I)) or bool(re.search(r"\b(dein|deine|your|own)\b", text, re.I))
+            is_path = bool(re.match(r"^[A-Za-z]:[\\/]", tgt))
+            args = {"what": "files" if re.search(r"\bdatei|file\b", text, re.I) else "dirs",
+                    "path": tgt if is_path else "", "name": "" if (is_path or self_ref) else tgt,
+                    "drive": (tgt if re.match(r"^[A-Za-z]:\\?$", tgt) else ""), "self_ref": self_ref}
+            intent = ActionIntent(op, verb="read", object_type="fs", target=tgt,
+                                  arguments=args, confidence=goal.confidence, reason=f"semantic: {goal.reason[:120]}")
+            self._answer_fs_operation(intent, text, scope)
+            return True
         if op in {"web.open", "web.search", "app.open", "file.open", "folder.open",
                   "system.open_view", "system.tell_time", "system.tell_date",
                   "calendar.create", "calendar.query", "image.generate",

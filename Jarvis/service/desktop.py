@@ -179,6 +179,45 @@ def focus(hwnd: int) -> bool:
     return True
 
 
+def style_frameless(hwnd: int) -> bool:
+    """Native borderless + maximized (to the work area), WITHOUT browser fullscreen.
+
+    Removes WS_CAPTION | WS_THICKFRAME so there is no Windows title bar and no
+    resize frame, then maximizes.  Because the window keeps WS_OVERLAPPED (not
+    WS_POPUP) it maximizes to the *work area* -- the taskbar stays -- and Edge
+    never enters its Fullscreen mode, so the "Vollbildmodus beenden" toast that
+    --start-fullscreen produced is gone.  The page draws its own top bar.
+    """
+
+    if sys.platform != "win32" or not hwnd:
+        return False
+    w = _win32()
+    if w is None:
+        return False
+    ctypes, wt, user32 = w
+    if not user32.IsWindow(hwnd):
+        return False
+    GWL_STYLE = -16
+    WS_CAPTION = 0x00C00000
+    WS_THICKFRAME = 0x00040000
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0020, 0x0002, 0x0001, 0x0004
+    try:
+        user32.GetWindowLongW.argtypes = [wt.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+        user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME))
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE first
+        user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE (to work area, since not WS_POPUP)
+        return True
+    except Exception:  # noqa: BLE001 - styling is cosmetic; never break the launch
+        return False
+
+
 def minimize_window(hwnd: int) -> bool:
     """Minimize to the taskbar -- works on fullscreen windows too."""
     if sys.platform != "win32" or not hwnd:
@@ -386,6 +425,12 @@ class DesktopWindow:
                     self.hwnd = found.hwnd
                     focus(found.hwnd)
                     self.identity = apply_identity(found.hwnd, icon=self.icon)
+            # native borderless + maximized, unless the owner chose an explicit
+            # immersive/windowed mode.  Idempotent, so focusing an already-styled
+            # window costs nothing.
+            mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower() or "borderless"
+            if self.hwnd and mode in {"borderless", "maximized"}:
+                style_frameless(self.hwnd)
             self.last_show_seconds = round(time.perf_counter() - started, 3)
             self.last_shown_at = time.time()
             self._ensure_single(keep=self.hwnd)

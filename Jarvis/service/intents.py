@@ -582,29 +582,101 @@ _FS_NAME = re.compile(r"\b(?:ordner|folder|verzeichnis)\s+[„\"']?(?P<name>[\w.
 _FS_DRIVE = re.compile(r"\b(?:festplatte|laufwerk|drive)?\s*(?P<drive>[A-Za-z])\s*[:/]", re.I)
 
 
-def parse_fs_operation(text: str) -> ActionIntent | None:
-    body = _VOCATIVE.sub("", (text or "").strip(), count=1)
-    m = _FS_COUNT.search(body)
-    if not m:
-        return None
-    what = fold(m.group("what"))
-    kind = "files" if what in {"dateien", "files"} else "dirs"
+#: "größter Ordner auf D:", "welcher Ordner frisst am meisten Platz", "größte Datei"
+_FS_LARGEST = re.compile(
+    r"\b(gr(?:oe|ö)(?:ss|ß)te[rns]?|biggest|largest)\b.{0,40}?\b(ordner|verzeichnis|folder|datei|file)\b"
+    r"|\b(ordner|verzeichnis|folder)\b.{0,40}?\b(gr(?:oe|ö)(?:ss|ß)te[rns]?|am\s+gr(?:oe|ö)(?:ss|ß)ten|biggest|largest)\b"
+    r"|\bam\s+meisten\s+(platz|speicher)\b|\bfrisst\b.{0,20}\bplatz\b|\bbelegt\b.{0,20}\b(?:am\s+meisten|platz)\b", re.I)
+#: "was ist in deinem Repo", "was liegt in X", "zeig mir den Inhalt von X", "was ist direkt drin"
+_FS_LIST = re.compile(
+    r"\bwas\s+(?:ist|liegt|steckt)\b.{0,40}?\b(in|unter|drin)\b|\binhalt\b.{0,20}\b(von|des|vom)\b"
+    r"|\bwas\s+ist\b.{0,20}\bdirekt\s+drin\b|\blist\w*\b.{0,20}\b(inhalt|ordner|verzeichnis)\b", re.I)
+#: a bare "... hat X" / "von X" / "unter X" folder name after a count/list cue
+_FS_TRAILING_NAME = re.compile(
+    r"\b(?:hat|von|unter|in|im|f(?:ue|ü)r|des|vom|zu)\s+(?:dem\s+|der\s+|das\s+|den\s+|meinem?\s+|deinem?\s+|einem?\s+)?"
+    r"(?:ordner\s+|verzeichnis\s+|projekt\s+)?(?P<name>[A-Za-z0-9._][\w.\-]{1,48})\b", re.I)
+_FS_NAME_STOP = {"platz", "speicher", "d", "c", "der", "die", "das", "dem", "den", "welt", "internet",
+                 "heute", "morgen", "einem", "einer", "deinem", "meinem", "raum", "namen", "er", "es", "sie",
+                 "groesste", "groesster", "groessten", "groesse", "welcher", "welche", "welches", "meisten",
+                 "biggest", "largest", "kleinste", "kleinster", "dein", "deine", "your", "own", "ordner",
+                 "verzeichnis", "verzeichnisse", "datei", "dateien", "direkt", "direkte", "direkter",
+                 "direkten", "liegen", "liegt", "meinem", "eigenes", "eigene", "eigenen"}
+
+
+def _clean_fs_name(cand: str) -> str:
+    cand = (cand or "").strip(" .!?")
+    if not cand or fold(cand) in _FS_NAME_STOP or re.fullmatch(r"[A-Za-z]:?\\?", cand):
+        return ""
+    return cand
+
+
+def _fs_targets(body: str) -> tuple[str, str, str]:
+    """(explicit path, folder name, drive) extracted from the request."""
+
     path = ""
     pm = _FS_PATH.search(body)
     if pm:
-        path = pm.group("path").rstrip(".")
-    name = ""
-    nm = _FS_NAME.search(body)
-    if nm:
-        name = (nm.group("name") or nm.group("name2") or "").strip()
+        path = pm.group("path").rstrip(" .")
     drive = ""
     dm = _FS_DRIVE.search(body)
     if dm:
         drive = dm.group("drive").upper() + ":\\"
-    if not path and not name:
+    name = ""
+    nm = _FS_NAME.search(body)
+    if nm:
+        name = _clean_fs_name(nm.group("name") or nm.group("name2") or "")
+    if not name:
+        for tm in _FS_TRAILING_NAME.finditer(body):
+            cand = _clean_fs_name(tm.group("name"))
+            if cand:
+                name = cand
+                break
+    return path, name, drive
+
+
+def parse_fs_operation(text: str) -> ActionIntent | None:
+    body = _VOCATIVE.sub("", (text or "").strip(), count=1)
+
+    # a self-reference ("dein Repo", "deine Modelle") makes this filesystem work
+    # even without an explicit path or the word "Ordner"
+    self_ref = bool(re.search(r"\b(dein|deine[nmrs]?|your|own)\b.{0,20}\b(repo\w*|quell\s*code|quellcode|source|daten\w*|modelle?|models?|bilder|bibliothek|wissen)\b", body, re.I))
+
+    largest = bool(_FS_LARGEST.search(body))
+    counting = bool(_FS_COUNT.search(body))
+    listing = bool(_FS_LIST.search(body)) or (self_ref and re.search(r"\b(was|zeig\w*|inhalt|drin|direkt)\b", body, re.I))
+    opening = self_ref and bool(re.search(r"\b(oeffne\w*|öffne\w*|open|bring\s+mich\s+zu|geh\s+(?:zu|in)|zeig\s+mir|go\s+to|take\s+me\s+to)\b", body, re.I))
+
+    if not (largest or counting or listing or opening or (self_ref and re.search(r"\b(unterordner|ordner|verzeichnis\w*|dateien)\b", body, re.I))):
         return None
-    return ActionIntent("fs.count", verb="read", object_type="fs", target=path or name,
-                        arguments={"what": kind, "path": path, "name": name, "drive": drive},
+
+    path, name, drive = _fs_targets(body)
+
+    if largest:
+        which = "files" if re.search(r"\bdatei|file\b", body, re.I) else "dirs"
+        root = path or drive
+        return ActionIntent("fs.largest", verb="read", object_type="fs", target=root or "D:\\",
+                            arguments={"what": which, "path": path, "drive": drive or "D:\\", "name": name},
+                            confidence=0.85, success_criteria=["the real largest entry of a real folder is named with its size"],
+                            reason="asks for the largest filesystem entry")
+    if opening and not counting and not listing:
+        return ActionIntent("fs.open", verb="open", object_type="fs", target=path or name,
+                            arguments={"path": path, "name": name, "self_ref": self_ref},
+                            confidence=0.85, success_criteria=["Explorer opens the real folder"],
+                            reason="asks to open a folder in Explorer")
+    if listing and not counting:
+        return ActionIntent("fs.list", verb="read", object_type="fs", target=path or name,
+                            arguments={"path": path, "name": name, "drive": drive, "self_ref": self_ref},
+                            confidence=0.8, success_criteria=["the real direct entries of a real folder are listed"],
+                            reason="asks what is directly inside a folder")
+    # counting (default when 'wie viele … Ordner/Dateien')
+    m = _FS_COUNT.search(body)
+    what = fold(m.group("what")) if m else "unterordner"
+    kind = "files" if what in {"dateien", "files"} else "dirs"
+    if not path and not name and not (self_ref and drive is None):
+        if not self_ref:
+            return None
+    return ActionIntent("fs.count", verb="read", object_type="fs", target=path or name or "self",
+                        arguments={"what": kind, "path": path, "name": name, "drive": drive, "self_ref": self_ref},
                         confidence=0.85, success_criteria=["the real count of a real folder is stated"],
                         reason="asks to count filesystem entries")
 
