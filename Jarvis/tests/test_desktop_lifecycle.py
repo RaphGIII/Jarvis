@@ -166,7 +166,7 @@ class FakeCore:
 def test_full_quit_ends_window_speech_and_asks_for_shutdown(tmp_path, win, monkeypatch):
     core = FakeCore(tmp_path)
     life = Lifecycle(core)
-    monkeypatch.setattr(life, "save_conversation", lambda reason: None)
+    monkeypatch.setattr(life, "save_conversation", lambda reason, **kwargs: None)
     life.desktop = _window(tmp_path, win)
     life.desktop.show()
     import service.processes as processes

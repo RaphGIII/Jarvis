@@ -1,92 +1,169 @@
-"""image.generate: local, free, offline once the model is cached.
+"""image.generate: local, free, and now FAST after the first image.
 
-The heavy lifting happens in a SEPARATE process from a dedicated venv
-(D:\\JarvisLocal\\venv-image, torch cu118 + diffusers, SD-Turbo fp16): one
-generation = one process = the VRAM is provably free afterwards.  The chat
-model (FAST_LOCAL via Ollama) shares the single GTX 1070; when free VRAM is
-too tight for the ~2.6 GB the pipeline needs, the generator asks Ollama to
-unload the chat model first and says so — the next chat turn pays one model
-reload instead of the interface freezing mid-generation (§ resource rule:
-never evict uncontrolled, never freeze, always say what is happening).
+v1 spawned a one-shot process per image and paid 200–370 s of model load per
+generation — the owner watched nothing happen for minutes.  v2 keeps a
+PERSISTENT worker (imagegen/worker.py in the image venv): the model loads
+once into CPU RAM, each job moves it to the GPU only for the generation
+window (~15–25 s total), then the VRAM is freed again.  Phases stream back
+so the Job system can show "Modell lädt / Generiere / Speichere" honestly.
 
-Output lands in the owner's library (D:\\ZEUS_Wissen\\Bilder), so the Wissen
-galaxy shows every generated image as a real file.
+Naming and destination honour the owner's creation defaults
+(service/defaults.py) unless the request names a path explicitly.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 DEFAULT_PYTHON = Path(os.environ.get("ZEUS_IMAGE_PYTHON", r"D:\JarvisLocal\venv-image\Scripts\python.exe"))
 DEFAULT_OUTPUT_DIR = Path(os.environ.get("ZEUS_IMAGE_DIR", r"D:\ZEUS_Wissen\Bilder"))
-#: measured live: fp16 SD-Turbo peaked at 3359 MiB on the first 512x512 run.
+#: measured live: fp16 SD-Turbo peaked at 3575 MiB on a 640x512 run.
 NEEDED_VRAM_MIB = 3800
-TIMEOUT_SECONDS = 900.0
+FIRST_LOAD_TIMEOUT = 900.0
+PHASE_TIMEOUT = 600.0
+
+PHASE_LABELS = {"loading_model": "Modell lädt", "to_gpu": "Modell → GPU", "generating": "Generiere",
+                "saving": "Speichere", "to_cpu": "GPU wird freigegeben"}
 
 
 def _slug(prompt: str) -> str:
-    folded = re.sub(r"[^a-z0-9]+", "-", prompt.lower()).strip("-")
+    folded = re.sub(r"[^a-z0-9äöüß]+", "-", prompt.lower()).strip("-")
     return (folded[:48] or "bild").rstrip("-")
 
 
 class ImageGenerator:
+    """Client for the persistent worker; one generation at a time."""
+
     def __init__(self, *, python: Path | None = None, output_dir: Path | None = None,
                  repo_root: Path | None = None) -> None:
         self.python = Path(python or DEFAULT_PYTHON)
-        self.output_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
+        self.default_output_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
         self.repo_root = Path(repo_root or Path(__file__).resolve().parent.parent)
         self.busy = False
+        self.model_loaded = False
+        self._proc: subprocess.Popen | None = None
+        self._lines: "queue.Queue[str]" = queue.Queue()
+        self._lock = threading.Lock()
+
+    # -- worker lifecycle ------------------------------------------------
 
     def available(self) -> dict[str, Any]:
         if not self.python.is_file():
             return {"ok": False, "error": f"kein Bild-Venv unter {self.python} — Installation fehlt"}
-        return {"ok": True, "python": str(self.python), "output_dir": str(self.output_dir)}
+        return {"ok": True, "python": str(self.python), "output_dir": str(self.default_output_dir),
+                "worker": bool(self._proc and self._proc.poll() is None), "model_loaded": self.model_loaded}
+
+    def _reader(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout or ():
+            self._lines.put(line)
+
+    def _ensure_worker(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            return
+        self.model_loaded = False
+        self._lines = queue.Queue()
+        self._proc = subprocess.Popen(
+            [str(self.python), "-u", "-m", "imagegen.worker"],
+            cwd=str(self.repo_root), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        threading.Thread(target=self._reader, args=(self._proc,), daemon=True, name="image-worker-reader").start()
+
+    def stop_worker(self) -> None:
+        proc, self._proc = self._proc, None
+        self.model_loaded = False
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.stdin.write(json.dumps({"op": "quit"}) + "\n")
+                proc.stdin.flush()
+                proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                proc.kill()
+
+    # -- generation ------------------------------------------------------
+
+    def resolve_output(self, prompt: str, *, output_path: str = "",
+                       output_dir: str = "", name_template: str = "") -> Path:
+        if output_path:
+            return Path(output_path)
+        directory = Path(output_dir) if output_dir else self.default_output_dir
+        template = name_template or "{date}_{time}_{slug}"
+        name = (template.replace("{date}", time.strftime("%Y%m%d"))
+                        .replace("{time}", time.strftime("%H%M%S"))
+                        .replace("{slug}", _slug(prompt)))
+        if not name.lower().endswith(".png"):
+            name += ".png"
+        return directory / name
 
     def generate(self, prompt: str, *, negative: str = "", size: str = "512x512",
-                 steps: int = 2, seed: int = -1, output_path: str = "") -> dict[str, Any]:
-        """Run one real generation; the returned dict mirrors the worker's JSON."""
-
+                 steps: int = 2, seed: int = -1, output_path: str = "",
+                 output_dir: str = "", name_template: str = "",
+                 on_phase: Callable[[str, float], None] | None = None,
+                 cancel_check: Callable[[], bool] | None = None) -> dict[str, Any]:
         prompt = str(prompt or "").strip()
         if not prompt:
             return {"ok": False, "error": "leerer Prompt"}
         ready = self.available()
         if not ready.get("ok"):
             return ready
-        if self.busy:
-            return {"ok": False, "error": "es läuft bereits eine Bildgenerierung"}
-        out = Path(output_path) if output_path else self.output_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_{_slug(prompt)}.png"
-        command = [str(self.python), "-m", "imagegen.generate", "--prompt", prompt,
-                   "--out", str(out), "--size", size, "--steps", str(int(steps)), "--seed", str(int(seed))]
-        if negative:
-            command += ["--negative", negative]
-        self.busy = True
-        started = time.perf_counter()
-        try:
-            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                       cwd=str(self.repo_root), timeout=TIMEOUT_SECONDS,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": f"Bildgenerierung hat {TIMEOUT_SECONDS:.0f}s überschritten"}
-        except OSError as exc:
-            return {"ok": False, "error": str(exc)}
-        finally:
-            self.busy = False
-        last_line = (completed.stdout or "").strip().splitlines()[-1:] or [""]
-        try:
-            result = json.loads(last_line[0])
-        except ValueError:
-            result = {"ok": False, "error": (completed.stderr or completed.stdout or "keine Ausgabe")[-400:]}
-        result.setdefault("total_seconds", round(time.perf_counter() - started, 1))
-        # verification is the file, not the exit code
-        if result.get("ok") and not (out.is_file() and out.stat().st_size > 0):
-            result = {"ok": False, "error": "der Worker meldete Erfolg, aber die Datei fehlt", "file": str(out)}
-        return result
+        with self._lock:
+            if cancel_check and cancel_check():
+                return {"ok": False, "error": "abgebrochen, bevor es losging", "cancelled": True}
+            self.busy = True
+            started = time.monotonic()
+            try:
+                self._ensure_worker()
+                out = self.resolve_output(prompt, output_path=output_path,
+                                          output_dir=output_dir, name_template=name_template)
+                rid = f"img{int(time.time())}"
+                request = {"op": "generate", "id": rid, "prompt": prompt, "negative": negative,
+                           "size": size, "steps": int(steps), "seed": int(seed), "out": str(out)}
+                self._proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+                self._proc.stdin.flush()
+                deadline = time.monotonic() + (PHASE_TIMEOUT if self.model_loaded else FIRST_LOAD_TIMEOUT)
+                while time.monotonic() < deadline:
+                    try:
+                        line = self._lines.get(timeout=2.0)
+                    except queue.Empty:
+                        if self._proc.poll() is not None:
+                            return {"ok": False, "error": "der Bild-Worker ist abgestürzt", "worker_died": True}
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    kind = event.get("event")
+                    if kind == "phase" and event.get("id") == rid:
+                        phase = str(event.get("phase", ""))
+                        if phase != "loading_model":
+                            self.model_loaded = True
+                        if on_phase:
+                            try:
+                                on_phase(phase, float(event.get("at", 0.0)))
+                            except Exception:  # noqa: BLE001
+                                pass
+                        deadline = time.monotonic() + PHASE_TIMEOUT
+                    elif kind == "result" and event.get("id") == rid:
+                        event["total_seconds"] = round(time.monotonic() - started, 1)
+                        self.model_loaded = self.model_loaded or bool(event.get("ok"))
+                        # verification is the file, not the exit line
+                        if event.get("ok") and not (out.is_file() and out.stat().st_size > 0):
+                            return {"ok": False, "error": "der Worker meldete Erfolg, aber die Datei fehlt", "file": str(out)}
+                        return event
+                return {"ok": False, "error": f"der Bild-Worker hat nicht innerhalb des Zeitfensters geantwortet"}
+            except OSError as exc:
+                return {"ok": False, "error": str(exc)}
+            finally:
+                self.busy = False
 
 
 #: "Erzeuge mir ein Bild von einem Adler über den Alpen." → the prompt part.
@@ -103,7 +180,6 @@ def parse_image_request(text: str) -> str | None:
     m = _PROMPT_PART.search(body)
     if m:
         return m.group("p").strip()
-    # no "von …": strip the command words, keep the rest as prompt
     stripped = re.sub(r"\b(zeus|jarvis|erzeug\w*|generier\w*|male?|zeichne\w*|erstell\w*|mach\w*|mir|mal|bitte|ein(?:e[ns]?)?|neues?|bild|foto|grafik|image|picture|von|create|generate|draw|paint|a|an|of)\b", " ", body, flags=re.I)
     stripped = re.sub(r"\s+", " ", stripped).strip(" .,!?-")
     return stripped or "ein stimmungsvolles Bild"

@@ -508,6 +508,8 @@ class JarvisCore:
             return
         if self._resume_open_target(text, scope):
             return
+        if self._resume_fs(text, scope):
+            return
         if self._resume_calendar(text, scope):
             return
         if self._handle_alias_teach(text, scope):
@@ -904,6 +906,9 @@ class JarvisCore:
                               context_text="[web.search failed; said so instead of guessing]")
                 return
             rows = result.get("results", [])
+            # the follow-up context: "fass mir den Inhalt zusammen" now knows
+            # exactly which results "der Inhalt" refers to
+            self._web_context = {"query": action.target, "results": rows, "at": time.time()}
             lines = [f"• {r['title']} — {r['snippet'][:140]}".rstrip(" —") for r in rows[:4]]
             sources = ", ".join(r["url"].split("/")[2] for r in rows[:4])
             answer = ((f"Dazu habe ich im Internet gefunden:\n" + "\n".join(lines) + f"\n\nQuellen: {sources}") if de
@@ -921,6 +926,12 @@ class JarvisCore:
         if action.operation == "image.generate":
             self._answer_image_generate(action.target or text, scope)
             return
+        if action.operation in {"fs.count", "fs.search", "fs.info"}:
+            self._answer_fs_operation(action, text, scope)
+            return
+        if action.operation == "web.read_summary":
+            self._answer_web_summary(action, text, scope)
+            return
         if action.operation == "calendar.create":
             self._answer_calendar_create(text or action.target, scope)
             return
@@ -928,6 +939,228 @@ class JarvisCore:
             self._answer_calendar_query(text or action.target, scope)
             return
         self._deliver("Das kann ich nicht steuern." if de else "I cannot control that.", scope=scope, backend="ui")
+
+    # ------------------------------------------------------------------
+    # Web reading: the follow-up knows what "davon" means
+    # ------------------------------------------------------------------
+
+    def _answer_web_summary(self, action: Any, text: str, scope: str) -> None:
+        """Fetch the referenced article FOR REAL and summarize it with a source."""
+
+        de = self.language.startswith("de")
+        m = re.search(r"https?://\S+", text)
+        explicit_url = m.group(0).rstrip(".,)") if m else ""
+        ctx = getattr(self, "_web_context", None)
+        candidates: list[dict[str, Any]] = []
+        if explicit_url:
+            candidates = [{"url": explicit_url, "title": explicit_url}]
+        elif ctx and ctx.get("results"):
+            from service.aliases import fold
+
+            probe = fold(text)
+            rows = list(ctx["results"])
+            named = [r for r in rows if fold(str(r.get("url", "")).split("/")[2] if "://" in str(r.get("url", "")) else "") and
+                     fold(str(r.get("url", "")).split("/")[2].replace("www.", "").split(".")[0]) in probe]
+            candidates = (named or rows)[:4]
+        if not candidates:
+            self._deliver(("Worauf beziehst du dich? Ich habe gerade keine Suchergebnisse oder Artikel offen — such erst etwas, oder gib mir einen Link." if de
+                           else "What are you referring to? I have no open search results — search first, or give me a link."),
+                          scope=scope, backend="web", final_state=JarvisState.WAITING,
+                          context_text="[web summary asked without any web context]")
+            return
+
+        job = self.jobs.create(f"Artikel zusammenfassen: {candidates[0].get('title', '')[:50]}", kind="web", scope=scope)
+        self._deliver(("Bin dran — ich lese den Artikel und fasse ihn zusammen." if de
+                       else "On it — reading the article and summarizing."),
+                      scope=scope, backend="web", final_state=JarvisState.RESEARCHING,
+                      context_text=f"[web summary job {job.job_id}]")
+
+        def work() -> None:
+            from brain.tiers import ModelTier
+            from service.webread import fetch_readable, summarize_with_retry
+
+            article = None
+            tried: list[str] = []
+            for candidate in candidates[:3]:
+                url = str(candidate.get("url", ""))
+                self.jobs.phase(job.job_id, f"Lese {url.split('/')[2] if '://' in url else url}")
+                self.state.set(JarvisState.RESEARCHING, detail=f"lese {url[:80]}", scope=scope)
+                fetched = fetch_readable(url)
+                self.emit(EventType.TOOL, {"summary": f"web.read {url}: {'ok, ' + str(len(fetched.get('text', ''))) + ' Zeichen' if fetched.get('ok') else fetched.get('error', '')[:120]}",
+                                           "source": "webread"}, scope=scope)
+                if fetched.get("ok"):
+                    article = fetched
+                    break
+                tried.append(f"{url}: {fetched.get('error', '')[:80]}")
+            if article is None:
+                self.jobs.fail(job.job_id, "keine Quelle lesbar", detail="; ".join(tried)[:280])
+                self._deliver(("Keine der Quellen ließ sich lesen (blockiert oder leer). Details stehen in Activity." if de
+                               else "None of the sources could be read. Details are in Activity."),
+                              scope=scope, backend="web", final_state=JarvisState.ERROR)
+                return
+            self.jobs.phase(job.job_id, "Fasse zusammen", progress=0.7)
+            self.state.set(JarvisState.THINKING, detail="fasse den Artikel zusammen", scope=scope)
+            try:
+                provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+            except Exception as exc:  # noqa: BLE001
+                self.jobs.fail(job.job_id, f"kein Modell: {exc}")
+                self._deliver("Die lokale KI ist gerade nicht erreichbar — gleich nochmal versuchen.", scope=scope,
+                              backend="web", final_state=JarvisState.ERROR)
+                return
+            summary = summarize_with_retry(provider, title=article.get("title", ""), text=article.get("text", ""))
+            if not summary.get("ok"):
+                self.jobs.fail(job.job_id, summary.get("error", "Zusammenfassung fehlgeschlagen"))
+                self._deliver(("Die Zusammenfassung ist auch nach mehreren Anläufen fehlgeschlagen — die lokale KI antwortet nicht. Details in Activity." if de
+                               else "Summarization failed after several attempts. Details in Activity."),
+                              scope=scope, backend="web", final_state=JarvisState.ERROR)
+                return
+            self._web_context = {**(getattr(self, "_web_context", None) or {}),
+                                 "last_article": {"url": article["url"], "title": article.get("title", "")}}
+            self.jobs.complete(job.job_id, {"url": article["url"], "title": article.get("title", ""),
+                                            "context": summary.get("context")})
+            answer = summary["summary"] + f"\n\nQuelle: {article.get('title') or article['url']} — {article['url']}"
+            self._deliver(answer, scope=scope, backend="webread",
+                          context_text=f"[summarized {article['url']} ({summary.get('context')} context)]")
+
+        threading.Thread(target=work, daemon=True, name=f"web-summary-{job.job_id[-6:]}").start()
+
+    # ------------------------------------------------------------------
+    # Filesystem intelligence: count/find/inspect are TOOL work, never prose
+    # ------------------------------------------------------------------
+
+    _FS_SEARCH_ROOTS = (r"D:\\", r"C:\\Users\\")
+
+    def _fs_candidates(self, name: str, *, drive: str = "", limit: int = 6) -> list[str]:
+        """Real directories whose name contains ``name`` — bounded, two levels."""
+
+        from service.aliases import fold
+
+        wanted = fold(name).replace("-", " ").strip()
+        if not wanted:
+            return []
+        roots = [drive] if drive else [r.replace("\\\\", "\\") for r in self._FS_SEARCH_ROOTS]
+        hits: list[str] = []
+        for root in roots:
+            try:
+                level1 = [e for e in os.scandir(root) if e.is_dir()]
+            except OSError:
+                continue
+            for entry in level1:
+                if wanted in fold(entry.name).replace("-", " "):
+                    hits.append(entry.path)
+            if len(hits) >= limit:
+                break
+            for entry in level1[:80]:
+                if len(hits) >= limit:
+                    break
+                try:
+                    for sub in os.scandir(entry.path):
+                        if sub.is_dir() and wanted in fold(sub.name).replace("-", " "):
+                            hits.append(sub.path)
+                            if len(hits) >= limit:
+                                break
+                except OSError:
+                    continue
+        # exact folds first, shortest paths first: D:\Jarvis beats deep matches
+        hits.sort(key=lambda p: (fold(Path(p).name).replace("-", " ") != wanted, len(p)))
+        return hits[:limit]
+
+    def _fs_count(self, path: str, what: str) -> dict[str, Any]:
+        p = Path(path)
+        if not p.is_dir():
+            return {"ok": False, "error": f"{path} ist kein Ordner"}
+        dirs = files = 0
+        try:
+            for entry in os.scandir(p):
+                if entry.is_dir():
+                    dirs += 1
+                else:
+                    files += 1
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": str(p), "dirs": dirs, "files": files,
+                "count": dirs if what == "dirs" else files}
+
+    def _answer_fs_operation(self, action: Any, text: str, scope: str) -> None:
+        de = self.language.startswith("de")
+        args = dict(action.arguments or {})
+        what = args.get("what") or "dirs"
+        path = str(args.get("path") or "")
+        name = str(args.get("name") or action.target or "")
+        drive = str(args.get("drive") or "")
+        self.state.set(JarvisState.WORKING, detail=f"zähle in {path or name}", scope=scope)
+        if not path:
+            # an alias the owner taught wins outright
+            try:
+                alias = self.aliases.get(name)
+            except Exception:  # noqa: BLE001
+                alias = None
+            if alias and alias.get("kind") == "folder":
+                path = str(alias.get("value"))
+        if not path:
+            candidates = self._fs_candidates(name, drive=drive)
+            self.emit(EventType.TOOL, {"summary": f"fs resolve „{name}“: {len(candidates)} Kandidat(en)",
+                                       "candidates": candidates, "source": "fs"}, scope=scope)
+            if not candidates:
+                self._deliver((f"Ich finde keinen Ordner namens „{name}“" + (f" auf {drive}" if drive else "") + ". Wo liegt er?" if de
+                               else f"I cannot find a folder called “{name}”. Where is it?"),
+                              scope=scope, backend="fs", final_state=JarvisState.WAITING)
+                self._pending_open = {"name": name, "text": text}
+                return
+            if len(candidates) > 1:
+                # several plausible folders: ONE precise question, then run
+                self._pending_fs = {"action": action, "candidates": candidates, "text": text}
+                listing = " oder ".join(f"„{c}“" for c in candidates[:3])
+                self._deliver((f"Meinst du {listing}?" if de else f"Do you mean {listing}?"),
+                              scope=scope, backend="fs", final_state=JarvisState.WAITING,
+                              context_text=f"[fs disambiguation among {len(candidates)}]")
+                return
+            path = candidates[0]
+        result = self._fs_count(path, what)
+        self.emit(EventType.TOOL, {"summary": f"fs.count {path}: {result}", "source": "fs"}, scope=scope)
+        if not result.get("ok"):
+            self._deliver((f"Das konnte ich nicht zählen: {result.get('error')}" if de
+                           else f"I could not count that: {result.get('error')}"),
+                          scope=scope, backend="fs", final_state=JarvisState.ERROR)
+            return
+        label = ("Unterordner" if what == "dirs" else "Dateien") if de else ("subfolders" if what == "dirs" else "files")
+        other = (f" (und {result['files']} Dateien)" if what == "dirs" else f" (und {result['dirs']} Ordner)") if de else ""
+        self._deliver((f"„{result['path']}“ hat {result['count']} direkte {label}{other}." if de
+                       else f"“{result['path']}” has {result['count']} direct {label}."),
+                      scope=scope, backend="fs",
+                      context_text=f"[fs.count {result['path']}: {result['dirs']} dirs, {result['files']} files]")
+
+    def _resume_fs(self, text: str, scope: str) -> bool:
+        """The owner picked one of the offered folders (by name, path or number)."""
+
+        pending = getattr(self, "_pending_fs", None)
+        if not pending:
+            return False
+        self._pending_fs = None
+        from service.aliases import fold
+
+        reply = fold(text).strip(" .!?")
+        candidates = pending.get("candidates") or []
+        chosen = ""
+        m = re.search(r"\b([1-9])\b", reply)
+        if m and int(m.group(1)) <= len(candidates):
+            chosen = candidates[int(m.group(1)) - 1]
+        if not chosen:
+            for c in candidates:
+                if fold(c) == reply or fold(Path(c).name) in reply or reply in fold(c):
+                    chosen = c
+                    break
+        if not chosen:
+            pm = re.search(r"[A-Za-z]:[\\/][^\s\"']*", text)
+            if pm:
+                chosen = pm.group(0)
+        if not chosen:
+            return False  # not an answer to the question; handle normally
+        action = pending["action"]
+        action.arguments = dict(action.arguments or {})
+        action.arguments["path"] = chosen
+        self._answer_fs_operation(action, pending.get("text", text), scope)
+        return True
 
     # ------------------------------------------------------------------
     # Calendar
@@ -1101,7 +1334,8 @@ class JarvisCore:
                 return True
         if op in {"web.open", "web.search", "app.open", "file.open", "folder.open",
                   "system.open_view", "system.tell_time", "system.tell_date",
-                  "calendar.create", "calendar.query", "image.generate"}:
+                  "calendar.create", "calendar.query", "image.generate",
+                  "fs.count", "web.read_summary"}:
             intent = ActionIntent(op, verb="open" if op.endswith(".open") else "read",
                                   object_type=op.split(".", 1)[0], target=goal.target,
                                   confidence=goal.confidence,
@@ -1549,6 +1783,12 @@ class JarvisCore:
                     raise RuntimeError(report["error"])
                 sources = report.get("sources", [])
                 findings = report.get("findings", [])
+                if sources:
+                    # research results are web context too: "fass den
+                    # wichtigsten Artikel davon zusammen" must know "davon"
+                    self._web_context = {"query": text, "at": time.time(),
+                                         "results": [{"title": str(s.get("title") or ""), "url": str(s.get("url") or ""), "snippet": ""}
+                                                     for s in sources if s.get("url")]}
                 for s in sources[:8]:
                     self.missions.add_evidence(mission, external(str(s.get("title") or s.get("url", "")), url=str(s.get("url", "")),
                                                                  fetched_at=str(s.get("fetched_at", "")), authority=int(s.get("authority", 0) or 0)))
@@ -2466,6 +2706,8 @@ class JarvisCore:
         from brain.tiers import ModelTier
         from service.actions import compose
 
+        if self._hold_for_gpu(text, scope):
+            return
         self.state.set(JarvisState.WORKING, detail=classification.reason[:120], scope=scope)
         # Owner corrections are retrieved BEFORE the model interprets the
         # request, and their overrides are applied AFTER it: the owner's word
@@ -2666,6 +2908,8 @@ class JarvisCore:
     def _answer_conversationally(self, text: str, scope: str) -> None:
         from brain.tiers import ModelTier
 
+        if self._hold_for_gpu(text, scope):
+            return
         quick = self._small_talk(text)
         if quick:
             self.state.set(JarvisState.THINKING, detail=text[:120], scope=scope)
@@ -2752,8 +2996,34 @@ class JarvisCore:
                 for _ in tee():
                     pass
         except Exception as exc:
-            self.state.set(JarvisState.ERROR, detail=str(exc)[:200])
+            # bounded agentic recovery (§ the live "ProviderError timed out"):
+            # one retry with a REDUCED prompt before admitting the failure —
+            # and the admission is a human sentence, never a stack line
             self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
+            de = self.language.startswith("de")
+            try:
+                from brain.providers import ProviderError
+
+                recoverable = isinstance(exc, ProviderError)
+            except Exception:  # noqa: BLE001
+                recoverable = False
+            if recoverable and not collected:
+                try:
+                    self.state.set(JarvisState.THINKING, detail="zweiter Versuch (kürzerer Kontext)", scope=scope)
+                    time.sleep(1.5)
+                    provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                    short = provider.generate((f"Antworte kurz und sachlich auf Deutsch: {text}" if de
+                                               else f"Answer briefly: {text}"), max_tokens=300, temperature=0.4)
+                    if str(short).strip():
+                        self._deliver(str(short).strip(), scope=scope, backend="fast_local",
+                                      context_text="[recovered with a reduced prompt after a provider error]")
+                        return
+                except Exception as retry_exc:  # noqa: BLE001
+                    self.emit(EventType.DIAGNOSTIC, {"conversation_retry": f"{type(retry_exc).__name__}: {retry_exc}"}, scope=scope)
+            self._deliver(("Die lokale KI hat gerade nicht rechtzeitig geantwortet. Frag mich bitte gleich nochmal – ich bin dran, sie wiederherzustellen." if de
+                           else "The local model did not answer in time. Please ask again in a moment – I am restoring it."),
+                          scope=scope, backend="recovery", final_state=JarvisState.ERROR,
+                          context_text=f"[conversation failed: {type(exc).__name__}: {str(exc)[:160]}]")
             return
 
         answer = "".join(collected).strip()
@@ -2930,6 +3200,17 @@ class JarvisCore:
             guidance += self.adaptation.guidance(classify_context(request=text))
         except Exception:  # noqa: BLE001 - adaptation never blocks an answer
             pass
+        # Capability awareness (§ the live "I cannot access D:" failure): the
+        # conversation model must know what THIS system can actually do, and
+        # must not confabulate facts about unfamiliar words.
+        guidance.append(
+            "Du läufst als ZEUS mit echten Werkzeugen auf diesem Windows-PC: Dateisystem "
+            "(Ordner zählen/suchen/öffnen), Apps starten, Websites öffnen, Websuche, Spotify/Musik, "
+            "Kalender, Projekte, Wissen, PDF-Zusammenfassungen, Bildgenerierung, Screenshots, SelfDev. "
+            "Behaupte NIEMALS, du hättest keinen Zugriff auf Dateien oder dieses System — wenn dafür "
+            "eine Aktion nötig ist, sage kurz, dass du sie ausführen kannst. "
+            "Bei Faktenfragen zu seltenen oder unbekannten Begriffen: NICHT raten und keine Definition "
+            "erfinden — sag ehrlich, dass du unsicher bist, und biete an, im Internet nachzusehen.")
         recent = self.history[-8:]
         transcript = "\n".join(f"{turn.role}: {turn.for_prompt()}" for turn in recent[:-1])
         from config import conversation_prompt
@@ -4269,8 +4550,29 @@ class JarvisCore:
         return self._apps
 
     @property
+    def jobs(self) -> Any:
+        """The live WorkItem board: what runs NOW, its phase, its result."""
+
+        if getattr(self, "_jobs", None) is None:
+            from service.jobs import JobBoard
+
+            self._jobs = JobBoard(Path(self.kernel.state_root) / "jobs.jsonl",
+                                  emit=lambda payload: self.emit(EventType.JOB, payload))
+        return self._jobs
+
+    @property
+    def defaults(self) -> Any:
+        """Owner creation defaults: output folders and naming templates."""
+
+        if getattr(self, "_defaults", None) is None:
+            from service.defaults import CreationDefaults
+
+            self._defaults = CreationDefaults(Path(self.kernel.state_root) / "owner" / "defaults.json")
+        return self._defaults
+
+    @property
     def imagegen(self) -> Any:
-        """Local image generation (SD-Turbo in its own venv/process)."""
+        """Local image generation (persistent SD-Turbo worker in its own venv)."""
 
         if getattr(self, "_imagegen", None) is None:
             from service.imagegen import ImageGenerator
@@ -4278,8 +4580,54 @@ class JarvisCore:
             self._imagegen = ImageGenerator()
         return self._imagegen
 
+    # -- GPU arbitration: the conversation must survive image generation --
+
+    def _hold_for_gpu(self, text: str, scope: str) -> bool:
+        """True = the request was parked because the image model holds the GPU.
+
+        Deterministic paths (time, calendar, app/web open …) never come here —
+        only paths that need FAST_LOCAL.  The parked request re-runs the moment
+        the model is restored; the owner is told, not timed out.
+        """
+
+        if not getattr(self, "_gpu_hold", None):
+            return False
+        if not hasattr(self, "_gpu_queue_lock"):
+            self._gpu_queue_lock = threading.Lock()
+            self._gpu_queue = []
+        de = self.language.startswith("de")
+        with self._gpu_queue_lock:
+            self._gpu_queue.append({"text": text, "scope": scope})
+        self.emit(EventType.TOOL, {"summary": f"gpu hold: request queued ({text[:60]})", "source": "jobs"}, scope=scope)
+        self._deliver(("Das Bildmodell nutzt gerade die Grafikkarte. Deine Frage ist vorgemerkt – ich beantworte sie direkt danach." if de
+                       else "The image model is using the GPU right now. Your question is queued – I will answer it right after."),
+                      scope=scope, backend="jobs", final_state=JarvisState.WAITING,
+                      context_text="[request queued during image GPU window]")
+        return True
+
+    def _release_gpu_hold(self) -> None:
+        self._gpu_hold = None
+        if not hasattr(self, "_gpu_queue_lock"):
+            self._gpu_queue_lock = threading.Lock()
+            self._gpu_queue = []
+        with self._gpu_queue_lock:
+            queued, self._gpu_queue = list(self._gpu_queue), []
+        for item in queued:
+            try:
+                self.send_message(item["text"], scope=item.get("scope", ""),
+                                  meta={"source": "correction_rerun", "gpu_requeued": True})
+            except Exception:  # noqa: BLE001
+                pass
+
     def _answer_image_generate(self, prompt: str, scope: str) -> None:
-        """Generate a real image locally; nothing is claimed before the file exists."""
+        """Generate a real image locally, as a visible Job, with an immediate ack.
+
+        The pipeline that fixes the live "25 s became minutes" failure:
+        immediate acknowledgment → job with phases → FAST_LOCAL evicted ONLY
+        for the GPU window when VRAM demands it → generation via the
+        persistent worker → result surfaced in ZEUS (chat + notification with
+        thumbnail) → FAST_LOCAL restored IMMEDIATELY → queued questions run.
+        """
 
         de = self.language.startswith("de")
         ready = self.imagegen.available()
@@ -4293,51 +4641,115 @@ class JarvisCore:
                           else "A generation is already running — right after it.", scope=scope, backend="imagegen")
             return
 
+        from service.imagegen import PHASE_LABELS
+
+        job = self.jobs.create(f"Bild: {prompt[:60]}", kind="image", scope=scope, cancellable=True,
+                               phase="in der Warteschlange")
+        cold = not self.imagegen.model_loaded
+        ack = (("Bin dran — ich erzeuge das Bild." + (" Beim ersten Mal lädt das Modell noch, das dauert etwas länger." if cold else ""))
+               if de else "On it — generating the image." + (" First run loads the model, that takes a bit longer." if cold else ""))
+        self._deliver(ack, scope=scope, backend="imagegen", final_state=JarvisState.WORKING,
+                      context_text=f"[image job {job.job_id} acknowledged]")
+
         def work() -> None:
-            self.state.set(JarvisState.WORKING, detail="Bildmodell wird geladen", scope=scope)
+            t_request = time.time()
             evicted = False
-            try:
-                # single-GPU resource rule: if free VRAM is too tight for the
-                # pipeline, unload the chat model FIRST and say so — the next
-                # chat turn pays one reload instead of the generation failing
-                from service.imagegen import NEEDED_VRAM_MIB
+            restore_started = 0.0
 
-                usage = self.gpu_usage()
-                total = int(usage.get("memory_total_mib") or 0)
-                free = total - int(usage.get("memory_used_mib") or 0) if total else 0
-                if free and free < NEEDED_VRAM_MIB:
-                    from brain.tiers import ModelTier
+            def on_phase(phase: str, at: float) -> None:
+                nonlocal evicted
+                self.jobs.phase(job.job_id, PHASE_LABELS.get(phase, phase),
+                                progress={"loading_model": 0.15, "to_gpu": 0.35, "generating": 0.55,
+                                          "saving": 0.9, "to_cpu": 0.95}.get(phase))
+                self.state.set(JarvisState.WORKING, detail=f"Bild: {PHASE_LABELS.get(phase, phase)}", scope=scope)
+                if phase == "to_gpu":
+                    # the GPU window opens NOW: decide about eviction here,
+                    # not minutes earlier during the model's CPU load
+                    try:
+                        from service.imagegen import NEEDED_VRAM_MIB
 
-                    provider = self.kernel.provider(ModelTier.FAST_LOCAL)
-                    if hasattr(provider, "unload"):
-                        provider.unload()
-                        evicted = True
-                        self.emit(EventType.TOOL, {"summary": f"image: {free} MiB frei < {NEEDED_VRAM_MIB} — FAST_LOCAL entladen",
+                        usage = self.gpu_usage()
+                        total = int(usage.get("memory_total_mib") or 0)
+                        free = total - int(usage.get("memory_used_mib") or 0) if total else 0
+                        if free and free < NEEDED_VRAM_MIB:
+                            from brain.tiers import ModelTier
+
+                            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                            if hasattr(provider, "unload"):
+                                provider.unload()
+                                evicted = True
+                                self._gpu_hold = job.job_id
+                                self.emit(EventType.TOOL,
+                                          {"summary": f"image: {free} MiB frei < {NEEDED_VRAM_MIB} — FAST_LOCAL für das GPU-Fenster entladen",
+                                           "source": "imagegen"}, scope=scope)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            self.jobs.phase(job.job_id, "Modell wird vorbereitet", state="WAITING_FOR_RESOURCE")
+            result = self.imagegen.generate(
+                prompt,
+                output_dir=self.defaults.get("image_dir"),
+                name_template=self.defaults.get("image_name"),
+                on_phase=on_phase,
+                cancel_check=lambda: self.jobs.cancelled(job.job_id),
+            )
+            t_generated = time.time()
+
+            # restore the conversation model the MOMENT the GPU is free — the
+            # owner's next question must not pay for our housekeeping
+            if evicted:
+                def restore() -> None:
+                    nonlocal restore_started
+                    restore_started = time.time()
+                    try:
+                        from brain.tiers import ModelTier
+
+                        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                        provider.generate("OK", max_tokens=2)
+                        self.emit(EventType.TOOL, {"summary": f"FAST_LOCAL restored in {time.time() - restore_started:.1f}s",
                                                    "source": "imagegen"}, scope=scope)
-            except Exception:  # noqa: BLE001 - resource management must not block the attempt
-                pass
-            result = self.imagegen.generate(prompt)
-            self.emit(EventType.TOOL, {"summary": (f"image.generate ok: {result.get('file')} ({result.get('generate_seconds')}s gen, "
-                                                   f"{result.get('vram_peak_mib')} MiB)") if result.get("ok")
-                                                  else f"image.generate failed: {result.get('error', '')[:160]}",
-                                       "result": result, "source": "imagegen"}, scope=scope)
+                    except Exception as exc:  # noqa: BLE001
+                        self.emit(EventType.DIAGNOSTIC, {"imagegen": f"restore failed: {exc}"}, scope=scope)
+                    finally:
+                        self._release_gpu_hold()
+
+                threading.Thread(target=restore, daemon=True, name="fastlocal-restore").start()
+            else:
+                self._release_gpu_hold()
+
+            self.emit(EventType.TOOL, {"summary": (f"image.generate ok: {result.get('file')} "
+                                                   f"({(result.get('timings') or {}).get('total', '?')}s, {result.get('vram_peak_mib')} MiB peak)")
+                                                  if result.get("ok") else f"image.generate failed: {result.get('error', '')[:160]}",
+                                       "result": result, "job_id": job.job_id, "source": "imagegen"}, scope=scope)
+            if result.get("cancelled"):
+                self.jobs.fail(job.job_id, "abgebrochen")
+                return
             if not result.get("ok"):
+                self.jobs.fail(job.job_id, str(result.get("error", ""))[:300])
                 self._deliver((f"Das Bild ist nicht entstanden: {result.get('error', '')[:200]}" if de
                                else f"The image was not created: {result.get('error', '')[:200]}"),
                               scope=scope, backend="imagegen", final_state=JarvisState.ERROR)
                 return
-            self.emit(EventType.NOTIFICATION, {"kind": "image", "file": result.get("file"), "text": ""}, scope=scope)
-            try:
-                os.startfile(str(result.get("file")))  # noqa: S606 - show the real image
-            except OSError:
-                pass
-            note = (" (Das Sprachmodell wurde dafür kurz entladen; die nächste Antwort lädt es neu.)" if evicted and de else "")
-            self._deliver((f"Bild erzeugt: {result.get('file')} — {result.get('generate_seconds')}s Generierung, "
-                           f"Modell {result.get('model', '').split('/')[-1]}, Seed {result.get('seed')}." + note) if de else
-                          (f"Image created: {result.get('file')} — {result.get('generate_seconds')}s generation, "
-                           f"model {result.get('model', '').split('/')[-1]}, seed {result.get('seed')}." + note),
+            timings = dict(result.get("timings") or {})
+            timings["request_to_file_seconds"] = round(t_generated - t_request, 1)
+            # worker timings are phase START offsets; the diffusion itself is
+            # the distance from "generating" to "saving"
+            if "saving" in timings and "generating" in timings:
+                timings["generation_seconds"] = round(timings["saving"] - timings["generating"], 1)
+            self.jobs.complete(job.job_id, {"file": result.get("file"), "bytes": result.get("bytes"),
+                                            "seed": result.get("seed"), "model": result.get("model"),
+                                            "width": result.get("width"), "height": result.get("height"),
+                                            "vram_peak_mib": result.get("vram_peak_mib"), "timings": timings})
+            # the result surfaces INSIDE ZEUS: a notification the UI renders as
+            # a thumbnail card (served through /api/image/file), plus the answer
+            gen_s = timings.get("generation_seconds", timings.get("total", "?"))
+            self.emit(EventType.NOTIFICATION, {"kind": "image", "file": result.get("file"),
+                                               "job_id": job.job_id, "title": f"Bild fertig ({gen_s}s)",
+                                               "text": "Bild fertig."}, scope=scope)
+            self._deliver((f"Bild fertig: {Path(str(result.get('file'))).name} — Generierung {gen_s}s, gespeichert unter {result.get('file')}." if de
+                           else f"Image ready: {Path(str(result.get('file'))).name} — generation {gen_s}s, saved at {result.get('file')}."),
                           scope=scope, backend="imagegen",
-                          context_text=f"[image generated: {result.get('file')}]")
+                          context_text=f"[image generated: {result.get('file')}; job {job.job_id}]")
 
         threading.Thread(target=work, daemon=True, name="image-generate").start()
 
@@ -4919,12 +5331,87 @@ class JarvisCore:
         the thing this whole system exists to prevent.
         """
 
+        archived = None
+        try:
+            with self._lock:
+                turns = [t.to_dict() for t in self._history]
+            archived = self.conversations.archive(turns, language=self.language, reason="new_conversation")
+        except Exception:  # noqa: BLE001 - archiving must never block a fresh start
+            archived = None
         with self._lock:
             self._history.clear()
         self._session_receipts.clear()
         self.language = ""
         self.state.set(JarvisState.IDLE)
-        return {"ok": True, "cleared": True}
+        if archived:
+            self._summarize_conversation_async(archived["id"])
+        return {"ok": True, "cleared": True, "archived": archived["id"] if archived else ""}
+
+    @property
+    def conversations(self) -> Any:
+        """The conversation archive: recent chats with summaries, persisted."""
+
+        if getattr(self, "_conversations", None) is None:
+            from service.conversations import ConversationArchive
+
+            self._conversations = ConversationArchive(Path(self.kernel.state_root) / "conversations")
+        return self._conversations
+
+    def _summarize_conversation_async(self, conv_id: str) -> None:
+        """Fill in title/summary with one FAST_LOCAL call, off the request path."""
+
+        def work() -> None:
+            try:
+                from brain.json_utils import lenient_json_loads
+                from brain.tiers import ModelTier
+                from service.conversations import SUMMARY_PROMPT, SUMMARY_SCHEMA, transcript_text
+
+                record = self.conversations.get(conv_id)
+                if not record:
+                    return
+                prompt = SUMMARY_PROMPT.format(transcript=transcript_text(record.get("turns", [])))
+                provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                if hasattr(provider, "generate_structured"):
+                    raw = provider.generate_structured(prompt, SUMMARY_SCHEMA, max_tokens=400, temperature=0.1)
+                else:
+                    raw = provider.generate(prompt, max_tokens=400)
+                payload = lenient_json_loads(str(raw))
+                if isinstance(payload, dict):
+                    self.conversations.set_summary(conv_id, title=str(payload.get("title", "")),
+                                                   summary=str(payload.get("summary", "")),
+                                                   open_tasks=list(payload.get("open_tasks") or []),
+                                                   facts=list(payload.get("facts") or []))
+                    self.emit(EventType.DIAGNOSTIC, {"conversation_summarized": conv_id})
+            except Exception:  # noqa: BLE001 - a missing summary is only a missing summary
+                pass
+
+        threading.Thread(target=work, daemon=True, name=f"conv-summary-{conv_id[-6:]}").start()
+
+    def conversation_restore(self, conv_id: str) -> dict[str, Any]:
+        """Bring an archived conversation back as the live transcript."""
+
+        record = self.conversations.get(conv_id)
+        if not record:
+            return {"ok": False, "error": f"kein Gespräch {conv_id}"}
+        # the current transcript is archived first, so nothing is lost
+        try:
+            with self._lock:
+                current = [t.to_dict() for t in self._history]
+            parked = self.conversations.archive(current, language=self.language, reason="replaced_by_restore")
+            if parked:
+                self._summarize_conversation_async(parked["id"])
+        except Exception:  # noqa: BLE001
+            pass
+        turns = [ConversationTurn(role=str(t.get("role", "")), text=str(t.get("text", "")),
+                                  at=str(t.get("at", "")), backend=str(t.get("backend", "")))
+                 for t in record.get("turns", []) if isinstance(t, dict)]
+        with self._lock:
+            self._history.clear()
+            self._history.extend(turns)
+        self.language = str(record.get("language", "")) or self.language
+        self.state.set(JarvisState.IDLE)
+        return {"ok": True, "id": conv_id, "title": record.get("title"),
+                "turns": [t.to_dict() for t in turns], "late_results": record.get("late_results", [])}
 
     # ------------------------------------------------------------------
     # Projects

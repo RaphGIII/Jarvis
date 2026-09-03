@@ -41,6 +41,29 @@ body.tv, body.tv * { cursor: none; }
      CSS nebulae), never animated — depth without spending a single frame. -->
 <canvas id="cosmos" aria-hidden="true"></canvas>
 
+<!-- The boot veil: the main interface stays COVERED until the product is
+     genuinely interactive (core answering + conversation model warm).  The
+     owner must never watch the shell reconnect to its own backend.  It is
+     present in the markup from the first byte, so there is no flash of a
+     half-dead UI before scripts run; app.js dissolves it on INTERACTIVE_READY
+     and keeps a honest chip while voice finishes warming. -->
+<div id="bootVeil">
+  <div class="bv-rig">
+    <div class="bv-ring r3"><i></i></div>
+    <div class="bv-ring r2"><i></i></div>
+    <div class="bv-ring r1"><i></i></div>
+    <div class="bv-orb"></div>
+  </div>
+  <div class="bv-brand">ZEUS</div>
+  <div class="bv-phase" id="bvPhase">SYSTEME WERDEN GEWECKT</div>
+  <ul class="bv-systems">
+    <li data-k="core">Kern</li>
+    <li data-k="ai">Lokale Intelligenz</li>
+    <li data-k="voice">Stimme</li>
+    <li data-k="universe">Universum</li>
+  </ul>
+</div>
+
 <div id="app">
   <header class="top">
     <span id="brand" title="Home" class="brand">__PRODUCT_NAME__</span>

@@ -116,6 +116,9 @@ function startJarvis() {
 
   for (const mod of VIEW_MODULES) views.register(mod.view);
   chat.init({ eye });
+  import("./core/workrail.js").then((workrail) => workrail.init({ toast, chat }));
+  // the eye carries a background-work indicator whenever jobs are active
+  bus.on("jobs:active", (n) => eye?.setBackgroundWork?.(Number(n) || 0));
   mic.init({ eye });
   playback.init({ eye });
   palette.init();
@@ -126,6 +129,8 @@ function startJarvis() {
   refreshHealth();
   setInterval(refreshStatus, 15000);
   setInterval(refreshHealth, 5000);
+  // during boot the veil deserves a live picture: poll fast until it lifts
+  const bootPoll = setInterval(() => { if (veilLifted) clearInterval(bootPoll); else refreshHealth(); }, 1000);
   refreshGpu();
   setInterval(refreshGpu, 3000);
   setInterval(drawUptime, 1000);
@@ -153,7 +158,7 @@ function connect() {
     setTimeout(connect, reconnectDelay);
   };
   for (const type of ["state", "token", "message", "user_message", "transcript", "tool", "progress",
-                      "notification", "error", "speech", "diagnostic", "knowledge"]) {
+                      "notification", "error", "speech", "diagnostic", "knowledge", "job"]) {
     stream.addEventListener(type, (e) => {
       let event;
       try { event = JSON.parse(e.data); } catch { return; }
@@ -326,11 +331,35 @@ async function refreshStatus() {
 
 async function refreshHealth() {
   const health = await api("/api/health");
-  if (health.ok === false) return;
+  if (health.ok === false) { updateVeil({}, null); return; }
   set("health", health);
   const rd = health.readiness || {};
   for (const span of document.querySelectorAll("#readiness span")) {
     span.classList.toggle("on", Boolean(rd[span.dataset.stage]));
+  }
+  updateVeil(rd, health);
+}
+
+/* The boot veil: the main UI is covered until INTERACTIVE_READY (core
+   answering + conversation model warm).  The owner never sees the shell
+   reconnecting to its own backend; voice keeps warming behind the veil's
+   dissolve with its own honest light. */
+let veilLifted = false;
+function updateVeil(rd, health) {
+  const veil = $("bootVeil");
+  if (!veil || veilLifted) return;
+  const lights = { core: rd.CORE_READY, ai: rd.AI_READY, voice: rd.VOICE_READY, universe: rd.CORE_READY };
+  for (const li of veil.querySelectorAll(".bv-systems li")) li.classList.toggle("on", Boolean(lights[li.dataset.k]));
+  const detail = String(health?.detail || "");
+  const phase = !rd.CORE_READY ? "KERN WIRD GESTARTET"
+    : !rd.AI_READY ? (/unavailable|unreachable/i.test(detail) ? "LOKALE INTELLIGENZ WIRD WIEDERHERGESTELLT" : "LOKALE INTELLIGENZ WIRD GELADEN")
+    : "ZEUS ONLINE";
+  const node = $("bvPhase");
+  if (node && node.textContent !== phase) node.textContent = phase;
+  if (rd.INTERACTIVE_READY) {
+    veilLifted = true;
+    veil.classList.add("lifting");
+    setTimeout(() => { veil.hidden = true; }, 950);
   }
 }
 

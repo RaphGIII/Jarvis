@@ -53,6 +53,10 @@ class EventType(str, Enum):
     PROGRESS = "progress"
     #: Something worth telling the user about unprompted.
     NOTIFICATION = "notification"
+
+    #: A long-running WorkItem changed: created, phase advanced, progressed,
+    #: completed, failed or was cancelled.  The Work Center renders these.
+    JOB = "job"
     #: Knowledge graph changed.
     KNOWLEDGE = "knowledge"
     #: Health, model tiers, expert quota, resources.

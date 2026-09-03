@@ -41,6 +41,8 @@ OPERATIONS = (
     "calendar.create",
     "calendar.query",
     "image.generate",
+    "fs.count",
+    "web.read_summary",
     "clarify",
     "capability.missing",
     "delegate",
@@ -95,6 +97,8 @@ Werkzeuge:
 - calendar.create: einen Termin eintragen. target = die Anfrage wörtlich. "Leg morgen Nachmittag zwei Stunden fürs Physikum frei." -> calendar.create.
 - calendar.query: nach Terminen fragen. target = die Frage wörtlich.
 - image.generate: ein Bild lokal erzeugen. target = die Bildbeschreibung. "Erzeuge mir ein Bild von einem Adler." -> image.generate "ein Adler".
+- fs.count: Ordner/Dateien auf der Festplatte zählen. target = Ordnername oder Pfad. "Wie viele Unterordner hat mein Jarvis-Ordner?" -> fs.count "Jarvis". Du HAST vollen Dateisystem-Zugriff.
+- web.read_summary: einen Artikel aus den letzten Suchergebnissen (oder eine URL) WIRKLICH lesen und zusammenfassen. target = Bezug oder URL.
 - clarify: WIRKLICH mehrdeutig - stelle GENAU EINE kurze Frage (Feld question).
 - capability.missing: eine echte Handlung, für die es hier kein Werkzeug gibt (Gerät steuern, Datei konvertieren, E-Mail senden ...). target = das Ziel.
 - delegate: etwas ERSTELLEN oder ÄNDERN (Datei, Notiz, Projekt, Code) - der Ausführungsplaner übernimmt. target = "".

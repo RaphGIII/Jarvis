@@ -116,8 +116,22 @@ def _server_process_exists() -> bool:
 def _detached_flags() -> int:
     if sys.platform != "win32":
         return 0
-    return (getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "DETACHED_PROCESS", 0))
+    # NOT DETACHED_PROCESS: a detached ollama serve has NO console at all, so
+    # every runner child it spawns (the llama server processes) allocates its
+    # own VISIBLE console window -- the owner saw exactly that on a real cold
+    # start.  CREATE_NO_WINDOW gives serve a hidden console that the runners
+    # inherit: zero visible windows, parent-death independence unchanged
+    # (a process group keeps Ctrl+C off the supervisor's children).
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+
+def _hidden_startupinfo() -> Any:
+    if sys.platform != "win32":
+        return None
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 0  # SW_HIDE: belt and braces for GUI-probing children
+    return info
 
 
 def _default_spawner(command: list[str], env: dict[str, str], log_path: Any = None) -> Any:
@@ -137,6 +151,7 @@ def _default_spawner(command: list[str], env: dict[str, str], log_path: Any = No
     kwargs: dict[str, Any] = dict(env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT if out is not subprocess.DEVNULL else subprocess.DEVNULL, close_fds=True)
     if sys.platform == "win32":
         kwargs["creationflags"] = _detached_flags()
+        kwargs["startupinfo"] = _hidden_startupinfo()
     else:
         kwargs["start_new_session"] = True
     try:

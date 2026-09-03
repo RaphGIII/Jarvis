@@ -504,6 +504,65 @@ def parse_system_control(text: str) -> ActionIntent | None:
     return None
 
 
+# --- web follow-up: "fass mir den Inhalt zusammen" refers to SOMETHING ----
+_SUMMARIZE = re.compile(r"\bfass\w*\b.{0,80}\bzusammen\b|\bzusammenfass\w*\b|\bsummar(?:y|ize|ise)\b", re.I)
+_SUMMARY_REF = re.compile(r"\b(davon|daraus|inhalt\w*|artikel|seite|ergebnis\w*|treffer|link|meldung\w*|nachricht\w*|wichtigste\w*)\b|https?://", re.I)
+_SUMMARY_NOT_WEB = re.compile(r"\b(pdf|datei|dokument|buch|kapitel|notiz)\b", re.I)
+
+
+def parse_web_summary(text: str) -> ActionIntent | None:
+    body = _VOCATIVE.sub("", (text or "").strip(), count=1)
+    if not _SUMMARIZE.search(body):
+        return None
+    if _SUMMARY_NOT_WEB.search(body) or _FS_PATH.search(body):
+        return None
+    if not _SUMMARY_REF.search(body):
+        return None
+    return ActionIntent("web.read_summary", verb="read", object_type="web", target=body,
+                        confidence=0.85, success_criteria=["a real article was fetched and summarized with its source"],
+                        reason="asks to summarize the current web context")
+
+
+# --- filesystem questions: counting and finding are TOOL work -------------
+#: "Zähle wieviele Subordner der Ordner Jarvis auf D: hat" went to prose and
+#: the model claimed it had no filesystem access — while a Files subsystem
+#: sat right there.  These shapes route to real filesystem operations.
+_FS_COUNT = re.compile(
+    r"\b(?:wie\s*viele|wieviele|zaehl\w*|zähl\w*|count)\b.{0,60}?"
+    r"\b(?P<what>unterordner|subordner|sub-?folders?|ordner|verzeichnisse|dateien|files|folders?)\b", re.I)
+_FS_PATH = re.compile(r"(?P<path>[A-Za-z]:[\\/][^\s\"'?!,]*)")
+_FS_NAME = re.compile(r"\b(?:ordner|folder|verzeichnis)\s+[„\"']?(?P<name>[\w.\-]{2,40})[“\"']?"
+                      r"|\b(?P<name2>[\w.\-]{2,40})[-\s](?:ordner|folder)\b", re.I)
+_FS_DRIVE = re.compile(r"\b(?:festplatte|laufwerk|drive)?\s*(?P<drive>[A-Za-z])\s*[:/]", re.I)
+
+
+def parse_fs_operation(text: str) -> ActionIntent | None:
+    body = _VOCATIVE.sub("", (text or "").strip(), count=1)
+    m = _FS_COUNT.search(body)
+    if not m:
+        return None
+    what = fold(m.group("what"))
+    kind = "files" if what in {"dateien", "files"} else "dirs"
+    path = ""
+    pm = _FS_PATH.search(body)
+    if pm:
+        path = pm.group("path").rstrip(".")
+    name = ""
+    nm = _FS_NAME.search(body)
+    if nm:
+        name = (nm.group("name") or nm.group("name2") or "").strip()
+    drive = ""
+    dm = _FS_DRIVE.search(body)
+    if dm:
+        drive = dm.group("drive").upper() + ":\\"
+    if not path and not name:
+        return None
+    return ActionIntent("fs.count", verb="read", object_type="fs", target=path or name,
+                        arguments={"what": kind, "path": path, "name": name, "drive": drive},
+                        confidence=0.85, success_criteria=["the real count of a real folder is stated"],
+                        reason="asks to count filesystem entries")
+
+
 # --- calendar: create and query, deterministically ------------------------
 _CALENDAR_WORD = re.compile(r"\b(termin\w*|kalender|calendar)\b|\berinnere?\s+mich\b", re.I)
 _CALENDAR_ENTER = re.compile(r"\btrag\w*\b.*\bein\b|\beintragen\b|\berinnere?\s+mich\b", re.I)
@@ -602,6 +661,14 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
                                  confidence=0.85, success_criteria=["a real image file exists"],
                                  reason="asks for a generated image")
             return Understanding(TopIntent.SYSTEM_CONTROL, image.reason, image, is_action_request=True)
+
+    web_summary = parse_web_summary(text)
+    if web_summary is not None:
+        return Understanding(TopIntent.SYSTEM_CONTROL, web_summary.reason, web_summary, is_action_request=True)
+
+    fs_op = parse_fs_operation(text)
+    if fs_op is not None:
+        return Understanding(TopIntent.SYSTEM_CONTROL, fs_op.reason, fs_op, is_action_request=True)
 
     calendar = parse_calendar_operation(text)
     if calendar is not None:

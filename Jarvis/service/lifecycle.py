@@ -101,7 +101,12 @@ class Lifecycle:
         ui = bool(stages.get("http", {}).get("ok"))
         ai = bool(stages.get("fast_local", {}).get("ok"))
         voice = bool(stages.get("voice", {}).get("ok")) and bool(stages.get("recogniser", {}).get("ok"))
+        # INTERACTIVE = the owner can genuinely use the product: core answering
+        # and the conversation model warm.  Voice keeps warming behind the main
+        # UI with an honest indicator — waiting the extra ~40 s of Whisper load
+        # before showing anything made the whole product feel broken.
         return {"UI_READY": ui, "CORE_READY": ui, "AI_READY": ai, "VOICE_READY": voice,
+                "INTERACTIVE_READY": ui and ai,
                 "FULL_READY": ui and ai and voice}
 
     # -- the desktop window ------------------------------------------
@@ -287,7 +292,7 @@ class Lifecycle:
     def _plan_exit(self, code: int, reason: str) -> None:
         self.exit_code = code
         self.exit_reason = reason
-        self.save_conversation(reason)
+        self.save_conversation(reason, archive=code == 0)
         # Give the HTTP response time to leave before the process does.
         threading.Timer(0.5, self.exit_event.set).start()
 
@@ -296,7 +301,17 @@ class Lifecycle:
     def _resume_path(self) -> Path:
         return Path(self.core.kernel.state_root) / "conversation_resume.json"
 
-    def save_conversation(self, reason: str) -> None:
+    def save_conversation(self, reason: str, *, archive: bool = False) -> None:
+        # On a FINAL shutdown the archive keeps a durable copy (the resume
+        # file below would otherwise be the only trace, and it is consumed).
+        # A planned restart restores the live transcript instead — archiving
+        # there too would duplicate the same conversation on every restart.
+        if archive:
+            try:
+                self.core.conversations.archive([turn.to_dict() for turn in self.core.history],
+                                                language=self.core.language, reason=reason)
+            except Exception:  # noqa: BLE001
+                pass
         try:
             payload = {
                 "saved_at": time.time(),

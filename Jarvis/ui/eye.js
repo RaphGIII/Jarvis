@@ -88,6 +88,16 @@ class JarvisEye {
     this.particles = [];
     this.baked = { size: 0, markings: null, noise: null };
 
+    //: emitted radiation: short-lived particles flying outward on energy events
+    this.emissions = [];
+    //: active background jobs (image generation, indexing …): a secondary
+    //: orbit dot makes "ZEUS is doing something for you" visible at a glance
+    this.backgroundWork = 0;
+    //: owner animation intensity (Owner → Appearance): 0 = off, 1 = normal
+    this.intensity = 1;
+    //: theme hue shift in degrees (COSMOS 0, NEBULA +60, REACTOR -12 …)
+    this.themeShift = 0;
+
     // Adaptive quality. Starts full and drops if frames get expensive, so a
     // busy machine loses eye detail rather than model throughput.
     this.quality = 1;
@@ -104,6 +114,18 @@ class JarvisEye {
 
   setEnergy(value) {
     this.energy = Math.max(0, Math.min(1, value || 0));
+  }
+
+  setBackgroundWork(count) {
+    this.backgroundWork = Math.max(0, Math.round(count || 0));
+  }
+
+  setIntensity(value) {
+    this.intensity = Math.max(0, Math.min(1.6, Number(value) ?? 1));
+  }
+
+  setThemeShift(degrees) {
+    this.themeShift = Number(degrees) || 0;
   }
 
   /* Match the backing store to the element's rendered size, so the hero eye is
@@ -260,14 +282,32 @@ class JarvisEye {
     }
 
     // Energy pulses: an occasional ring travelling outward, or inward when the
-    // eye is verifying -- gathering rather than emitting.
-    this.nextPulse -= dt * (0.4 + this.live.rings);
+    // eye is verifying -- gathering rather than emitting.  Frequency follows
+    // the state (idle rare, thinking often) and the owner's intensity dial.
+    this.nextPulse -= dt * (0.4 + this.live.rings) * Math.max(0.2, this.intensity);
     if (this.nextPulse <= 0) {
       this.nextPulse = 2.2 + Math.random() * 3.4;
       this.pulses.push({ t: 0, inward: this.state === "verifying" || this.state === "listening" });
+      // radiation: the pulse also EMITS — a handful of particles fly out and
+      // fade into the star field.  Error states emit low and red-hot instead.
+      if (this.intensity > 0.05) {
+        const n = Math.round((this.state === "error" ? 4 : 7) * this.intensity);
+        for (let i = 0; i < n; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const v = 0.22 + Math.random() * 0.3;
+          this.emissions.push({ x: Math.cos(a) * 0.34, y: Math.sin(a) * 0.34,
+                                vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.8,
+                                life: 1, size: 0.9 + Math.random() * 1.4 });
+        }
+      }
     }
     for (const pulse of this.pulses) pulse.t += dt * 0.85;
     this.pulses = this.pulses.filter((pulse) => pulse.t < 1);
+    for (const e of this.emissions) {
+      e.x += e.vx * dt; e.y += e.vy * dt;
+      e.life -= dt * 0.9;
+    }
+    this.emissions = this.emissions.filter((e) => e.life > 0);
 
     // (the blink is gone: an aperture that never closes reads as PRESENCE,
     // and the owner found the lid animation distracting)
@@ -284,8 +324,10 @@ class JarvisEye {
 
     ctx.clearRect(0, 0, size, size);
 
-    const hue = this.live.hue;
-    const glow = this.live.glow;
+    const hue = (this.live.hue + this.themeShift + 360) % 360;
+    // stronger default presence (the owner found the standard eye too faint):
+    // a floor under the glow plus the owner's intensity dial
+    const glow = Math.min(1.25, (this.live.glow + 0.12) * (0.75 + this.intensity * 0.35));
     const stroke = (l, a) => `hsla(${hue.toFixed(0)}, 85%, ${l}%, ${a})`;
 
     const breath = 1 + Math.sin(this.phase * 2.0) * this.live.breathe + this.energy * 0.10;
@@ -313,6 +355,8 @@ class JarvisEye {
     this.drawSegmentedRing(ctx, unit, stroke, glow, jitter);
     this.drawArcs(ctx, unit, stroke, glow);
     this.drawPulses(ctx, unit, hue, glow);
+    this.drawEmissions(ctx, unit, hue, glow);
+    if (this.backgroundWork > 0) this.drawWorkOrbit(ctx, unit, glow);
     const irisR = this.drawIris(ctx, unit, hue, stroke, glow, breath, detail);
     this.drawCore(ctx, irisR, hue, glow);
     if (detail > 0.6) this.drawNoise(ctx, unit, size);
@@ -323,6 +367,41 @@ class JarvisEye {
   }
 
   /* ---- layers ----------------------------------------------------------- */
+
+  drawEmissions(ctx, unit, hue, glow) {
+    for (const e of this.emissions) {
+      const a = Math.max(0, e.life) * 0.7 * glow;
+      ctx.fillStyle = `hsla(${hue}, 90%, ${62 + (1 - e.life) * 20}%, ${a})`;
+      ctx.beginPath();
+      ctx.arc(e.x * unit, e.y * unit, e.size * (0.4 + e.life * 0.6), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /* Background work: one small bright body on its own outer orbit — the
+     at-a-glance sign that ZEUS is doing something even while the eye idles. */
+  drawWorkOrbit(ctx, unit, glow) {
+    const t = this.phase * 1.4;
+    const r = unit * 0.9;
+    ctx.strokeStyle = `hsla(150, 80%, 60%, ${0.14 * glow})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r, r * 0.42, -0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < Math.min(3, this.backgroundWork); i++) {
+      const a = t + i * 2.1;
+      const x = Math.cos(a) * r, y = Math.sin(a) * r * 0.42;
+      const rx = x * Math.cos(-0.5) - y * Math.sin(-0.5);
+      const ry = x * Math.sin(-0.5) + y * Math.cos(-0.5);
+      ctx.fillStyle = `hsla(150, 90%, 65%, ${0.9 * glow})`;
+      ctx.shadowColor = "hsla(150, 90%, 60%, .8)";
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(rx, ry, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
 
   drawHalo(ctx, unit, hue, glow) {
     // stronger presence: a brighter inner bloom and a wider, still-soft falloff

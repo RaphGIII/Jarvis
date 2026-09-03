@@ -346,6 +346,20 @@ class JarvisHTTPServer:
                 size=str(body.get("size", "512x512")), steps=int(body.get("steps", 2) or 2),
                 seed=int(body.get("seed", -1) if str(body.get("seed", "")).strip() not in {"", "None"} else -1)),
             "/api/image/status": lambda _: {**self.core.imagegen.available(), "busy": self.core.imagegen.busy},
+            # the WorkItem board: what runs now, what just finished
+            "/api/jobs": lambda _: {"ok": True, **self.core.jobs.snapshot()},
+            "/api/jobs/cancel": lambda body: {"ok": self.core.jobs.cancel(str(body.get("job_id", "")))},
+            # owner creation defaults (folders + naming templates)
+            "/api/defaults": lambda _: {"ok": True, "defaults": self.core.defaults.all()},
+            "/api/defaults/set": lambda body: {"ok": True, "defaults": self.core.defaults.set(
+                str(body.get("key", "")), str(body.get("value", "")))},
+            # the conversation archive: recent chats with summaries
+            "/api/conversations": lambda body: {"ok": True, "conversations": self.core.conversations.list(
+                int(body.get("limit", 30) or 30))},
+            "/api/conversation": lambda body: (lambda r: {"ok": r is not None, "conversation": r})(
+                self.core.conversations.get(str(body.get("id", "")))),
+            "/api/conversation/restore": lambda body: self.core.conversation_restore(str(body.get("id", ""))),
+            "/api/conversation/delete": lambda body: {"ok": self.core.conversations.delete(str(body.get("id", "")))},
             "/api/feedback": lambda body: self.core.feedback(
                 str(body.get("kind", "response")), rating=str(body.get("rating", "")), category=str(body.get("category", "")),
                 text=str(body.get("text", "")), request_id=str(body.get("request_id", "")),
@@ -517,6 +531,14 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                     return
                 self._serve_audio(path.rsplit("/", 1)[-1])
                 return
+            if path == "/api/image/file":
+                # generated images render INSIDE ZEUS (chat thumbnails, the
+                # Work Center); fenced to the owner's generated-media roots
+                if not app.authorised(self.headers, query):
+                    self._send_json(401, {"error": "unauthorised"})
+                    return
+                self._serve_generated_image((query.get("path") or [""])[0])
+                return
             if path.startswith("/api/"):
                 if not app.authorised(self.headers, query):
                     self._send_json(401, {"error": "unauthorised"})
@@ -593,6 +615,33 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                 return
             status, response = app.handle_api(parsed.path, payload)
             self._send_json(status, response)
+
+        def _serve_generated_image(self, raw_path: str) -> None:
+            from pathlib import Path as _P
+
+            try:
+                target = _P(str(raw_path)).resolve()
+            except OSError:
+                self._send_json(400, {"error": "bad path"})
+                return
+            roots = [_P(r"D:\ZEUS_Wissen")]
+            try:
+                roots.append(_P(app.core.defaults.get("image_dir")).resolve())
+            except Exception:  # noqa: BLE001
+                pass
+            fenced = False
+            for root in roots:
+                try:
+                    target.relative_to(root.resolve())
+                    fenced = True
+                    break
+                except (ValueError, OSError):
+                    continue
+            if not fenced or target.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"} or not target.is_file():
+                self._send_json(404, {"error": "not a generated image"})
+                return
+            mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}[target.suffix.lower()]
+            self._send(200, target.read_bytes(), mime)
 
         def _serve_audio(self, name: str) -> None:
             audio = app.core.voice.store.get(name.removesuffix(".wav"))

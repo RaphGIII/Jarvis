@@ -48,7 +48,20 @@ export function init(deps) {
   bus.on("token", (p) => { if (!p._replay) appendToken(p.text || ""); });
   bus.on("message", (p) => finishStreaming(p.text || "", p));
   bus.on("transcript", () => { /* the verdict follows as a user_message, or not at all */ });
-  bus.on("error", (p) => { if (p._replay) return; endStreaming(); addTurn("error", "Error", p.error || "something went wrong"); });
+  bus.on("error", (p) => {
+    if (p._replay) return;
+    endStreaming();
+    // §UX: raw ProviderError(...) lines belong in Activity/Diagnostics, not
+    // in the conversation.  The chat gets one honest human sentence.
+    console.warn("[zeus error]", p.error);
+    const raw = String(p.error || "");
+    const friendly = /timed?\s*out|timeout/i.test(raw)
+      ? "Die lokale KI hat nicht rechtzeitig geantwortet. Ich versuche es gleich erneut – Details stehen in Activity."
+      : /provider|unreachable|refused|connect/i.test(raw)
+        ? "Die lokale KI ist gerade nicht erreichbar – ich stelle die Verbindung wieder her. Details stehen in Activity."
+        : "Da ist etwas schiefgelaufen – Details stehen in Activity.";
+    addTurn("error", "!", friendly);
+  });
   bus.on("notification", (p) => {
     if (p._replay || !p.text) return;
     if (p.kind === "thought") { addTurn("insight", "Insight", p.text, p); return; }
