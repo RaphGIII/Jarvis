@@ -4,6 +4,7 @@
 
 import { el, clear, kv, section, badge, button, ago } from "../core/dom.js";
 import { api } from "../core/api.js";
+import { withAuth } from "../core/authgate.js";
 import * as views from "../core/views.js";
 
 export const view = {
@@ -36,7 +37,17 @@ export const view = {
         el("div", { class: "title" }, c.verified ? badge("VERIFIED", "ok") : badge("UNVERIFIED", "dim"), " ", c.id),
         el("div", { class: "meta", text: `${(c.version?.revision || "").slice(0, 12)} · launcher ${c.version?.launcher_fingerprint || "?"} · ${c.version?.built_at || ""}` }),
         el("div", { class: "toolbar" },
-          c.verified ? button("Promote & relaunch", async () => { if (confirm("Promote this candidate and relaunch ZEUS into it?")) { const r = await api("/api/release/promote", { candidate: c.path, relaunch: true }); alert(`${r.outcome}: ${r.reason || ""}`); } }, "primary")
+          c.verified ? button("Promote & relaunch", async () => {
+            if (!confirm("Promote this candidate and relaunch ZEUS into it?")) return;
+            // promotion is a SELFDEV_PROMOTE change: withAuth shows the password
+            // modal on needs_auth and retries with the minted token (the earlier
+            // button swallowed needs_auth and silently did nothing)
+            const r = await withAuth("SELFDEV_PROMOTE", (authorization) =>
+              api("/api/release/promote", { candidate: c.path, relaunch: true, authorization }));
+            alert(r.needs_auth ? "Abgebrochen – ohne Passwort keine Freigabe."
+                               : `${r.outcome || r.error || "?"}: ${r.reason || ""}`);
+            views.open("release");
+          }, "primary")
                      : button("Verify", async () => { const r = await api("/api/release/verify", { candidate: c.path }); alert(`${r.outcome}: ${r.reason}`); views.open("release"); })))),
     ));
     pane.append(section("Release history", el("div", { class: "timeline" }, ...((rel.history || []).slice().reverse().map((h) =>
