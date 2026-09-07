@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from capabilities.models import CapabilityManifest
+from capabilities.models import CapabilityHealth, CapabilityLifecycle, CapabilityManifest, RuntimeBrain
 from capabilities.registry import CapabilityRegistry
 from knowledge.graph import KnowledgeGraph, NodeType
 from knowledge.memory import ExperienceMemory
@@ -860,9 +860,22 @@ class CapabilityService:
             version=version,
             entrypoint="main.py",
             source_location=str(target.resolve()),
+            implementation_path=str(target.resolve()),
             tests_location=str((target / "test_capability.py").resolve()),
             input_schema=self._input_schema_of(target),
             output_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            family=capability_id.split(".", 1)[0],
+            examples=list(keywords or []),
+            aliases=list(keywords or []),
+            security_level=0,
+            latency_class="local",
+            runtime_dependencies=[],
+            source="codex_generated",
+            runtime_brain=RuntimeBrain.NONE.value,
+            codex_required=False,
+            created_by="codex",
+            lifecycle=CapabilityLifecycle.ACTIVE.value,
+            health={"state": "healthy", "health": CapabilityHealth.HEALTHY.value},
             creation_metadata={
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "source": "capability_service",
@@ -870,8 +883,13 @@ class CapabilityService:
                 "keywords": terms,
             },
             validation_status={"verified": True, "checks": verification.get("checks", [])},
+            verification={"checks": verification.get("checks", []), "summary": verification.get("detail", "")},
         )
         self.registry.register(manifest)
+        (target / "manifest.json").write_text(
+            json.dumps(manifest.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
         if self.memory is not None:
             self.memory.record_capability(capability_id, goal, keywords=terms, version=version)

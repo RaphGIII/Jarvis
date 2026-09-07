@@ -11,7 +11,13 @@ a YouTube search, a generated tone, a local file, or a browser window.  It
 either becomes a real Spotify capability or it becomes an honest failure, and
 there is no third branch.
 
-The escalation ladder is evidence-driven rather than time-driven:
+The legacy escalation ladder remains available for internal callers and tests,
+but the owner-facing route now uses Codex-first acquisition for genuinely
+missing or broken capabilities. That route checks Codex availability quickly,
+queues honestly when it is unavailable, and otherwise sends Codex into the same
+isolated workspace and verification gates.
+
+The legacy ladder is evidence-driven rather than time-driven:
 
 1. BUILD_LOCAL attempts the implementation against the real machine.
 2. Every attempt, pass or fail, is counted in the performance ledger.
@@ -67,6 +73,10 @@ class AcquisitionResult:
     local_attempts: int = 0
     seconds: float = 0.0
     reason: str = ""
+    codex_state: str = ""
+    codex_checked: bool = False
+    queued: bool = False
+    queue_id: str = ""
     steps: list[AcquisitionStep] = field(default_factory=list)
     verification: dict[str, Any] = field(default_factory=dict)
 
@@ -80,6 +90,10 @@ class AcquisitionResult:
             "local_attempts": self.local_attempts,
             "seconds": round(self.seconds, 1),
             "reason": self.reason,
+            "codex_state": self.codex_state,
+            "codex_checked": self.codex_checked,
+            "queued": self.queued,
+            "queue_id": self.queue_id,
             "steps": [step.to_dict() for step in self.steps],
             "verification": self.verification,
         }
@@ -139,6 +153,7 @@ class AcquisitionMission:
         controller: Any = None,
         memory: Any = None,
         missions: Any = None,
+        codex_availability: Any = None,
     ) -> None:
         self.service = service
         self.kernel = kernel
@@ -148,6 +163,7 @@ class AcquisitionMission:
         self._controller = controller
         self._memory = memory
         self._missions = missions
+        self._codex_availability = codex_availability
 
     # -- wiring ----------------------------------------------------------
 
@@ -196,15 +212,23 @@ class AcquisitionMission:
     @property
     def gateway(self) -> Any:
         if self._gateway is None:
-            from experts.claude_code import ClaudeCodeExpert
+            from experts.codex import CodexExpert
             from experts.gateway import ExpertGateway
             from runtime.cost_policy import CostPolicy
 
             # The policy is loaded and passed explicitly rather than left to a
             # default, because "which channels may be spent on" is exactly the
             # decision that must not be implicit.
-            self._gateway = ExpertGateway([ClaudeCodeExpert()], policy=CostPolicy.load())
+            self._gateway = ExpertGateway([CodexExpert()], policy=CostPolicy.load())
         return self._gateway
+
+    @property
+    def codex_availability(self) -> Any:
+        if self._codex_availability is None:
+            from capabilities.codex import CodexAvailabilityCache
+
+            self._codex_availability = CodexAvailabilityCache(gateway=self.gateway)
+        return self._codex_availability
 
     # -- reporting -------------------------------------------------------
 
@@ -234,6 +258,7 @@ class AcquisitionMission:
         expert_constraints: list[str] | None = None,
         expert_acceptance: list[tuple[str, list[str]]] | None = None,
         repair: str = "",
+        codex_first: bool = False,
     ) -> AcquisitionResult:
         """Attempt locally, count the evidence, escalate only if it says to.
 
@@ -275,6 +300,23 @@ class AcquisitionMission:
         # And what THIS mission already established, if it was interrupted.
         checkpoint = self._open_checkpoint(capability_id, goal, repair, result)
         already_done = checkpoint.local_attempts if checkpoint else 0
+
+        if codex_first:
+            return self._run_codex_first(
+                goal,
+                result,
+                capability_id=capability_id,
+                keywords=keywords,
+                extra_checks=extra_checks,
+                constraints=expert_constraints,
+                acceptance=expert_acceptance,
+                task_class=task_class,
+                repair_mode=bool(repair),
+                subject=subject,
+                max_steps=max_steps,
+                max_seconds=max_seconds,
+                started=started,
+            )
 
         outcome = None
         for attempt in range(self.MAX_LOCAL_ATTEMPTS):
@@ -396,6 +438,99 @@ class AcquisitionMission:
             f"put {capability_id} back into service; its defect is unfixed but it works",
         )
 
+    def _run_codex_first(
+        self,
+        goal: str,
+        result: AcquisitionResult,
+        *,
+        capability_id: str,
+        keywords: list[str] | None,
+        extra_checks: list[Any] | None,
+        constraints: list[str] | None,
+        acceptance: list[tuple[str, list[str]]] | None,
+        task_class: str,
+        repair_mode: bool,
+        subject: str,
+        max_steps: int,
+        max_seconds: float,
+        started: float,
+    ) -> AcquisitionResult:
+        """Use Codex as the capability engineer before local generation.
+
+        This is the owner-facing policy for missing or broken capabilities. It
+        still uses the same isolated workspace, verification and registration
+        gates; only the first engineering tier changes.
+        """
+
+        try:
+            status = self.codex_availability.status()
+        except Exception as exc:  # noqa: BLE001
+            from capabilities.codex import CodexAvailability, CodexAvailabilityState
+
+            status = CodexAvailability(CodexAvailabilityState.ERROR, f"{type(exc).__name__}: {exc}")
+        result.codex_checked = True
+        result.codex_state = status.state.value
+        self._step(result, "codex_availability", f"{status.state.value}: {status.detail[:180]}", ok=status.ready)
+        if not status.ready:
+            self._queue_capability_request(goal, result, status)
+            result.reason = f"Codex is {status.state.value}: {status.detail}"
+            result.seconds = time.perf_counter() - started
+            if repair_mode and capability_id:
+                self._restore(capability_id, result)
+            return result
+
+        cid = capability_id or self.service.suggest_id(goal)
+        start_project = getattr(self.service, "_start_project", None)
+        if not callable(start_project):
+            result.reason = "capability service cannot create an isolated workspace for Codex"
+            result.seconds = time.perf_counter() - started
+            self._step(result, "workspace", result.reason, ok=False)
+            return result
+        try:
+            project = start_project(
+                goal,
+                cid,
+                max_steps=max_steps,
+                max_seconds=max_seconds,
+                extra_checks=list(extra_checks or []),
+            )
+            workspace = Path(str(project.workspace))
+        except Exception as exc:  # noqa: BLE001
+            result.reason = f"could not prepare Codex workspace: {type(exc).__name__}: {exc}"
+            result.seconds = time.perf_counter() - started
+            self._step(result, "workspace", result.reason, ok=False)
+            return result
+        self._step(result, "codex", f"engineering {cid} in isolated workspace {workspace}")
+        escalated = self._escalate(
+            goal,
+            result,
+            capability_id=cid,
+            keywords=keywords,
+            extra_checks=extra_checks,
+            constraints=constraints,
+            acceptance=acceptance,
+            task_class=task_class,
+            repair_mode=repair_mode,
+            subject=subject,
+            workspace=workspace,
+        )
+        escalated.seconds = time.perf_counter() - started
+        if repair_mode and capability_id and not escalated.acquired:
+            self._restore(capability_id, escalated)
+        return escalated
+
+    def _queue_capability_request(self, goal: str, result: AcquisitionResult, status: Any) -> None:
+        try:
+            from capabilities.codex import CapabilityRequestQueue
+
+            queue = CapabilityRequestQueue(Path(self.kernel.state_root) / "capabilities" / "requests.jsonl")
+            request = queue.enqueue(goal, reason=f"Codex is {status.state.value}: {status.detail}")
+            result.queued = True
+            result.queue_id = request.request_id
+            self._step(result, "queue", f"queued as {request.request_id}")
+        except Exception as exc:  # noqa: BLE001
+            self._step(result, "queue", f"could not queue: {type(exc).__name__}: {exc}", ok=False)
+
     def _retire(self, capability_id: str, defect: str, result: AcquisitionResult) -> None:
         """Stop handing out a capability that is known to be broken.
 
@@ -444,6 +579,7 @@ class AcquisitionMission:
         task_class: str,
         repair_mode: bool = False,
         subject: str = "",
+        workspace: Path | None = None,
     ) -> AcquisitionResult:
         """Ask an expert, then verify its work here before believing any of it.
 
@@ -457,7 +593,7 @@ class AcquisitionMission:
         from experts.escalation import Attempt
 
         result.escalated = True
-        workspace = self._workspace_for(goal)
+        workspace = workspace or self._workspace_for(goal)
         if workspace is None:
             result.reason = "no workspace was available to escalate into"
             self._step(result, "escalation", result.reason, ok=False)

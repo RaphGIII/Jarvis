@@ -299,10 +299,10 @@ class JarvisCore:
     @property
     def experts(self) -> Any:
         if self._expert_gateway is None:
-            from experts.claude_code import ClaudeCodeExpert
+            from experts.codex import CodexExpert
             from experts.gateway import ExpertGateway
 
-            self._expert_gateway = ExpertGateway([ClaudeCodeExpert()])
+            self._expert_gateway = ExpertGateway([CodexExpert()])
         return self._expert_gateway
 
     # ------------------------------------------------------------------
@@ -1945,8 +1945,8 @@ class JarvisCore:
     def _answer_by_acquisition(self, text: str, scope: str) -> None:
         """"Learn to do X": a capability-acquisition mission, started from the chat.
 
-        Runs the same pipeline the music gap uses (local build, verification,
-        escalation only after counted local failure, registration), as a
+        Runs the same pipeline the music gap uses (Codex first when available,
+        verification, registration), as a
         durable engine mission with the acquisition's own steps as evidence.
         The conversation stays open; the verdict comes back when it is one.
         """
@@ -1963,22 +1963,22 @@ class JarvisCore:
                               scope=scope, backend="acquisition")
                 return
         goal = text.strip()
-        mission = self.missions.create(goal, kind="capability", interpretation="acquire a missing primitive: local build, verify, register",
+        mission = self.missions.create(goal, kind="capability", interpretation="acquire a missing primitive: Codex first, verify, register",
                                        acceptance=["the capability is registered and verified", "a second invocation uses it directly"], scope=scope)
         self.missions.add_evidence(mission, owner_statement(goal))
         de = self.language.startswith("de")
         self._deliver(
-            (f"Verstanden, das lerne ich jetzt (Mission {mission.mission_id}): lokaler Build, Verifikation, Registrierung; Experte nur bei "
-             f"nachgewiesenem lokalem Scheitern. Ich melde mich, wenn es verifiziert ist.") if de else
-            (f"Understood, I will learn that now (mission {mission.mission_id}): local build, verification, registration; the expert only after "
-             f"counted local failure. I will report when it is verified."),
+            (f"Verstanden, das lerne ich jetzt (Mission {mission.mission_id}): Codex zuerst, dann Verifikation und Registrierung. "
+             f"Ich melde mich, wenn es verifiziert ist.") if de else
+            (f"Understood, I will learn that now (mission {mission.mission_id}): Codex first, then verification and registration. "
+             f"I will report when it is verified."),
             scope=scope, backend="acquisition", final_state=JarvisState.CODING,
         )
 
         def work() -> None:
             try:
                 self.missions.transition(mission, "PLAN", "acquisition pipeline")
-                self.missions.transition(mission, "EXECUTE", "local build")
+                self.missions.transition(mission, "EXECUTE", "Codex capability engineering")
                 acq = AcquisitionMission(service=self.capabilities, kernel=self.kernel,
                                          emit=lambda kind, payload: self.emit(kind, payload, scope=scope))
                 # "Learn X" names a thing to build, never a thing to look up:
@@ -1995,10 +1995,10 @@ class JarvisCore:
                          if w not in {"lerne", "lern", "learn", "wie", "man", "how", "to"}
                          and w not in BOILERPLATE and w not in ADDRESS_TERMS]
                 cid = "learned." + "_".join(words[:3])[:48] if words else f"learned.{mission.mission_id}"
-                result = acq.run(goal, capability_id=cid, keywords=words[:12])
+                result = acq.run(goal, capability_id=cid, keywords=words[:12], codex_first=True)
                 for step in getattr(result, "steps", [])[-12:]:
-                    self.missions.add_evidence(mission, inference(f"{getattr(step, 'phase', '')}: {getattr(step, 'summary', '')}"[:200],
-                                                                  tier="BUILD_LOCAL", confidence=0.5))
+                    self.missions.add_evidence(mission, inference(f"{getattr(step, 'stage', '')}: {getattr(step, 'detail', '')}"[:200],
+                                                                  tier="CODEX", confidence=0.5))
                 if result.escalated:
                     self.missions.transition(mission, "ESCALATE", f"expert {result.expert_used or 'used'}")
                 self.missions.transition(mission, "VERIFY", f"acquired={result.acquired} {result.reason[:120]}")
@@ -2011,10 +2011,10 @@ class JarvisCore:
                     self.missions.add_evidence(mission, from_receipt(receipt))
                     self.missions.transition(mission, "COMPLETE", f"{result.capability_id} in {result.seconds:.0f}s")
                     self._deliver(
-                        (f"Gelernt und verifiziert: {result.capability_id} ({result.seconds:.0f}s, {result.local_attempts} lokale Versuche, "
-                         f"{'mit' if result.escalated else 'ohne'} Experten). Ab jetzt nutze ich es direkt.") if de else
-                        (f"Learned and verified: {result.capability_id} ({result.seconds:.0f}s, {result.local_attempts} local attempts, "
-                         f"{'with' if result.escalated else 'without'} an expert). From now on I use it directly."),
+                        (f"Gelernt und verifiziert: {result.capability_id} ({result.seconds:.0f}s, Codex-Status {result.codex_state or 'unbekannt'}). "
+                         f"Ab jetzt nutze ich es direkt.") if de else
+                        (f"Learned and verified: {result.capability_id} ({result.seconds:.0f}s, Codex state {result.codex_state or 'unknown'}). "
+                         f"From now on I use it directly."),
                         scope=scope, backend="acquisition", context_text=f"[capability {result.capability_id} acquired; mission {mission.mission_id}]")
                 else:
                     self.missions.fail_approach(mission, "acquisition pipeline", result.reason[:300])
@@ -2725,25 +2725,7 @@ class JarvisCore:
             self.emit(EventType.ERROR, {"error": f"registry unreadable: {exc}"}, scope=scope)
 
         if manifest is None:
-            receipt = failed(
-                "capability.missing", "capability.resolver",
-                f"I have no verified capability for that yet: {goal[:160]}",
-                request=text, goal=goal,
-            )
-            self.receipts.record(receipt)
-            self._session_receipts.append(receipt)
-            self.emit(
-                EventType.TOOL,
-                {"summary": receipt.summary(), "receipt_id": receipt.id,
-                 "receipt": receipt.to_dict()},
-                scope=scope,
-            )
-            self._deliver(
-                f"{receipt.detail}\n\nreceipt {receipt.id}",
-                scope=scope, backend="capability.resolver",
-                context_text=f"[no capability for: {goal[:80]}]",
-                final_state=JarvisState.ERROR,
-            )
+            self._start_capability_teaching_for_request(goal, text, scope)
             return
 
         capability_id = str(manifest.capability_id)
@@ -2805,6 +2787,116 @@ class JarvisCore:
             f"{'verified' if receipt.verified else 'not verified'}, receipt {receipt.id}]",
             final_state=JarvisState.IDLE if receipt.verified else JarvisState.ERROR,
         )
+
+    def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str) -> None:
+        """Codex learns a missing action capability, then retries the request."""
+
+        from service.acquisition import AcquisitionMission
+
+        if not self._acquiring.acquire(blocking=False):
+            de = self.language.startswith("de")
+            self._deliver(
+                ("Ich lerne gerade schon eine FÃ¤higkeit. Diese Anfrage ist vorgemerkt." if de
+                 else "I am already learning a capability. This request is queued."),
+                scope=scope,
+                backend="capability.resolver",
+                final_state=JarvisState.WAITING,
+                context_text=f"[capability acquisition already running: {goal[:120]}]",
+            )
+            return
+        de = self.language.startswith("de")
+        self.state.set(JarvisState.CODING, detail=f"acquiring capability: {goal[:80]}", scope=scope)
+        self._deliver(
+            (f"Die Funktion habe ich noch nicht zuverlÃ¤ssig. Codex baut sie: {goal[:120]}" if de
+             else f"I do not have that capability reliably yet. Codex is building it: {goal[:120]}"),
+            scope=scope,
+            backend="codex.engineer",
+            final_state=JarvisState.CODING,
+            context_text=f"[capability missing; Codex acquisition started: {goal[:120]}]",
+        )
+
+        def work() -> None:
+            try:
+                from capabilities.registry import ADDRESS_TERMS, BOILERPLATE
+                from development.experience import terms as goal_terms
+
+                words = [w for w in goal_terms(goal) if w not in BOILERPLATE and w not in ADDRESS_TERMS]
+                capability_id = self.capabilities.suggest_id(goal)
+                mission = AcquisitionMission(
+                    service=self.capabilities,
+                    kernel=self.kernel,
+                    emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
+                )
+                result = mission.run(goal, capability_id=capability_id, keywords=words[:12], codex_first=True)
+                self.emit(EventType.PROGRESS, {"summary": f"capability acquisition finished: {result.acquired}",
+                                               "acquisition": result.to_dict()}, scope=scope)
+                if not result.acquired or not result.capability_id:
+                    self._deliver(
+                        (f"Nicht gelernt: {result.reason[:200]}" if de else f"Not learned: {result.reason[:200]}"),
+                        scope=scope,
+                        backend="codex.engineer",
+                        final_state=JarvisState.ERROR if not result.queued else JarvisState.WAITING,
+                        context_text=f"[capability acquisition failed: {result.reason[:160]}]",
+                    )
+                    return
+                manifest = self.capabilities.registry.get(result.capability_id)
+                if manifest is None:
+                    self._deliver(
+                        ("Gelernt, aber der Registry-Eintrag ist nicht ladbar." if de else "Learned, but the registry entry cannot be loaded."),
+                        scope=scope,
+                        backend="capability.registry",
+                        final_state=JarvisState.ERROR,
+                    )
+                    return
+                payload, unmet = self._capability_payload(manifest, goal, original_text)
+                if unmet:
+                    self._deliver(
+                        (f"Gelernt: {result.capability_id}. Zum AusfÃ¼hren fehlt noch: {', '.join(unmet)}." if de
+                         else f"Learned: {result.capability_id}. To run it I still need: {', '.join(unmet)}."),
+                        scope=scope,
+                        backend="capability.resolver",
+                        final_state=JarvisState.WAITING,
+                        context_text=f"[capability {result.capability_id} acquired; missing input {unmet}]",
+                    )
+                    return
+                execution = self.capabilities.execute(result.capability_id, payload)
+                from runtime.receipts import Receipt
+
+                output = dict(getattr(execution, "output", {}) or {})
+                ok = bool(getattr(execution, "ok", False))
+                checks = self._verify_capability_output(output)
+                receipt = Receipt(
+                    kind=f"capability.{result.capability_id}",
+                    executor=result.capability_id,
+                    ok=ok and all(item.passed for item in checks),
+                    request=original_text,
+                    detail=(str(output.get("detail") or output.get("message") or "ran")
+                            if ok else str(getattr(execution, "error", "") or output.get("error", "failed"))),
+                    evidence={"goal": goal, "capability": result.capability_id, "output": output},
+                    verifications=tuple(checks),
+                )
+                self.receipts.record(receipt)
+                self._session_receipts.append(receipt)
+                self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id,
+                                           "receipt": receipt.to_dict()}, scope=scope)
+                self._deliver(
+                    f"{receipt.detail}\n\nreceipt {receipt.id}",
+                    scope=scope,
+                    backend=result.capability_id,
+                    final_state=JarvisState.IDLE if receipt.verified else JarvisState.ERROR,
+                    context_text=f"[capability {result.capability_id} acquired and retried; receipt {receipt.id}]",
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._deliver(
+                    (f"Akquise fehlgeschlagen: {exc}" if de else f"Acquisition failed: {exc}"),
+                    scope=scope,
+                    backend="codex.engineer",
+                    final_state=JarvisState.ERROR,
+                )
+            finally:
+                self._acquiring.release()
+
+        threading.Thread(target=work, daemon=True, name=f"capability-teach-{int(time.time())}").start()
 
     @staticmethod
     def _verify_capability_output(output: dict[str, Any]) -> list[Any]:
@@ -2935,6 +3027,7 @@ class JarvisCore:
                 max_steps=60,
                 max_seconds=1800.0,
                 repair=repair,
+                codex_first=True,
             )
             self.emit(
                 EventType.PROGRESS,

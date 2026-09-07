@@ -7,9 +7,16 @@ from pathlib import Path
 from typing import Any
 
 from capabilities.executor import CapabilityExecutor
+from capabilities.codex import (
+    CapabilityRequestQueue,
+    CodexAvailabilityCache,
+    CodexAvailabilityState,
+    StaticCodexAvailability,
+)
 from capabilities.models import (
     AcquisitionStage,
     CapabilityAcquisitionResult,
+    CapabilityResolutionStatus,
     CapabilityResolution,
     SkillSpecification,
 )
@@ -41,6 +48,9 @@ class CapabilityRuntimeConfig:
     seed: int = 404
     trace: bool = False
     enable_research: bool = True
+    missing_capability_policy: str = "codex_first"
+    require_healthy_capabilities: bool = True
+    codex_availability_ttl_seconds: float = 90.0
 
 
 class CapabilityAcquisitionRuntime:
@@ -53,6 +63,7 @@ class CapabilityAcquisitionRuntime:
         backend: SandboxBackend | None = None,
         config: CapabilityRuntimeConfig | None = None,
         researcher: CapabilityResearcher | None = None,
+        codex_availability: Any | None = None,
     ) -> None:
         self.config = config or CapabilityRuntimeConfig()
         self.root = Path(self.config.data_dir)
@@ -60,7 +71,17 @@ class CapabilityAcquisitionRuntime:
         self.backend = backend or self._default_backend()
         self.brain = brain
         self.registry = CapabilityRegistry(self.root / "registry.json")
-        self.resolver = CapabilityResolver(self.registry, brain=brain)
+        self.resolver = CapabilityResolver(
+            self.registry,
+            brain=None,
+            require_healthy=self.config.require_healthy_capabilities,
+        )
+        self.codex_availability = codex_availability or (
+            StaticCodexAvailability(CodexAvailabilityState.READY, "engineering brain configured")
+            if brain is not None
+            else CodexAvailabilityCache(ttl_seconds=self.config.codex_availability_ttl_seconds)
+        )
+        self.request_queue = CapabilityRequestQueue(self.root / "capability_requests.jsonl")
         self.spec_generator = SkillSpecificationGenerator(brain=brain)
         self.researcher = researcher if researcher is not None else (CapabilityResearcher() if self.config.enable_research else None)
         self.permission_policy = PermissionPolicy()
@@ -94,9 +115,10 @@ class CapabilityAcquisitionRuntime:
 
         resolution = self.resolver.resolve(goal)
         trajectory.record(AcquisitionStage.GAP.value, resolution.to_dict())
-        if resolution.status == "available" and resolution.manifest is not None:
+        if resolution.found:
             execution = self.executor.execute(resolution.manifest, payload)
             execution_ok = self._execution_matches(execution.success, execution.output, expected_output)
+            self.registry.note_execution(resolution.manifest.capability_id, execution_ok, execution.error)
             result = CapabilityAcquisitionResult(
                 goal=goal,
                 success=execution_ok,
@@ -109,6 +131,40 @@ class CapabilityAcquisitionRuntime:
                 error=execution.error,
             )
             trajectory.record(AcquisitionStage.EXECUTE.value, execution.__dict__)
+            self.trajectory_store.save(trajectory, result.to_dict())
+            return result
+
+        if resolution.outcome is CapabilityResolutionStatus.AMBIGUOUS:
+            result = self._failed(
+                goal,
+                resolution,
+                trajectory,
+                "Capability resolution is ambiguous; ask one clarification before invoking Codex.",
+            )
+            self.trajectory_store.save(trajectory, result.to_dict())
+            return result
+
+        codex = self.codex_availability.status()
+        trajectory.record("codex_availability", codex.to_dict())
+        if not codex.ready:
+            queued = self.request_queue.enqueue(
+                goal,
+                context={"resolution": resolution.to_dict(), "request_payload": payload},
+                reason=f"Codex is {codex.state.value}: {codex.detail}",
+            )
+            result = CapabilityAcquisitionResult(
+                goal=goal,
+                success=False,
+                resolution=resolution,
+                trajectory_id=trajectory.trajectory_id,
+                error=(
+                    "Diese Fähigkeit ist noch nicht zuverlässig vorhanden. "
+                    f"Codex ist gerade {codex.state.value}; Anfrage {queued.request_id} wurde queued."
+                ),
+                codex_state=codex.state.value,
+                codex_checked=True,
+                queued=True,
+            )
             self.trajectory_store.save(trajectory, result.to_dict())
             return result
 
@@ -246,17 +302,20 @@ class CapabilityAcquisitionRuntime:
 
         execution = self.executor.execute(promotion.manifest, payload)
         execution_ok = self._execution_matches(execution.success, execution.output, expected_output)
+        self.registry.note_execution(promotion.manifest.capability_id, execution_ok, execution.error)
         trajectory.record(AcquisitionStage.EXECUTE.value, execution.__dict__)
         second_resolution = self.resolver.resolve(second_goal or goal)
         second_execution = (
             self.executor.execute(second_resolution.manifest, payload)
-            if second_resolution.status == "available" and second_resolution.manifest is not None
+            if second_resolution.found
             else None
         )
         second_execution_ok = bool(
             second_execution
             and self._execution_matches(second_execution.success, second_execution.output, expected_output)
         )
+        if second_resolution.found and second_resolution.manifest is not None:
+            self.registry.note_execution(second_resolution.manifest.capability_id, second_execution_ok, getattr(second_execution, "error", "") if second_execution else "")
         trajectory.record(
             AcquisitionStage.SECOND_CALL.value,
             {
@@ -286,6 +345,8 @@ class CapabilityAcquisitionRuntime:
             trajectory_id=trajectory.trajectory_id,
             output=execution.output,
             error=execution.error,
+            codex_state=codex.state.value,
+            codex_checked=True,
         )
         self.software_engineer.record_lifecycle_memory(
             project_request,

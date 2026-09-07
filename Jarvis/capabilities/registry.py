@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from capabilities.models import CapabilityManifest
+from capabilities.models import CapabilityHealth, CapabilityManifest
 
 
 #: Vocabulary that every capability contract contains, so sharing it says
@@ -143,7 +143,7 @@ def _subject_sentence(description: str) -> str:
 class CapabilityRegistry:
     """Persistent registry for installed Jarvis capabilities."""
 
-    schema_version = 1
+    schema_version = 2
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -185,7 +185,7 @@ class CapabilityRegistry:
             return []
         scored: list[tuple[float, float, CapabilityManifest]] = []
         for manifest in self._records.values():
-            if manifest.status != "active":
+            if not manifest.is_active():
                 continue
             keywords = {
                 term
@@ -232,13 +232,23 @@ class CapabilityRegistry:
             described = self._terms(manifest.description) - BOILERPLATE
             tiebreak = len(query_terms & described) / max(1, len(query_terms))
             score = hits / max(1, len(query_terms))
-            if manifest.health_view().get("state") == "failing":
+            if manifest.health_state() is CapabilityHealth.BROKEN:
                 score *= 0.5  # demoted, not hidden: a repair can restore it
             scored.append((score, tiebreak, manifest))
         scored.sort(key=lambda item: (item[0], item[1], item[2].capability_id), reverse=True)
         return [manifest for _, _, manifest in scored[:limit]]
 
     def register(self, manifest: CapabilityManifest) -> CapabilityManifest:
+        if not manifest.family:
+            manifest.family = manifest.capability_id.split(".", 1)[0]
+        if not manifest.semantic_signature:
+            manifest.semantic_signature = manifest.compute_semantic_signature()
+        if not manifest.implementation_path and manifest.source_location:
+            manifest.implementation_path = manifest.source_location
+        if not manifest.runtime_dependencies:
+            manifest.runtime_dependencies = list(manifest.dependencies)
+        if manifest.validation_status.get("verified") and not manifest.health:
+            manifest.health = {"state": "healthy", "health": CapabilityHealth.HEALTHY.value}
         errors = manifest.validate()
         if errors:
             raise ValueError("; ".join(errors))
@@ -272,18 +282,27 @@ class CapabilityRegistry:
             health["consecutive_ok"] = streak
             health["consecutive_failures"] = 0
             health["last_ok_at"] = now
-            health["state"] = "healthy" if streak >= 2 or health.get("state") in {"unverified", "healthy"} else "degraded"
+            healthy_now = streak >= 2 or health.get("state") in {"unverified", "healthy"}
+            health["state"] = "healthy" if healthy_now else "degraded"
+            health["health"] = CapabilityHealth.HEALTHY.value if healthy_now else CapabilityHealth.AT_RISK.value
         else:
             failures = int(health.get("consecutive_failures", 0)) + 1
             health["consecutive_failures"] = failures
             health["consecutive_ok"] = 0
             health["last_error_at"] = now
             health["last_error"] = str(detail)[:300]
-            health["state"] = "failing" if failures >= FAILING_AFTER else "degraded"
+            broken = failures >= FAILING_AFTER
+            health["state"] = "failing" if broken else "degraded"
+            health["health"] = CapabilityHealth.BROKEN.value if broken else CapabilityHealth.AT_RISK.value
+            health["failure_count"] = int(health.get("failure_count", 0)) + 1
         if repair:
             health.setdefault("repairs", []).append({"at": now, "ok": ok, "detail": str(detail)[:200]})
             health["repairs"] = health["repairs"][-10:]
         manifest.health = health
+        manifest.failure_count = int(health.get("failure_count", manifest.failure_count or 0) or 0)
+        calls = int(health.get("calls", 0) or 0)
+        if calls:
+            manifest.success_rate = max(0.0, min(1.0, (calls - manifest.failure_count) / calls))
         self._save()
         return manifest
 

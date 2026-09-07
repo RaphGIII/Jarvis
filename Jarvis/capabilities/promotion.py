@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from capabilities.models import CapabilityManifest, SkillSpecification
+from capabilities.models import CapabilityHealth, CapabilityLifecycle, CapabilityManifest, SkillSpecification
 from capabilities.registry import CapabilityRegistry
 from capabilities.workspace import StagedSkillWorkspace
 
@@ -65,8 +66,12 @@ class SkillPromoter:
         tmp.rename(target)
 
         manifest.source_location = str(target.resolve())
+        manifest.implementation_path = manifest.source_location
         manifest.tests_location = str((target / "test_public.py").resolve())
+        manifest.lifecycle = CapabilityLifecycle.ACTIVE.value
+        manifest.health = {"state": "healthy", "health": CapabilityHealth.HEALTHY.value}
         manifest.validation_status = {
+            "verified": True,
             "syntax_build": True,
             "public_tests": True,
             "internal_qa": True,
@@ -76,4 +81,8 @@ class SkillPromoter:
             "permission_policy": True,
         }
         registry_manifest = self.registry.register(manifest)
+        (target / "manifest.json").write_text(
+            json.dumps(registry_manifest.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         return PromotionDecision(True, registry_manifest, [])
