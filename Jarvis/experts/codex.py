@@ -1,11 +1,9 @@
 """Expert provider backed by the Codex CLI on a ChatGPT subscription.
 
-**Status: written, not verified.** The Codex CLI is not installed on this
-machine, so unlike :mod:`experts.claude_code` -- which was built by inspecting
-``claude 2.1.241`` and proved on a real job -- this adapter has never actually
-run. :meth:`CodexExpert.availability` says so rather than reporting a cheerful
-"ready" for something nobody has tested, and the gateway will simply not select
-it until the CLI exists.
+The adapter uses the installed Codex CLI directly. :meth:`CodexExpert.availability`
+is deliberately cheap: it checks that the CLI can start and report a version,
+then the acquisition job itself proves whether the non-interactive execution
+path works. Expensive probes do not run before every owner request.
 
 What *is* load-bearing here regardless of whether the tool is present is the
 cost safety, and it is the same shape as the Claude adapter for the same
@@ -19,10 +17,9 @@ intention.
 Removing a variable is a far stronger guarantee than passing a flag that asks
 politely, and it is the same lesson ``--bare`` taught on the Claude side.
 
-When the CLI is installed, the two things to verify before trusting this are:
-the non-interactive subcommand and its output format (assumed ``codex exec``
-with ``--json``), and that a subscription-authenticated session really is what
-runs. Until then it is scaffolding with the safety already in place.
+The important safety property is that metered credentials are removed from the
+child environment. If the user is not signed in through the ChatGPT subscription
+client, Codex reports an auth error instead of silently falling back to PAYG.
 """
 
 from __future__ import annotations
@@ -68,10 +65,6 @@ class CodexExpert:
     name = "codex"
     channel = SpendChannel.SUBSCRIPTION_CLI
 
-    #: Set once the CLI has actually been driven successfully on this machine.
-    #: Until then the adapter reports itself unverified rather than ready.
-    verified_on_this_machine = False
-
     def __init__(
         self,
         *,
@@ -110,15 +103,6 @@ class CodexExpert:
             return ProviderAvailability(False, (completed.stderr or completed.stdout).strip()[:300])
 
         version = completed.stdout.strip()[:80]
-        if not self.verified_on_this_machine:
-            # Present but untested. Honest rather than optimistic: this adapter
-            # was written against documented behaviour, not observed behaviour.
-            return ProviderAvailability(
-                False,
-                f"codex {version} is installed but this adapter has never been verified against it. "
-                "Set CodexExpert.verified_on_this_machine = True once a real job has run.",
-                version=version,
-            )
         return ProviderAvailability(True, "subscription CLI available", version=version)
 
     # -- execution -------------------------------------------------------

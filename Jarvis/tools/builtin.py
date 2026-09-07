@@ -641,6 +641,11 @@ def safe_environment(context: ToolContext) -> dict[str, str]:
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["PYTHONIOENCODING"] = "utf-8"
     environment.setdefault("PYTHONUNBUFFERED", "1")
+    temp_root = context.workspace / ".jarvis_tmp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    environment["TEMP"] = str(temp_root)
+    environment["TMP"] = str(temp_root)
+    environment["PYTEST_DEBUG_TEMPROOT"] = str(temp_root)
     # The workspace wins over anything installed on the host. Without this, a
     # stray top-level package in user site-packages shadows the workspace's own
     # modules -- this machine has a `tests` package installed that did exactly

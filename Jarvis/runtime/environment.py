@@ -157,7 +157,10 @@ def probe_ollama() -> list[Fact]:
             Fact("ollama.models", models, "GET /api/tags", _now()),
         ]
     except Exception as exc:
-        return [Fact("ollama.reachable", False, f"GET /api/tags failed: {type(exc).__name__}", _now())]
+        return [
+            Fact("ollama.reachable", False, f"GET /api/tags failed: {type(exc).__name__}", _now()),
+            Fact("ollama.models", [], "GET /api/tags unavailable", _now()),
+        ]
 
 
 def probe_gpu() -> list[Fact]:

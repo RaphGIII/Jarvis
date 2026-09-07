@@ -94,7 +94,11 @@ class CodexAvailabilityCache:
 
     def _probe(self) -> CodexAvailability:
         if self.gateway is not None:
-            return _from_gateway_status(self.gateway.status())
+            if hasattr(self.gateway, "status"):
+                return _from_gateway_status(self.gateway.status())
+            if hasattr(self.gateway, "availability"):
+                return _from_provider_availability(self.gateway.availability())
+            return CodexAvailability(CodexAvailabilityState.ERROR, "gateway has no status or availability method", evidence="expert gateway")
         exe = self.executable if self.executable is not None else shutil.which("codex")
         if not exe:
             return CodexAvailability(
@@ -139,6 +143,25 @@ def _from_gateway_status(status: dict[str, Any]) -> CodexAvailability:
         return CodexAvailability(CodexAvailabilityState.OFFLINE, "Codex is offline", evidence="expert gateway")
     detail = json.dumps(status, sort_keys=True, default=str)[:300] if status else "no gateway status"
     return CodexAvailability(CodexAvailabilityState.ERROR, detail, evidence="expert gateway")
+
+
+def _from_provider_availability(status: Any) -> CodexAvailability:
+    available = bool(getattr(status, "available", False))
+    detail = str(getattr(status, "reason", "") or "")
+    version = str(getattr(status, "version", "") or "")
+    text = " ".join(part for part in (detail, version) if part).strip()
+    lowered = text.lower()
+    if available:
+        return CodexAvailability(CodexAvailabilityState.READY, text or "Codex provider available", evidence="provider availability")
+    if any(marker in lowered for marker in ("quota", "rate limit", "usage limit", "insufficient_quota")):
+        return CodexAvailability(CodexAvailabilityState.QUOTA_EXHAUSTED, text, evidence="provider availability")
+    if any(marker in lowered for marker in ("auth", "sign in", "login", "not authenticated")):
+        return CodexAvailability(CodexAvailabilityState.AUTH_REQUIRED, text, evidence="provider availability")
+    if "not installed" in lowered or "not configured" in lowered:
+        return CodexAvailability(CodexAvailabilityState.NOT_INSTALLED, text, evidence="provider availability")
+    if "offline" in lowered or "network" in lowered:
+        return CodexAvailability(CodexAvailabilityState.OFFLINE, text, evidence="provider availability")
+    return CodexAvailability(CodexAvailabilityState.ERROR, text or "Codex provider unavailable", evidence="provider availability")
 
 
 @dataclass

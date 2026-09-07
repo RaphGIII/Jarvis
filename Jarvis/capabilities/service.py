@@ -988,7 +988,7 @@ class CapabilityService:
                 encoding="utf-8",
                 errors="replace",
                 timeout=self.execution_timeout,
-                env={**_safe_env(), "JARVIS_CAPABILITY_RUN_DIR": str(run_dir)},
+                env={**_safe_env_for_workspace(source), "JARVIS_CAPABILITY_RUN_DIR": str(run_dir)},
             )
             duration = time.perf_counter() - started
 
@@ -1069,7 +1069,7 @@ class CapabilityService:
                 encoding="utf-8",
                 errors="replace",
                 timeout=self.execution_timeout,
-                env=_safe_env(),
+                env=_safe_env_for_workspace(cwd),
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
@@ -1129,6 +1129,16 @@ def _safe_env() -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in allowed}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _safe_env_for_workspace(workspace: Path) -> dict[str, str]:
+    env = _safe_env()
+    temp_root = Path(workspace) / ".jarvis_tmp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    env["TEMP"] = str(temp_root)
+    env["TMP"] = str(temp_root)
+    env["PYTEST_DEBUG_TEMPROOT"] = str(temp_root)
     return env
 
 

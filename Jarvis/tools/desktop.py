@@ -59,6 +59,8 @@ def running_processes(payload: dict[str, Any], context: ToolContext) -> dict[str
         command = ["ps", "-eo", "comm,pid", "--no-headers"]
 
     completed = _run(command)
+    if sys.platform == "win32" and not completed["ok"]:
+        completed = _windows_processes_with_powershell()
     if not completed["ok"]:
         return completed
 
@@ -75,6 +77,21 @@ def running_processes(payload: dict[str, Any], context: ToolContext) -> dict[str
         if len(names) >= limit:
             break
     return {"ok": True, "processes": names, "count": len(names)}
+
+
+def _windows_processes_with_powershell() -> dict[str, Any]:
+    """Fallback when tasklist is blocked by local policy."""
+
+    return _run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-Process | Sort-Object ProcessName | Select-Object -ExpandProperty ProcessName",
+        ],
+        timeout=30,
+    )
 
 
 def find_applications(payload: dict[str, Any], context: ToolContext) -> dict[str, Any]:

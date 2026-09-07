@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -295,6 +296,12 @@ class ExpertGateway:
 
 
 def _run(command: list[str], cwd: Path, *, timeout: float = 900.0) -> tuple[bool, str]:
+    temp_root = Path(cwd) / ".jarvis_tmp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env["TEMP"] = str(temp_root)
+    env["TMP"] = str(temp_root)
+    env["PYTEST_DEBUG_TEMPROOT"] = str(temp_root)
     try:
         completed = subprocess.run(
             list(command),
@@ -305,6 +312,7 @@ def _run(command: list[str], cwd: Path, *, timeout: float = 900.0) -> tuple[bool
             encoding="utf-8",
             errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            env=env,
         )
     except FileNotFoundError as exc:
         return False, f"command not found: {exc}"

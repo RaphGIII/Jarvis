@@ -274,6 +274,31 @@ def _process_alive(pid: int) -> bool:
             )
         except (OSError, subprocess.SubprocessError):
             return True  # cannot tell; assume alive rather than kill a live run
+        if completed.returncode == 0:
+            return str(pid) in completed.stdout
+        try:
+            completed = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    f"Get-Process -Id {pid} -ErrorAction Stop | Select-Object -ExpandProperty Id",
+                ],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return True
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").lower()
+            if "cannot find" in detail or "keinen prozess" in detail or "no process" in detail:
+                return False
+            return True
         return str(pid) in completed.stdout
     try:
         os.kill(pid, 0)
