@@ -41,10 +41,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from jarvis.window import DEFAULT_SIZE, default_profile_dir, find_engine, window_command
+from jarvis.window import DEFAULT_SIZE, DEFAULT_WINDOW_MODE, default_profile_dir, find_engine, normalize_window_mode, window_command
 
 APP_USER_MODEL_ID = "ZEUS.Desktop"
 BEACON_NAME = "window-show"
+WINDOW_SETTINGS_NAME = "settings.json"
+
+
+def _environment_window_mode() -> str:
+    """An explicit process override, when a launcher wants one."""
+
+    raw = os.getenv("ZEUS_WINDOW_MODE", "").strip()
+    return normalize_window_mode(raw) if raw else ""
 
 
 # --------------------------------------------------------------------------
@@ -74,6 +82,10 @@ def _win32() -> Any:
     user32.GetWindow.argtypes = [wt.HWND, ctypes.c_uint]
     user32.GetWindow.restype = wt.HWND
     user32.GetWindowRect.argtypes = [wt.HWND, ctypes.c_void_p]
+    user32.MonitorFromWindow.argtypes = [wt.HWND, ctypes.c_uint]
+    user32.MonitorFromWindow.restype = wt.HANDLE
+    user32.GetMonitorInfoW.argtypes = [wt.HANDLE, ctypes.c_void_p]
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
     return ctypes, wt, user32
 
 
@@ -179,14 +191,39 @@ def focus(hwnd: int) -> bool:
     return True
 
 
-def style_frameless(hwnd: int) -> bool:
-    """Native borderless + maximized (to the work area), WITHOUT browser fullscreen.
+def _monitor_rect(hwnd: int, *, work_area: bool = False) -> tuple[int, int, int, int]:
+    """The monitor rectangle for ``hwnd``; falls back to the primary screen."""
 
-    Removes WS_CAPTION | WS_THICKFRAME so there is no Windows title bar and no
-    resize frame, then maximizes.  Because the window keeps WS_OVERLAPPED (not
-    WS_POPUP) it maximizes to the *work area* -- the taskbar stays -- and Edge
-    never enters its Fullscreen mode, so the "Vollbildmodus beenden" toast that
-    --start-fullscreen produced is gone.  The page draws its own top bar.
+    w = _win32()
+    if w is None:
+        return 0, 0, DEFAULT_SIZE[0], DEFAULT_SIZE[1]
+    ctypes, wt, user32 = w
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", RECT), ("rcWork", RECT), ("dwFlags", wt.DWORD)]
+
+    try:
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+        if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            rect = info.rcWork if work_area else info.rcMonitor
+            return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    except Exception:  # noqa: BLE001 - primary-screen fallback below
+        pass
+    return 0, 0, int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+
+
+def style_frameless(hwnd: int) -> bool:
+    """Native borderless fullscreen, without browser fullscreen or kiosk.
+
+    Removes only the visible frame (WS_CAPTION | WS_THICKFRAME), then sizes the
+    same normal top-level Chromium app window to the monitor.  It is not made
+    topmost and no owner/tool-window style is set, so Alt+Tab continues to see
+    it as a normal application.
     """
 
     if sys.platform != "win32" or not hwnd:
@@ -200,19 +237,62 @@ def style_frameless(hwnd: int) -> bool:
     GWL_STYLE = -16
     WS_CAPTION = 0x00C00000
     WS_THICKFRAME = 0x00040000
-    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0020, 0x0002, 0x0001, 0x0004
+    SWP_FRAMECHANGED, SWP_NOZORDER, SWP_NOOWNERZORDER, SWP_SHOWWINDOW = 0x0020, 0x0004, 0x0200, 0x0040
     try:
         user32.GetWindowLongW.argtypes = [wt.HWND, ctypes.c_int]
         user32.GetWindowLongW.restype = ctypes.c_long
         user32.SetWindowLongW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_long]
         user32.SetWindowLongW.restype = ctypes.c_long
         user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-        user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME))
-        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
         if user32.IsIconic(hwnd):
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE first
-        user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE (to work area, since not WS_POPUP)
+        left, top, right, bottom = _monitor_rect(hwnd)
+        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+        user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME))
+        user32.SetWindowPos(
+            hwnd, 0, left, top, right - left, bottom - top,
+            SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - styling is cosmetic; never break the launch
+        return False
+
+
+def style_windowed(hwnd: int, *, size: tuple[int, int] = DEFAULT_SIZE) -> bool:
+    """Restore a framed, resizable window for the F11 windowed mode."""
+
+    if sys.platform != "win32" or not hwnd:
+        return False
+    w = _win32()
+    if w is None:
+        return False
+    ctypes, wt, user32 = w
+    if not user32.IsWindow(hwnd):
+        return False
+    GWL_STYLE = -16
+    WS_CAPTION = 0x00C00000
+    WS_THICKFRAME = 0x00040000
+    WS_SYSMENU = 0x00080000
+    WS_MINIMIZEBOX = 0x00020000
+    WS_MAXIMIZEBOX = 0x00010000
+    SWP_FRAMECHANGED, SWP_NOZORDER, SWP_NOOWNERZORDER, SWP_SHOWWINDOW = 0x0020, 0x0004, 0x0200, 0x0040
+    try:
+        user32.GetWindowLongW.argtypes = [wt.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        width, height = int(size[0]), int(size[1])
+        left, top, right, bottom = _monitor_rect(hwnd, work_area=True)
+        x = left + max(0, ((right - left) - width) // 2)
+        y = top + max(0, ((bottom - top) - height) // 2)
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        else:
+            user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
+        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+        user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+        user32.SetWindowPos(hwnd, 0, x, y, width, height, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_SHOWWINDOW)
         return True
     except Exception:  # noqa: BLE001 - styling is cosmetic; never break the launch
         return False
@@ -222,7 +302,12 @@ def minimize_window(hwnd: int) -> bool:
     """Minimize to the taskbar -- works on fullscreen windows too."""
     if sys.platform != "win32" or not hwnd:
         return False
-    user32 = _user32()
+    w = _win32()
+    if w is None:
+        return False
+    _ctypes, _wt, user32 = w
+    if not user32.IsWindow(hwnd):
+        return False
     user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
     return True
 
@@ -318,7 +403,7 @@ class DesktopWindow:
     identity: dict[str, Any] = field(default_factory=dict)
     _watcher: threading.Thread | None = None
     _stop: threading.Event = field(default_factory=threading.Event)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def __post_init__(self) -> None:
         self.state_root = Path(self.state_root)
@@ -330,6 +415,10 @@ class DesktopWindow:
     @property
     def session_path(self) -> Path:
         return self.state_root / "window" / "session.json"
+
+    @property
+    def settings_path(self) -> Path:
+        return self.state_root / "window" / WINDOW_SETTINGS_NAME
 
     @property
     def beacon_path(self) -> Path:
@@ -349,6 +438,36 @@ class DesktopWindow:
             tmp.replace(self.session_path)
         except OSError:
             pass
+
+    def _read_mode(self) -> str:
+        try:
+            data = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return DEFAULT_WINDOW_MODE
+        return normalize_window_mode(str(data.get("mode", DEFAULT_WINDOW_MODE)))
+
+    def _write_mode(self, mode: str) -> None:
+        try:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"mode": normalize_window_mode(mode), "at": time.time()}
+            tmp = self.settings_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(self.settings_path)
+        except OSError:
+            pass
+
+    def preferred_mode(self) -> str:
+        """The mode to apply now: explicit environment, persisted setting, default."""
+
+        return _environment_window_mode() or self._read_mode()
+
+    def _apply_mode(self, hwnd: int, mode: str) -> bool:
+        resolved = normalize_window_mode(mode)
+        if resolved == "windowed":
+            return style_windowed(hwnd, size=self.size)
+        if resolved == "fullscreen":
+            return style_frameless(hwnd)
+        return True
 
     # -- discovery -------------------------------------------------------
 
@@ -384,6 +503,8 @@ class DesktopWindow:
     def status(self) -> dict[str, Any]:
         found = self.find()
         extra = find_windows(self.title)
+        override = _environment_window_mode()
+        mode = override or self._read_mode()
         return {
             "available": bool(self.engine) and sys.platform == "win32",
             "engine": Path(self.engine).name if self.engine else "",
@@ -396,6 +517,8 @@ class DesktopWindow:
             "last_show_seconds": self.last_show_seconds,
             "identity": self.identity,
             "app_id": APP_USER_MODEL_ID,
+            "mode": mode,
+            "mode_overridden": bool(override),
         }
 
     # -- actions ---------------------------------------------------------
@@ -425,18 +548,19 @@ class DesktopWindow:
                     self.hwnd = found.hwnd
                     focus(found.hwnd)
                     self.identity = apply_identity(found.hwnd, icon=self.icon)
-            # native borderless + maximized, unless the owner chose an explicit
-            # immersive/windowed mode.  Idempotent, so focusing an already-styled
-            # window costs nothing.
-            mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower() or "borderless"
-            if self.hwnd and mode in {"borderless", "maximized"}:
-                style_frameless(self.hwnd)
+            # Native mode application is idempotent.  It deliberately happens
+            # after focus/launch because Chromium creates the top-level HWND
+            # asynchronously and may reset its style during the first paint.
+            mode = self.preferred_mode()
+            mode_applied = self._apply_mode(self.hwnd, mode) if self.hwnd else False
             self.last_show_seconds = round(time.perf_counter() - started, 3)
             self.last_shown_at = time.time()
             self._ensure_single(keep=self.hwnd)
-            self._write_session(action=action, reason=reason, seconds=self.last_show_seconds)
+            self._write_session(action=action, reason=reason, seconds=self.last_show_seconds,
+                                mode=mode, mode_applied=mode_applied)
             result = {"ok": found is not None, "action": action, "seconds": self.last_show_seconds,
-                      "hwnd": self.hwnd, "reason": reason, "identity": self.identity}
+                      "hwnd": self.hwnd, "reason": reason, "identity": self.identity,
+                      "mode": mode, "mode_applied": mode_applied}
             if self.emit is not None:
                 self.emit("tool", {"summary": f"window {action} in {self.last_show_seconds}s" + (f" ({reason})" if reason else ""),
                                    "source": "desktop", "window": result})
@@ -467,6 +591,34 @@ class DesktopWindow:
                 self.emit("tool", {"summary": "window hidden" + (f" ({reason})" if reason else ""), "source": "desktop"})
             return {"ok": ok, "action": "hidden", "hwnd": found.hwnd, "reason": reason}
 
+    def toggle_fullscreen(self, *, reason: str = "") -> dict[str, Any]:
+        """F11: switch between native borderless fullscreen and windowed mode.
+
+        The chosen mode is written before styling so it survives a core restart
+        even if the window itself is left running for the next process.
+        """
+
+        with self._lock:
+            current = self.preferred_mode()
+            mode = "windowed" if current == "fullscreen" else "fullscreen"
+            self._write_mode(mode)
+            found = self.find()
+            if found is None:
+                shown = self.show(reason=reason or "toggle")
+                shown.update({"action": "toggled", "from": current, "mode": mode})
+                return shown
+            self.hwnd = found.hwnd
+            ok = self._apply_mode(found.hwnd, mode)
+            if ok:
+                focus(found.hwnd)
+            self._write_session(action="toggled", reason=reason, mode=mode, mode_applied=ok)
+            result = {"ok": ok, "action": "toggled", "from": current, "mode": mode,
+                      "hwnd": found.hwnd, "reason": reason, "mode_applied": ok}
+            if self.emit is not None:
+                self.emit("tool", {"summary": f"window mode {mode}" + (f" ({reason})" if reason else ""),
+                                   "source": "desktop", "window": result})
+            return result
+
     def close(self, *, reason: str = "") -> dict[str, Any]:
         """End the window process(es): the full-quit case."""
 
@@ -488,7 +640,8 @@ class DesktopWindow:
             return {"ok": False, "detail": "no Chromium engine (Edge, Chrome, Brave, Vivaldi) was found on this machine"}
         try:
             self.profile_dir.mkdir(parents=True, exist_ok=True)
-            command = window_command(self.engine, self.url, profile_dir=self.profile_dir, size=self.size)
+            command = window_command(self.engine, self.url, profile_dir=self.profile_dir,
+                                     size=self.size, mode=self.preferred_mode())
             subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              close_fds=True)
             return {"ok": True}

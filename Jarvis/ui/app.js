@@ -282,6 +282,13 @@ function wireShell() {
 
   document.addEventListener("keydown", (e) => {
     const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+    if (e.key === "F11") {
+      e.preventDefault();
+      e.stopPropagation();
+      api("/api/window", { action: "toggle_fullscreen", reason: "f11" })
+        .then((r) => { if (r && r.ok === false) toast(r.error || "Window mode change failed", "warn"); });
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); palette.open(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) { e.preventDefault(); palette.open("search: "); return; }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); views.open("projects"); return; }

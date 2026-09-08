@@ -344,7 +344,7 @@ class JarvisCore:
             return {"ok": False, "error": "empty message"}
         meta = dict(meta or {})
         meta.setdefault("source", "text")
-        if meta["source"] not in self.USER_SOURCES:
+        if meta['source'] not in self.USER_SOURCES:
             return {"ok": False, "error": f"no provenance: {meta['source']!r} may not enter the conversation as the owner"}
         request_id = str(request_id or meta.get("request_id") or "") or uuid.uuid4().hex[:12]
         with self._lock:

@@ -141,6 +141,8 @@ class Lifecycle:
             return self.desktop.hide(reason=reason or "api")
         if action == "minimize":
             return self.desktop.minimize(reason=reason or "api")
+        if action in {"toggle_fullscreen", "toggle_window_mode", "f11"}:
+            return self.desktop.toggle_fullscreen(reason=reason or "api")
         if action == "close":
             return self.desktop.close(reason=reason or "api")
         return {"ok": True, "action": "status", **self.desktop.status()}

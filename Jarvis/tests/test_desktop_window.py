@@ -107,6 +107,37 @@ def test_the_command_is_an_application_window_on_its_own_profile(tmp_path: Path)
     assert f"--user-data-dir={tmp_path}" in command
     assert any(argument.startswith("--window-size=") for argument in command)
     assert "--no-first-run" in command
+    # Default: native borderless fullscreen, not Chromium kiosk/browser
+    # fullscreen.  The native restyle in service.desktop keeps Alt+Tab working.
+    assert "--start-maximized" in command
+    assert "--start-fullscreen" not in command
+    assert "--kiosk" not in command
+
+
+def test_windowed_mode_keeps_a_normal_launch_vector(tmp_path: Path) -> None:
+    command = window.window_command("msedge.exe", "http://127.0.0.1:8420/", profile_dir=tmp_path, mode="windowed")
+
+    assert any(argument.startswith("--window-size=") for argument in command)
+    assert "--start-maximized" not in command
+    assert "--start-fullscreen" not in command
+    assert "--kiosk" not in command
+
+
+def test_browser_fullscreen_and_kiosk_are_explicit_opt_ins(tmp_path: Path) -> None:
+    assert "--start-fullscreen" in window.window_command(
+        "msedge.exe", "http://127.0.0.1:8420/", profile_dir=tmp_path, mode="browser-fullscreen"
+    )
+    assert "--kiosk" in window.window_command(
+        "msedge.exe", "http://127.0.0.1:8420/", profile_dir=tmp_path, mode="kiosk"
+    )
+
+
+def test_the_ui_routes_f11_to_the_managed_window_toggle() -> None:
+    app = (REPOSITORY / "ui" / "app.js").read_text(encoding="utf-8")
+
+    assert 'e.key === "F11"' in app
+    assert 'action: "toggle_fullscreen"' in app
+    assert "preventDefault" in app.split('e.key === "F11"', 1)[1].split("return;", 1)[0]
 
 
 def test_the_profile_follows_the_state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

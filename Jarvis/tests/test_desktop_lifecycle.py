@@ -25,6 +25,7 @@ class FakeWin:
         self.windows: dict[int, FoundWindow] = {}
         self.next_hwnd = 100
         self.focused: list[int] = []
+        self.modes: list[tuple[str, int]] = []
         self.launches = 0
         self.killed: list[int] = []
 
@@ -64,9 +65,13 @@ class FakeWin:
 @pytest.fixture
 def win(monkeypatch, tmp_path):
     fake = FakeWin()
+    monkeypatch.delenv("ZEUS_SUPERVISED", raising=False)
+    monkeypatch.delenv("ZEUS_SUPERVISOR_DIR", raising=False)
     monkeypatch.setattr(desktop_mod, "find_windows", fake.find)
     monkeypatch.setattr(desktop_mod, "focus", fake.focus)
     monkeypatch.setattr(desktop_mod, "hide_window", fake.hide)
+    monkeypatch.setattr(desktop_mod, "style_frameless", lambda hwnd: fake.modes.append(("fullscreen", hwnd)) or True)
+    monkeypatch.setattr(desktop_mod, "style_windowed", lambda hwnd, **_: fake.modes.append(("windowed", hwnd)) or True)
     monkeypatch.setattr(desktop_mod, "apply_identity", lambda hwnd, **k: {"app_id": True, "icon": True})
     monkeypatch.setattr(desktop_mod, "find_engine", lambda: r"C:\fake\msedge.exe")
     monkeypatch.setattr(desktop_mod, "find_windows_of", lambda pids, **k: [])
@@ -92,6 +97,50 @@ def test_show_launches_once_then_reuses_the_window(tmp_path, win):
     second = dw.show(reason="second ZEUS.exe")
     assert second["action"] == "focused" and win.launches == 1
     assert json.loads(dw.session_path.read_text())["action"] == "focused"
+
+
+def test_default_start_applies_native_borderless_fullscreen(tmp_path, win):
+    dw = _window(tmp_path, win)
+
+    shown = dw.show(reason="startup")
+
+    assert shown["mode"] == "fullscreen" and shown["mode_applied"] is True
+    assert win.modes[-1] == ("fullscreen", dw.hwnd)
+    assert json.loads(dw.session_path.read_text())["mode"] == "fullscreen"
+
+
+def test_f11_toggle_persists_across_a_restarted_desktop_manager(tmp_path, win):
+    dw = _window(tmp_path, win)
+    dw.show(reason="startup")
+
+    windowed = dw.toggle_fullscreen(reason="f11")
+
+    assert windowed["mode"] == "windowed" and windowed["from"] == "fullscreen"
+    assert win.modes[-1] == ("windowed", dw.hwnd)
+    assert json.loads(dw.settings_path.read_text())["mode"] == "windowed"
+
+    restarted = _window(tmp_path, win)
+    shown = restarted.show(reason="restart")
+
+    assert shown["action"] == "focused" and shown["mode"] == "windowed"
+    assert win.launches == 1
+    assert win.modes[-1] == ("windowed", restarted.hwnd)
+
+    fullscreen = restarted.toggle_fullscreen(reason="f11")
+
+    assert fullscreen["mode"] == "fullscreen" and fullscreen["from"] == "windowed"
+    assert json.loads(restarted.settings_path.read_text())["mode"] == "fullscreen"
+
+
+def test_lifecycle_exposes_the_f11_window_mode_toggle(tmp_path, win):
+    core = FakeCore(tmp_path)
+    life = Lifecycle(core)
+    life.desktop = _window(tmp_path, win)
+    life.desktop.show()
+
+    result = life.window("f11", reason="keyboard")
+
+    assert result["action"] == "toggled" and result["mode"] == "windowed"
 
 
 def test_hide_keeps_the_process_and_show_restores_it(tmp_path, win):

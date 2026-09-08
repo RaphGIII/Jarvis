@@ -54,6 +54,11 @@ PROFILE_DIRNAME = "window"
 #: without being a maximised window the owner has to shrink every time.
 DEFAULT_SIZE = (1280, 860)
 
+#: The shell starts borderless fullscreen unless the owner has toggled it.
+#: This is a native window mode, not Chromium's kiosk/browser fullscreen, so
+#: Windows still sees a normal top-level app window and Alt+Tab keeps working.
+DEFAULT_WINDOW_MODE = "fullscreen"
+
 #: Chromium engines on Windows, relative to a program-files or local-app-data
 #: root.  Edge first: it is present on every supported Windows installation,
 #: so it is the one answer that is almost always right.
@@ -79,6 +84,28 @@ _POSIX_ENGINES = (
     "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
     "microsoft-edge", "microsoft-edge-stable", "brave-browser",
 )
+
+
+def normalize_window_mode(value: str) -> str:
+    """Return one of the shell modes ZEUS understands.
+
+    ``fullscreen`` means ZEUS's native borderless fullscreen managed by
+    :mod:`service.desktop`.  ``browser_fullscreen`` is kept only as an explicit
+    compatibility escape hatch for Chromium's own F11/fullscreen mode.
+    """
+
+    text = str(value or "").strip().lower().replace("-", "_")
+    if text in {"window", "windowed", "normal", "fenster", "fenstermodus"}:
+        return "windowed"
+    if text in {"kiosk"}:
+        return "kiosk"
+    if text in {"browser_fullscreen", "immersive", "chromium_fullscreen"}:
+        return "browser_fullscreen"
+    if text in {"maximized", "maximised", "borderless", "borderless_fullscreen", "full", "vollbild", ""}:
+        return "fullscreen"
+    if text == "fullscreen":
+        return "fullscreen"
+    return DEFAULT_WINDOW_MODE
 
 
 def default_profile_dir() -> Path:
@@ -140,6 +167,7 @@ def window_command(
     *,
     profile_dir: str | Path,
     size: tuple[int, int] = DEFAULT_SIZE,
+    mode: str = "",
 ) -> list[str]:
     """The command line that turns a Chromium engine into an application window.
 
@@ -178,19 +206,19 @@ def window_command(
         "--disable-renderer-backgrounding",
     ]
     # ZEUS is an operating environment, not a browser page.  The default shell
-    # is a NATIVE borderless MAXIMIZED window: no Windows title bar, no visible
-    # frame -- but NOT the browser Fullscreen API.  --start-fullscreen made
-    # Edge show its "Vollbildmodus beenden" toast on every launch; the frame is
-    # instead removed by Win32 after the window appears (service.desktop
-    # _style_frameless).  The window is launched maximized so the borderless
-    # restyle has a full-size window to strip.  ZEUS_WINDOW_MODE overrides per
-    # device: fullscreen (old kiosk-style immersive), kiosk, windowed.
-    mode = os.getenv("ZEUS_WINDOW_MODE", "").strip().lower() or "borderless"
-    if mode == "kiosk":
+    # is native borderless fullscreen: Chromium starts maximized, then
+    # service.desktop removes the Windows frame and sizes the same normal
+    # top-level window to the monitor.  It is deliberately not --kiosk and not
+    # Chromium's --start-fullscreen, so Alt+Tab stays an OS window-switcher.
+    # F11 toggles through /api/window and the chosen mode is persisted in the
+    # desktop state directory.  ZEUS_WINDOW_MODE remains an explicit per-device
+    # override for callers that cannot reach the persisted state.
+    resolved_mode = normalize_window_mode(mode or os.getenv("ZEUS_WINDOW_MODE", ""))
+    if resolved_mode == "kiosk":
         command.append("--kiosk")
-    elif mode == "fullscreen":
+    elif resolved_mode == "browser_fullscreen":
         command.append("--start-fullscreen")
-    else:  # borderless (default) and maximized both launch maximized
+    elif resolved_mode == "fullscreen":
         command.append("--start-maximized")
     return command
 
