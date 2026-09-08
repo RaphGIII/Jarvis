@@ -66,6 +66,26 @@ class FakeLifecycle:
         return {"deployments": self.receipts}
 
 
+#: The Owner Security Gate as the runner uses it: a token the owner minted with
+#: their password, burned on use. A mission that reaches PROMOTE in these tests
+#: has to carry one, because a real one does -- see
+#: tests/test_selfdev_promotion_gate.py for the whole matrix.
+OWNER_TOKEN = "owner-token-from-the-ui"
+
+
+class FakeGate:
+    configured = True
+
+    def __init__(self) -> None:
+        self.live = {OWNER_TOKEN}
+
+    def consume(self, authorization: str, scope: str) -> bool:
+        if scope == "SELFDEV_PROMOTE" and authorization in self.live:
+            self.live.discard(authorization)
+            return True
+        return False
+
+
 def _runner(repo: Path, tmp_path: Path, *, build, owner=None, lifecycle=None, gateway=None):
     """A runner exercising the LOCAL builder.
 
@@ -79,12 +99,15 @@ def _runner(repo: Path, tmp_path: Path, *, build, owner=None, lifecycle=None, ga
     from capabilities.codex import CodexAvailabilityState, StaticCodexAvailability
 
     events: list[tuple] = []
+    security = FakeGate()
     runner = SelfDevRunner(
         repository=repo, store=SelfDevStore(tmp_path / "missions"), kernel=SimpleNamespace(provider=lambda tier: object()),
         owner=owner or FakeOwner(), lifecycle=lifecycle or FakeLifecycle(), gateway=gateway,
         availability=StaticCodexAvailability(CodexAvailabilityState.OFFLINE, "not in this test"),
+        security=security,
         emit=lambda kind, payload: events.append((kind, payload)), set_state=lambda *a, **k: None,
     )
+    runner.security_fake = security  # type: ignore[attr-defined]
     runner._build = build.__get__(runner)  # type: ignore[method-assign]
     runner.events = events  # type: ignore[attr-defined]
     runner.health_command = [runner.python, "-c", "import service.core; print('FAKE_OK')"]
@@ -111,7 +134,8 @@ def test_mission_is_durable_and_phases_are_recorded(repo: Path, tmp_path: Path) 
         _candidate(self, mission, {"service/core.py": "VALUE = 2\n"})
 
     runner = _runner(repo, tmp_path, build=build)
-    mission = SelfDevMission(request="make VALUE bigger in your code, use the local coder", language="en")
+    mission = SelfDevMission(request="make VALUE bigger in your code, use the local coder", language="en",
+                             authorization=OWNER_TOKEN)
     runner.store.save(mission)
     result = runner.run(mission)
 
@@ -164,7 +188,8 @@ def test_resume_reverifies_and_promotes_an_existing_candidate(repo: Path, tmp_pa
         _candidate(self, mission, {"service/core.py": "VALUE = 2\n"})
 
     runner = _runner(repo, tmp_path, build=build)
-    mission = SelfDevMission(request="make VALUE bigger in your code, use the local coder")
+    mission = SelfDevMission(request="make VALUE bigger in your code, use the local coder",
+                             authorization=OWNER_TOKEN)
     runner.store.save(mission)
     # Simulate a crash after BUILD: candidate exists, mission marked failed.
     build(runner, mission, 0)

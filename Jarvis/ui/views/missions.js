@@ -7,6 +7,7 @@
 
 import { el, clear, kv, section, badge, button, ago, seconds, clockOf } from "../core/dom.js";
 import { api } from "../core/api.js";
+import { withAuth } from "../core/authgate.js";
 import * as bus from "../core/bus.js";
 import * as views from "../core/views.js";
 
@@ -134,8 +135,25 @@ function inspectSelfdev(m, row) {
     el("span", { class: "v", text: r.clean ? "live tree unchanged" : `BREACH: ${r.contamination.join(", ")} — restored ${r.restored.join(", ")}` })));
   const events = (m.events || []).slice(-30).map((e) => el("div", { class: "tl " + (e.phase === "FAILED" ? "bad" : e.phase === "DONE" ? "ok" : "work") },
     el("span", { class: "when", text: clockOf(e.at) }), el("span", { class: "text", text: `${e.phase}: ${e.detail || ""}` }), e.error ? el("span", { class: "sub", text: e.error }) : null));
-  const finished = ["DONE", "FAILED", "CANCELLED"].includes(m.phase);
+  const finished = ["DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "WAITING"].includes(m.phase);
   const actions = el("div", { class: "toolbar" });
+  /* The owner's half of the promotion gate, and the only way through it. The
+     change is engineered, tested and verified in its isolated worktree and
+     goes no further until a password typed HERE mints a short-lived, scoped,
+     single-use SELFDEV_PROMOTE token. Nothing said in the chat, and nothing
+     any model reports, opens this. */
+  if (m.phase === "AWAITING_AUTHORIZATION") {
+    actions.append(button("Freigeben und übernehmen (Passwort)", async () => {
+      if (!confirm(`Diese Änderung in das laufende Produkt übernehmen und neu starten?\n\n${(m.changed_files || []).join("\n")}`)) return;
+      const r = await withAuth("SELFDEV_PROMOTE", (authorization) =>
+        api("/api/selfdev/authorize", { mission_id: m.mission_id, authorization }));
+      alert(r.needs_setup ? r.error
+            : r.needs_auth ? "Abgebrochen – ohne Passwort keine Freigabe."
+            : r.ok ? "Freigegeben. Übernahme läuft, danach startet ZEUS neu."
+            : (r.error || "?"));
+      views.open("missions");
+    }, "primary"));
+  }
   if (!finished && m.phase !== "RESTARTING") actions.append(button("Cancel", async () => { await api("/api/selfdev/cancel", { mission_id: m.mission_id }); }, "ghost danger"));
   if (m.outcome === "failed" && m.verification?.ok) actions.append(button("Resume (verified candidate)", async () => { await api("/api/selfdev/resume", { mission_id: m.mission_id }); }, "primary"));
   if (m.evidence_patch) actions.append(button("Diff (kept)", () => showDiff(m, row)));

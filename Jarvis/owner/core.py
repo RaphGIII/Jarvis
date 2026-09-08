@@ -114,7 +114,13 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "policy": {
         "self_development": {
             "enabled": True,
-            "auto_promote": True,
+            # Code promotion is NOT configurable. It requires a SELFDEV_PROMOTE
+            # token minted from the owner's password, in every configuration,
+            # including one with no password set -- where it is refused rather
+            # than waved through. `auto_promote` used to be the switch that let
+            # a chat sentence promote seven files into the live tree; it is
+            # gone rather than defaulted, because a switch that can only weaken
+            # that invariant reads like a supported configuration.
             "require_health_check": True,
             "max_seconds": 2400,
         },

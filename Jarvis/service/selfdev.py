@@ -396,18 +396,20 @@ class SelfDevRunner:
                 self._audit(mission, "VERIFY")
             if not verified:
                 return self._fail(mission, f"no verified candidate: {mission.verification.get('detail', '')[:400]}")
-            if not policy.get("auto_promote", True):
-                mission.outcome = "verified_not_promoted"
-                self._phase(mission, "DONE", "verified; the owner policy does not promote automatically")
-                return mission
-            # Promoting code into the running product is a Level-2 change. It
-            # is the owner's decision, proven by their password, and nothing
-            # else may stand in for it -- not this mission, not the engineer's
-            # verdict, not a policy default. Mission d1309425e9 promoted seven
-            # files into the live tree and restarted ZEUS on the strength of a
-            # chat sentence, with no entry in the owner's audit log.
-            if not self._promotion_authorized(mission):
-                return self._await_authorization(mission)
+            # Promoting code into the running product is the owner's decision,
+            # proven by their password, and nothing else may stand in for it --
+            # not this mission, not the engineer's verdict, not a policy flag.
+            # Mission d1309425e9 promoted seven files into the live tree and
+            # restarted ZEUS on the strength of a chat sentence, with no entry
+            # in the owner's audit log.
+            #
+            # `policy.self_development.auto_promote` is deliberately not read
+            # here. It used to be the switch that let this happen, and a switch
+            # that can only ever weaken this invariant is worse than no switch:
+            # it reads like a supported configuration.
+            refusal = self._promotion_refusal(mission)
+            if refusal:
+                return self._await_authorization(mission, refusal)
             self._timed(mission, "promote", lambda: self._promote(mission))
             if mission.outcome == "failed":
                 return mission
@@ -451,18 +453,20 @@ class SelfDevRunner:
             self.set_state(JarvisState.VERIFYING, detail="re-verifying the candidate", scope=mission.scope)
             if not self._timed(mission, "verify", lambda: self._verify(mission)):
                 return self._fail(mission, f"the candidate no longer verifies: {mission.verification.get('detail', '')[:400]}")
-            if not policy.get("auto_promote", True):
-                mission.outcome = "verified_not_promoted"
-                self._phase(mission, "DONE", "verified; the owner policy does not promote automatically")
-                return mission
-            # Promoting code into the running product is a Level-2 change. It
-            # is the owner's decision, proven by their password, and nothing
-            # else may stand in for it -- not this mission, not the engineer's
-            # verdict, not a policy default. Mission d1309425e9 promoted seven
-            # files into the live tree and restarted ZEUS on the strength of a
-            # chat sentence, with no entry in the owner's audit log.
-            if not self._promotion_authorized(mission):
-                return self._await_authorization(mission)
+            # Promoting code into the running product is the owner's decision,
+            # proven by their password, and nothing else may stand in for it --
+            # not this mission, not the engineer's verdict, not a policy flag.
+            # Mission d1309425e9 promoted seven files into the live tree and
+            # restarted ZEUS on the strength of a chat sentence, with no entry
+            # in the owner's audit log.
+            #
+            # `policy.self_development.auto_promote` is deliberately not read
+            # here. It used to be the switch that let this happen, and a switch
+            # that can only ever weaken this invariant is worse than no switch:
+            # it reads like a supported configuration.
+            refusal = self._promotion_refusal(mission)
+            if refusal:
+                return self._await_authorization(mission, refusal)
             self._timed(mission, "promote", lambda: self._promote(mission))
             if mission.outcome == "failed":
                 return mission
@@ -590,32 +594,85 @@ class SelfDevRunner:
 
     # -- the owner's authorization -------------------------------------
 
-    def _promotion_authorized(self, mission: SelfDevMission) -> bool:
-        """Whether the owner has actually authorized THIS promotion.
+    #: What the owner is told when no password exists to authorize with. Not a
+    #: prompt to invent one and not a reason to proceed: promotion simply does
+    #: not happen until an owner password is set up.
+    NO_PASSWORD_MESSAGE = (
+        "Für Self-Development-Promotion muss zuerst ein Owner-Passwort eingerichtet werden."
+    )
 
-        A live SELFDEV_PROMOTE session, minted by the owner's password through
-        the SecurityGate. With no password configured there is nothing to prove
-        and the machine is the owner's own -- that is the gate's existing rule
-        everywhere else, and this follows it rather than inventing a stricter
-        one here.
+    def _promotion_refusal(self, mission: SelfDevMission) -> str:
+        """Why this promotion may not happen, or "" when the owner authorized it.
+
+        There is no configuration in which code promotes itself. Not a policy
+        flag, not an unconfigured gate, not a mission that verified beautifully,
+        not an engineer's verdict, not a sentence in the chat. The only thing
+        that returns "" here is a live SELFDEV_PROMOTE token, and the only thing
+        that mints one is :meth:`owner.security_gate.SecurityGate.unlock` with
+        the owner's password typed into the ZEUS UI.
+
+        The token is consumed rather than merely checked: a promotion is one
+        act, and the authorization for it should not still be lying around
+        afterwards for a second one.
         """
 
         gate = self.security
         if gate is None:
-            return True
+            return "no owner security gate is available; promotion is refused"
         try:
             if not gate.configured:
-                return True
-            return bool(gate.authorized(mission.authorization, "SELFDEV_PROMOTE"))
-        except Exception:  # noqa: BLE001 - a gate that cannot answer has not said yes
-            return False
+                return self.NO_PASSWORD_MESSAGE
+            if not mission.authorization:
+                return ("verified in the isolated worktree; promoting it into the product needs "
+                        "your password (SELFDEV_PROMOTE)")
+            if not gate.consume(mission.authorization, "SELFDEV_PROMOTE"):
+                return ("that authorization is not valid for SELFDEV_PROMOTE any more "
+                        "(used, expired, or for a different operation)")
+        except Exception as exc:  # noqa: BLE001 - a gate that cannot answer has not said yes
+            return f"the owner security gate could not be consulted: {type(exc).__name__}"
+        self._audit_promotion(mission)
+        return ""
 
-    def _await_authorization(self, mission: SelfDevMission) -> SelfDevMission:
+    def _audit_promotion(self, mission: SelfDevMission) -> None:
+        """Write down that the owner authorized this, and what it covered.
+
+        The token itself is not recorded -- only that a valid one was consumed,
+        for which mission, over which files. An audit line that carried the
+        authorization would be an authorization lying on disk.
+        """
+
+        record = {
+            "at": _now(),
+            "kind": "selfdev.promote.authorized",
+            "scope": "SELFDEV_PROMOTE",
+            "mission_id": mission.mission_id,
+            "request": mission.request[:200],
+            "engineer": (mission.engineering or {}).get("engineer", ""),
+            "changed_files": list(mission.changed_files),
+            "approved_by": "owner",
+            "proof": "SecurityGate.consume(SELFDEV_PROMOTE)",
+        }
+        try:
+            path = Path(self.store.root).parent / "owner" / "audit.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        mission.events.append({"at": record["at"], "phase": "AUTHORIZED",
+                               "detail": "owner authorization consumed for SELFDEV_PROMOTE"})
+
+    def _promotion_authorized(self, mission: SelfDevMission) -> bool:
+        """Kept for callers that only need the yes/no."""
+
+        return self._promotion_refusal(mission) == ""
+
+    def _await_authorization(self, mission: SelfDevMission, reason: str = "") -> SelfDevMission:
         """Verified, promotable, and stopped until the owner turns the key."""
 
         mission.outcome = "verified_awaiting_authorization"
-        mission.reason = ("verified in the isolated worktree; promoting it into the product needs "
-                          "your password (SELFDEV_PROMOTE)")
+        mission.reason = reason or ("verified in the isolated worktree; promoting it into the product "
+                                    "needs your password (SELFDEV_PROMOTE)")
         self._phase(mission, "AWAITING_AUTHORIZATION", mission.reason)
         mission.phase = "AWAITING_AUTHORIZATION"
         self.store.save(mission)
@@ -953,8 +1010,9 @@ class SelfDevRunner:
         only the step that was waiting for the password.
         """
 
-        if not self._promotion_authorized(mission):
-            return self._await_authorization(mission)
+        refusal = self._promotion_refusal(mission)
+        if refusal:
+            return self._await_authorization(mission, refusal)
         try:
             self._timed(mission, "promote", lambda: self._promote(mission))
             if mission.outcome == "failed":

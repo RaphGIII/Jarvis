@@ -204,16 +204,24 @@ def test_the_owner_sentence_says_what_actually_happened() -> None:
 
 
 class _Gate:
-    """The Owner Security Gate, as far as the runner can see it."""
+    """The Owner Security Gate, as far as the runner can see it.
+
+    ``consume`` rather than ``authorized``: a promotion is one act, and the
+    real gate burns the token so the authorization is not still lying around
+    for a second one.
+    """
 
     def __init__(self, *, configured: bool = True, token: str = "") -> None:
         self.configured = configured
         self._token = token
         self.asked: list[tuple[str, str]] = []
 
-    def authorized(self, authorization: str, scope: str) -> bool:
+    def consume(self, authorization: str, scope: str) -> bool:
         self.asked.append((authorization, scope))
-        return bool(self._token) and authorization == self._token
+        if self._token and authorization == self._token and scope == "SELFDEV_PROMOTE":
+            self._token = ""
+            return True
+        return False
 
 
 def _runner(tmp_path, *, availability, gate, gateway=None):
@@ -265,48 +273,28 @@ def test_the_runner_selects_the_local_coder_only_on_an_explicit_authorization(tm
     assert explicit.engineer is Engineer.BUILD_LOCAL
 
 
-def test_a_chat_mission_carries_no_authorization_and_cannot_promote(tmp_path) -> None:
-    """d1309425e9 promoted seven files with nothing in the owner's audit log."""
+def test_the_promotion_gate_lives_in_its_own_module(tmp_path) -> None:
+    """This module is about choosing an ENGINEER, not about authorizing a promotion.
+
+    The full 1-8 matrix -- no token, chat "I authorize", no password
+    configured, Codex asking, the local engineer asking, a real token, a reused
+    or expired token, a token for another scope -- is in
+    ``test_selfdev_promotion_gate.py``. What is checked here is only that this
+    runner refuses on its own when nothing has authorized it, so a routing
+    change can never quietly reopen the door.
+    """
 
     from service.selfdev import SelfDevMission
 
-    gate = _Gate(configured=True, token="a-real-token")
-    runner = _runner(tmp_path, availability=StaticCodexAvailability(CodexAvailabilityState.READY, ""), gate=gate)
+    runner = _runner(tmp_path, availability=StaticCodexAvailability(CodexAvailabilityState.READY, ""), gate=_Gate())
     mission = SelfDevMission(request="Zeus, bring dir Vollbild bei")
 
     assert mission.authorization == "", "a chat request mints no token"
     assert runner._promotion_authorized(mission) is False
-    assert gate.asked == [("", "SELFDEV_PROMOTE")]
 
-    settled = runner._await_authorization(mission)
+    settled = runner._await_authorization(mission, runner._promotion_refusal(mission))
     assert settled.phase == "AWAITING_AUTHORIZATION"
-    assert settled.outcome == "verified_awaiting_authorization"
-    assert "password" in settled.reason
-
-
-def test_a_mission_carrying_the_owners_token_may_promote(tmp_path) -> None:
-    from service.selfdev import SelfDevMission
-
-    gate = _Gate(configured=True, token="a-real-token")
-    runner = _runner(tmp_path, availability=StaticCodexAvailability(CodexAvailabilityState.READY, ""), gate=gate)
-    mission = SelfDevMission(request="Zeus, bring dir Vollbild bei")
-    mission.authorization = "a-real-token"
-
-    assert runner._promotion_authorized(mission) is True
-
-
-def test_no_password_configured_means_nothing_to_prove(tmp_path) -> None:
-    """The gate's existing rule everywhere else, followed rather than tightened."""
-
-    from service.selfdev import SelfDevMission
-
-    runner = _runner(
-        tmp_path,
-        availability=StaticCodexAvailability(CodexAvailabilityState.READY, ""),
-        gate=_Gate(configured=False),
-    )
-
-    assert runner._promotion_authorized(SelfDevMission(request="x")) is True
+    assert settled.promotion == {}
 
 
 def test_a_gate_that_cannot_answer_has_not_said_yes(tmp_path) -> None:

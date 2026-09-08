@@ -4615,10 +4615,13 @@ class JarvisCore:
         Level-2 change behind a SELFDEV_PROMOTE authorization.
         """
 
-        if self.security.configured:
-            denied = self.require_auth(authorization, "SELFDEV_PROMOTE")
-            if denied is not None:
-                return denied
+        # Unconditional. Promoting a built candidate over the running product
+        # is the same act as promoting a self-developed change, and it used to
+        # be skipped entirely on a machine with no owner password -- which is
+        # the one configuration where nothing would have noticed.
+        denied = self.require_auth(authorization, "SELFDEV_PROMOTE")
+        if denied is not None:
+            return denied
         record = self.releases.promote(candidate)
         out = record.to_dict()
         # "staged": the running exe locks its directory (Windows); the swap is
@@ -4724,10 +4727,9 @@ class JarvisCore:
 
         from service.selfdev import SelfDevRunner, describe
 
-        if self.security.configured:
-            denied = self.require_auth(authorization, "SELFDEV_PROMOTE")
-            if denied is not None:
-                return denied
+        denied = self.require_auth(authorization, "SELFDEV_PROMOTE")
+        if denied is not None:
+            return denied
         mission = self.selfdev_store.load(mission_id) if mission_id else None
         if mission is None:
             return {"ok": False, "error": f"no self-development mission {mission_id!r}"}
@@ -5748,6 +5750,11 @@ class JarvisCore:
         dropped = self.security.lock(scope)
         return {"ok": True, "locked": dropped}
 
+    #: Told to the owner when code promotion is asked for on a machine that has
+    #: no owner password. Not a prompt to invent one, and not a reason to
+    #: proceed: promotion waits until there is a password to authorize with.
+    NO_OWNER_PASSWORD = "Für Self-Development-Promotion muss zuerst ein Owner-Passwort eingerichtet werden."
+
     def require_auth(self, authorization: str, scope: str) -> dict[str, Any] | None:
         """None when authorized; otherwise the standard needs_auth answer the UI understands."""
 
@@ -5755,9 +5762,13 @@ class JarvisCore:
             return None
         from owner.security_gate import SCOPE_LEVELS
 
+        # An unconfigured gate is a refusal with something to do about it, not
+        # the same sentence as a wrong password.
+        error = ("Das ist eine geschützte Änderung – bitte mit deinem Passwort freigeben."
+                 if self.security.configured else self.NO_OWNER_PASSWORD)
         return {"ok": False, "needs_auth": scope, "level": SCOPE_LEVELS.get(scope, 2),
-                "error": "Das ist eine geschützte Änderung – bitte mit deinem Passwort freigeben.",
-                "configured": self.security.configured}
+                "error": error, "configured": self.security.configured,
+                "needs_setup": not self.security.configured}
 
     # ------------------------------------------------------------------
     # Feedback: 👍/👎 and owner verdicts, into the adaptive model
