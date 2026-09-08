@@ -141,7 +141,20 @@ def _from_gateway_status(status: dict[str, Any]) -> CodexAvailability:
         return CodexAvailability(CodexAvailabilityState.NOT_INSTALLED, "Codex is not installed or configured", evidence="expert gateway")
     if state in {"OFFLINE"}:
         return CodexAvailability(CodexAvailabilityState.OFFLINE, "Codex is offline", evidence="expert gateway")
-    detail = json.dumps(status, sort_keys=True, default=str)[:300] if status else "no gateway status"
+    # The provider's own sentence, not the whole status object. Serialising the
+    # dict put a JSON blob -- policy flags, timestamps and all -- into the
+    # answer the owner reads: measured live, "Nicht gelernt: Codex is ERROR:
+    # {"checked_at": 1788845136.37, "expert_available": false, "policy": {...".
+    # The gateway already asked each provider why, and that answer is a
+    # sentence.
+    reasons = [
+        str(row.get("detail") or "").strip()
+        for row in (status.get("providers") or [])
+        if isinstance(row, dict) and row.get("permitted") and not row.get("available")
+    ]
+    detail = "; ".join(reason for reason in reasons if reason)[:300]
+    if not detail:
+        detail = json.dumps(status, sort_keys=True, default=str)[:300] if status else "no gateway status"
     return CodexAvailability(CodexAvailabilityState.ERROR, detail, evidence="expert gateway")
 
 
@@ -199,25 +212,57 @@ class CapabilityRequestQueue:
         return request
 
     def list(self, *, status: str = "queued") -> list[CapabilityRequest]:
+        """The current state of every request, newest write per id wins.
+
+        The file is append-only, so a request that was later served appears
+        twice. Reading it as a log rather than as a table is what makes
+        "still waiting" and "already handled" distinguishable -- without it a
+        queue only ever grows and the Capability Center shows work that was
+        finished hours ago as outstanding.
+        """
+
+        latest: dict[str, CapabilityRequest] = {}
+        order: list[str] = []
+        for data in self._rows():
+            request = CapabilityRequest(
+                goal=str(data.get("goal", "")),
+                context=dict(data.get("context") or {}),
+                requested_at=float(data.get("requested_at", 0.0) or 0.0),
+                priority=str(data.get("priority", "normal")),
+                request_id=str(data.get("request_id", "")),
+                reason=str(data.get("reason", "")),
+                status=str(data.get("status", "queued")),
+            )
+            if request.request_id not in latest:
+                order.append(request.request_id)
+            elif not request.goal:
+                request.goal = latest[request.request_id].goal
+                request.context = request.context or latest[request.request_id].context
+            latest[request.request_id] = request
+        return [latest[key] for key in order if not status or latest[key].status == status]
+
+    def resolve(self, request_id: str, *, detail: str = "", status: str = "served") -> CapabilityRequest | None:
+        """Mark one queued request as handled, without rewriting history."""
+
+        current = {request.request_id: request for request in self.list(status="")}
+        request = current.get(str(request_id))
+        if request is None or request.status != "queued":
+            return request
+        request.status = status
+        request.reason = detail or request.reason
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(request.to_dict(), sort_keys=True) + "\n")
+        return request
+
+    def _rows(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
-        rows: list[CapabilityRequest] = []
+        rows: list[dict[str, Any]] = []
         for line in self.path.read_text(encoding="utf-8").splitlines():
             try:
                 data = json.loads(line)
             except ValueError:
                 continue
-            if status and data.get("status") != status:
-                continue
-            rows.append(
-                CapabilityRequest(
-                    goal=str(data.get("goal", "")),
-                    context=dict(data.get("context") or {}),
-                    requested_at=float(data.get("requested_at", 0.0) or 0.0),
-                    priority=str(data.get("priority", "normal")),
-                    request_id=str(data.get("request_id", "")),
-                    reason=str(data.get("reason", "")),
-                    status=str(data.get("status", "queued")),
-                )
-            )
+            if isinstance(data, dict):
+                rows.append(data)
         return rows

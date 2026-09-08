@@ -483,6 +483,7 @@ class JarvisHTTPServer:
             "/api/mission/pause": lambda body: self.core.mission_control(str(body.get("mission_id", "")), "pause"),
             "/api/mission/resume": lambda body: self.core.mission_control(str(body.get("mission_id", "")), "resume"),
             "/api/capabilities/report": lambda _: self.core.capability_report(),
+            "/api/capabilities/requests": lambda _: self.core.capability_requests(),
             "/api/tools/chess": lambda _: self.core.chess_tool_status(),
             "/api/tools/chess/start": lambda _: self.core.chess_tool_start(),
             "/api/tools/chess/stop": lambda _: self.core.chess_tool_stop(),

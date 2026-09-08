@@ -56,8 +56,9 @@ class StubService:
         return {"ok": self.verify_ok, "detail": "ok" if self.verify_ok else "checks failed",
                 "checks": []}
 
-    def _install(self, capability_id, goal, workspace, verification, *, keywords=None):
+    def _install(self, capability_id, goal, workspace, verification, *, keywords=None, built_by="local_build"):
         self.installed.append((capability_id, tuple(keywords or ())))
+        self.built_by = built_by
         return type("M", (), {"capability_id": capability_id})()
 
     @staticmethod
@@ -245,6 +246,7 @@ def test_a_verified_expert_result_is_promoted_with_its_keywords(tmp_path):
                      keywords=["musik", "song"])
 
     assert result.acquired is True
+    assert service.built_by == "claude_code", "who wrote it is recorded from the run, not assumed"
     assert result.capability_id == "music.provider.spotify"
     assert service.installed == [("music.provider.spotify", ("musik", "song"))]
 

@@ -275,12 +275,40 @@ def test_an_absent_codex_cli_is_reported_honestly():
     assert "not installed" in availability.detail
 
 
-def test_an_unverified_adapter_does_not_claim_to_be_ready():
-    """It was written against documented behaviour, not observed behaviour."""
+def test_the_engineer_is_never_handed_a_credential():
+    """The guard that replaced ``verified_on_this_machine``.
+
+    That flag existed because the adapter had never been driven on this
+    machine; it has been since, and a flag saying otherwise would now be the
+    dishonest answer. What was always the load-bearing part -- that the child
+    process cannot reach metered billing, and cannot read the owner's secrets
+    either -- is what is asserted instead.
+    """
+
+    import os
 
     from experts.codex import CodexExpert
 
-    assert CodexExpert.verified_on_this_machine is False
+    poison = {
+        "OPENAI_API_KEY": "sk-should-never-be-inherited",
+        "ANTHROPIC_API_KEY": "sk-ant-should-never-be-inherited",
+        "JARVIS_OWNER_PASSWORD": "hunter2",
+        "SPOTIFY_CLIENT_SECRET": "shhh",
+        "GITHUB_TOKEN": "ghp_nope",
+    }
+    previous = {name: os.environ.get(name) for name in poison}
+    os.environ.update(poison)
+    try:
+        env = CodexExpert(executable="")._environment()
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    assert not (set(poison) & set(env)), sorted(set(poison) & set(env))
+    assert "PATH" in env or "Path" in env
 
 
 def test_an_explicitly_empty_executable_is_not_auto_detected():

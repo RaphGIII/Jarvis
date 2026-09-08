@@ -280,6 +280,7 @@ class _CodexFirstService:
         verification: dict[str, Any],
         *,
         keywords: list[str] | None = None,
+        built_by: str = "local_build",
     ) -> Any:
         self.installed.append(capability_id)
         return type("Manifest", (), {"capability_id": capability_id})()

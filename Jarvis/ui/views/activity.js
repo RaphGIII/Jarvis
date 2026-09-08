@@ -272,8 +272,20 @@ function technical(entry) {
     if ((d.routing.conflicts || []).length) line("overruled", d.routing.conflicts.join(" | "));
     if ((d.routing.corrections || []).length) line("corrections", d.routing.corrections.join(", "));
   }
+  /* Which capability served the request, why that one, and what it beat.
+     Without the runners-up "it chose X" is an assertion; with them it is a
+     decision the owner can disagree with. */
+  if (d.capability_routing) {
+    const r = d.capability_routing;
+    line("capability route", `${r.result} → ${r.capability_id || "none"} (${r.confidence ?? "?"})`);
+    line("why", r.reason);
+    line("engineer consulted", r.codex_checked ? `yes — Codex ${r.codex_state || ""}`.trim() : "no");
+    if (r.dispatch_ms !== undefined) line("resolved in", `${r.dispatch_ms} ms`);
+    for (const c of r.candidates || []) line("candidate", `${c.capability_id} ${c.confidence} · ${c.health}/${c.lifecycle} · ${c.reason}`);
+    if (r.queued) line("queued", "Codex unavailable; the request is parked, not dropped");
+  }
   for (const [k, v] of Object.entries(d)) {
-    if (["summary", "routing", "mission_id", "phase", "receipt", "text", "goal", "forbidden", "plan"].includes(k)) continue;
+    if (["summary", "routing", "capability_routing", "mission_id", "phase", "receipt", "text", "goal", "forbidden", "plan"].includes(k)) continue;
     if (v === null || v === "" || typeof v === "object") continue;
     line(k, v);
   }
@@ -308,6 +320,15 @@ function inspect(entry) {
       kv("operation", d.routing.reading?.operation), kv("object", d.routing.reading?.object),
       kv("self / world", `${d.routing.reading?.self_score} / ${d.routing.reading?.world_score}`),
       kv("overruled", (d.routing.conflicts || []).join("\n")), kv("corrections", (d.routing.corrections || []).join(", "))));
+  }
+  if (d.capability_routing) {
+    const r = d.capability_routing;
+    children.push(section("Capability routing",
+      kv("goal", r.goal), kv("result", r.result), kv("capability", r.capability_id || "none"),
+      kv("confidence", r.confidence), kv("reason", r.reason),
+      kv("engineer consulted", r.codex_checked ? `yes — Codex ${r.codex_state || ""}`.trim() : "no"),
+      kv("resolved in", r.dispatch_ms !== undefined ? `${r.dispatch_ms} ms` : "—"),
+      kv("candidates", (r.candidates || []).map((c) => `${c.capability_id} ${c.confidence} · ${c.health}/${c.lifecycle} · ${c.reason}`).join("\n") || "—")));
   }
   if (d.plan) children.push(section("Plan", kv("steps", (d.plan.steps || []).map((s) => `${s.status === "forbidden" ? "⛔ " : ""}${s.step} [${s.role || "required"}]`).join("\n")),
     kv("constraints", JSON.stringify(d.plan.constraints || {}, null, 1), "mono")));

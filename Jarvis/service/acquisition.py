@@ -500,6 +500,21 @@ class AcquisitionMission:
             result.seconds = time.perf_counter() - started
             self._step(result, "workspace", result.reason, ok=False)
             return result
+        # The capability contract is what the verification gates actually
+        # enforce, and the project carries it: run(payload) -> dict, an
+        # accurate INPUT_SCHEMA, real tests, the machine facts. Sending Codex a
+        # bare goal and then failing it on rules it was never shown is not a
+        # verification gate, it is a trap -- and the gates are re-run here
+        # afterwards either way, so telling it the rules costs nothing and
+        # removes the only failure mode that is this system's own fault.
+        brief_constraints = list(constraints or []) + [
+            str(item) for item in getattr(project, "constraints", []) or []
+        ]
+        brief_acceptance = list(acceptance or []) or [
+            (str(getattr(item, "text", "")), list(getattr(item, "check", []) or []))
+            for item in getattr(project, "acceptance", []) or []
+            if getattr(item, "check", None)
+        ]
         self._step(result, "codex", f"engineering {cid} in isolated workspace {workspace}")
         escalated = self._escalate(
             goal,
@@ -507,17 +522,32 @@ class AcquisitionMission:
             capability_id=cid,
             keywords=keywords,
             extra_checks=extra_checks,
-            constraints=constraints,
-            acceptance=acceptance,
+            constraints=brief_constraints,
+            acceptance=brief_acceptance,
             task_class=task_class,
             repair_mode=repair_mode,
             subject=subject,
             workspace=workspace,
         )
         escalated.seconds = time.perf_counter() - started
+        if not escalated.acquired and escalated.codex_state == "QUOTA_EXHAUSTED":
+            from capabilities.codex import CodexAvailability, CodexAvailabilityState
+
+            self._queue_capability_request(
+                goal, escalated,
+                CodexAvailability(CodexAvailabilityState.QUOTA_EXHAUSTED, escalated.reason),
+            )
         if repair_mode and capability_id and not escalated.acquired:
             self._restore(capability_id, escalated)
         return escalated
+
+    def _invalidate_codex_availability(self, reason: str) -> None:
+        try:
+            invalidate = getattr(self._codex_availability, "invalidate", None)
+            if callable(invalidate):
+                invalidate(reason)
+        except Exception:  # noqa: BLE001 - a cache is not a dependency
+            pass
 
     def _queue_capability_request(self, goal: str, result: AcquisitionResult, status: Any) -> None:
         try:
@@ -589,7 +619,7 @@ class AcquisitionMission:
         older recalls rather than against the work.
         """
 
-        from experts.contracts import ExpertJob
+        from experts.contracts import ExpertJob, ExpertStatus
         from experts.escalation import Attempt
 
         result.escalated = True
@@ -655,6 +685,21 @@ class AcquisitionMission:
                                    succeeded=bool(getattr(expert, "verified", False)),
                                    seconds=elapsed))
 
+        # An expert that could not run is a different outcome from one that ran
+        # and produced nothing, and only the first one is worth waiting out.
+        # Checking availability before the call cannot catch this: the CLI
+        # answers `--version` from a binary on disk and knows nothing about the
+        # allowance behind it, so "quota spent" is only ever discovered by
+        # asking. Discovering it here and reporting it as a state is what lets
+        # the caller queue the request instead of calling it a failed build.
+        quota_spent = bool(getattr(getattr(expert, "quota", None), "exhausted", False))
+        if quota_spent or getattr(expert, "status", None) is ExpertStatus.UNAVAILABLE:
+            result.codex_state = "QUOTA_EXHAUSTED"
+            result.reason = (getattr(expert, "blocker", "") or "the expert is unavailable").strip()[:300]
+            self._step(result, "codex_unavailable", result.reason, ok=False)
+            self._invalidate_codex_availability(result.reason)
+            return result
+
         # The expert's own report is informational. What decides the outcome is
         # this process re-running the capability's own gates over the workspace
         # the expert edited.
@@ -667,7 +712,8 @@ class AcquisitionMission:
             return result
 
         installed = self._install(goal, workspace, capability_id=capability_id,
-                                  keywords=keywords, verification=verification)
+                                  keywords=keywords, verification=verification,
+                                  built_by=result.expert_used or "expert")
         if installed is None:
             result.reason = "verified, but the capability could not be registered"
             self._step(result, "promote", result.reason, ok=False)
@@ -903,7 +949,8 @@ class AcquisitionMission:
             return {"ok": False, "detail": f"{type(exc).__name__}: {exc}", "checks": []}
 
     def _install(self, goal: str, workspace: Path, *, capability_id: str,
-                 keywords: list[str] | None, verification: dict[str, Any]) -> str | None:
+                 keywords: list[str] | None, verification: dict[str, Any],
+                 built_by: str = "local_build") -> str | None:
         """Register the verified workspace, carrying the verification with it.
 
         ``keywords`` is not decoration.  It is what the knowledge graph indexes,
@@ -919,6 +966,7 @@ class AcquisitionMission:
                 Path(workspace),
                 verification,
                 keywords=list(keywords or []),
+                built_by=built_by or "local_build",
             )
         except Exception as exc:
             self._emit(EventType.ERROR, {"error": f"registration failed: {type(exc).__name__}: {exc}"})

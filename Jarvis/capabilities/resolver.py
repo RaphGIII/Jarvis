@@ -13,7 +13,7 @@ from capabilities.models import (
     CapabilityResolutionStatus,
     GoalEnvelope,
 )
-from capabilities.registry import ADDRESS_TERMS, BOILERPLATE, CapabilityRegistry
+from capabilities.registry import ADDRESS_TERMS, BOILERPLATE, CapabilityRegistry, _alphanumeric_parts
 
 
 STRONG_THRESHOLD = 0.72
@@ -167,7 +167,21 @@ class CapabilityResolver:
         positive_terms = _manifest_terms(manifest)
         anti_score = _best_overlap(query_terms, [_terms(text) for text in manifest.anti_examples])
         example_score = _best_overlap(query_terms, [_terms(text) for text in manifest.examples + manifest.aliases])
-        subject_score = len(query_terms & positive_terms) / max(1, len(query_terms))
+        # Two ways of asking "is this request about this capability", and the
+        # request is about it if EITHER is high.
+        #
+        # Dividing by the query's length alone punishes a request for saying
+        # more than the minimum: "wie lautet die sha256 Pruefsumme von
+        # zeus_acceptance.txt?" contains every subject word the capability
+        # declares, and scored 0.462 -- under the threshold -- because it also
+        # named a file and asked politely. Coverage of the CAPABILITY's own
+        # subject is the other direction of the same question, and it is the
+        # one that does not degrade as the sentence grows.
+        shared = len(query_terms & positive_terms)
+        subject_score = max(
+            shared / max(1, len(query_terms)),
+            shared / max(1, len(positive_terms)),
+        )
         if example_score:
             score += min(0.24, example_score * 0.24)
             reasons.append("examples/aliases match")
@@ -183,7 +197,16 @@ class CapabilityResolver:
         if anti_score >= max(0.45, example_score + 0.1):
             score *= 0.2
             reasons.append("anti-example is closer than examples")
-        if manifest.health_state() is CapabilityHealth.BROKEN:
+        if manifest.health_state() is CapabilityHealth.BROKEN and score >= self.moderate_threshold:
+            # A broken capability that really does match is reported as BROKEN
+            # rather than quietly skipped, because "this is the thing you want
+            # and it is defective" is what makes a repair possible.
+            #
+            # Only when it really does match. Lifting the score unconditionally
+            # promoted every broken capability that shared one word with the
+            # request to the top of the ranking, so a single defective entry in
+            # the registry would answer BROKEN to nearly everything and send
+            # every request into a repair of the wrong thing.
             score = max(score, self.confidence_threshold)
             reasons.append("matched but health is BROKEN")
         return CandidateScore(manifest, max(0.0, min(1.0, score)), ", ".join(reasons) or "weak local signal", typed=typed)
@@ -292,7 +315,16 @@ def _manifest_terms(manifest: CapabilityManifest) -> set[str]:
 
 
 def _terms(text: str) -> set[str]:
-    raw = {term for term in re.split(r"[^a-z0-9]+", _fold(text)) if len(term) > 2}
+    # The address term goes before the expansion, not only after it. "Zeus" is
+    # filtered at the end, but ``_singular`` had already turned it into "zeu"
+    # -- a token that is in no filter list, appears in every request the owner
+    # speaks, and matches nothing. Every score was being divided by one more
+    # term than the request actually contained.
+    raw = {
+        term
+        for term in re.split(r"[^a-z0-9]+", _fold(text))
+        if len(term) > 2 and term not in ADDRESS_TERMS
+    }
     expanded = set(raw)
     synonyms = {
         "actual": {"non", "empty"},
@@ -324,6 +356,7 @@ def _terms(text: str) -> set[str]:
     for term in list(raw):
         expanded.add(_singular(term))
         expanded.update(synonyms.get(term, set()))
+        expanded.update(_alphanumeric_parts(term))
     return {term for term in expanded if len(term) > 2} - BOILERPLATE - ADDRESS_TERMS
 
 

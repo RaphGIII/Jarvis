@@ -498,7 +498,7 @@ class JarvisCore:
         from service.intents import TopIntent, understand
 
         try:
-            titles = [str(p.get("title") or "") for p in self.list_projects()]
+            titles = [str(p.get("title") or "") for p in self.owner_projects()]
         except Exception:  # noqa: BLE001
             titles = []
         understanding = understand(text, route=route, project_titles=titles, capability_names=names)
@@ -548,6 +548,14 @@ class JarvisCore:
             self._answer_by_acquisition(text, scope)
             return
         if classification.intent in {Intent.READ, Intent.CAPABILITY}:
+            # A question can still be a request for something to happen:
+            # "welchen sha256 Fingerprint hat die Datei X?" is answered by
+            # running a capability, not by looking in the records. The gate is
+            # strict -- installed, HEALTHY, a clear match, and every required
+            # input present in the sentence -- so an ordinary question about
+            # what ZEUS knows still goes where it always went.
+            if self._dispatch_known_capability(text, scope):
+                return
             self._answer_from_records(text, scope, classification)
             return
         if classification.intent is Intent.MUSIC:
@@ -594,6 +602,13 @@ class JarvisCore:
 
             wish = Classification(Intent.ACTION, "names an openable thing with an intent cue", matched="openable-wish", route=route)
             self._answer_by_executing(text, scope, wish, action_request=True)
+            return
+        # Last chance before prose. A question with no action verb -- "welchen
+        # sha256 Fingerprint hat die Datei X?" -- carries nothing for the
+        # routing table to recognise, and answering it conversationally means
+        # answering it from a model's memory something it could have simply
+        # gone and computed. The registry is asked before that happens.
+        if self._dispatch_known_capability(text, scope):
             return
         self._answer_conversationally(text, scope)
 
@@ -1499,6 +1514,64 @@ class JarvisCore:
     # The semantic control plane
     # ------------------------------------------------------------------
 
+    def _dispatch_known_capability(self, text: str, scope: str) -> bool:
+        """Run an installed, healthy capability that plainly answers this request.
+
+        Returns False for everything else -- including a capability that is
+        only a plausible match, or one whose health is not HEALTHY -- so the
+        ordinary understanding path still owns every ambiguous case.
+        """
+
+        from capabilities.models import CapabilityHealth, CapabilityResolutionStatus
+        from capabilities.resolver import MODERATE_THRESHOLD
+
+        started = time.perf_counter()
+        try:
+            resolution = self.capabilities.resolve_request(text)
+        except Exception:  # noqa: BLE001 - an unreadable registry is not a reason to stop
+            return False
+        manifest = resolution.manifest
+        if resolution.outcome is CapabilityResolutionStatus.BROKEN and resolution.capability_id:
+            # "The capability you want exists and is defective" is a definite
+            # answer about this request. Handing it to the planner instead
+            # would route the request somewhere unrelated and leave the defect
+            # in place, which is how a broken capability stays broken.
+            self._route_capability_goal(text, text, scope)
+            return True
+        if not resolution.found or manifest is None:
+            return False
+        # FOUND is the resolver's own verdict and already encodes its rules,
+        # including that no second candidate was close enough to make this
+        # ambiguous. The floor underneath it guards against a lone weak match
+        # being called FOUND for want of competition.
+        if resolution.confidence < MODERATE_THRESHOLD:
+            return False
+        if manifest.health_state() is not CapabilityHealth.HEALTHY:
+            return False
+        payload, unmet = self._capability_payload(manifest, text, text)
+        if unmet:
+            # A capability that cannot be given what it needs from this
+            # sentence has not answered it. Asking the planner is a better
+            # next move than asking the owner for a slot they may not have
+            # meant to fill.
+            return False
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self.emit(
+            EventType.TOOL,
+            {"summary": (f"capability routing: FOUND {manifest.capability_id} "
+                         f"({resolution.confidence:.2f}, {elapsed_ms:.0f}ms, before the planner)"),
+             "capability_routing": {"goal": text[:200], "result": "FOUND",
+                                    "capability_id": manifest.capability_id,
+                                    "confidence": round(float(resolution.confidence), 3),
+                                    "reason": resolution.reason[:200],
+                                    "candidates": resolution.candidates[:5], "codex_checked": False,
+                                    "dispatch_ms": round(elapsed_ms, 1),
+                                    "source": "capability.resolver"}},
+            scope=scope,
+        )
+        self._execute_capability(manifest, text, text, scope, phrase=text)
+        return True
+
     def _semantic_goal(self, text: str, scope: str, *, guidance: str = "") -> Any:
         """One structured FAST_LOCAL call: the goal behind the words, or None.
 
@@ -1526,7 +1599,7 @@ class JarvisCore:
             apps_hint = []
         projects_hint: list[str] = []
         try:
-            for p in self.list_projects():
+            for p in self.owner_projects():
                 title = str(p.get("title") or "")
                 folded = fold(title)
                 if folded and any(w in folded or folded in probe for w in words):
@@ -1628,7 +1701,17 @@ class JarvisCore:
             return True
         if op == "capability.missing":
             if goal.confidence >= 0.5:
-                self._answer_by_acquisition(text, scope)
+                # "capability.missing" is FAST_LOCAL's opinion about the world,
+                # not a fact about the registry: the model has never seen the
+                # registry and cannot know what was learned last week. The
+                # resolver decides, and a capability that already exists is
+                # dispatched locally instead of being built a second time.
+                self._route_capability_goal(goal.target or text, text, scope)
+                return True
+            # Even an unsure "I have no tool for this" is a claim about the
+            # registry, so the registry answers it before the owner is asked
+            # to authorise building something that already exists.
+            if self._dispatch_known_capability(text, scope):
                 return True
             # honest and forward-looking, never a dead end: name the gap and
             # offer the acquisition; a yes re-enters as an explicit "lerne"
@@ -1665,7 +1748,7 @@ class JarvisCore:
                 return False
         if op == "project.open":
             try:
-                titles = {str(p.get("title") or "").lower() for p in self.list_projects()}
+                titles = {str(p.get("title") or "").lower() for p in self.owner_projects()}
             except Exception:  # noqa: BLE001
                 titles = set()
             return target.lower() in titles
@@ -1832,7 +1915,7 @@ class JarvisCore:
             if app_id:
                 kind, norm = "app", value
             else:
-                titles = {str(p.get("title") or "").lower() for p in self.list_projects()}
+                titles = {str(p.get("title") or "").lower() for p in self.owner_projects()}
                 if value.lower() in titles:
                     kind, norm = "project", value
         if not kind:
@@ -1942,6 +2025,25 @@ class JarvisCore:
 
     # -- the three answering paths --------------------------------------
 
+    @staticmethod
+    def _names_a_subject(goal: str) -> bool:
+        """Whether a goal contains any word that is about a subject at all.
+
+        Everything a capability contract says, everything the owner says to
+        address ZEUS, and the vocabulary of asking for a capability are all
+        filtered out. What is left is what the capability would be *for*, and
+        if nothing is left there is nothing to build.
+        """
+
+        from capabilities.registry import ADDRESS_TERMS, BOILERPLATE
+        from development.experience import terms as goal_terms
+
+        asking = {"lerne", "lern", "learn", "wie", "man", "how", "to", "das", "dass", "ja", "nein", "yes", "no"}
+        return bool([
+            word for word in goal_terms(goal)
+            if word not in asking and word not in BOILERPLATE and word not in ADDRESS_TERMS
+        ])
+
     def _answer_by_acquisition(self, text: str, scope: str) -> None:
         """"Learn to do X": a capability-acquisition mission, started from the chat.
 
@@ -1963,6 +2065,41 @@ class JarvisCore:
                               scope=scope, backend="acquisition")
                 return
         goal = text.strip()
+        # A sentence with no subject in it is not a capability request.
+        # Observed live: the owner answered an offer to learn something with
+        # "Ja, bitte lerne das.", the confirmation did not replay what was
+        # being confirmed, and that sentence became the goal -- a queued
+        # request to build a capability called "Ja, bitte lerne das." Building
+        # from a goal that names nothing can only produce a capability that
+        # does nothing, so it is refused before the engineer is involved.
+        if not self._names_a_subject(goal):
+            de = self.language.startswith("de")
+            self._deliver(
+                ("Was genau soll ich lernen? Sag mir die F\u00e4higkeit, dann baue ich sie." if de
+                 else "What exactly should I learn? Name the capability and I will build it."),
+                scope=scope, backend="capability.resolver", final_state=JarvisState.WAITING,
+                context_text=f"[acquisition refused: {goal[:80]!r} names no subject]",
+            )
+            return
+        # "Learn to do X" is still a request about a capability, and the
+        # registry -- not the wording -- decides whether one exists. Without
+        # this check an owner who asks for something already learned pays for
+        # a second acquisition of it, which is the exact cost this whole
+        # architecture exists to stop paying.
+        try:
+            existing = self.capabilities.resolve_request(goal)
+        except Exception:  # noqa: BLE001
+            existing = None
+        if existing is not None and existing.found and existing.manifest is not None:
+            self.emit(EventType.TOOL,
+                      {"summary": f"capability routing: FOUND {existing.capability_id} (already learned)",
+                       "capability_routing": {"goal": goal[:200], "result": "FOUND",
+                                              "capability_id": existing.capability_id,
+                                              "confidence": round(float(existing.confidence), 3),
+                                              "codex_checked": False,
+                                              "source": "capability.resolver"}}, scope=scope)
+            self._execute_capability(existing.manifest, goal, text, scope, phrase=goal)
+            return
         mission = self.missions.create(goal, kind="capability", interpretation="acquire a missing primitive: Codex first, verify, register",
                                        acceptance=["the capability is registered and verified", "a second invocation uses it directly"], scope=scope)
         self.missions.add_evidence(mission, owner_statement(goal))
@@ -1986,16 +2123,21 @@ class JarvisCore:
                 # with the Spotify provider.  A fresh id and the goal's own
                 # terms as keywords make the build the only outcome, and let
                 # the next request find what was built.
+                from capabilities.generalize import generalize, generic_keywords
                 from capabilities.registry import ADDRESS_TERMS, BOILERPLATE
                 from development.experience import terms as goal_terms
 
+                # The particulars of the request are not part of what is being
+                # learned; see capabilities.generalize.
+                shape = generalize(goal)
                 # German function words must never become keywords: a stored
                 # "einer" once matched "Öffne Wikipedia" to a word counter.
-                words = [w for w in goal_terms(goal)
+                words = [w for w in goal_terms(shape.goal)
                          if w not in {"lerne", "lern", "learn", "wie", "man", "how", "to"}
                          and w not in BOILERPLATE and w not in ADDRESS_TERMS]
+                words = generic_keywords(words, shape.particulars)
                 cid = "learned." + "_".join(words[:3])[:48] if words else f"learned.{mission.mission_id}"
-                result = acq.run(goal, capability_id=cid, keywords=words[:12], codex_first=True)
+                result = acq.run(shape.goal, capability_id=cid, keywords=words[:12], codex_first=True)
                 for step in getattr(result, "steps", [])[-12:]:
                     self.missions.add_evidence(mission, inference(f"{getattr(step, 'stage', '')}: {getattr(step, 'detail', '')}"[:200],
                                                                   tier="CODEX", confidence=0.5))
@@ -2016,6 +2158,20 @@ class JarvisCore:
                         (f"Learned and verified: {result.capability_id} ({result.seconds:.0f}s, Codex state {result.codex_state or 'unknown'}). "
                          f"From now on I use it directly."),
                         scope=scope, backend="acquisition", context_text=f"[capability {result.capability_id} acquired; mission {mission.mission_id}]")
+                elif result.queued:
+                    # Not a failure: the engineer was unavailable and the
+                    # request is on the record. Saying "not learned" for work
+                    # that is explicitly still owed is the kind of small
+                    # dishonesty that makes a system untrustworthy about the
+                    # large things.
+                    self.missions.transition(mission, "WAITING", f"queued as {result.queue_id}")
+                    self._deliver(
+                        ((f"Codex ist gerade nicht verf\u00fcgbar ({result.codex_state}). Ich habe es vorgemerkt "
+                          f"({result.queue_id}) und hole es nach, sobald Codex wieder da ist.") if de else
+                         (f"Codex is unavailable right now ({result.codex_state}). I have queued it "
+                          f"({result.queue_id}) and will build it as soon as Codex is back.")),
+                        scope=scope, backend="codex.engineer", final_state=JarvisState.WAITING,
+                        context_text=f"[capability queued {result.queue_id}: Codex {result.codex_state}]")
                 else:
                     self.missions.fail_approach(mission, "acquisition pipeline", result.reason[:300])
                     self.missions.transition(mission, "FAILED", result.reason[:200] or "not acquired")
@@ -2676,7 +2832,6 @@ class JarvisCore:
         """
 
         from runtime.paths import PathError, resolve_workspace_path
-        from service.intent import FILENAME
 
         schema = dict(getattr(manifest, "input_schema", {}) or {})
         properties = dict(schema.get("properties") or {})
@@ -2684,7 +2839,7 @@ class JarvisCore:
         payload: dict[str, Any] = {}
         unmet: list[str] = []
         workspace = Path(self.kernel.state_root) / "workspace"
-        names = [m.group(0) for m in FILENAME.finditer(text)] if hasattr(FILENAME, "finditer") else []
+        names = self._filenames_in(text, workspace)
         for key in properties:
             lowered = key.lower()
             if "path" in lowered or lowered in {"file", "source", "folder", "directory", "filename", "file_name"}:
@@ -2702,7 +2857,50 @@ class JarvisCore:
                 unmet.append(key)
         if not properties:
             payload = {"goal": goal}
+        if len(unmet) == 1 and names and unmet[0] in properties:
+            # The capability named its input something this mapping does not
+            # recognise -- ``source_file``, ``target``, ``document``. The
+            # request named exactly one file and exactly one required slot is
+            # empty, so which one goes where is not a guess. Only a declared
+            # string slot, and only when there is nothing else it could be.
+            only = unmet[0]
+            declared = dict(properties.get(only) or {})
+            if str(declared.get("type", "string")) == "string":
+                try:
+                    payload[only] = str(resolve_workspace_path(workspace, names[0], must_exist=True))
+                    unmet = []
+                except PathError:
+                    pass
         return payload, unmet
+
+    @staticmethod
+    def _filenames_in(text: str, workspace: Path) -> list[str]:
+        """The file names a request actually names, shortest plausible first.
+
+        ``FILENAME`` allows spaces, because real files have them. Applied to a
+        sentence it therefore matches far more than the file: "berechne die
+        SHA-256-Pruefsumme der Datei bericht.txt" comes back in one piece and
+        is then looked up, verbatim, as a path -- which fails, and the request
+        is answered with "tell me which file" about a file the owner did name.
+
+        So each match is peeled from the left one word at a time and the first
+        tail that exists in the workspace wins; when none exists, the bare
+        ``name.ext`` is what gets reported as missing, because that is what the
+        owner will recognise in the reply.
+        """
+
+        from service.intent import FILENAME
+
+        if not hasattr(FILENAME, "finditer"):
+            return []
+        found: list[str] = []
+        for match in FILENAME.finditer(text):
+            words = match.group(0).split(" ")
+            tails = [" ".join(words[index:]) for index in range(len(words))]
+            chosen = next((tail for tail in reversed(tails) if (workspace / tail).exists()), tails[-1])
+            if chosen and chosen not in found:
+                found.append(chosen)
+        return found
 
     def _answer_by_capability(self, text: str, scope: str, plan: Any) -> None:
         """Serve a real-world request from a capability, acquiring one if needed.
@@ -2713,20 +2911,81 @@ class JarvisCore:
         allowed to be is a description of the thing happening.
         """
 
-        from runtime.receipts import Receipt, Verification, failed
-
         goal = str(plan.arguments.get("goal") or plan.reason or text).strip()
-        self.emit(EventType.TOOL, {"summary": f"capability requested: {goal[:120]}"}, scope=scope)
+        self._route_capability_goal(goal, text, scope)
 
-        manifest = None
+    def _route_capability_goal(self, goal: str, text: str, scope: str) -> None:
+        """The single gate in front of every capability request.
+
+        A known healthy capability is dispatched here and now, locally, with no
+        engineer involved: that is the whole point of having learned it. Only a
+        goal the registry genuinely cannot serve -- MISSING, or BROKEN -- gets
+        as far as asking whether Codex is available, and AMBIGUOUS asks the
+        owner one question rather than guessing between two capabilities.
+
+        Every request passes through this method, so the routing decision is
+        recorded once, in one place, as evidence: which capability was chosen,
+        with what confidence, over which runners-up, and whether an engineer
+        was consulted at all.
+        """
+
+        started = time.perf_counter()
+        resolution = None
         try:
-            manifest = self.capabilities.resolve(goal)
-        except Exception as exc:
+            resolution = self.capabilities.resolve_request(goal)
+        except Exception as exc:  # noqa: BLE001 - an unreadable registry is a finding, not a crash
             self.emit(EventType.ERROR, {"error": f"registry unreadable: {exc}"}, scope=scope)
 
-        if manifest is None:
+        if resolution is None:
             self._start_capability_teaching_for_request(goal, text, scope)
             return
+
+        outcome = resolution.outcome.value
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self.emit(
+            EventType.TOOL,
+            {"summary": (f"capability routing: {outcome} "
+                         f"{resolution.capability_id or '-'} ({resolution.confidence:.2f}, {elapsed_ms:.0f}ms)"),
+             "capability_routing": {"goal": goal[:200], "result": outcome,
+                                    "capability_id": resolution.capability_id or "",
+                                    "confidence": round(float(resolution.confidence), 3),
+                                    "reason": resolution.reason[:200],
+                                    "candidates": resolution.candidates[:5], "codex_checked": False,
+                                    "dispatch_ms": round(elapsed_ms, 1),
+                                    "source": "capability.resolver"}},
+            scope=scope,
+        )
+
+        from capabilities.models import CapabilityResolutionStatus
+
+        if resolution.outcome is CapabilityResolutionStatus.FOUND and resolution.manifest is not None:
+            self._execute_capability(resolution.manifest, goal, text, scope, phrase=goal)
+            return
+        if resolution.outcome is CapabilityResolutionStatus.AMBIGUOUS:
+            self._ask_capability_clarification(resolution, scope)
+            return
+        if resolution.outcome is CapabilityResolutionStatus.BROKEN and resolution.capability_id:
+            self._start_capability_repair_for_request(resolution, goal, text, scope)
+            return
+        self._start_capability_teaching_for_request(goal, text, scope)
+
+    def _ask_capability_clarification(self, resolution: Any, scope: str) -> None:
+        """Two plausible capabilities: ask once instead of guessing."""
+
+        de = self.language.startswith("de")
+        names = [str(item.get("capability_id", "")) for item in resolution.candidates[:2] if item.get("capability_id")]
+        options = " oder ".join(names) if de else " or ".join(names)
+        self._deliver(
+            (f"Dafür habe ich zwei Fähigkeiten, die passen könnten ({options}). Welche meinst du?" if de
+             else f"I have two capabilities that could fit ({options}). Which one do you mean?"),
+            scope=scope, backend="capability.resolver", final_state=JarvisState.WAITING,
+            context_text=f"[capability routing AMBIGUOUS between {names}]",
+        )
+
+    def _execute_capability(self, manifest: Any, goal: str, text: str, scope: str, *, phrase: str = "") -> None:
+        """Run one resolved capability and verify what it produced, from outside."""
+
+        from runtime.receipts import Receipt, failed
 
         capability_id = str(manifest.capability_id)
         self.state.set(JarvisState.VERIFYING, detail=capability_id, scope=scope)
@@ -2757,7 +3016,7 @@ class JarvisCore:
         output = dict(getattr(execution, "output", {}) or {})
         # A capability's own word is not the verdict. What it produced is
         # checked here, from outside, exactly as the acquisition gates do.
-        checks = self._verify_capability_output(output)
+        checks = self._verify_capability_output(output, payload)
         receipt = Receipt(
             kind=f"capability.{capability_id}",
             executor=capability_id,
@@ -2776,27 +3035,99 @@ class JarvisCore:
             {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()},
             scope=scope,
         )
+        # Two records written from one run: what it did to this capability's
+        # health, and what it taught the registry about the words the owner
+        # actually used for it.
+        try:
+            if ok and checks and not all(item.passed for item in checks):
+                # The capability reported success and an outside check that
+                # actually ran says otherwise. ``execute`` already counted its
+                # own word as a pass, so without this the failure mode that
+                # matters most -- a capability that lies about what it produced
+                # -- is the only one that never marks it unhealthy.
+                #
+                # Only when a check RAN. A capability that returns a value has
+                # nothing for a file check to look at, and treating "there was
+                # nothing to check" as a failure marked every correct value-
+                # returning capability AT_RISK on its first successful call.
+                self.capabilities.registry.note_execution(
+                    capability_id, False, "external verification of the reported output failed")
+            if receipt.ok and phrase:
+                # An alias is a routing hint, not a success claim: what it
+                # records is that this wording reached this capability and it
+                # ran without error. ``receipt.ok`` is that bar -- the stricter
+                # ``verified`` requires an external check to exist, and a
+                # capability that returns a value rather than writing a file
+                # has nothing for the outside check to look at.
+                self.capabilities.registry.learn_alias(capability_id, phrase)
+        except Exception:  # noqa: BLE001 - health bookkeeping must not break the answer
+            pass
         lines = [receipt.detail]
+        # A capability that returns a value and no prose left the owner with
+        # the word "ran". What it produced IS the answer to the request, so it
+        # is said out loud; the receipt keeps the full record either way.
+        lines += _capability_result_lines(output, receipt.detail)
         if receipt.verifications:
             lines += ["", "Belege:" if self.language.startswith("de") else "Evidence:"]
             lines += [f"  - {line}" for line in receipt.evidence_lines()]
         lines += ["", f"receipt {receipt.id}"]
+        # VERIFIED and RAN are different, and so is FAILED. A capability that
+        # returned a value nobody outside can re-derive is not verified -- the
+        # receipt keeps saying so -- but it is also not an error, and reporting
+        # it as one put the whole system into ERROR after doing exactly what
+        # was asked. What decides the state is whether the run failed or a
+        # check contradicted it.
+        contradicted = bool(checks) and not all(item.passed for item in checks)
+        standing = ("verified" if receipt.verified
+                    else "ran; nothing external to check" if ok and not checks
+                    else "not verified")
         self._deliver(
             "\n".join(lines), scope=scope, backend=capability_id,
-            context_text=f"[capability {capability_id}: "
-            f"{'verified' if receipt.verified else 'not verified'}, receipt {receipt.id}]",
-            final_state=JarvisState.IDLE if receipt.verified else JarvisState.ERROR,
+            context_text=f"[capability {capability_id}: {standing}, receipt {receipt.id}]",
+            final_state=JarvisState.ERROR if (not ok or contradicted) else JarvisState.IDLE,
         )
 
     def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str) -> None:
-        """Codex learns a missing action capability, then retries the request."""
+        """A capability ZEUS does not have: Codex engineers one, then the request resumes."""
+
+        self._start_capability_engineering(goal, original_text, scope)
+
+    def _start_capability_repair_for_request(self, resolution: Any, goal: str, original_text: str, scope: str) -> None:
+        """A capability ZEUS has and cannot trust: Codex repairs it, then the request resumes.
+
+        The same engineering path as a missing capability, with two
+        differences that matter: the broken version is named so its source is
+        the starting point rather than a blank workspace, and the defect it is
+        failing with is handed over as the brief.
+        """
+
+        capability_id = str(resolution.capability_id or "")
+        manifest = resolution.manifest
+        health = manifest.health_view() if manifest is not None else {}
+        defect = str(health.get("last_error") or resolution.reason or "the capability is marked BROKEN")
+        self._start_capability_engineering(
+            goal, original_text, scope, capability_id=capability_id,
+            repair=defect[:300] or "the capability is marked BROKEN",
+        )
+
+    def _start_capability_engineering(
+        self, goal: str, original_text: str, scope: str, *, capability_id: str = "", repair: str = "",
+    ) -> None:
+        """Codex builds or repairs one capability, then the original request resumes.
+
+        Codex is the engineer, not the runtime. It is consulted here, once,
+        because the registry could not serve the request; what it produces is
+        verified and registered locally, and every equivalent request after
+        this one is answered by :meth:`_route_capability_goal` without an
+        engineer being asked whether it is available.
+        """
 
         from service.acquisition import AcquisitionMission
 
+        de = self.language.startswith("de")
         if not self._acquiring.acquire(blocking=False):
-            de = self.language.startswith("de")
             self._deliver(
-                ("Ich lerne gerade schon eine FÃ¤higkeit. Diese Anfrage ist vorgemerkt." if de
+                ("Ich lerne gerade schon eine Fähigkeit. Diese Anfrage ist vorgemerkt." if de
                  else "I am already learning a capability. This request is queued."),
                 scope=scope,
                 backend="capability.resolver",
@@ -2804,38 +3135,71 @@ class JarvisCore:
                 context_text=f"[capability acquisition already running: {goal[:120]}]",
             )
             return
-        de = self.language.startswith("de")
-        self.state.set(JarvisState.CODING, detail=f"acquiring capability: {goal[:80]}", scope=scope)
+        self.state.set(JarvisState.CODING, detail=f"{'repairing' if repair else 'acquiring'} capability: {goal[:80]}", scope=scope)
+        if repair:
+            opening = (f"Die Fähigkeit {capability_id} ist defekt ({repair[:120]}). Codex repariert sie." if de
+                       else f"The capability {capability_id} is broken ({repair[:120]}). Codex is repairing it.")
+        else:
+            opening = (f"Die Funktion habe ich noch nicht zuverlässig. Codex baut sie: {goal[:120]}" if de
+                       else f"I do not have that capability reliably yet. Codex is building it: {goal[:120]}")
         self._deliver(
-            (f"Die Funktion habe ich noch nicht zuverlÃ¤ssig. Codex baut sie: {goal[:120]}" if de
-             else f"I do not have that capability reliably yet. Codex is building it: {goal[:120]}"),
+            opening,
             scope=scope,
             backend="codex.engineer",
             final_state=JarvisState.CODING,
-            context_text=f"[capability missing; Codex acquisition started: {goal[:120]}]",
+            context_text=(f"[capability {'broken' if repair else 'missing'}; Codex "
+                          f"{'repair' if repair else 'acquisition'} started: {goal[:120]}]"),
         )
 
         def work() -> None:
             try:
+                from capabilities.generalize import generalize, generic_keywords
                 from capabilities.registry import ADDRESS_TERMS, BOILERPLATE
                 from development.experience import terms as goal_terms
 
-                words = [w for w in goal_terms(goal) if w not in BOILERPLATE and w not in ADDRESS_TERMS]
-                capability_id = self.capabilities.suggest_id(goal)
+                # What gets built is the KIND of thing that was asked for, not
+                # this instance of it. Handing the raw sentence to the engineer
+                # indexes the capability under the owner's file name, so it
+                # answers requests about that one file and no others -- a
+                # lookup table with extra steps, and one more near-duplicate in
+                # the registry every time a different file is named.
+                shape = generalize(goal)
+                words = [w for w in goal_terms(shape.goal) if w not in BOILERPLATE and w not in ADDRESS_TERMS]
+                words = generic_keywords(words, shape.particulars)
+                cid = capability_id or self.capabilities.suggest_id(shape.goal)
+                if shape.changed:
+                    self.emit(EventType.TOOL,
+                              {"summary": f"generalized for reuse: {shape.goal[:120]}",
+                               "generalization": shape.to_dict()}, scope=scope)
                 mission = AcquisitionMission(
                     service=self.capabilities,
                     kernel=self.kernel,
                     emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
                 )
-                result = mission.run(goal, capability_id=capability_id, keywords=words[:12], codex_first=True)
-                self.emit(EventType.PROGRESS, {"summary": f"capability acquisition finished: {result.acquired}",
-                                               "acquisition": result.to_dict()}, scope=scope)
+                result = mission.run(shape.goal, capability_id=cid, keywords=words[:12], repair=repair, codex_first=True)
+                self.emit(EventType.PROGRESS,
+                          {"summary": f"capability {'repair' if repair else 'acquisition'} finished: {result.acquired}",
+                           "acquisition": result.to_dict(),
+                           "capability_routing": {"goal": goal[:200], "result": "BROKEN" if repair else "MISSING",
+                                       "capability_id": result.capability_id or cid, "codex_checked": bool(result.codex_checked),
+                                       "codex_state": result.codex_state, "queued": bool(result.queued),
+                                       "source": "codex.engineer"}}, scope=scope)
                 if not result.acquired or not result.capability_id:
+                    if result.queued:
+                        self._deliver(
+                            ((f"Codex ist gerade nicht verfügbar ({result.codex_state}). "
+                              f"Ich habe die Anfrage vorgemerkt ({result.queue_id}) und hole es nach, sobald Codex wieder da ist.") if de else
+                             (f"Codex is unavailable right now ({result.codex_state}). I have queued the request "
+                              f"({result.queue_id}) and will build it as soon as Codex is back.")),
+                            scope=scope, backend="codex.engineer", final_state=JarvisState.WAITING,
+                            context_text=f"[capability queued {result.queue_id}: Codex {result.codex_state}]",
+                        )
+                        return
                     self._deliver(
                         (f"Nicht gelernt: {result.reason[:200]}" if de else f"Not learned: {result.reason[:200]}"),
                         scope=scope,
                         backend="codex.engineer",
-                        final_state=JarvisState.ERROR if not result.queued else JarvisState.WAITING,
+                        final_state=JarvisState.ERROR,
                         context_text=f"[capability acquisition failed: {result.reason[:160]}]",
                     )
                     return
@@ -2848,44 +3212,11 @@ class JarvisCore:
                         final_state=JarvisState.ERROR,
                     )
                     return
-                payload, unmet = self._capability_payload(manifest, goal, original_text)
-                if unmet:
-                    self._deliver(
-                        (f"Gelernt: {result.capability_id}. Zum AusfÃ¼hren fehlt noch: {', '.join(unmet)}." if de
-                         else f"Learned: {result.capability_id}. To run it I still need: {', '.join(unmet)}."),
-                        scope=scope,
-                        backend="capability.resolver",
-                        final_state=JarvisState.WAITING,
-                        context_text=f"[capability {result.capability_id} acquired; missing input {unmet}]",
-                    )
-                    return
-                execution = self.capabilities.execute(result.capability_id, payload)
-                from runtime.receipts import Receipt
-
-                output = dict(getattr(execution, "output", {}) or {})
-                ok = bool(getattr(execution, "ok", False))
-                checks = self._verify_capability_output(output)
-                receipt = Receipt(
-                    kind=f"capability.{result.capability_id}",
-                    executor=result.capability_id,
-                    ok=ok and all(item.passed for item in checks),
-                    request=original_text,
-                    detail=(str(output.get("detail") or output.get("message") or "ran")
-                            if ok else str(getattr(execution, "error", "") or output.get("error", "failed"))),
-                    evidence={"goal": goal, "capability": result.capability_id, "output": output},
-                    verifications=tuple(checks),
-                )
-                self.receipts.record(receipt)
-                self._session_receipts.append(receipt)
-                self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id,
-                                           "receipt": receipt.to_dict()}, scope=scope)
-                self._deliver(
-                    f"{receipt.detail}\n\nreceipt {receipt.id}",
-                    scope=scope,
-                    backend=result.capability_id,
-                    final_state=JarvisState.IDLE if receipt.verified else JarvisState.ERROR,
-                    context_text=f"[capability {result.capability_id} acquired and retried; receipt {receipt.id}]",
-                )
+                self._resolve_capability_requests(goal)
+                # The original request resumes through the ordinary execution
+                # path, so what the owner asked for is answered by the same
+                # code that will answer it next time -- with no engineer in it.
+                self._execute_capability(manifest, goal, original_text, scope, phrase=goal)
             except Exception as exc:  # noqa: BLE001
                 self._deliver(
                     (f"Akquise fehlgeschlagen: {exc}" if de else f"Acquisition failed: {exc}"),
@@ -2898,14 +3229,53 @@ class JarvisCore:
 
         threading.Thread(target=work, daemon=True, name=f"capability-teach-{int(time.time())}").start()
 
+    def _capability_request_queue(self) -> Any:
+        """Requests parked because Codex was unavailable when they arrived."""
+
+        from capabilities.codex import CapabilityRequestQueue
+
+        return CapabilityRequestQueue(Path(self.kernel.state_root) / "capabilities" / "requests.jsonl")
+
+    def _resolve_capability_requests(self, goal: str) -> list[str]:
+        """Close out queued requests that this acquisition has now answered."""
+
+        resolved: list[str] = []
+        try:
+            queue = self._capability_request_queue()
+            for request in queue.list():
+                if self.capabilities.resolve(request.goal) is not None:
+                    queue.resolve(request.request_id, detail=f"served by the capability acquired for: {goal[:120]}")
+                    resolved.append(request.request_id)
+        except Exception:  # noqa: BLE001 - the queue is a record, not a dependency
+            return resolved
+        return resolved
+
+    def capability_requests(self) -> dict[str, Any]:
+        """The queued capability requests, for the Capability Center."""
+
+        try:
+            rows = [request.to_dict() for request in self._capability_request_queue().list()]
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "requests": []}
+        return {"ok": True, "requests": rows, "count": len(rows)}
+
     @staticmethod
-    def _verify_capability_output(output: dict[str, Any]) -> list[Any]:
+    def _verify_capability_output(output: dict[str, Any], payload: dict[str, Any] | None = None) -> list[Any]:
         """Check whatever the capability says it produced, from outside.
 
         Deliberately domain-blind: this knows nothing about screenshots or
         exports. It knows the shape of the claim -- "there is a file at this
         path" -- and goes and looks, because a capability that reports a path
         it did not write is the file-write defect wearing different clothes.
+
+        ``payload`` is what the capability was given. Without it the freshness
+        check cannot tell an artifact from an input, and punishes every
+        capability that only reads: measured live on 2026-09-08, a checksum
+        capability returned the correct digest of a file, echoed that file's
+        path, and the receipt came back FAILED because the file it had been
+        asked about was older than five minutes. A path that was handed IN is
+        not a claim to have produced anything, so freshness says nothing about
+        it; a path the capability chose itself is still held to the old bar.
         """
 
         import time
@@ -2916,6 +3286,11 @@ class JarvisCore:
         raw = output.get("path") or output.get("file") or output.get("artifact")
         if not raw:
             return checks
+        given = {
+            _normalized_path(value)
+            for value in (payload or {}).values()
+            if isinstance(value, str) and value
+        }
         target = Path(str(raw))
         exists = target.is_file()
         checks.append(
@@ -2927,6 +3302,11 @@ class JarvisCore:
             )
         )
         if not exists:
+            return checks
+        if _normalized_path(str(raw)) in given:
+            # The capability is reporting back what it was asked about. There
+            # is nothing here it claims to have produced, so there is nothing
+            # for freshness to check.
             return checks
         age = time.time() - target.stat().st_mtime
         checks.append(
@@ -3089,6 +3469,24 @@ class JarvisCore:
             hits = self.capabilities.registry.find(text, limit=1)
         except Exception:  # noqa: BLE001
             hits = []
+        # A capability ZEUS already has, is healthy, and clearly matches is
+        # dispatched BEFORE any model is asked what the request means.
+        #
+        # Not an optimisation. Measured on this machine: asked "welchen sha256
+        # Fingerprint hat die Datei zeus_acceptance.txt?", FAST_LOCAL answered
+        # file.open with confidence 0.95 -- a confident, wrong reading of a
+        # request the registry could answer exactly. The model has never seen
+        # the registry and cannot know what was learned last week, so letting
+        # it decide first means a learned capability is reachable only through
+        # the wordings the model happens to associate with it.
+        #
+        # The registry is the ground truth about what ZEUS can do; the model is
+        # what handles everything the registry cannot. The bar is deliberately
+        # high (a strong match, ACTIVE and HEALTHY) so ordinary requests still
+        # reach the planner. It is also 40-85 seconds faster, because the
+        # planner call does not happen at all.
+        if not looks_compound(text) and self._dispatch_known_capability(text, scope):
+            return
         if looks_compound(text) or hits:
             try:
                 if self._answer_by_composition(text, scope, guidance="\n".join(guidance_lines(relevant)), allow_single=bool(hits)):
@@ -3718,7 +4116,7 @@ class JarvisCore:
 
         names: list[str] = [self.identity.assistant_name]
         try:
-            names += [str(p.get("title") or "") for p in self.list_projects() if not p.get("hidden")][:12]
+            names += [str(p.get("title") or "") for p in self.owner_projects()][:12]
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -3742,7 +4140,7 @@ class JarvisCore:
 
         entities: list[str] = []
         try:
-            entities += [str(p.get("title") or "") for p in self.list_projects() if not p.get("hidden")][:40]
+            entities += [str(p.get("title") or "") for p in self.owner_projects()][:40]
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -5904,6 +6302,29 @@ class JarvisCore:
             return "owner"
         return "unclassified"
 
+    def owner_projects(self) -> list[dict[str, Any]]:
+        """The projects the OWNER has, which is not everything in the store.
+
+        A capability acquisition creates a project per attempt, titled after
+        the capability it is building. Those are ZEUS's own working notes, and
+        showing them where owner projects belong is not only clutter -- it is
+        wrong answers. Measured live, 2026-09-08: asked to compute a checksum,
+        FAST_LOCAL was handed the failed acquisition attempt
+        ``local.berechne.sha.256_fsumme`` as a project title, chose
+        ``project.open`` with confidence 0.98, and ZEUS answered "Projekt
+        local.berechne.sha.256_fsumme ist offen" to a request to compute a
+        checksum. The grounding check that exists to catch invented targets
+        waved it through, because the target really did exist -- as ZEUS's own
+        record of trying and failing to build the thing being asked for.
+        """
+
+        return [
+            row for row in self.list_projects()
+            if row.get("origin") == "owner"
+            and not row.get("hidden")
+            and row.get("importance") not in self.HIDDEN_IMPORTANCE
+        ]
+
     def list_projects(self) -> list[dict[str, Any]]:
         try:
             projects = self.kernel.projects.list_projects()
@@ -6883,3 +7304,42 @@ def _now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
+
+
+#: Bookkeeping a capability returns about itself, not an answer to anything.
+_CAPABILITY_BOOKKEEPING = frozenset({
+    "ok", "detail", "message", "error", "dry_run", "would_use", "status",
+    "duration_seconds", "seconds", "client_secret", "capability_id",
+})
+
+
+def _capability_result_lines(output: dict[str, Any], detail: str) -> list[str]:
+    """The values a capability produced, for the answer the owner reads.
+
+    Deliberately domain-blind, like the verification next to it: it does not
+    know what a digest or a file count is, only that a key which is not
+    bookkeeping is something the capability was asked to produce. Values
+    already visible in the detail line are not repeated.
+    """
+
+    said = str(detail or "")
+    lines: list[str] = []
+    for key, value in output.items():
+        if key in _CAPABILITY_BOOKKEEPING or isinstance(value, (dict, list)):
+            continue
+        text = str(value)
+        if not text or text in said:
+            continue
+        lines.append(f"{key}: {text}")
+    return ([""] + lines) if lines else []
+
+
+def _normalized_path(value: str) -> str:
+    """A path in one shape, for comparing what came out with what went in."""
+
+    import os
+
+    try:
+        return os.path.normcase(os.path.normpath(str(value)))
+    except (TypeError, ValueError):
+        return str(value)

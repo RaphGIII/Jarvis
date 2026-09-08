@@ -404,17 +404,49 @@ class CapabilityService:
     # ------------------------------------------------------------------
 
     def resolve(self, goal: str) -> CapabilityManifest | None:
-        """Find an installed capability that can satisfy ``goal``.
+        """The installed capability that can satisfy ``goal``, or nothing.
 
-        The registry's own term matching comes first, then the knowledge graph,
-        which knows the vocabulary a capability declared for itself -- that is
-        what lets "play some music" reach ``audio.play_file``.
+        Kept as the narrow answer for callers that only need a manifest.
+        :meth:`resolve_request` is the routing decision and the one the owner
+        path uses, because "there is nothing" and "there is one and it is
+        broken" are different situations with different next steps.
         """
 
-        matches = self.registry.find(goal, limit=1)
-        if matches:
-            return matches[0]
+        resolution = self.resolve_request(goal)
+        return resolution.manifest if resolution.found else None
 
+    def resolve_request(self, goal: str) -> "CapabilityResolution":
+        """Route one owner goal: FOUND, AMBIGUOUS, BROKEN or MISSING.
+
+        The typed resolver ranks the registry on what each capability declares
+        itself to be for. The knowledge graph is consulted only as an extra
+        candidate SOURCE when the registry found nothing, never as the verdict:
+        its fuzzy text search once matched a light-switch request to the
+        Spotify provider (live, 2026-09-02).
+
+        No model runs here. A resolution that needs an engineer says so and the
+        caller decides; this method never writes code and never calls Codex.
+        """
+
+        from capabilities.models import CapabilityResolution, CapabilityResolutionStatus, GoalEnvelope
+        from capabilities.resolver import CapabilityResolver
+
+        resolver = CapabilityResolver(self.registry, require_healthy=False)
+        resolution = resolver.resolve(goal)
+        if resolution.outcome is not CapabilityResolutionStatus.MISSING:
+            return resolution
+        manifest = self._graph_candidate(goal)
+        if manifest is None:
+            return resolution
+        if manifest.is_broken():
+            return CapabilityResolution("broken", manifest.capability_id, "Knowledge graph candidate is BROKEN.",
+                                        0.5, manifest, result=CapabilityResolutionStatus.BROKEN.value,
+                                        goal=GoalEnvelope.from_text(goal), candidates=resolution.candidates)
+        return CapabilityResolution("available", manifest.capability_id, "knowledge graph subject match",
+                                    0.5, manifest, result=CapabilityResolutionStatus.FOUND.value,
+                                    goal=GoalEnvelope.from_text(goal), candidates=resolution.candidates)
+
+    def _graph_candidate(self, goal: str) -> CapabilityManifest | None:
         if self.memory is not None:
             # The graph is a candidate SOURCE, never the decision: its fuzzy
             # text search once matched a light-switch request to the Spotify
@@ -839,8 +871,16 @@ class CapabilityService:
         verification: dict[str, Any],
         *,
         keywords: list[str] | None = None,
+        built_by: str = "local_build",
     ) -> CapabilityManifest:
-        """Copy the verified workspace into the permanent catalog and register it."""
+        """Copy the verified workspace into the permanent catalog and register it.
+
+        ``built_by`` is who wrote the code -- the engineer's provider name, or
+        the local builder. It was a hardcoded "codex" on every record, which
+        made the field a decoration rather than a fact: after this sprint, the
+        registry can be asked which capabilities an engineer was actually
+        needed for, and the answer has to be true.
+        """
 
         version = self._next_version(capability_id)
         target = self.root / capability_id.replace(".", "_") / version
@@ -850,7 +890,13 @@ class CapabilityService:
         shutil.copytree(
             workspace,
             target,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".venv"),
+            # ``.jarvis_tmp`` is the workspace-local TEMP that every verification
+            # subprocess is pointed at, so by the time a capability is installed
+            # it holds whatever pytest was doing seconds earlier -- files that
+            # are being deleted while this copy walks them. One live install
+            # failed here with a shutil.Error naming three of them, and the
+            # capability was verified, correct, and thrown away.
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".venv", ".jarvis_tmp"),
         )
 
         terms = sorted(set((keywords or []) + _keywords_from(goal)))
@@ -863,17 +909,20 @@ class CapabilityService:
             implementation_path=str(target.resolve()),
             tests_location=str((target / "test_capability.py").resolve()),
             input_schema=self._input_schema_of(target),
-            output_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            output_schema=self._output_schema_of(target),
             family=capability_id.split(".", 1)[0],
             examples=list(keywords or []),
             aliases=list(keywords or []),
             security_level=0,
             latency_class="local",
             runtime_dependencies=[],
-            source="codex_generated",
+            source=f"{built_by}_generated",
+            # The engineer wrote it; nothing needs the engineer to RUN it.
+            # That distinction is the whole architecture, so it is recorded on
+            # every capability rather than assumed.
             runtime_brain=RuntimeBrain.NONE.value,
             codex_required=False,
-            created_by="codex",
+            created_by=built_by,
             lifecycle=CapabilityLifecycle.ACTIVE.value,
             health={"state": "healthy", "health": CapabilityHealth.HEALTHY.value},
             creation_metadata={
@@ -914,6 +963,36 @@ class CapabilityService:
                 "-c",
                 "import json, main; "
                 "schema = getattr(main, 'INPUT_SCHEMA', None); "
+                "print('SCHEMA:' + json.dumps(schema if isinstance(schema, dict) else {}))",
+            ],
+            source,
+        )
+        if not result["ok"] or "SCHEMA:" not in result["detail"]:
+            return fallback
+        try:
+            raw = result["detail"].split("SCHEMA:", 1)[1].splitlines()[0]
+            schema = json.loads(raw)
+        except (IndexError, json.JSONDecodeError):
+            return fallback
+        return schema if schema.get("properties") else fallback
+
+    def _output_schema_of(self, source: Path) -> dict[str, Any]:
+        """What the capability says it returns, read from its own module.
+
+        The counterpart to :meth:`_input_schema_of`, and it exists for the same
+        reason: a contract the capability declares is something the outside can
+        check it against. Without it every capability's output schema said only
+        ``{"ok": boolean}`` -- true of every possible return value, and so
+        worth nothing as a check.
+        """
+
+        fallback = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+        result = self._run(
+            [
+                sys.executable,
+                "-c",
+                "import json, main; "
+                "schema = getattr(main, 'OUTPUT_SCHEMA', None); "
                 "print('SCHEMA:' + json.dumps(schema if isinstance(schema, dict) else {}))",
             ],
             source,
@@ -1047,7 +1126,16 @@ class CapabilityService:
 
         import re
 
-        words = [word for word in re.split(r"[^a-z0-9]+", goal.lower()) if len(word) > 2]
+        # Fold before splitting. Splitting on "not [a-z0-9]" treats an umlaut
+        # as a separator, so "Prüfsumme" became the two fragments "pr" and
+        # "fsumme" and a live capability was registered as
+        # ``local.berechne.sha.256_fsumme`` -- an identifier that names nothing
+        # a German-speaking owner would recognise, and one the resolver then
+        # indexes under a non-word.
+        from capabilities.models import _fold
+
+        folded = _fold(goal)
+        words = [word for word in re.split(r"[^a-z0-9]+", folded) if len(word) > 2]
         stopwords = {
             "the", "and", "for", "with", "that", "this", "from", "into", "can", "able", "ability",
             "build", "make", "create", "reusable", "capability", "jarvis", "please", "want", "need",
@@ -1162,11 +1250,16 @@ def _keywords_from(goal: str) -> list[str]:
 
     import re
 
+    from capabilities.models import _fold
     from capabilities.registry import BOILERPLATE
 
+    # Folded first, for the same reason ``suggest_id`` folds: splitting on
+    # "not [a-z0-9]" treats an umlaut as a separator, so "Pruefsumme" written
+    # with its umlaut was indexed as the fragment "fsumme" -- a non-word that
+    # no request will ever contain, taking one of the eight slots.
     stopwords = BOILERPLATE | {"jarvis", "please", "want", "need", "should", "able"}
     return [
         word
-        for word in re.split(r"[^a-z0-9]+", goal.lower())
+        for word in re.split(r"[^a-z0-9]+", _fold(goal))
         if len(word) > 3 and word not in stopwords
     ][:8]

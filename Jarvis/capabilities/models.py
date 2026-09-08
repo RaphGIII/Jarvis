@@ -213,18 +213,44 @@ class CapabilityManifest:
     def is_broken(self) -> bool:
         return self.lifecycle_state() is CapabilityLifecycle.BROKEN or self.health_state() is CapabilityHealth.BROKEN
 
+    @property
+    def declares_subject(self) -> bool:
+        """Whether this capability says, in types, what it is for.
+
+        Only such a capability can be compared with another one for sameness.
+        A record that declares no goal or target type is not "about nothing" --
+        it is undeclared, which is a different thing, and guessing that two
+        undeclared capabilities are duplicates of each other would retire
+        working functionality on no evidence at all.
+        """
+
+        return bool(self.goal_types or self.target_types)
+
     def compute_semantic_signature(self) -> str:
+        """A hash of what this capability is FOR, not of what it is called.
+
+        The identifier is deliberately excluded. Including it -- as the first
+        version of this did -- makes the signature unique per capability by
+        construction, which reads like duplicate detection and can never once
+        detect a duplicate. Aliases are excluded for the mirror reason: they
+        are learned phrasings that change as the capability is used, and an
+        identity that changes every time something is said differently is not
+        an identity.
+        """
+
         import hashlib
 
         parts = [
-            self.capability_id,
             self.family or self.capability_id.split(".", 1)[0],
             " ".join(sorted(self.goal_types)),
             " ".join(sorted(self.target_types)),
             " ".join(sorted(self.side_effects)),
             " ".join(sorted(self.runtime_dependencies or self.dependencies)),
-            " ".join(sorted(self.aliases)),
         ]
+        if not self.declares_subject:
+            # Undeclared: the signature stays unique so nothing is ever
+            # deduplicated against it.
+            parts = [self.capability_id, *parts, (self.description or "").strip()[:200]]
         subject = "|".join(part.strip().lower() for part in parts if part.strip())
         if not subject:
             subject = (self.description or self.capability_id).strip().lower()
