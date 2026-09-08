@@ -675,9 +675,14 @@ class AcquisitionMission:
 
         elapsed = time.perf_counter() - started
         result.expert_used = getattr(expert, "provider", "")
+        # The blocker, not only the summary. A provider that fails before it
+        # writes anything has an empty summary, so the log said
+        # "expert: failed:" and stopped -- twice, on this machine, for two
+        # different causes. Whichever of the two is non-empty is the evidence.
+        account = (expert.summary or "").strip() or (getattr(expert, "blocker", "") or "").strip()
         self._step(
             result, "expert",
-            f"{getattr(expert.status, 'value', expert.status)}: {expert.summary[:200]}",
+            f"{getattr(expert.status, 'value', expert.status)}: {account[:300]}",
             ok=bool(getattr(expert, "verified", False)),
             seconds=elapsed,
         )

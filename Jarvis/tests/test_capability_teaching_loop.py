@@ -405,10 +405,11 @@ def test_the_cli_is_driven_with_flags_the_installed_codex_accepts(tmp_path: Path
 
     from experts.contracts import ExpertJob
 
+    job = ExpertJob(goal="build it", workspace=tmp_path / "ws")
     real_run = subprocess.run
     subprocess.run = _fake_run  # type: ignore[assignment]
     try:
-        expert.execute(ExpertJob(goal="build it", workspace=tmp_path / "ws"))
+        expert.execute(job)
     finally:
         subprocess.run = real_run  # type: ignore[assignment]
 
@@ -417,7 +418,10 @@ def test_the_cli_is_driven_with_flags_the_installed_codex_accepts(tmp_path: Path
     assert "--full-auto" not in command, "rejected by the installed CLI"
     assert command[2:5] == ["--sandbox", "workspace-write", "--skip-git-repo-check"]
     assert "-C" in command
-    assert recorded["kwargs"]["stdin"] is subprocess.DEVNULL, "a service has no terminal to read from"
+    # The brief is written to stdin and the pipe is closed, so the CLI never
+    # waits on a terminal this service does not have. See the 8191-character
+    # test below for why it cannot be a command-line argument.
+    assert recorded["kwargs"]["input"] == expert._prompt(job)
 
 
 def test_a_spent_allowance_is_remembered_so_availability_stops_saying_ready() -> None:
@@ -1020,3 +1024,77 @@ def test_a_subjectless_learn_request_asks_instead_of_building(tmp_path: Path) ->
 
     assert created == []
     assert delivered and ("Was genau" in delivered[0] or "What exactly" in delivered[0])
+
+
+# --------------------------------------------------------------------------
+# The brief is not a command-line argument
+# --------------------------------------------------------------------------
+
+
+def test_the_brief_goes_on_stdin_because_cmd_truncates_at_8191_characters(tmp_path: Path) -> None:
+    """Found live, 2026-09-08, and it failed the bigger job every time.
+
+    `codex` on Windows is `codex.CMD`, and cmd.exe truncates a command line at
+    8191 characters. A capability brief carries the whole contract; a repair
+    brief adds the defect and the repair rules on top. Measured: an acquisition
+    brief of 7.4 KB got through and the repair brief of the same capability did
+    not, dying in two seconds with "Die Befehlszeile ist zu lang." and no other
+    output. The bigger the job, the more certain the failure.
+    """
+
+    import subprocess
+
+    from experts.codex import CodexExpert
+    from experts.contracts import ExpertJob
+
+    expert = CodexExpert(executable="codex")
+    recorded: dict[str, Any] = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = "done"
+        stderr = ""
+
+    def _fake_run(command, **kwargs):
+        recorded["command"] = list(command)
+        recorded["kwargs"] = kwargs
+        return _Completed()
+
+    job = ExpertJob(
+        goal="repair it",
+        workspace=tmp_path / "ws",
+        constraints=[f"constraint number {index} " + "x" * 200 for index in range(60)],
+    )
+    real_run = subprocess.run
+    subprocess.run = _fake_run  # type: ignore[assignment]
+    try:
+        expert.execute(job)
+    finally:
+        subprocess.run = real_run  # type: ignore[assignment]
+
+    command, kwargs = recorded["command"], recorded["kwargs"]
+    assert len(expert._prompt(job)) > 8191, "this brief would not fit on a cmd.exe command line"
+    assert kwargs["input"] == expert._prompt(job), "the brief is what gets written to stdin"
+    assert not any(len(argument) > 4096 for argument in command), "no argument carries the brief"
+    assert sum(len(argument) for argument in command) < 8191
+    assert "stdin" not in kwargs, "input= already closes the pipe; setting both is an error"
+
+
+def test_a_provider_that_dies_without_output_still_says_something() -> None:
+    """"expert: failed:" and nothing else has cost two investigations."""
+
+    from experts.codex import _failure_evidence
+
+    class _Silent:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    class _Noisy:
+        returncode = 1
+        stdout = ""
+        stderr = "You've hit your usage limit."
+
+    silent = _failure_evidence(_Silent(), 2.1, 9000)
+    assert "exit 1" in silent and "no output" in silent and "9000" in silent
+    assert _failure_evidence(_Noisy(), 3.0, 100) == "You've hit your usage limit."

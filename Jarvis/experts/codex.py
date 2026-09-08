@@ -205,7 +205,21 @@ class CodexExpert:
         command += ["-C", str(workspace)]
         if self.model:
             command += ["--model", self.model]
-        command.append(self._prompt(job))
+        # The brief goes on stdin, not on the command line.
+        #
+        # `codex` on Windows is `codex.CMD`, and cmd.exe truncates a command
+        # line at 8191 characters. A capability brief carries the whole
+        # contract -- run(payload) -> dict, the INPUT_SCHEMA rule, the machine
+        # facts, the acceptance commands -- and a repair brief adds the defect
+        # and the repair rules on top. Measured live on 2026-09-08: an
+        # acquisition brief of 7.4 KB got through and the repair brief of the
+        # same capability did not, failing in two seconds with
+        # "Die Befehlszeile ist zu lang." and no other output. The bigger the
+        # job, the more certain the failure -- exactly backwards.
+        #
+        # `codex exec` reads its instructions from stdin when no prompt
+        # argument is given, which is its documented path and has no limit.
+        prompt = self._prompt(job)
 
         started = time.perf_counter()
         try:
@@ -213,10 +227,9 @@ class CodexExpert:
                 command,
                 cwd=str(workspace),
                 capture_output=True, text=True,
-                # Without this the CLI inherits whatever stdin this process
-                # has and announces "Reading additional input from stdin...",
-                # which in a service with no terminal is a wait with no end.
-                stdin=subprocess.DEVNULL,
+                # The brief itself, closing the pipe afterwards so the CLI
+                # never waits on a terminal this service does not have.
+                input=prompt,
                 timeout=max(30.0, job.max_seconds),
                 env=self._environment(), encoding="utf-8", errors="replace",
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -259,7 +272,7 @@ class CodexExpert:
             summary=text[:4000],
             files_changed=_changed(before, _snapshot(workspace)),
             commands_run=[" ".join(command[:2]) + " ..."],
-            blocker=(completed.stderr or "").strip()[-400:] if failed else "",
+            blocker=_failure_evidence(completed, duration, len(prompt)) if failed else "",
             quota=quota,
             duration_seconds=duration,
         )
@@ -342,3 +355,26 @@ def _reset_seconds(text: str, *, default: float = 3600.0) -> float:
     if target <= now:
         target += _dt.timedelta(days=1)
     return max(60.0, min(24 * 3600.0, (target - now).total_seconds()))
+
+
+def _failure_evidence(completed: Any, duration: float, prompt_length: int) -> str:
+    """Why the CLI failed, in a form that can be acted on.
+
+    A failed run used to report whatever was on stderr, and when the process
+    died before writing anything that was the empty string -- so the
+    acquisition log said `expert: failed:` and nothing else. That has cost two
+    separate investigations on this machine: once for a flag the CLI does not
+    accept, once for a run that produced no output at all. An exit code and the
+    fact that there was no output are themselves evidence, and cheap to keep.
+    """
+
+    stderr = (getattr(completed, "stderr", "") or "").strip()
+    stdout = (getattr(completed, "stdout", "") or "").strip()
+    if stderr:
+        return stderr[-400:]
+    if stdout:
+        return f"exit {completed.returncode} after {duration:.1f}s; stdout: {stdout[-300:]}"
+    return (
+        f"exit {completed.returncode} after {duration:.1f}s with no output at all "
+        f"(prompt {prompt_length} chars). The CLI did not start, or rejected its arguments."
+    )

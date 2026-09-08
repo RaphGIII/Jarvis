@@ -315,6 +315,65 @@ is involved.
 | Codex invocations serving a learned capability | **0** |
 | Registry resolution, whole registry | 2–23 ms |
 
+## The repair loop, live
+
+Run on 2026-09-08 on the capability Codex had taught earlier the same day. A
+deliberate, reversible, deterministic fault was introduced into the installed
+implementation -- `digest.hexdigest()` -> `digest.hex_digest()`, one call in
+`_sha256_file`, which raises `AttributeError` on every real hash and leaves the
+dry run untouched. A byte-exact backup was taken first.
+
+```
+request 1   FOUND  -> action.failed  AttributeError: ... has no attribute 'hex_digest'
+            health HEALTHY -> AT_RISK      (consecutive_failures 1)
+request 2   ->  action.failed
+            health AT_RISK -> BROKEN       (consecutive_failures 2, FAILING_AFTER)
+request 3   capability routing: BROKEN local.berechne.sha.256_pruefsumme (0.72, 1ms)
+            acquisition/retire: disabled ... AttributeError: ...
+            acquisition/codex_availability: READY
+            acquisition/codex: engineering local.berechne.sha.256_pruefsumme
+            acquisition/expert: completed (116 s)
+            acquisition/verify: re-running the capability checks here
+            acquisition/promote: registered after independent verification
+            action.verified  SHA-256-Pruefsumme von zeus_acceptance.txt: 281a25eb...920db
+```
+
+The defect ZEUS recorded from the real failure was handed to Codex as the brief,
+and the workspace was seeded from the broken version rather than from a blank
+skeleton. What came back was the minimal correct fix: **73 lines, 0 content
+differences from the pre-fault original.** Same `capability_id`, version
+1.0.0 -> 1.0.1, no second capability registered, no phrase-specific workaround,
+health back to HEALTHY, the capability's own five tests passing.
+
+Then the engineer was removed: ZEUS stopped, `codex` replaced on PATH by the
+logging shim, ZEUS restarted. A wording never used before --
+*"welchen sha256 Wert hat die Datei X?"* -- resolved FOUND in 3.8 ms and ran the
+repaired capability. **Zero Codex invocations.**
+
+### Found by running it
+
+**The brief could not be delivered.** `codex` on Windows is `codex.CMD`, and
+cmd.exe truncates a command line at 8191 characters. The brief was being passed
+as an argument. An acquisition brief of 7.4 KB got through; the repair brief of
+the same capability -- the contract plus the defect plus the repair rules --
+did not, dying in two seconds with `Die Befehlszeile ist zu lang.` The bigger
+the job, the more certain the failure, which is exactly backwards. The brief now
+goes on stdin, which is the CLI's own documented path and has no limit.
+
+**A failure with no output said nothing.** The adapter reported stderr, and a
+process that dies before writing anything has none -- so the log read
+`expert: failed:` and stopped. That is the same line the `--full-auto` defect
+produced, and it cost a separate investigation each time. The exit code, the
+duration and the fact that there was no output are now the evidence, and the
+acquisition step prints the blocker when the summary is empty.
+
+**A broken capability was silently replaced by an unrelated one.** While health
+was AT_RISK, the composer replanned around the failing checksum capability, ran
+`file.read` plus a line/word counter, and reported *"Ziel erreicht ... GOAL
+SATISFIED"* for a request that asked for a SHA-256 checksum. Recorded, not
+fixed: it is the composer's replanner, not this routing path, and fixing it
+inside a repair acceptance would have muddied the evidence.
+
 ## Zero paid API
 
 `CostPolicy` permits `local_model` and `subscription_cli`; `paid_api`,
@@ -347,15 +406,6 @@ on its own. A flake, not a regression — recorded rather than quietly re-run.
 The generalizer is syntactic: it recognises paths, filenames, quoted literals
 and drive letters. A particular expressed some other way ("the third file in my
 downloads") still reaches the engineer as part of the goal.
-
-**The repair loop was not run live.** BROKEN routes to
-`_start_capability_repair_for_request`, which hands Codex the recorded defect as
-the brief and starts from the broken version's own source; the path is covered
-by tests, and the health transitions that produce BROKEN were exercised live
-(the checksum capability really did go AT_RISK and really did earn HEALTHY back
-over two verified runs). What has not happened on this machine is a real
-capability breaking and Codex really repairing it. That costs a second
-acquisition budget, and it is the honest gap in this sprint.
 
 A confirmation ("Ja, bitte lerne das.") does not replay the offer it confirms;
 the sentence itself became the goal. Now refused rather than built, but the
