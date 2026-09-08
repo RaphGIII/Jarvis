@@ -76,6 +76,14 @@ class SelfDevMission:
     changed_files: list[str] = field(default_factory=list)
     local_attempts: int = 0
     escalated: bool = False
+    #: The routing decision from service.engineering: which engineer, why, and
+    #: what Codex said when it was asked -- recorded before any code is written
+    #: so "who built this" is answerable from the mission alone.
+    engineering: dict[str, Any] = field(default_factory=dict)
+    #: A SELFDEV_PROMOTE token the owner minted with their password. Empty for
+    #: a mission started from chat, which is why such a mission stops before
+    #: promotion instead of promoting itself.
+    authorization: str = ""
     expert: dict[str, Any] = field(default_factory=dict)
     verification: dict[str, Any] = field(default_factory=dict)
     promotion: dict[str, Any] = field(default_factory=dict)
@@ -100,7 +108,15 @@ class SelfDevMission:
 
     @property
     def finished(self) -> bool:
-        return self.phase in {"DONE", "FAILED", "CANCELLED"}
+        """Whether this mission still has work of its own to do.
+
+        A mission parked on the owner -- AWAITING_AUTHORIZATION -- or on an
+        engineer that is away -- WAITING -- is not working. Counting it as
+        active blocked every later request behind a decision only the owner
+        could unblock, and the dock showed it as running.
+        """
+
+        return self.phase in {"DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "WAITING"}
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -179,6 +195,8 @@ class SelfDevRunner:
         owner: Any,
         lifecycle: Any,
         gateway: Any = None,
+        availability: Any = None,
+        security: Any = None,
         emit: Callable[[EventType, dict[str, Any]], None],
         set_state: Callable[..., Any],
         python: str = "",
@@ -189,6 +207,11 @@ class SelfDevRunner:
         self.owner = owner
         self.lifecycle = lifecycle
         self.gateway = gateway
+        #: Asked BEFORE any engineering starts; see service.engineering.
+        self.availability = availability
+        #: The Owner Security Gate. Promotion into the running product is a
+        #: Level-2 change and this is the only thing that can permit it.
+        self.security = security
         self.emit = emit
         self.set_state = set_state
         self.python = python or sys.executable
@@ -211,6 +234,10 @@ class SelfDevRunner:
         from development.experience import ExperienceStore
 
         self.experience = ExperienceStore(Path(self.store.root).parent / "experience" / "selfdev.jsonl")
+        if self.availability is None:
+            from service.engineering import default_availability
+
+            self.availability = default_availability(self.gateway)
 
     # -- isolation -----------------------------------------------------
 
@@ -337,17 +364,34 @@ class SelfDevRunner:
             self._baseline = self._guard.fingerprint()
             self._timed(mission, "understand", lambda: self._understand(mission))
             self._timed(mission, "investigate", lambda: self._investigate(mission))
-            self.set_state(JarvisState.CODING, detail="developing a change to myself", scope=mission.scope)
-            candidate = self._timed(mission, "build", lambda: self._build(mission, max_seconds))
-            self._audit(mission, "BUILD")
-            self.set_state(JarvisState.VERIFYING, detail="verifying the candidate", scope=mission.scope)
-            verified = self._timed(mission, "verify", lambda: self._verify(mission))
-            self._audit(mission, "VERIFY")
-            if not verified and self.gateway is not None:
-                self.set_state(JarvisState.CODING, detail="asking an expert", scope=mission.scope)
+
+            # Who engineers this is decided once, before anything is built, by
+            # the one router every path shares. Codex first; the local coder
+            # only where the owner has explicitly asked for it. This used to
+            # run BUILD_LOCAL unconditionally and treat Codex as the fallback
+            # for its failures -- see service.engineering.
+            decision = self._choose_engineer(mission)
+            mission.engineering = decision.to_dict()
+            self._phase(mission, "ENGINEER",
+                        f"{decision.engineer.value}: {decision.reason} "
+                        f"(Codex {decision.codex_state})")
+            self.store.save(mission)
+            if not decision.proceeds:
+                return self._queue(mission, decision)
+
+            if decision.is_codex:
+                self._prepare_workspace(mission)
+                self.set_state(JarvisState.CODING, detail="Codex is developing the change", scope=mission.scope)
                 self._timed(mission, "escalate", lambda: self._escalate(mission))
                 self._audit(mission, "ESCALATE")
-                self.set_state(JarvisState.VERIFYING, detail="verifying the expert's work", scope=mission.scope)
+                self.set_state(JarvisState.VERIFYING, detail="verifying the engineer's work", scope=mission.scope)
+                verified = self._timed(mission, "verify", lambda: self._verify(mission))
+                self._audit(mission, "VERIFY")
+            else:
+                self.set_state(JarvisState.CODING, detail="developing a change to myself", scope=mission.scope)
+                self._timed(mission, "build", lambda: self._build(mission, max_seconds))
+                self._audit(mission, "BUILD")
+                self.set_state(JarvisState.VERIFYING, detail="verifying the candidate", scope=mission.scope)
                 verified = self._timed(mission, "verify", lambda: self._verify(mission))
                 self._audit(mission, "VERIFY")
             if not verified:
@@ -356,6 +400,14 @@ class SelfDevRunner:
                 mission.outcome = "verified_not_promoted"
                 self._phase(mission, "DONE", "verified; the owner policy does not promote automatically")
                 return mission
+            # Promoting code into the running product is a Level-2 change. It
+            # is the owner's decision, proven by their password, and nothing
+            # else may stand in for it -- not this mission, not the engineer's
+            # verdict, not a policy default. Mission d1309425e9 promoted seven
+            # files into the live tree and restarted ZEUS on the strength of a
+            # chat sentence, with no entry in the owner's audit log.
+            if not self._promotion_authorized(mission):
+                return self._await_authorization(mission)
             self._timed(mission, "promote", lambda: self._promote(mission))
             if mission.outcome == "failed":
                 return mission
@@ -403,6 +455,14 @@ class SelfDevRunner:
                 mission.outcome = "verified_not_promoted"
                 self._phase(mission, "DONE", "verified; the owner policy does not promote automatically")
                 return mission
+            # Promoting code into the running product is a Level-2 change. It
+            # is the owner's decision, proven by their password, and nothing
+            # else may stand in for it -- not this mission, not the engineer's
+            # verdict, not a policy default. Mission d1309425e9 promoted seven
+            # files into the live tree and restarted ZEUS on the strength of a
+            # chat sentence, with no entry in the owner's audit log.
+            if not self._promotion_authorized(mission):
+                return self._await_authorization(mission)
             self._timed(mission, "promote", lambda: self._promote(mission))
             if mission.outcome == "failed":
                 return mission
@@ -490,6 +550,76 @@ class SelfDevRunner:
             lines.append(guidance)
             mission.events.append({"at": _now(), "phase": "EXPERIENCE", "detail": f"{guidance.count(chr(10))} lines of verified experience retrieved"})
         return "\n".join(line for line in lines if line)
+
+    # -- who engineers this --------------------------------------------
+
+    def _choose_engineer(self, mission: SelfDevMission) -> Any:
+        """The one routing decision, shared with every other engineering path."""
+
+        from service.engineering import EngineeringNeed, choose_engineer, owner_authorized_local_build
+
+        return choose_engineer(
+            EngineeringNeed.CORE_ENGINEERING,
+            availability=self.availability,
+            owner_authorized_local=owner_authorized_local_build(mission.request),
+        )
+
+    def _prepare_workspace(self, mission: SelfDevMission) -> Any:
+        """The isolation boundary, created before an engineer is handed anything.
+
+        ``_build`` used to create this as a side effect of running the local
+        coder, so the Codex-first path had nowhere to work.
+        """
+
+        if self._workspace is None:
+            workspace = CandidateWorkspace(repository=self.repository, mission_id=mission.mission_id).create()
+            self._workspace = workspace
+            mission.worktree = str(workspace.root)
+            self.store.save(mission)
+        return self._workspace
+
+    def _queue(self, mission: SelfDevMission, decision: Any) -> SelfDevMission:
+        """No engineer is available and the local coder is not a substitute."""
+
+        mission.outcome = "queued"
+        mission.reason = decision.reason
+        self._phase(mission, "WAITING", f"queued: {decision.reason}")
+        mission.phase = "WAITING"
+        self.store.save(mission)
+        return mission
+
+    # -- the owner's authorization -------------------------------------
+
+    def _promotion_authorized(self, mission: SelfDevMission) -> bool:
+        """Whether the owner has actually authorized THIS promotion.
+
+        A live SELFDEV_PROMOTE session, minted by the owner's password through
+        the SecurityGate. With no password configured there is nothing to prove
+        and the machine is the owner's own -- that is the gate's existing rule
+        everywhere else, and this follows it rather than inventing a stricter
+        one here.
+        """
+
+        gate = self.security
+        if gate is None:
+            return True
+        try:
+            if not gate.configured:
+                return True
+            return bool(gate.authorized(mission.authorization, "SELFDEV_PROMOTE"))
+        except Exception:  # noqa: BLE001 - a gate that cannot answer has not said yes
+            return False
+
+    def _await_authorization(self, mission: SelfDevMission) -> SelfDevMission:
+        """Verified, promotable, and stopped until the owner turns the key."""
+
+        mission.outcome = "verified_awaiting_authorization"
+        mission.reason = ("verified in the isolated worktree; promoting it into the product needs "
+                          "your password (SELFDEV_PROMOTE)")
+        self._phase(mission, "AWAITING_AUTHORIZATION", mission.reason)
+        mission.phase = "AWAITING_AUTHORIZATION"
+        self.store.save(mission)
+        return mission
 
     def _build(self, mission: SelfDevMission, max_seconds: float) -> Any:
         from brain.tiers import ModelTier
@@ -816,6 +946,24 @@ class SelfDevRunner:
         self._phase(mission, "ESCALATE", f"expert {mission.expert['status']} in {mission.expert['seconds']}s; "
                                          f"{len(mission.changed_files)} changed files")
 
+    def promote_authorized(self, mission: SelfDevMission) -> SelfDevMission:
+        """Finish a mission the owner has now authorized.
+
+        Everything up to PROMOTE already happened and was verified; this is
+        only the step that was waiting for the password.
+        """
+
+        if not self._promotion_authorized(mission):
+            return self._await_authorization(mission)
+        try:
+            self._timed(mission, "promote", lambda: self._promote(mission))
+            if mission.outcome == "failed":
+                return mission
+            self._restart(mission)
+            return mission
+        except Exception as exc:  # noqa: BLE001
+            return self._fail(mission, f"{type(exc).__name__}: {exc}")
+
     def _promote(self, mission: SelfDevMission) -> None:
         from deployment.promotion import HealthCheck, Promoter
 
@@ -911,6 +1059,24 @@ def describe(mission: SelfDevMission, language: str = "") -> str:
                     f"entfernt{' (Diff aufbewahrt)' if mission.evidence_patch else ''}. Aktiver Code unverändert.")
         return (f"Self-update cancelled: “{mission.request[:80]}”. Nothing was promoted; the candidate is "
                 f"released{' (diff kept)' if mission.evidence_patch else ''}. Live code unchanged.")
+    if mission.outcome == "verified_awaiting_authorization":
+        # Not a failure. The change exists, it is verified, and it is waiting
+        # for the one decision that was never the machine's to make. Reporting
+        # it as "fehlgeschlagen" tells the owner the opposite of what happened.
+        if de:
+            return (f"Fertig entwickelt und verifiziert: „{mission.request[:80]}“. Geändert: {files}. "
+                    f"Es liegt im isolierten Arbeitsbaum und ist noch NICHT übernommen — dafür brauche ich "
+                    f"dein Passwort (SELFDEV_PROMOTE). Sag Bescheid, dann übernehme ich es. "
+                    f"{total:.0f}s, Engineer: {mission.engineering.get('engineer', '?')}.")
+        return (f"Engineered and verified: “{mission.request[:80]}”. Changed: {files}. It is in the isolated "
+                f"worktree and is NOT promoted — that needs your password (SELFDEV_PROMOTE). Say the word and "
+                f"I will promote it. {total:.0f}s, engineer: {mission.engineering.get('engineer', '?')}.")
+    if mission.outcome == "queued":
+        if de:
+            return (f"Noch nicht gebaut: „{mission.request[:80]}“ — {mission.reason[:200]}. "
+                    f"Ich baue das nicht ersatzweise mit dem lokalen Modell; es ist vorgemerkt.")
+        return (f"Not built yet: “{mission.request[:80]}” — {mission.reason[:200]}. I am not substituting the "
+                f"local coder; it is queued.")
     if mission.outcome == "rolled_back":
         if de:
             return (f"Selbst-Update zurückgerollt: „{mission.request[:80]}“ hat den Neustart nicht überstanden "

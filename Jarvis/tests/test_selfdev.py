@@ -67,10 +67,22 @@ class FakeLifecycle:
 
 
 def _runner(repo: Path, tmp_path: Path, *, build, owner=None, lifecycle=None, gateway=None):
+    """A runner exercising the LOCAL builder.
+
+    These tests stub ``_build``, so the local coder is what they are about --
+    and since the engineering router landed, that path exists only where the
+    owner authorized it (see service.engineering). Codex is reported away so
+    the choice is the owner's authorization and nothing else; the missions
+    below carry it in their own words.
+    """
+
+    from capabilities.codex import CodexAvailabilityState, StaticCodexAvailability
+
     events: list[tuple] = []
     runner = SelfDevRunner(
         repository=repo, store=SelfDevStore(tmp_path / "missions"), kernel=SimpleNamespace(provider=lambda tier: object()),
         owner=owner or FakeOwner(), lifecycle=lifecycle or FakeLifecycle(), gateway=gateway,
+        availability=StaticCodexAvailability(CodexAvailabilityState.OFFLINE, "not in this test"),
         emit=lambda kind, payload: events.append((kind, payload)), set_state=lambda *a, **k: None,
     )
     runner._build = build.__get__(runner)  # type: ignore[method-assign]
@@ -99,7 +111,7 @@ def test_mission_is_durable_and_phases_are_recorded(repo: Path, tmp_path: Path) 
         _candidate(self, mission, {"service/core.py": "VALUE = 2\n"})
 
     runner = _runner(repo, tmp_path, build=build)
-    mission = SelfDevMission(request="make VALUE bigger in your code", language="en")
+    mission = SelfDevMission(request="make VALUE bigger in your code, use the local coder", language="en")
     runner.store.save(mission)
     result = runner.run(mission)
 
@@ -121,7 +133,7 @@ def test_candidate_touching_protected_paths_never_reaches_promotion(repo: Path, 
         _candidate(self, mission, {"owner/core.py": "# weakened\n", "service/core.py": "VALUE = 3\n"})
 
     runner = _runner(repo, tmp_path, build=build)
-    result = runner.run(SelfDevMission(request="loosen your own owner policy"))
+    result = runner.run(SelfDevMission(request="loosen your own owner policy, use the local coder"))
     assert result.phase == "FAILED"
     assert "owner-protected" in result.reason
     assert (repo / "owner" / "core.py").read_text(encoding="utf-8") == "# owner\n"
@@ -133,7 +145,7 @@ def test_failed_verification_fails_the_mission_without_promotion(repo: Path, tmp
         _candidate(self, mission, {"service/core.py": "VALUE = 0\n"})  # breaks the targeted test
 
     runner = _runner(repo, tmp_path, build=build)
-    result = runner.run(SelfDevMission(request="set VALUE in your code to zero"))
+    result = runner.run(SelfDevMission(request="set VALUE in your code to zero, use the local coder"))
     assert result.phase == "FAILED" and result.verification["ok"] is False
     assert (repo / "service" / "core.py").read_text(encoding="utf-8") == "VALUE = 1\n"
 
@@ -152,7 +164,7 @@ def test_resume_reverifies_and_promotes_an_existing_candidate(repo: Path, tmp_pa
         _candidate(self, mission, {"service/core.py": "VALUE = 2\n"})
 
     runner = _runner(repo, tmp_path, build=build)
-    mission = SelfDevMission(request="make VALUE bigger in your code")
+    mission = SelfDevMission(request="make VALUE bigger in your code, use the local coder")
     runner.store.save(mission)
     # Simulate a crash after BUILD: candidate exists, mission marked failed.
     build(runner, mission, 0)
@@ -169,7 +181,7 @@ def test_resume_reverifies_and_promotes_an_existing_candidate(repo: Path, tmp_pa
 def test_disabled_policy_refuses(repo: Path, tmp_path: Path) -> None:
     runner = _runner(repo, tmp_path, build=lambda self, m, s: None,
                      owner=FakeOwner({"self_development": {"enabled": False}}))
-    result = runner.run(SelfDevMission(request="anything about yourself"))
+    result = runner.run(SelfDevMission(request="anything about yourself, use the local coder"))
     assert result.phase == "FAILED" and "disabled" in result.reason
 
 

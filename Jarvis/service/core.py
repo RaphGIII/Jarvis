@@ -297,6 +297,16 @@ class JarvisCore:
         return self._actions
 
     @property
+    def codex_availability(self) -> Any:
+        """The one Codex availability every engineering path asks."""
+
+        if getattr(self, "_codex_availability", None) is None:
+            from service.engineering import default_availability
+
+            self._codex_availability = default_availability(self.experts)
+        return self._codex_availability
+
+    @property
     def experts(self) -> Any:
         if self._expert_gateway is None:
             from experts.codex import CodexExpert
@@ -4454,20 +4464,40 @@ class JarvisCore:
                                            "kind": "selfdev", "mission_id": mission.mission_id, "request": text[:200]},
                   scope=scope)
         de = self.language.startswith("de")
+        # Who is going to write this is decided by the engineering router, not
+        # by this sentence. It used to promise "lokales Coder-Modell" before
+        # anything had been chosen -- and after the router landed it was
+        # promising the wrong engineer while Codex did the work. Announce the
+        # decision, and announce that promotion needs the owner.
+        from service.engineering import EngineeringNeed, choose_engineer, owner_authorized_local_build
+
+        decision = choose_engineer(
+            EngineeringNeed.CORE_ENGINEERING,
+            availability=self.codex_availability,
+            owner_authorized_local=owner_authorized_local_build(text),
+        )
+        self.emit(EventType.TOOL,
+                  {"summary": (f"engineering routing: {decision.engineer.value} — {decision.reason}"),
+                   "engineering": decision.to_dict(), "mission_id": mission.mission_id,
+                   "source": "engineering.router"}, scope=scope)
+        gated = self.security.configured
         self._deliver(
-            (f"Verstanden. Ich entwickle das jetzt selbst (Mission {mission.mission_id}): isolierter Arbeitsbaum, "
-             f"lokales Coder-Modell, Verifikation, dann Übernahme und Neustart. Ich melde mich, wenn es verifiziert ist.")
-            if de else
-            (f"Understood. I will develop that myself (mission {mission.mission_id}): isolated worktree, local coder "
-             f"model, verification, then promotion and a restart. I will report when it is verified."),
-            scope=scope, backend="selfdev", final_state=JarvisState.CODING,
+            ((f"Verstanden (Mission {mission.mission_id}). {decision.owner_sentence(german=True)} "
+              + ("Vor der Übernahme ins Produkt frage ich dich nach deinem Passwort."
+                 if gated and decision.proceeds else ""))
+             if de else
+             (f"Understood (mission {mission.mission_id}). {decision.owner_sentence(german=False)} "
+              + ("I will ask for your password before anything is promoted into the product."
+                 if gated and decision.proceeds else ""))).strip(),
+            scope=scope, backend="selfdev",
+            final_state=JarvisState.CODING if decision.proceeds else JarvisState.WAITING,
         )
 
         runner = SelfDevRunner(
             repository=self.selfdev_repository(),
             store=self.selfdev_store, kernel=self.kernel, owner=self.owner, lifecycle=self.lifecycle,
             gateway=self.experts, emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
-            set_state=self.state.set,
+            set_state=self.state.set, security=self.security,
         )
 
         def work() -> None:
@@ -4680,6 +4710,46 @@ class JarvisCore:
         results.sort(key=lambda r: (-r["score"], r["when"]), reverse=False)
         results.sort(key=lambda r: -r["score"])
         return {"results": results[:limit], "query": query, "count": len(results)}
+
+    def selfdev_authorize(self, mission_id: str, *, authorization: str = "") -> dict[str, Any]:
+        """Promote a verified self-development mission the owner has authorized.
+
+        The other half of the gate. A mission that engineered and verified a
+        change stops at AWAITING_AUTHORIZATION and waits here; the owner's
+        password mints the SELFDEV_PROMOTE token through the ordinary
+        SecurityGate, and only that token gets past this line. Nothing else
+        does -- not the mission's own verdict, not the engineer's report, not a
+        sentence in the chat.
+        """
+
+        from service.selfdev import SelfDevRunner, describe
+
+        if self.security.configured:
+            denied = self.require_auth(authorization, "SELFDEV_PROMOTE")
+            if denied is not None:
+                return denied
+        mission = self.selfdev_store.load(mission_id) if mission_id else None
+        if mission is None:
+            return {"ok": False, "error": f"no self-development mission {mission_id!r}"}
+        if mission.phase != "AWAITING_AUTHORIZATION":
+            return {"ok": False, "error": f"mission {mission_id} is {mission.phase}, not awaiting authorization"}
+        mission.authorization = authorization
+        self.selfdev_store.save(mission)
+        runner = SelfDevRunner(
+            repository=self.selfdev_repository(), store=self.selfdev_store, kernel=self.kernel, owner=self.owner,
+            lifecycle=self.lifecycle, gateway=self.experts, security=self.security,
+            emit=lambda kind, payload: self.emit(kind, payload, scope=mission.scope), set_state=self.state.set,
+        )
+
+        def work() -> None:
+            finished = runner.promote_authorized(mission)
+            if finished.phase != "RESTARTING":
+                self._deliver(describe(finished, finished.language or self.language), scope=finished.scope,
+                              backend="selfdev",
+                              final_state=JarvisState.IDLE if finished.outcome != "failed" else JarvisState.ERROR)
+
+        threading.Thread(target=work, daemon=True, name=f"selfdev-promote-{mission.mission_id}").start()
+        return {"ok": True, "mission_id": mission.mission_id, "promoting": True}
 
     def selfdev_diff(self, mission_id: str) -> dict[str, Any]:
         """The candidate's diff: from the kept evidence patch, or the live worktree."""
@@ -5089,7 +5159,7 @@ class JarvisCore:
             return {"ok": False, "error": "another self-development mission is active"}
         runner = SelfDevRunner(
             repository=self.selfdev_repository(), store=self.selfdev_store, kernel=self.kernel, owner=self.owner,
-            lifecycle=self.lifecycle, gateway=self.experts,
+            lifecycle=self.lifecycle, gateway=self.experts, security=self.security,
             emit=lambda kind, payload: self.emit(kind, payload, scope=mission.scope), set_state=self.state.set,
         )
 

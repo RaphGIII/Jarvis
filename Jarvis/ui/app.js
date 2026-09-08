@@ -152,6 +152,7 @@ function connect() {
     reconnectDelay = 500;
     setPill("connected", "live");
     refreshStatus();
+    reconcileMission();
   };
   stream.onerror = () => {
     setPill("reconnecting", "warn");
@@ -231,8 +232,34 @@ bus.on("progress", (payload) => {
   const idx = stages.indexOf(phase);
   $("hudBar").style.width = (idx >= 0 ? ((idx + 1) / stages.length) * 100 : 10) + "%";
 });
+/* The dock is driven by events, and RESTARTING is precisely the phase during
+   which this page loses the process that would send the next one. ZEUS goes
+   away, comes back as a new process, settles the mission to DONE during boot,
+   and the event announcing that is emitted before this page has reconnected.
+   Observed live on 2026-09-08: the dock sat on RESTARTING for about forty
+   minutes after the mission record already said DONE.
+
+   So on every (re)connect the dock asks what is actually running rather than
+   waiting for an event it may have missed. An event can always be lost across
+   a restart; the store cannot. */
+async function reconcileMission() {
+  try {
+    const { missions = [] } = await api("/api/selfdev");
+    const live = missions.filter((m) => !["DONE", "FAILED", "CANCELLED", "WAITING", "AWAITING_AUTHORIZATION"].includes(m.phase));
+    if (!live.length) {
+      set("mission", null);
+      $("hud").hidden = true;
+      return;
+    }
+    const m = live[live.length - 1];
+    bus.emit("mission", { kind: "selfdev", phase: m.phase, request: m.request, summary: m.request, mission_id: m.mission_id });
+  } catch {
+    /* the dock is a readout; a failed reconcile must not break the page */
+  }
+}
+
 bus.on("notification", (payload) => {
-  if (payload.kind === "selfdev" && /cancelled|failed|done|promoted/i.test(payload.text || "")) {
+  if (payload.kind === "selfdev" && /cancelled|failed|done|promoted|authoriz|freigabe/i.test(payload.text || "")) {
     set("mission", null);
     $("hud").hidden = true;
   }

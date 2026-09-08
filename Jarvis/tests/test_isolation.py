@@ -74,9 +74,17 @@ class FakeLifecycle:
 
 def _runner(zeus: Path, tmp_path: Path, build):
     events: list = []
+    # These tests are about the isolation boundary around the LOCAL builder --
+    # they stub ``_build`` -- so they say so the way an owner would. Since the
+    # engineering router landed, the local coder runs only where it was
+    # explicitly authorized (see service.engineering); Codex is reported away
+    # here so that authorization is the only thing selecting it.
+    from capabilities.codex import CodexAvailabilityState, StaticCodexAvailability
+
     runner = SelfDevRunner(
         repository=zeus, store=SelfDevStore(tmp_path / "missions"), kernel=SimpleNamespace(provider=lambda tier: object()),
         owner=FakeOwner(), lifecycle=FakeLifecycle(), gateway=None,
+        availability=StaticCodexAvailability(CodexAvailabilityState.OFFLINE, "not in this test"),
         emit=lambda kind, payload: events.append((kind, payload)), set_state=lambda *a, **k: None,
     )
     runner._build = build.__get__(runner)  # type: ignore[method-assign]
@@ -192,7 +200,7 @@ def test_a_failing_candidate_leaves_the_live_tree_byte_identical(layout, tmp_pat
         return SimpleNamespace(worktree=str(ws.root), status="candidate", error="", cycles=1)
 
     runner = _runner(zeus, tmp_path, build)
-    mission = runner.run(SelfDevMission(request="break yourself"))
+    mission = runner.run(SelfDevMission(request="break yourself, use the local coder"))
     assert mission.phase == "FAILED" and mission.outcome == "failed"
     assert "no verified candidate" in mission.reason
     # The live tree: same commit, nothing dirty but runtime state.
@@ -223,7 +231,7 @@ def test_a_build_that_writes_into_the_live_tree_is_caught_and_undone(layout, tmp
         return SimpleNamespace(worktree=str(ws.root), status="candidate", error="", cycles=1)
 
     runner = _runner(zeus, tmp_path, build)
-    mission = runner.run(SelfDevMission(request="leak"))
+    mission = runner.run(SelfDevMission(request="leak, use the local coder"))
     assert mission.phase == "FAILED"
     assert "isolation breach in BUILD" in mission.reason
     assert _status(top) == "" or all(l[3:].startswith("Jarvis/data/") for l in _status(top).splitlines())
@@ -246,7 +254,7 @@ def test_a_crashing_build_still_releases_the_candidate(layout, tmp_path):
         raise RuntimeError("child process crashed")
 
     runner = _runner(zeus, tmp_path, build)
-    mission = runner.run(SelfDevMission(request="crash"))
+    mission = runner.run(SelfDevMission(request="crash, use the local coder"))
     assert mission.phase == "FAILED" and "child process crashed" in mission.reason
     assert not (tmp_path / "cand" / f"candidate_{mission.mission_id}").exists()
     assert "VALUE = 5" in Path(mission.evidence_patch).read_text()
@@ -269,7 +277,7 @@ def test_cancel_stops_the_mission_at_the_next_phase_and_releases_it(layout, tmp_
         return SimpleNamespace(worktree=str(ws.root), status="candidate", error="", cycles=1)
 
     runner = _runner(zeus, tmp_path, build)
-    mission = runner.run(SelfDevMission(request="cancel me"))
+    mission = runner.run(SelfDevMission(request="cancel me, use the local coder"))
     assert mission.phase == "CANCELLED" and mission.outcome == "cancelled" and mission.finished
     assert not (tmp_path / "cand" / f"candidate_{mission.mission_id}").exists()
     assert all(l[3:].startswith("Jarvis/data/") for l in _status(top).splitlines())
@@ -297,7 +305,7 @@ def test_the_candidate_health_check_cannot_reach_the_live_state_root(layout, tmp
                              "import os, pathlib; r = pathlib.Path(os.environ['JARVIS_STATE_ROOT']); r.mkdir(parents=True, exist_ok=True); "
                              "(r / 'marker').write_text('x'); print('FAKE_OK')"]
     runner.lifecycle.supervised = False
-    mission = runner.run(SelfDevMission(request="env"))
+    mission = runner.run(SelfDevMission(request="env, use the local coder"))
     assert not (live_state / "marker").exists(), "the candidate wrote into the live state root"
     assert mission.verification.get("ok") is True, mission.verification
 
@@ -320,12 +328,12 @@ def test_a_candidate_that_hijacks_a_definition_is_rejected(layout, tmp_path):
         return SimpleNamespace(worktree=str(ws.root), status="candidate", error="", cycles=1)
 
     runner = _runner(zeus, tmp_path, build)
-    mission = runner.run(SelfDevMission(request="add a mission counter"))
+    mission = runner.run(SelfDevMission(request="add a mission counter, use the local coder"))
     assert mission.phase == "FAILED"
     structural = [c for c in mission.verification["checks"] if "definition" in c["criterion"]][0]
     assert not structural["ok"] and "answer" in structural["output"]
     # asking for the removal lifts the rule for the named symbol
     runner2 = _runner(zeus, tmp_path, build)
-    mission2 = runner2.run(SelfDevMission(request="remove the answer function and add update_count"))
+    mission2 = runner2.run(SelfDevMission(request="remove the answer function and add update_count, use the local coder"))
     structural2 = [c for c in mission2.verification["checks"] if "definition" in c["criterion"]][0]
     assert structural2["ok"]

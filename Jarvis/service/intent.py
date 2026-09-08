@@ -355,11 +355,24 @@ def classify(text: str, *, corrections: Iterable[Any] = (), capability_names: It
 
     # Questions about the system's own state are answered from the registries
     # whatever the top level made of them ("was kannst du" is not acquisition).
-    for hint in READ_HINTS:
-        if hint in normalized:
-            return Classification(
-                Intent.READ, f"asks about this system's own state: {hint!r}", matched=hint, route=top
-            )
+    #
+    # A QUESTION. An instruction to change ZEUS is not one, however many state
+    # words it happens to contain, and letting a hint win there loses the
+    # request entirely: measured live on 2026-09-08, "aendere dich so, dass du
+    # in der Diagnose-Ansicht deine Prozess-ID anzeigst" was routed
+    # self_development (high) by the top level and then answered with a
+    # registry listing, because the word "diagnose" appeared in it. The
+    # engineering router never ran.
+    self_modification = (
+        top.intent is TopLevelIntent.SELF_DEVELOPMENT
+        and not getattr(getattr(top, "reading", None), "is_question", False)
+    )
+    if not self_modification:
+        for hint in READ_HINTS:
+            if hint in normalized:
+                return Classification(
+                    Intent.READ, f"asks about this system's own state: {hint!r}", matched=hint, route=top
+                )
 
     # A description of its own abilities is a registry read, not a mission.
     # The phrase lists below cannot see it: "Entwickler" contains "entwickle".

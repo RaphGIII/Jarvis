@@ -426,6 +426,8 @@ class JarvisHTTPServer:
             "/api/selfdev": lambda _: self.core.list_selfdev(),
             "/api/selfdev/cancel": lambda body: self.core.cancel_selfdev(str(body.get("mission_id", ""))),
             "/api/selfdev/resume": lambda body: self.core.resume_selfdev(str(body.get("mission_id", ""))),
+            "/api/selfdev/authorize": lambda body: self.core.selfdev_authorize(
+                str(body.get("mission_id", "")), authorization=str(body.get("authorization", ""))),
             "/api/project/delete": lambda body: self.core.project_delete(
                 str(body.get("id", "")), authorization=str(body.get("authorization", ""))),
             "/api/activity/correct": lambda body: self.core.activity_correct(
