@@ -179,16 +179,26 @@ class ReleaseManager:
         rebuild, why = self.needs_rebuild()
         cands = []
         if self.candidates.is_dir():
-            for path in sorted(self.candidates.iterdir()):
+            for path in self.candidates.iterdir():
                 if path.is_dir():
-                    cands.append({"id": path.name, "path": str(path), "version": read_version(path / "ZEUS"),
+                    version = read_version(path / "ZEUS")
+                    cands.append({"id": path.name, "path": str(path), "version": version,
                                   "verified": (path / "VERIFIED.json").is_file()})
+        # Newest first, by when it was BUILT.
+        #
+        # A candidate is named <revision12>-<timestamp>-<uuid>, so sorting the
+        # names alphabetically ordered them by git revision hash -- a value with
+        # no relation to time. Observed with sixteen candidates present: the one
+        # built minutes earlier sat eighth of ten and two builds from a week
+        # before came last, which the view's reverse() then showed at the top.
+        # Truncating to ten could drop the newest entirely.
+        cands.sort(key=lambda item: _built_at(item), reverse=True)
         return {
             "known_good": {"path": str(self.known_good), "exists": (self.known_good / "ZEUS.exe").is_file(),
                            "version": read_version(self.known_good)},
             "previous": {"path": str(self.previous), "exists": (self.previous / "ZEUS.exe").is_file(),
                          "version": read_version(self.previous)},
-            "candidates": cands[-10:],
+            "candidates": cands[:10],
             "needs_rebuild": rebuild, "needs_rebuild_reason": why,
             "source_fingerprint": launcher_fingerprint(self.repository),
             "source_revision": self.revision(),
@@ -415,3 +425,25 @@ class ReleaseManager:
         """
 
         return {"signed": False, "reason": "no code-signing certificate is configured; see ReleaseManager.sign"}
+
+
+def _built_at(candidate: dict[str, Any]) -> str:
+    """When this candidate was built, from the best evidence it carries.
+
+    ``VERSION.json`` is written at the end of a successful build, so a build
+    that died has none -- and that is exactly the candidate whose age matters,
+    because it must not be offered as the newest thing to promote. The id
+    carries a UTC timestamp of its own, and a directory that fits neither shape
+    sorts last rather than first.
+    """
+
+    stamp = str((candidate.get("version") or {}).get("built_at") or "")
+    if stamp:
+        return stamp
+    import re
+
+    match = re.search(r"-(\d{8}T\d{6}Z)-", str(candidate.get("id", "")))
+    if match:
+        raw = match.group(1)
+        return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}T{raw[9:11]}:{raw[11:13]}:{raw[13:15]}+00:00"
+    return ""

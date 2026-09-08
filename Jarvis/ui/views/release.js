@@ -33,7 +33,9 @@ export const view = {
         el("div", { class: "toolbar" },
           button("Build & verify candidate", async () => { const r = await api("/api/release/build", { verify: true }); alert(r.ok ? "building in the background (about a minute); Activity shows the outcome" : r.error); }, "primary"),
           rel.previous?.exists ? button("Roll back to previous release", async () => { if (confirm("Rename the previous ZEUS.exe release back into place?")) { const r = await api("/api/release/rollback", { confirm: true }); alert(r.outcome || r.error); views.open("release"); } }, "ghost danger") : null)),
-      ...(rel.candidates || []).slice().reverse().map((c) => el("div", { class: "card" },
+      /* The API hands these back newest first, by build time. It used to sort
+         them by revision hash, and this reverse() then put the oldest on top. */
+      ...(rel.candidates || []).map((c) => el("div", { class: "card" },
         el("div", { class: "title" }, c.verified ? badge("VERIFIED", "ok") : badge("UNVERIFIED", "dim"), " ", c.id),
         el("div", { class: "meta", text: `${(c.version?.revision || "").slice(0, 12)} · launcher ${c.version?.launcher_fingerprint || "?"} · ${c.version?.built_at || ""}` }),
         el("div", { class: "toolbar" },
