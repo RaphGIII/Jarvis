@@ -370,9 +370,76 @@ acquisition step prints the blocker when the summary is empty.
 **A broken capability was silently replaced by an unrelated one.** While health
 was AT_RISK, the composer replanned around the failing checksum capability, ran
 `file.read` plus a line/word counter, and reported *"Ziel erreicht ... GOAL
-SATISFIED"* for a request that asked for a SHA-256 checksum. Recorded, not
-fixed: it is the composer's replanner, not this routing path, and fixing it
-inside a repair acceptance would have muddied the evidence.
+SATISFIED"* for a request that asked for a SHA-256 checksum. Fixed below.
+
+## Replan semantic equivalence
+
+`EXECUTION_VERIFIED` answers "did what we ran work". After a replan that is a
+different question from "is what we ran the thing that was asked for", and only
+the first one was ever being asked. Two true statements -- the steps ran, the
+steps verified -- were being used to justify a third that was false.
+
+The recorded plan, replayed exactly, before the fix:
+
+```
+GoalEvaluation(executed=True, execution_verified=True, goal_satisfied=True, reasons=[])
+```
+
+and after:
+
+```
+goal_satisfied=False
+reasons=["the replacement is not the goal: 'Zeus, wie lautet die sha256
+          Pruefsumme von zeus_acceptance.txt?' needs FILE_CHECKSUM, and what
+          ran was file.read, capability:learned.ausgabe_dateipfad_zeilen"]
+```
+
+`replan_semantic_equivalence()` in `service/composer.py` runs before
+`GOAL_SATISFIED` can be set, and only for a plan that actually replaced
+something. It checks four things:
+
+1. **the goal family is still served** -- the family comes from the step that
+   failed (the planner had already decided what this goal needed and named it),
+   falling back to the goal's own words only when that step is a capability
+   whose identifier is a code name;
+2. **the target is preserved** -- the file, path or drive the owner named is
+   the one the replacement operated on;
+3. **the output contract shows up** -- the family's result keys are present in
+   the evidence, wherever the receipt exposes any;
+4. constraints and required outcomes, which the surrounding gate already held.
+
+`GOAL_FAMILIES` covers FILE_CHECKSUM, FILESYSTEM_SIZE, PLAY_MEDIA, APP_OPEN,
+WEB_FETCH, CALENDAR_CREATE and IMAGE_GENERATE, with a held-out substitution per
+family in `tests/test_replan_semantic_equivalence.py` -- a checksum answered by
+a line count, a largest-folder question by a listing, playback by a web search,
+an app by a web page, a page fetch by memory, a calendar entry by a note, an
+image by a search and a file write.
+
+Two things it deliberately does **not** do. A family it cannot classify raises
+no complaint: a semantic guard that refuses everything it does not recognise is
+an outage. And a first plan is left alone -- that plan *is* the planner's
+reading of the goal, and second-guessing it with a keyword table would overrule
+the better signal with the worse one. Only a replacement has something concrete
+to stay equivalent to.
+
+When no equivalent alternative exists the mission is BLOCKED with the reason and
+the owner is told plainly: *"Steps ran, but the goal is NOT met: …"*. It never
+degrades into a different task.
+
+Re-run through production on the same request that produced the false positive,
+with the fault re-introduced to recreate the AT_RISK window:
+
+```
+11:11:24  mission VERIFY: 1 done, 1 failed; EXECUTION_VERIFIED=False GOAL_SATISFIED=False
+11:11:24  goal: NOT satisfied — required step capability:local.berechne.sha.256_pruefsumme
+          failed: AttributeError…; the replacement is not the goal: … needs
+          FILE_CHECKSUM, and what ran was file.read
+11:11:24  mission FAILED
+          answer: "Nicht geschafft — capability:… ist fehlgeschlagen"
+```
+
+The capability was then restored byte-exactly and earned HEALTHY back over three
+real verified executions.
 
 ## Zero paid API
 

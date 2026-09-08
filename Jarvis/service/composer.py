@@ -240,6 +240,199 @@ def extract_constraints(goal: str) -> PlanConstraints:
     return out
 
 
+#: What a request is *about*, coarse enough to be decidable without a model and
+#: fine enough that swapping one for another is obviously wrong.  Each family
+#: lists the primitives that genuinely serve it, and the output keys that are
+#: evidence the effect actually happened.
+#:
+#: Deliberately small.  A family nobody has described here does not block
+#: anything -- see :func:`replan_semantic_equivalence`.
+GOAL_FAMILIES: dict[str, dict[str, Any]] = {
+    "FILE_CHECKSUM": {
+        "served_by": ("checksum", "pruefsumme", "prufsumme", "sha1", "sha256", "sha512", "md5", "hash", "digest"),
+        "goal_words": ("pruefsumme", "prufsumme", "checksum", "sha256", "sha 256", "sha-256", "hashwert",
+                       "fingerprint", "md5", "digest", "quersumme der datei"),
+        "output_keys": ("sha256", "checksum", "digest", "hash"),
+    },
+    "FILESYSTEM_SIZE": {
+        "served_by": ("fs.largest", "largest", "biggest", "groesst", "grosst", "size", "speicher", "belegt"),
+        "goal_words": ("groesste", "groesster", "groessten", "grosste", "biggest", "largest",
+                       "meisten platz", "meisten speicher", "wie gross"),
+        "output_keys": ("path", "size", "bytes", "largest"),
+    },
+    "PLAY_MEDIA": {
+        "served_by": ("music.play", "music.resume", "music.control", "media.play", "spotify", "playback"),
+        "goal_words": ("spiel", "spiele", "spielen", "play ", "abspielen", "hoeren", "musik", "song", "lied"),
+        "output_keys": ("track", "playing", "uri", "device"),
+    },
+    "APP_OPEN": {
+        "served_by": ("app.open", "app.launch", "application.open"),
+        "goal_words": ("oeffne ", "offne ", "starte ", "start ", "open ", "mach auf", "aufmachen"),
+        "output_keys": ("app", "process", "pid", "window"),
+    },
+    "WEB_FETCH": {
+        "served_by": ("web.read_summary", "web.open", "web.fetch", "web.read"),
+        "goal_words": ("startseite", "webseite", "website", "http://", "https://", "www.",
+                       "lies mir die seite", "fasse die seite"),
+        "output_keys": ("url", "title", "summary", "text"),
+    },
+    "CALENDAR_CREATE": {
+        "served_by": ("calendar.create", "calendar.add", "termin"),
+        "goal_words": ("kalender", "termin", "calendar", "appointment", "erinnere mich am"),
+        "output_keys": ("event", "event_id", "start", "when"),
+    },
+    "IMAGE_GENERATE": {
+        "served_by": ("image.generate", "image.create", "imagegen"),
+        "goal_words": ("erstelle ein bild", "male ", "zeichne ", "generiere ein bild", "bild vom", "bild von",
+                       "generate an image", "draw "),
+        "output_keys": ("image", "path", "file"),
+    },
+}
+
+
+def goal_family(goal: str, failed_step: str = "") -> str:
+    """What the owner's request is about, from the plan and from the words.
+
+    The failed step is asked first and it is the stronger signal: the planner
+    already decided what this goal needed, and the step it chose says so in a
+    single token.  The goal text is the fallback for a capability whose
+    identifier is a code name.
+
+    Returns "" when nothing here describes the request.  That is a real answer,
+    not a failure -- most goals are not in this table and must keep working.
+    """
+
+    from capabilities.models import _fold
+
+    step = _fold(failed_step)
+    for family, spec in GOAL_FAMILIES.items():
+        if any(marker in step for marker in spec["served_by"]):
+            return family
+    if failed_step and not step.startswith("capability:"):
+        # A named primitive has already said what it is. `project.create`
+        # matching nothing here means this goal has no family, not that the
+        # words should be consulted -- "Starte ein Projekt namens X" reads as
+        # APP_OPEN to a keyword table and would then reject its own
+        # `project.create` replacement.
+        return ""
+    text = _fold(goal)
+    for family, spec in GOAL_FAMILIES.items():
+        if any(marker in text for marker in spec["goal_words"]):
+            return family
+    return ""
+
+
+def step_serves_family(family: str, step: str) -> bool:
+    """Whether this primitive is one of the things that family is done with."""
+
+    from capabilities.models import _fold
+
+    spec = GOAL_FAMILIES.get(family)
+    if not spec:
+        return False
+    folded = _fold(step)
+    return any(marker in folded for marker in spec["served_by"])
+
+
+def _targets(text: str) -> set[str]:
+    """The concrete things a request names -- files, paths, drives, quoted words."""
+
+    from capabilities.generalize import generalize
+
+    found = set()
+    for particular in generalize(str(text or "")).particulars:
+        cleaned = str(particular).replace("\\", "/").rstrip("/").lower()
+        found.add(cleaned)
+        found.add(cleaned.rsplit("/", 1)[-1])
+    return {item for item in found if item}
+
+
+def replan_semantic_equivalence(plan: "Plan", verified_steps: list["Step"], receipts: list[Any]) -> list[str]:
+    """Why a replacement plan is not the goal it replaced, or nothing.
+
+    ``EXECUTION_VERIFIED`` answers "did what we ran work".  After a replan that
+    is a different question from "is what we ran the thing that was asked for",
+    and only the first one was ever being asked.  Measured live on 2026-09-08:
+    the owner asked for the SHA-256 checksum of a file, the checksum capability
+    was failing, the composer replanned to ``file.read`` plus a line/word
+    counter, both steps ran and verified, and ZEUS reported GOAL_SATISFIED.
+    Two true statements were used to justify a third that was false.
+
+    Four things are checked, and only for a plan that actually replaced
+    something:
+
+    1. the original goal family is still served by a step that ran;
+    2. the target the owner named is the one that was operated on;
+    3. the family's output contract shows up in the evidence, where the
+       receipt exposes any;
+    4. constraints and required outcomes -- already enforced by the caller.
+
+    A family this module does not describe returns no complaint.  The check can
+    only speak about goals it can classify, and refusing every goal it cannot
+    would turn a semantic guard into an outage.
+    """
+
+    if not plan.replans:
+        # A first plan IS the planner's reading of the goal. Second-guessing it
+        # with keywords would overrule the better signal with the worse one.
+        # A replan is different: the step that failed already named what the
+        # goal needed, so there is something concrete to stay equivalent to.
+        return []
+    replaced = [s for s in plan.steps if s.status == "replanned"]
+    family = ""
+    for step in replaced:
+        family = goal_family(plan.goal, step.step)
+        if family:
+            break
+    if not family and not replaced:
+        family = goal_family(plan.goal)
+    if not family:
+        # Either nothing here describes this goal, or the step that failed was
+        # a named primitive that matched no family -- and that step has already
+        # said what the goal needed. Consulting the words after it would
+        # overrule the better signal with the worse one.
+        return []
+
+    serving = [s for s in verified_steps if step_serves_family(family, s.step)]
+    if not serving:
+        ran = ", ".join(s.step for s in verified_steps) or "nothing"
+        return [f"the replacement is not the goal: {plan.goal[:80]!r} needs {family}, "
+                f"and what ran was {ran}"]
+
+    wanted = _targets(plan.goal)
+    if wanted:
+        used: set[str] = set()
+        for step in serving:
+            for value in step.arguments.values():
+                if isinstance(value, str) and value:
+                    used |= _targets(value)
+        if used and not (wanted & used):
+            return [f"the replacement worked on a different target: asked for "
+                    f"{sorted(wanted)[0]!r}, operated on {sorted(used)[0]!r}"]
+
+    keys = GOAL_FAMILIES[family]["output_keys"]
+    by_id = {str(getattr(r, "id", "")): r for r in receipts}
+    evidence = [by_id.get(s.receipt_id) for s in serving]
+    shown = [r for r in evidence if isinstance(_output_of(r), dict) and _output_of(r)]
+    if shown and not any(str(k).lower() in {str(x).lower() for x in _output_of(r)} for r in shown for k in keys):
+        return [f"the replacement produced no {family} result: expected one of "
+                f"{', '.join(keys)} in the evidence"]
+    return []
+
+
+def _output_of(receipt: Any) -> dict[str, Any]:
+    if receipt is None:
+        return {}
+    evidence = getattr(receipt, "evidence", None)
+    if isinstance(evidence, dict):
+        inner = evidence.get("output")
+        if isinstance(inner, dict):
+            return inner
+        return evidence
+    output = getattr(receipt, "output", None)
+    return output if isinstance(output, dict) else {}
+
+
 @dataclass
 class GoalEvaluation:
     """ACTION_EXECUTED != EXECUTION_VERIFIED != GOAL_SATISFIED, kept apart on purpose."""
@@ -286,7 +479,12 @@ def evaluate_goal(plan: "Plan", receipts: list[Any]) -> GoalEvaluation:
         if s.status == "forbidden":
             reasons.append(f"planned but refused (forbidden): {s.step}")
     forbidden_happened = any(r.startswith("forbidden action happened") for r in reasons)
-    goal_satisfied = execution_verified and outcome_ok and not forbidden_happened and not plan.missing
+    # A replacement plan has to be about the same thing that was replaced.
+    # Running successfully is not the same as doing what was asked.
+    equivalence = replan_semantic_equivalence(plan, verified_steps, receipts)
+    reasons.extend(equivalence)
+    goal_satisfied = (execution_verified and outcome_ok and not forbidden_happened
+                      and not plan.missing and not equivalence)
     if plan.missing:
         reasons.append("missing primitive(s): " + ", ".join(plan.missing))
     return GoalEvaluation(executed, execution_verified, goal_satisfied, reasons)
