@@ -46,6 +46,7 @@ OPERATIONS = (
     "fs.list",
     "fs.open",
     "web.read_summary",
+    "capability.run",
     "clarify",
     "capability.missing",
     "delegate",
@@ -119,6 +120,7 @@ Werkzeuge:
 - fs.open: einen Ordner im Explorer öffnen. target = Pfad, Name oder "dein Repo".
 - Dateisystem-Fragen (Ordner, Dateien, Größe, "dein Repo", Laufwerk D:) sind IMMER fs.*-Werkzeuge — NIEMALS screen/capture/file.read. Behaupte nie fehlenden Zugriff.
 - web.read_summary: einen Artikel aus den letzten Suchergebnissen (oder eine URL) WIRKLICH lesen und zusammenfassen. target = Bezug oder URL.
+- capability.run: eine INSTALLIERTE ZEUS-Fähigkeit aus der Liste unten ausführen, wenn sie die Anfrage wirklich erfüllt – auch bei anderer Wortwahl ("Fingerprint der Datei" = Prüfsumme). target = capability_id EXAKT aus der Liste. Nie eine Fähigkeit erfinden; passt keine, wähle etwas anderes.
 - clarify: WIRKLICH mehrdeutig - stelle GENAU EINE kurze Frage (Feld question).
 - capability.missing: eine echte Handlung, für die es hier kein Werkzeug gibt (Gerät steuern, Datei konvertieren, E-Mail senden ...). target = das Ziel.
 - delegate: etwas ERSTELLEN oder ÄNDERN (Datei, Notiz, Projekt, Code) - der Ausführungsplaner übernimmt. target = "".
@@ -139,15 +141,23 @@ JSON:"""
 
 
 def _context_lines(*, apps: Iterable[str] = (), projects: Iterable[str] = (),
-                   aliases: Iterable[dict[str, Any]] = (), guidance: str = "") -> str:
+                   aliases: Iterable[dict[str, Any]] = (), guidance: str = "",
+                   capabilities: Iterable[dict[str, Any]] = ()) -> str:
     lines: list[str] = []
     apps = [a for a in apps if a][:8]
     projects = [p for p in projects if p][:8]
     aliases = list(aliases)[:5]
+    capabilities = list(capabilities)[:15]
     if apps:
         lines.append("Passende installierte Apps: " + ", ".join(apps))
     if projects:
         lines.append("Passende ZEUS-Projekte: " + ", ".join(projects))
+    if capabilities:
+        rows = []
+        for cap in capabilities:
+            examples = "; ".join(str(e) for e in (cap.get("examples") or [])[:2])
+            rows.append(f"  - {cap.get('id')}: {str(cap.get('description', ''))[:120]}" + (f" (z.B. {examples})" if examples else ""))
+        lines.append("Installierte ZEUS-Fähigkeiten (capability.run, target = id):\n" + "\n".join(rows))
     for entry in aliases:
         lines.append(f"Owner-Alias: „{entry.get('name')}“ = {entry.get('kind')} {entry.get('value')}")
     if guidance.strip():
@@ -160,11 +170,13 @@ class SemanticPlanner:
 
     def plan(self, request: str, provider: Any, *,
              apps: Iterable[str] = (), projects: Iterable[str] = (),
-             aliases: Iterable[dict[str, Any]] = (), guidance: str = "") -> SemanticGoal | None:
+             aliases: Iterable[dict[str, Any]] = (), guidance: str = "",
+             capabilities: Iterable[dict[str, Any]] = ()) -> SemanticGoal | None:
         request = str(request or "").strip()
         if not request:
             return None
-        prompt = PROMPT.format(context=_context_lines(apps=apps, projects=projects, aliases=aliases, guidance=guidance),
+        prompt = PROMPT.format(context=_context_lines(apps=apps, projects=projects, aliases=aliases, guidance=guidance,
+                                                      capabilities=capabilities),
                                request=request)
         started = time.perf_counter()
         raw = ""

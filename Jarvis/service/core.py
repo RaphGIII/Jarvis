@@ -764,7 +764,27 @@ class JarvisCore:
         # gone and computed. The registry is asked before that happens.
         if self._dispatch_known_capability(text, scope):
             return
+        # The registry matched nothing lexically.  A request that names a
+        # concrete object -- a path, a file, a folder -- and for which
+        # capabilities exist gets one semantic reading before prose: a capable
+        # model choosing from the closed list of installed capability ids is
+        # how "Fingerprint der Datei X" reaches the checksum capability without
+        # that wording having been taught.  Pure chat never pays for this call.
+        if self._names_concrete_object(text) and self._capability_hints():
+            try:
+                goal = self._semantic_goal(text, scope)
+            except Exception as exc:  # noqa: BLE001
+                goal = None
+                self.emit(EventType.DIAGNOSTIC, {"semantic": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
+            if goal is not None and goal.operation == "capability.run" and self._dispatch_capability_run(goal, text, scope):
+                return
         self._answer_conversationally(text, scope)
+
+    _CONCRETE_OBJECT = re.compile(r"[A-Za-z]:[\\/]|(?<!\w)[\w\-]+\.(?:txt|bin|pdf|png|jpg|jpeg|zip|iso|exe|py|js|json|csv|md|docx|xlsx|mp3|mp4|wav)\b"
+                                  r"|\b(datei|dateien|ordner|verzeichnis|file|files|folder)\b", re.I)
+
+    def _names_concrete_object(self, text: str) -> bool:
+        return bool(self._CONCRETE_OBJECT.search(text or ""))
 
     _FRESHNESS = re.compile(
         r"\b(was\s+ist\s+(?:heute|gerade|aktuell)\s+(?:in\s+der\s+welt\s+)?(?:passiert|los)"
@@ -868,6 +888,13 @@ class JarvisCore:
                 self._answer_by_project_operation(action, original, scope, confirmed=True)
             elif action is not None and action.operation in {"system.open_view", "system.stop"}:
                 self._answer_by_system_control(action, original, scope)
+            elif action is not None and action.operation == "capability.run":
+                manifest = self.capabilities.registry.get(str(action.target or ""))
+                if manifest is None:
+                    self._deliver("Die Fähigkeit gibt es nicht mehr." if de else "That capability no longer exists.",
+                                  scope=scope, backend="semantic")
+                else:
+                    self._execute_capability(manifest, original, original, scope, phrase=original)
             else:
                 # a spoken side-effect request the router handles: run the original words again, confirmed
                 self.send_message(original, scope=scope, meta={"source": "correction_rerun", "confirmed": True})
@@ -1769,7 +1796,7 @@ class JarvisCore:
             aliases_hint = []
         provider = self.kernel.provider(ModelTier.FAST_LOCAL)
         goal = self.semantic.plan(text, provider, apps=apps_hint, projects=projects_hint,
-                                  aliases=aliases_hint, guidance=guidance)
+                                  aliases=aliases_hint, guidance=guidance, capabilities=self._capability_hints())
         if goal is not None:
             self.emit(EventType.TOOL,
                       {"summary": f"semantic goal: {goal.operation} „{goal.target}“ ({goal.confidence:.2f}, {goal.elapsed_ms:.0f}ms)",
@@ -1781,6 +1808,65 @@ class JarvisCore:
                 self._gateway_soft(goal.features)
         return goal
 
+    def _capability_hints(self) -> list[dict[str, Any]]:
+        """The installed, healthy capabilities as the semantic planner may name them: id, purpose, two examples."""
+
+        try:
+            from capabilities.models import CapabilityHealth
+
+            hints = []
+            for manifest in self.capabilities.registry.all():
+                if not manifest.is_active() or manifest.health_state() is not CapabilityHealth.HEALTHY:
+                    continue
+                hints.append({"id": manifest.capability_id, "description": str(manifest.description or manifest.name or "")[:120],
+                              "examples": [str(e) for e in (manifest.examples or [])[:2]]})
+            return hints[:15]
+        except Exception:  # noqa: BLE001 - no registry, no hints
+            return []
+
+    def _dispatch_capability_run(self, goal: Any, text: str, scope: str) -> bool:
+        """The planner named an installed capability for a request the lexical resolver did not recognise.
+
+        A capable model choosing from a closed list of ids is how "Fingerprint
+        der Datei" finds the checksum capability without the phrase having been
+        taught.  The same choice from the small offline model is a guess with
+        a history of false positives (an entropy request answered with a
+        checksum), so it is asked about, never acted on.
+        """
+
+        from brain.tiers import ModelTier
+        from capabilities.models import CapabilityHealth
+        from service.intents import ActionIntent
+
+        capability_id = str(goal.target or "").strip()
+        manifest = self.capabilities.registry.get(capability_id) if capability_id else None
+        if manifest is None or not manifest.is_active() or manifest.health_state() is not CapabilityHealth.HEALTHY:
+            return False
+        try:
+            metadata = dict(getattr(self.kernel.provider(ModelTier.FAST_LOCAL), "last_metadata", {}) or {})
+        except Exception:  # noqa: BLE001
+            metadata = {}
+        offline = bool(metadata.get("offline_fallback"))
+        de = self.language.startswith("de")
+        self.emit(EventType.TOOL, {"summary": f"semantic capability match: {capability_id} ({goal.confidence:.2f}, "
+                                              f"{'offline model — asking' if offline else 'cloud model'})",
+                                   "capability_id": capability_id, "confidence": round(goal.confidence, 2), "offline": offline,
+                                   "source": "semantic"}, scope=scope)
+        if offline or goal.confidence < 0.7:
+            self._pending = {"action": ActionIntent("capability.run", verb="run", object_type="capability", target=capability_id),
+                             "text": text}
+            name = manifest.name or capability_id
+            self._deliver((f"Meinst du: {name} ({capability_id})? Ja oder nein." if de
+                           else f"Do you mean: {name} ({capability_id})? Yes or no."),
+                          scope=scope, backend="semantic", final_state=JarvisState.WAITING,
+                          context_text=f"[semantic capability match asked: {capability_id}]")
+            return True
+        payload, unmet = self._capability_payload(manifest, text, text)
+        if unmet:
+            return False
+        self._execute_capability(manifest, text, text, scope, phrase=text)
+        return True
+
     def _dispatch_semantic_goal(self, goal: Any, text: str, scope: str, classification: Any) -> bool:
         """Route one semantic goal to the typed dispatcher that owns it."""
 
@@ -1789,6 +1875,8 @@ class JarvisCore:
         op = goal.operation
         if op in {"delegate", "conversation"}:
             return False
+        if op == "capability.run":
+            return self._dispatch_capability_run(goal, text, scope)
         # low confidence must not silently fall back to lexical guessing: for
         # capability.missing the uncertainty IS the finding ("I have no tool
         # for this") — offer to build it instead of dropping to the legacy

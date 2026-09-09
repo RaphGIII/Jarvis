@@ -815,3 +815,23 @@ def test_the_semantic_planner_reads_soft_features_from_the_model():
 
     goal = SemanticPlanner().plan("Erkläre die Frank-Starling-Mechanik", Provider())
     assert goal is not None and goal.features == {"reasoning_depth": 0.8, "context_dependency": 0.3, "novelty": 1.0}
+
+
+def test_the_semantic_planner_offers_installed_capabilities_by_id_only():
+    from service.semantic import OPERATIONS, SemanticPlanner
+
+    assert "capability.run" in OPERATIONS
+    seen = {}
+
+    class Provider:
+        def generate_structured(self, prompt, schema, **_):
+            seen["prompt"] = prompt
+            return json.dumps({"operation": "capability.run", "target": "local.berechne.sha.256_pruefsumme", "confidence": 0.88,
+                               "reason": "Fingerprint = Prüfsumme"})
+
+    goal = SemanticPlanner().plan("Gib mir den Fingerprint der Datei x.bin", Provider(),
+                                  capabilities=[{"id": "local.berechne.sha.256_pruefsumme", "description": "SHA-256 einer Datei",
+                                                 "examples": ["Berechne die SHA-256-Prüfsumme der Datei X."]}])
+    assert goal is not None and goal.operation == "capability.run" and goal.target == "local.berechne.sha.256_pruefsumme"
+    assert "local.berechne.sha.256_pruefsumme: SHA-256 einer Datei" in seen["prompt"]
+    assert "capability.run" in seen["prompt"] and "EXAKT aus der Liste" in seen["prompt"]

@@ -132,6 +132,7 @@ packages:
       - tests/test_capability_teaching_loop.py
       - tests/test_engineering_router.py
       - tests/test_environment.py
+      - tests/test_gateway_integration.py
       - tests/test_isolation.py
       - tests/test_recovery_strategy.py
       - tests/test_replan_semantic_equivalence.py
@@ -184,6 +185,7 @@ packages:
       - tests/test_capability_learning_end_to_end.py
       - tests/test_capability_resolution.py
       - tests/test_capability_teaching_loop.py
+      - tests/test_gateway_integration.py
       - tests/test_replan_semantic_equivalence.py
       - tests/test_semantic_acceptance.py
       - tests/test_semantic_plane.py
@@ -1717,7 +1719,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 7890
+      lines: 7978
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1904,7 +1906,7 @@ packages:
       - tests/test_selfdev_promotion_gate.py
     - path: service/semantic.py
       purpose: 'The semantic control plane: FAST_LOCAL understands the goal, tools execute.'
-      lines: 217
+      lines: 229
       public: 2
       tests:
       - tests/test_model_gateway.py

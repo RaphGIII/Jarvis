@@ -4263,7 +4263,7 @@ modules:
       doc: 'One structured FAST_LOCAL call: owner words in, one typed goal out.'
       methods:
       - 'def plan(self, request: str, provider: Any, *, apps: Iterable[str]=(), projects: Iterable[str]=(), aliases: Iterable[dict[str,
-        Any]]=(), guidance: str='''') -> SemanticGoal | None'
+        Any]]=(), guidance: str='''', capabilities: Iterable[dict[str, Any]]=()) -> SemanticGoal | None'
     functions: []
   service/state.py:
     module: service.state

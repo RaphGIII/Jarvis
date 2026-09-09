@@ -200,3 +200,60 @@ def test_owner_feedback_on_an_answer_teaches_the_router(world):
     assert after.beta > before.beta and after.observations >= 1
     rows = gateway.ledger.observations()
     assert rows[-1].goal_verified is False and rows[-1].failure_class == "task_failure"
+
+
+def _checksum_manifest():
+    from capabilities.models import CapabilityHealth, CapabilityLifecycle, CapabilityManifest
+
+    return CapabilityManifest(
+        "local.berechne.sha.256_pruefsumme", "Berechnet die SHA-256-Prüfsumme einer Datei.",
+        source_location="skills/installed/local.berechne.sha.256_pruefsumme/1.0.1",
+        lifecycle=CapabilityLifecycle.ACTIVE.value,
+        health={"state": CapabilityHealth.HEALTHY.value.lower(), "health": CapabilityHealth.HEALTHY.value},
+        family="local", name="SHA-256 Prüfsumme", goal_types=["CHECKSUM"], target_types=["FILE"],
+        examples=["Berechne die SHA-256-Prüfsumme der Datei X."], aliases=["sha256"], runtime_brain="none",
+        codex_required=False, created_by="codex",
+    )
+
+
+def _planner_json(capability_id: str) -> str:
+    return json.dumps({"operation": "capability.run", "target": capability_id, "confidence": 0.9,
+                       "reason": "Fingerprint einer Datei ist die Prüfsumme"})
+
+
+def test_a_capable_model_finds_a_capability_by_meaning_and_zeus_runs_it(world, monkeypatch):
+    """§10: "Fingerprint der Datei" reaches the checksum capability without that phrase having been taught."""
+
+
+
+    core, kernel, net, local = world
+    manifest = _checksum_manifest()
+    core.capabilities.registry.register(manifest)
+    net.responses["generativelanguage.googleapis.com"] = gemini_reply(_planner_json(manifest.capability_id))
+    executed: list[str] = []
+    monkeypatch.setattr(core, "_execute_capability", lambda m, goal, text, scope, phrase="": executed.append(m.capability_id)
+                        or core._deliver("ausgeführt", scope=scope, backend=m.capability_id))
+    events = ask(core, "Gib mir den Fingerprint der Datei D:/x.bin")
+    assert executed == [manifest.capability_id], [e.payload.get("summary") for e in events if e.type is EventType.TOOL]
+    sent = json.dumps(net.requests[-1]["body"])
+    assert "Installierte ZEUS-F" in sent and manifest.capability_id in sent, "the planner was shown the installed capabilities"
+
+
+def test_the_offline_model_naming_a_capability_is_asked_about_not_acted_on(world, monkeypatch):
+    core, kernel, net, local = world
+    manifest = _checksum_manifest()
+    core.capabilities.registry.register(manifest)
+    from gateway.health import ProviderStatus
+
+    kernel.gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
+    core.set_chat_mode("FREE")
+    local.generate_structured = lambda prompt, schema, **kwargs: _planner_json(manifest.capability_id)
+    executed: list[str] = []
+    monkeypatch.setattr(core, "_execute_capability", lambda m, goal, text, scope, phrase="": executed.append(m.capability_id)
+                        or core._deliver("ausgeführt", scope=scope, backend=m.capability_id))
+    events = ask(core, "Gib mir den Fingerprint der Datei D:/x.bin")
+    assert executed == [], "the offline model's match is a question, not an action"
+    assert "Meinst du" in answer_text(events)
+    assert core._pending and core._pending["action"].operation == "capability.run"
+    events = ask(core, "ja")
+    assert executed == [manifest.capability_id]

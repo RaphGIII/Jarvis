@@ -40,7 +40,7 @@
 - **runtime** — Runtime services: deadlines, heartbeats, cost policy, the older runtimes. (28 modules, 7719 lines)
 - **sandbox** — sandboxing (1 modules, 1 lines)
 - **senses** — perception (1 modules, 1 lines)
-- **service** — the product service: core, HTTP API, intents, routing, self-development, isolation (40 modules, 23341 lines)
+- **service** — the product service: core, HTTP API, intents, routing, self-development, isolation (40 modules, 23441 lines)
 - **skills** — skill packaging (15 modules, 1130 lines)
 - **speech** — speech recognition, synthesis, wake word (16 modules, 4364 lines)
 - **tools** — Schach Analyse: a screen-watching chess assistant (board finder, piece recogniser, Stockfish, overlay). (15 modules, 4423 lines)
