@@ -23,10 +23,20 @@ a rollback, so promotion refuses to start rather than risk it.
 
 *The health check is a real command.*  "Health" means a process ran and exited
 zero after the change was applied -- not that the diff looked reasonable.
+
+*What is promoted is what was verified.*  Mission a00d4506ca verified a
+three-file change at 15:12 and was authorized at 17:00; in between the
+candidate worktree had been released and emptied.  ``_copy_files`` read every
+missing source as "the candidate deleted it" and removed three live modules,
+the import health check still passed, and the commit was a 1362-line
+deletion.  So a caller passes the fingerprint it verified, preflight checks
+the candidate against it, and a candidate in which *none* of the declared
+files exist is refused outright -- an empty shell is not a deletion.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -95,6 +105,26 @@ class PromotionRecord:
 
 class PromotionRefused(RuntimeError):
     """A precondition failed.  Nothing was changed."""
+
+
+def fingerprint_files(root: str | Path, files: Sequence[str]) -> dict[str, str | None]:
+    """sha256 per declared file under ``root``; ``None`` where the file is absent.
+
+    Taken at verification time and handed to :meth:`Promoter.promote` as
+    ``expected``, so a candidate that changed -- or vanished -- between the
+    two is refused rather than mirrored into the live tree.
+    """
+
+    base = Path(root)
+    out: dict[str, str | None] = {}
+    for relative in files:
+        rel = str(relative).replace("\\", "/")
+        path = base / rel
+        if path.is_file():
+            out[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            out[rel] = None
+    return out
 
 
 @dataclass
@@ -341,12 +371,18 @@ class Promoter:
         commit_message: str = "",
         verify: Callable[[Path], tuple[bool, str]] | None = None,
         allow_dirty: bool = False,
+        expected: dict[str, str | None] | None = None,
     ) -> PromotionRecord:
         """Apply a candidate worktree's changes to the live repository.
 
         ``changed_files`` is the caller's declaration of what may move; anything
         outside it is not copied, so a candidate cannot smuggle in a file the
         reviewer never saw.
+
+        ``expected`` is the fingerprint the caller verified
+        (:func:`fingerprint_files`): path -> sha256, or ``None`` for a file the
+        verified candidate had deleted.  When given, the candidate must still
+        match it byte for byte, or nothing moves.
         """
 
         candidate = Path(candidate).resolve()
@@ -386,7 +422,31 @@ class Promoter:
                 "refusing to promote onto a dirty working tree -- a rollback would destroy the uncommitted work. "
                 "Commit or stash it first."
             )
-        stage(PromotionStage.PREFLIGHT, True, f"known good {known_good[:12]}, {len(files)} file(s)")
+
+        # The candidate must be the thing that was verified.  A released
+        # worktree leaves an empty directory behind; every declared file is
+        # then "missing", and mirroring that would delete the live modules.
+        actual = fingerprint_files(candidate, files)
+        present = [rel for rel, digest in actual.items() if digest is not None]
+        if not present:
+            stage(PromotionStage.PREFLIGHT, False, f"none of the {len(files)} declared file(s) exist in the candidate")
+            return refuse(
+                f"the candidate is an empty shell: none of the {len(files)} declared file(s) exist under {candidate}. "
+                "A released or emptied worktree is not a deletion; rebuild the candidate from its evidence patch."
+            )
+        if expected:
+            wanted = {str(k).replace("\\", "/"): v for k, v in expected.items()}
+            mismatched = [rel for rel in files if wanted.get(rel, "<unverified>") != actual.get(rel)]
+            if mismatched:
+                stage(PromotionStage.PREFLIGHT, False, f"candidate differs from what was verified: {mismatched[:6]}")
+                return refuse(
+                    "the candidate is not what was verified: " + ", ".join(
+                        f"{rel} ({'missing now' if actual.get(rel) is None else 'not in the verified set' if rel not in wanted else 'content changed'})"
+                        for rel in mismatched[:6]
+                    )
+                )
+        stage(PromotionStage.PREFLIGHT, True,
+              f"known good {known_good[:12]}, {len(files)} file(s)" + (", fingerprint verified" if expected else ""))
 
         # ---- snapshot -------------------------------------------------
         snapshot_dir = self.snapshot_root / f"{record.promotion_id}_{known_good[:8]}"

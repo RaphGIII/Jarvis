@@ -349,8 +349,16 @@ class SelfDevRunner:
             return
         # A verified candidate whose promotion failed is worth keeping: a
         # resume re-verifies and promotes it in seconds instead of rebuilding
-        # it in half an hour.  Everything else is released, diff first.
-        keep = bool(mission.verification.get("ok")) and mission.outcome == "failed" and mission.phase == "FAILED"
+        # it in half an hour.  A candidate waiting for the owner's password
+        # MUST be kept: it is the thing the password will promote.  Mission
+        # a00d4506ca was released here at AWAITING_AUTHORIZATION, and two
+        # hours later the promotion mirrored the emptied worktree as three
+        # deletions.  Everything else is released, diff first.
+        verified = bool(mission.verification.get("ok"))
+        keep = verified and (
+            (mission.outcome == "failed" and mission.phase == "FAILED")
+            or mission.phase == "AWAITING_AUTHORIZATION"
+        )
         if keep:
             return
         try:
@@ -1131,12 +1139,17 @@ class SelfDevRunner:
         # FAILED, and what they observed.
         failed = [c for c in checks if not c["ok"]]
         failure_reason = "; ".join(f"{c['criterion']}: {str(c['output']).strip()[:220]}" for c in failed)
+        from deployment.promotion import fingerprint_files
+
         mission.verification = {
             "ok": ok_all, "checks": checks, "tests": tests,
             "detail": "; ".join(f"{c['criterion']}: {'ok' if c['ok'] else 'FAILED'}" for c in checks),
             "failure_reason": failure_reason,
             "passed": [c["criterion"] for c in checks if c["ok"]],
             "failed": [c["criterion"] for c in failed],
+            # What exactly passed these checks.  The promoter refuses a
+            # candidate that no longer matches it.
+            "fingerprint": fingerprint_files(mission.worktree, mission.changed_files),
         }
         self._phase(mission, "VERIFY", mission.verification["detail"])
         return ok_all
@@ -1284,6 +1297,19 @@ class SelfDevRunner:
         if refusal:
             return self._await_authorization(mission, refusal)
         try:
+            # The password was typed for the candidate that was verified.  If
+            # that candidate is gone or changed, it is rebuilt from the kept
+            # evidence patch and verified again before anything moves.
+            intact, why = self._candidate_intact(mission)
+            if not intact:
+                self._phase(mission, "RESTORE", f"candidate is not what was verified ({why}); rebuilding from evidence")
+                if not self._restore_candidate(mission):
+                    return self._fail(mission, f"the verified candidate is gone ({why}) and could not be rebuilt "
+                                               f"from its evidence patch; nothing was promoted")
+                self.set_state(JarvisState.VERIFYING, detail="re-verifying the rebuilt candidate", scope=mission.scope)
+                if not self._timed(mission, "verify", lambda: self._verify(mission)):
+                    return self._fail(mission, f"the rebuilt candidate no longer verifies: "
+                                               f"{mission.verification.get('detail', '')[:400]}")
             self._timed(mission, "promote", lambda: self._promote(mission))
             if mission.outcome == "failed":
                 return mission
@@ -1291,6 +1317,63 @@ class SelfDevRunner:
             return mission
         except Exception as exc:  # noqa: BLE001
             return self._fail(mission, f"{type(exc).__name__}: {exc}")
+
+    def _candidate_intact(self, mission: SelfDevMission) -> tuple[bool, str]:
+        """Is the worktree still the one whose fingerprint verification recorded?"""
+
+        from deployment.promotion import fingerprint_files
+
+        if not mission.worktree or not Path(mission.worktree).is_dir():
+            return False, "worktree directory missing"
+        expected = (mission.verification or {}).get("fingerprint") or {}
+        if not mission.changed_files:
+            return False, "no changed files recorded"
+        actual = fingerprint_files(mission.worktree, mission.changed_files)
+        if all(digest is None for digest in actual.values()):
+            return False, "worktree is an empty shell"
+        if not expected:
+            # Verified before fingerprints existed: presence is the best we can check.
+            return True, "no fingerprint recorded; files present"
+        changed = [rel for rel in mission.changed_files if expected.get(rel.replace("\\", "/"), "<none>") != actual.get(rel.replace("\\", "/"))]
+        if changed:
+            return False, f"{len(changed)} file(s) differ from the verified state: {changed[:4]}"
+        return True, "fingerprint matches"
+
+    def _restore_candidate(self, mission: SelfDevMission) -> bool:
+        """Rebuild the candidate worktree from the baseline plus the evidence patch."""
+
+        patch_path = Path(mission.evidence_patch) if mission.evidence_patch else (self.evidence_root / f"{mission.mission_id}.patch")
+        if not patch_path.is_file():
+            mission.events.append({"at": _now(), "phase": "RESTORE", "detail": f"no evidence patch at {patch_path}"})
+            self.store.save(mission)
+            return False
+        try:
+            workspace = CandidateWorkspace(repository=self.repository, mission_id=mission.mission_id).create()
+        except Exception as exc:  # noqa: BLE001
+            mission.events.append({"at": _now(), "phase": "RESTORE", "detail": f"worktree could not be created: {exc}"[:300]})
+            self.store.save(mission)
+            return False
+        # The patch was taken against the mission's baseline; the live tree
+        # may have moved since.  git apply refuses rather than guesses, and a
+        # refusal here is a correct FAILED, not a wrong promotion.
+        applied = subprocess.run(["git", "apply", "--whitespace=nowarn", str(patch_path)], cwd=str(workspace.path),
+                                 capture_output=True, text=True, timeout=120)
+        if applied.returncode != 0:
+            mission.events.append({"at": _now(), "phase": "RESTORE",
+                                   "detail": f"evidence patch did not apply: {applied.stderr.strip()[:300]}"})
+            self.store.save(mission)
+            try:
+                workspace.release(evidence_root=None, reason="restore failed")
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+        self._workspace = workspace
+        mission.worktree = str(workspace.root)
+        mission.changed_files = self._changed_files(mission.worktree)
+        mission.events.append({"at": _now(), "phase": "RESTORE",
+                               "detail": f"candidate rebuilt from {patch_path.name}: {len(mission.changed_files)} file(s)"})
+        self.store.save(mission)
+        return bool(mission.changed_files)
 
     def _promote(self, mission: SelfDevMission) -> None:
         from deployment.promotion import HealthCheck, Promoter
@@ -1305,10 +1388,20 @@ class SelfDevRunner:
                 ok, output = self._run(list(item["command"]), str(repo))
                 if not ok or (item.get("expect") and item["expect"] not in output):
                     return False, f"{item['criterion']}: {output[-600:]}"
+            # The import check alone passed with three modules deleted.  The
+            # targeted tests that verified the candidate verify the live tree
+            # too, so what the owner authorized is what was checked.
+            tests = list(mission.verification.get("tests") or [])
+            if tests:
+                ok, output = self._run([self.python, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], str(repo), timeout=900)
+                if not ok:
+                    return False, f"targeted tests on the live tree: {output[-600:]}"
+                return True, f"acceptance and {len(tests)} targeted test file(s) re-run on the live tree"
             return True, "acceptance re-run on the live tree"
 
         record = promoter.promote(
             mission.worktree, changed_files=mission.changed_files, health_check=health, verify=verify,
+            expected=mission.verification.get("fingerprint") or None,
             commit_message=f"ZEUS self-development: {mission.request[:64]}\n\nMission {mission.mission_id}. "
                            f"Developed in an isolated worktree, verified by {len(mission.acceptance)} acceptance "
                            f"check(s){' and targeted tests' if mission.verification.get('tests') else ''}, "

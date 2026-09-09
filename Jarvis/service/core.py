@@ -4827,7 +4827,7 @@ class JarvisCore:
 
         repository = self.selfdev_repository()
         keep = [m.mission_id for m in self.selfdev_store.list()
-                if m.phase in {"RESTARTING"} or (m.verification.get("ok") and m.outcome == "failed")]
+                if m.phase in {"RESTARTING", "AWAITING_AUTHORIZATION"} or (m.verification.get("ok") and m.outcome == "failed")]
         removed = CandidateWorkspace.reap(repository, keep=keep)
         recovered = recover_interrupted(repository)
         report = {"worktrees_removed": removed, "promotions_recovered": recovered, "kept": keep}
