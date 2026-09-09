@@ -26,7 +26,7 @@ body.tv { font-size: 22px; }
 body.tv #app { max-width: 1600px; padding: 0 5vw; }
 body.tv header.top { padding: 2vh 0; font-size: 16px; }
 body.tv .brand { font-size: 18px; letter-spacing: .4em; }
-body.tv nav.views, body.tv .composer, body.tv .hint, body.tv #hud { display: none; }
+body.tv nav.views, body.tv .composer, body.tv .modebar, body.tv .hint, body.tv #hud { display: none; }
 body.tv #eye { width: 34vh; height: 34vh; }
 body.tv #app.conversing #eye { width: 18vh; height: 18vh; }
 body.tv #stateLabel { font-size: 15px; letter-spacing: .45em; }
@@ -128,6 +128,7 @@ body.tv, body.tv * { cursor: none; }
   </main>
 
   <footer class="compose">
+    <div class="modebar" id="modebar" aria-label="Chat-Modus und Kosten"></div>
     <div class="composer">
       <textarea id="input" rows="1" placeholder="Talk to __ASSISTANT_NAME__…" autofocus></textarea>
       <button class="icon-btn" id="btnMic" title="Voice input">

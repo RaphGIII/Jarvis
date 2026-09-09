@@ -19,6 +19,7 @@ import { state } from "../core/state.js";
 import * as views from "../core/views.js";
 import * as corrections from "./corrections.js";
 import * as playback from "../voice/playback.js";
+import * as gateway from "../core/gateway.js";
 
 let streaming = null;
 let eye = null;
@@ -27,6 +28,7 @@ let historyDivider = false;
 export function init(deps) {
   eye = deps.eye;
   wireComposer();
+  gateway.init();
   bus.on("user_message", (p) => {
     document.querySelector(".turn.interim")?.remove();
     const meta = p.meta || {};
@@ -232,7 +234,7 @@ export function send(text, source = "text") {
   document.querySelector(".turn.interim")?.remove();
   if (views.isWorkspace()) views.close();
   // One id per press: a retried POST cannot become a second request.
-  return api("/api/message", { text: clean, source, request_id: requestId() });
+  return api("/api/message", { text: clean, source, request_id: requestId(), mode: gateway.currentMode() });
 }
 
 function wireComposer() {

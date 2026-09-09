@@ -62,6 +62,11 @@ class KernelConfig:
     #: its own risk level and is gated by ToolPolicy.
     enable_desktop_tools: bool = True
     default_limits: ResourceLimits = field(default_factory=ResourceLimits)
+    #: Route the conversational/semantic tier through the model gateway
+    #: (:mod:`gateway`).  Off only for drills that must prove the local model
+    #: alone still works; the gateway itself falls back to the local tier when
+    #: no cloud role is configured or permitted.
+    enable_gateway: bool = True
 
     @classmethod
     def from_env(cls) -> "KernelConfig":
@@ -71,6 +76,7 @@ class KernelConfig:
             state_root=Path(root) if root else DEFAULT_STATE_ROOT,
             config_root=Path(config_root) if config_root else DEFAULT_CONFIG_ROOT,
             enable_research_tools=os.getenv("JARVIS_ENABLE_RESEARCH", "1").strip().lower() in {"1", "true", "yes", "on"},
+            enable_gateway=os.getenv("ZEUS_GATEWAY", "1").strip().lower() in {"1", "true", "yes", "on"},
         )
 
 
@@ -114,6 +120,8 @@ class JarvisKernel:
         self.audit = AuditLog(self.state_root / "audit" / "tools.jsonl")
         self.tools = self._build_tools()
         self._providers: dict[ModelTier, Any] = {}
+        self._local_providers: dict[ModelTier, Any] = {}
+        self._gateway: Any = None
 
     # ------------------------------------------------------------------
     # Composition
@@ -153,13 +161,66 @@ class JarvisKernel:
 
         Reuse matters: each provider holds the keep-alive setting that keeps
         weights resident, and rebuilding one per call would defeat it.
+
+        FAST_LOCAL -- conversation, semantic interpretation, routing -- comes
+        back wrapped in the model gateway: the request is served by the
+        cheapest configured role predicted to be reliable enough for it, and
+        the small local model answers only as the offline fallback.  Every
+        other tier is the local provider it always was.
         """
 
         if tier not in self._providers:
+            local = self.local_provider(tier)
+            self._providers[tier] = self._through_gateway(tier, local)
+        return self._providers[tier]
+
+    def local_provider(self, tier: ModelTier):
+        """The provider behind the tier, gateway or not.
+
+        For GPU housekeeping -- warming the local model, evicting it before a
+        build -- and for anything that must stay on this machine.
+        """
+
+        if tier not in self._local_providers:
             from brain.providers import provider_for_spec
 
-            self._providers[tier] = provider_for_spec(self.catalog.get(tier))
-        return self._providers[tier]
+            self._local_providers[tier] = provider_for_spec(self.catalog.get(tier))
+        return self._local_providers[tier]
+
+    def _through_gateway(self, tier: ModelTier, local: Any) -> Any:
+        if tier is not ModelTier.FAST_LOCAL or not self.config.enable_gateway:
+            return local
+        from gateway.gateway import GatewayBrainProvider
+
+        return GatewayBrainProvider(self.gateway, fallback=local)
+
+    @property
+    def gateway(self) -> Any:
+        """The model gateway: roles, modes, budget, privacy -- built once."""
+
+        if self._gateway is None:
+            from gateway.config import GatewayConfig
+            from gateway.gateway import ModelGateway
+
+            def local_for_role(role: str) -> Any:
+                binding = self._gateway.config.binding(role) if self._gateway is not None else None
+                tier_name = getattr(binding, "tier", "") or "FAST_LOCAL"
+                return self.local_provider(ModelTier(tier_name))
+
+            def local_available(role: str) -> bool:
+                try:
+                    binding = self._gateway.config.binding(role) if self._gateway is not None else None
+                    tier_name = getattr(binding, "tier", "") or "FAST_LOCAL"
+                    spec = self.catalog.get(ModelTier(tier_name))
+                    return bool(spec.enabled and spec.configured)
+                except Exception:  # noqa: BLE001
+                    return False
+
+            config_path = Path(self.config_root) / "providers.json"
+            config = GatewayConfig.load(config_path) if config_path.is_file() else GatewayConfig.defaults()
+            self._gateway = ModelGateway(state_root=self.state_root, config=config,
+                                         local_provider=local_for_role, local_available=local_available)
+        return self._gateway
 
     def engine(self, *, tier: ModelTier = ModelTier.BUILD_LOCAL, hooks: EngineHooks | None = None) -> ProjectEngine:
         return ProjectEngine(brain=self.provider(tier), store=self.projects, tools=self.tools, hooks=hooks)
@@ -276,7 +337,7 @@ class JarvisKernel:
     def release_models(self) -> None:
         """Ask every local provider to evict its weights, giving the GPU back."""
 
-        for provider in self._providers.values():
+        for provider in list(self._providers.values()) + list(self._local_providers.values()):
             unload = getattr(provider, "unload", None)
             if callable(unload):
                 unload()

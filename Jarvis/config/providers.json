@@ -1,0 +1,296 @@
+{
+  "budget": {
+    "daily_hard_cap": 6.0,
+    "engineering_hard_cap": 25.0,
+    "monthly_hard_cap": 40.0,
+    "per_task_hard_cap": 5.0,
+    "provider_hard_caps": {},
+    "reasoning_hard_cap": 10.0,
+    "safety_factor": 1.5,
+    "soft_allocation": {
+      "deep_reasoning": 10.0,
+      "engineering": 25.0,
+      "reserve": 5.0
+    }
+  },
+  "currency": "EUR",
+  "providers": {
+    "anthropic": {
+      "base_url": "https://api.anthropic.com",
+      "enabled": false,
+      "kind": "anthropic",
+      "may_train_on_requests": false,
+      "metered": true,
+      "monthly_cap_eur": null,
+      "name": "anthropic",
+      "options": {},
+      "pricing": {
+        "claude-fable-5-1": {
+          "cached_input_per_m": 2.8,
+          "confirmed": false,
+          "input_per_m": 28.0,
+          "output_per_m": 140.0
+        },
+        "claude-opus-5": {
+          "cached_input_per_m": 1.4,
+          "confirmed": false,
+          "input_per_m": 14.0,
+          "output_per_m": 70.0
+        }
+      },
+      "secret": "anthropic",
+      "timeout_seconds": 600.0
+    },
+    "gemini": {
+      "base_url": "https://generativelanguage.googleapis.com",
+      "enabled": false,
+      "kind": "gemini",
+      "may_train_on_requests": true,
+      "metered": false,
+      "monthly_cap_eur": null,
+      "name": "gemini",
+      "options": {},
+      "pricing": {
+        "gemini-2.5-flash": {
+          "cached_input_per_m": 0.0,
+          "confirmed": true,
+          "input_per_m": 0.0,
+          "output_per_m": 0.0
+        }
+      },
+      "secret": "gemini",
+      "timeout_seconds": 120.0
+    },
+    "ollama": {
+      "base_url": "http://127.0.0.1:11434",
+      "enabled": true,
+      "kind": "ollama",
+      "may_train_on_requests": false,
+      "metered": false,
+      "monthly_cap_eur": null,
+      "name": "ollama",
+      "options": {},
+      "pricing": {},
+      "secret": "",
+      "timeout_seconds": 120.0
+    },
+    "openai": {
+      "base_url": "https://api.openai.com",
+      "enabled": false,
+      "kind": "openai",
+      "may_train_on_requests": false,
+      "metered": true,
+      "monthly_cap_eur": null,
+      "name": "openai",
+      "options": {},
+      "pricing": {
+        "gpt-5.6": {
+          "cached_input_per_m": 0.18,
+          "confirmed": false,
+          "input_per_m": 1.75,
+          "output_per_m": 14.0
+        }
+      },
+      "secret": "openai",
+      "timeout_seconds": 300.0
+    }
+  },
+  "risk_aversion": 1.0,
+  "roles": {
+    "engineer.frontier": {
+      "enabled": true,
+      "max_output_tokens": 16384,
+      "model": "claude-fable-5-1",
+      "offline_fallback": false,
+      "provider": "anthropic",
+      "reliability_prior": {
+        "engineering.large": [
+          7.0,
+          1.0
+        ],
+        "engineering.medium": [
+          9.0,
+          1.0
+        ],
+        "engineering.small": [
+          9.0,
+          1.0
+        ]
+      },
+      "role": "engineer.frontier",
+      "temperature": 0.1,
+      "thinking": {},
+      "tier": ""
+    },
+    "engineer.standard": {
+      "enabled": true,
+      "max_output_tokens": 8192,
+      "model": "claude-opus-5",
+      "offline_fallback": false,
+      "provider": "anthropic",
+      "reliability_prior": {
+        "engineering.large": [
+          2.0,
+          3.0
+        ],
+        "engineering.medium": [
+          6.0,
+          2.0
+        ],
+        "engineering.small": [
+          8.0,
+          1.0
+        ]
+      },
+      "role": "engineer.standard",
+      "temperature": 0.1,
+      "thinking": {},
+      "tier": ""
+    },
+    "local.build": {
+      "enabled": true,
+      "max_output_tokens": 2048,
+      "model": "",
+      "offline_fallback": true,
+      "provider": "ollama",
+      "reliability_prior": {
+        "engineering.large": [
+          1.0,
+          12.0
+        ],
+        "engineering.medium": [
+          1.0,
+          8.0
+        ],
+        "engineering.small": [
+          1.0,
+          4.0
+        ]
+      },
+      "role": "local.build",
+      "temperature": 0.3,
+      "thinking": {},
+      "tier": "BUILD_LOCAL"
+    },
+    "local.fast": {
+      "enabled": true,
+      "max_output_tokens": 2048,
+      "model": "",
+      "offline_fallback": true,
+      "provider": "ollama",
+      "reliability_prior": {
+        "composition": [
+          1.0,
+          6.0
+        ],
+        "knowledge": [
+          2.0,
+          3.0
+        ],
+        "planning": [
+          1.0,
+          6.0
+        ],
+        "semantic": [
+          1.0,
+          4.0
+        ]
+      },
+      "role": "local.fast",
+      "temperature": 0.3,
+      "thinking": {},
+      "tier": "FAST_LOCAL"
+    },
+    "reasoning.deep": {
+      "enabled": true,
+      "max_output_tokens": 4096,
+      "model": "gpt-5.6",
+      "offline_fallback": false,
+      "provider": "openai",
+      "reliability_prior": {
+        "composition": [
+          7.0,
+          1.0
+        ],
+        "knowledge": [
+          9.0,
+          1.0
+        ],
+        "planning": [
+          8.0,
+          1.0
+        ],
+        "semantic": [
+          9.0,
+          1.0
+        ]
+      },
+      "role": "reasoning.deep",
+      "temperature": 0.2,
+      "thinking": {
+        "FREE_HIGH": "high",
+        "FREE_LOW": "low",
+        "FREE_MEDIUM": "medium"
+      },
+      "tier": ""
+    },
+    "reasoning.free": {
+      "enabled": true,
+      "max_output_tokens": 2048,
+      "model": "gemini-2.5-flash",
+      "offline_fallback": false,
+      "provider": "gemini",
+      "reliability_prior": {
+        "composition": [
+          2.0,
+          3.0
+        ],
+        "knowledge": [
+          8.0,
+          1.0
+        ],
+        "planning": [
+          3.0,
+          3.0
+        ],
+        "semantic": [
+          6.0,
+          2.0
+        ]
+      },
+      "role": "reasoning.free",
+      "temperature": 0.3,
+      "thinking": {
+        "FREE_HIGH": 8192,
+        "FREE_LOW": 0,
+        "FREE_MEDIUM": 2048
+      },
+      "tier": ""
+    },
+    "speech.stt": {
+      "enabled": false,
+      "max_output_tokens": 2048,
+      "model": "gemini-2.5-flash",
+      "offline_fallback": false,
+      "provider": "gemini",
+      "reliability_prior": {},
+      "role": "speech.stt",
+      "temperature": 0.3,
+      "thinking": {},
+      "tier": ""
+    },
+    "speech.tts": {
+      "enabled": false,
+      "max_output_tokens": 2048,
+      "model": "gemini-2.5-flash-preview-tts",
+      "offline_fallback": false,
+      "provider": "gemini",
+      "reliability_prior": {},
+      "role": "speech.tts",
+      "temperature": 0.3,
+      "thinking": {},
+      "tier": ""
+    }
+  },
+  "schema_version": 1
+}

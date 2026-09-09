@@ -52,6 +52,10 @@ export const view = {
     // 1 - SECURITY: who may change ZEUS at all
     pane.append(section("Sicherheit", await securityPanel(reload)));
 
+    // 1b - PROVIDERS: the model gateway's credentials, roles and budget. Keys
+    // are write-only: the store reports presence and a four-character hint.
+    pane.append(section("Provider / Modell-Gateway", await providersPanel(reload)));
+
     // 2 - PROTECTED OPERATIONS: what the password protects, with levels
     const OPS = [
       ["Persönlichkeits-Kern ändern", "PERSONALITY_EDIT", 2],
@@ -331,6 +335,88 @@ export async function securityPanel(reload) {
       reload();
     }, "primary"),
     button("Alles sperren", async () => { await api("/api/auth/lock", {}); authgate.dropCache(); reload(); }, "ghost")));
+  return box;
+}
+
+/* ---- the model gateway: credentials (write-only), providers, roles, budget ---- */
+const PROVIDER_LABELS = { gemini: "Google / Gemini", openai: "OpenAI", anthropic: "Anthropic", ollama: "Ollama (lokal)" };
+
+function eur(value) {
+  const n = Number(value || 0);
+  return "€" + (n < 0.01 && n > 0 ? n.toFixed(3) : n.toFixed(2));
+}
+
+export async function providersPanel(reload) {
+  const data = await api("/api/providers");
+  const box = el("div");
+  if (!data || data.ok === false) { box.append(el("div", { class: "empty", text: data?.error || "Gateway nicht erreichbar" })); return box; }
+  const spend = data.spend || {};
+  box.append(el("div", { class: "meta" },
+    badge(`Monat ${eur(spend.month)} / ${eur(spend.monthly_hard_cap)}`, Number(spend.month) >= Number(spend.monthly_hard_cap) * 0.9 ? "warn" : "ok"),
+    el("span", { text: ` heute ${eur(spend.day)} / ${eur(spend.daily_hard_cap)} · pro Aufgabe max. ${eur(spend.per_task_hard_cap)} · Denken ${eur(spend.reasoning_month)} / ${eur(spend.reasoning_hard_cap)} · Engineering ${eur(spend.engineering_month)} / ${eur(spend.engineering_hard_cap)}` })));
+  box.append(el("div", { class: "kv" }, el("span", { class: "k", text: "Regel" }),
+    el("span", { class: "v", text: "Kein bezahlter Aufruf ohne Reservierung gegen das Monatslimit. FREE sperrt bezahlte Anbieter technisch. Private Inhalte gehen nie an Anbieter, die mit Anfragen trainieren dürfen." })));
+
+  const creds = data.credentials || {};
+  const providers = data.providers || {};
+  for (const [name, provider] of Object.entries(providers)) {
+    const card = el("div", { class: "card" });
+    const cred = creds[name];
+    const head = el("div", { class: "meta", style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } },
+      el("strong", { text: PROVIDER_LABELS[name] || name }),
+      badge(provider.enabled ? "AKTIV" : "AUS", provider.enabled ? "ok" : "dim"),
+      badge(provider.metered ? "bezahlt" : "kostenlos", provider.metered ? "warn" : "green"),
+      provider.may_train_on_requests ? badge("darf mit Anfragen trainieren", "amber") : null,
+      provider.health && provider.health !== "ok" ? badge(provider.health, "bad") : null,
+      cred ? badge(cred.configured ? `Schlüssel ${cred.hint || "gesetzt"}` : "kein Schlüssel", cred.configured ? "blue" : "dim") : null);
+    card.append(head);
+    const row = el("div", { class: "toolbar" });
+    if (cred) {
+      const input = el("input", { type: "password", placeholder: `${cred.label} einfügen`, autocomplete: "off", spellcheck: false, style: { minWidth: "260px" } });
+      row.append(input,
+        button("Schlüssel speichern", async () => {
+          const value = input.value.trim();
+          if (!value) return;
+          const r = await authgate.withAuth("CREDENTIALS", (token) => api("/api/providers/credential", { provider: name, value, authorization: token }));
+          input.value = "";
+          if (r.ok === false) { alert(r.error || "nicht gespeichert"); return; }
+          reload();
+        }, "primary"));
+      if (cred.configured) {
+        row.append(button("Schlüssel entfernen", async () => {
+          if (!confirm(`Schlüssel für ${PROVIDER_LABELS[name] || name} entfernen?`)) return;
+          const r = await authgate.withAuth("CREDENTIALS", (token) => api("/api/providers/credential/clear", { provider: name, authorization: token }));
+          if (r.ok === false) { alert(r.error || "nicht entfernt"); return; }
+          reload();
+        }, "danger"));
+      }
+    }
+    row.append(button(provider.enabled ? "Deaktivieren" : "Aktivieren", async () => {
+      const r = await authgate.withAuth("CREDENTIALS", (token) => api("/api/providers/enable", { provider: name, enabled: !provider.enabled, authorization: token }));
+      if (r.ok === false) { alert(r.error || "nicht geändert"); return; }
+      reload();
+    }));
+    card.append(row);
+    const prices = Object.entries(provider.pricing || {});
+    if (prices.length) {
+      card.append(el("div", { class: "meta", text: prices.map(([model, p]) =>
+        `${model}: ${eur(p.input_per_m)} in / ${eur(p.cached_input_per_m)} cached / ${eur(p.output_per_m)} out je 1M Tokens${p.confirmed ? "" : " (unbestätigt)"}`).join(" · ") }));
+    }
+    box.append(card);
+  }
+
+  const roles = data.roles || {};
+  const table = el("div");
+  for (const [role, r] of Object.entries(roles)) {
+    table.append(el("div", { class: "kv" },
+      el("span", { class: "k", text: role }),
+      el("span", { class: "v" },
+        el("span", { text: `${r.provider}${r.model ? " · " + r.model : ""} ` }),
+        badge(r.configured ? "bereit" : (r.enabled ? "nicht konfiguriert" : "aus"), r.configured ? "ok" : "dim"),
+        r.cost_class === "ZERO" ? badge("€0", "green") : badge("bezahlt", "warn"),
+        r.offline_fallback ? badge("offline-fallback", "dim") : null)));
+  }
+  box.append(el("div", { class: "meta", text: `Rollen (Konfiguration: ${data.config_source || "config/providers.json"}) — Modellnamen stehen nur in der Konfiguration, nie im Code.` }), table);
   return box;
 }
 

@@ -209,9 +209,24 @@ class JarvisHTTPServer:
         routes: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "/api/message": lambda body: self.core.send_message(
                 str(body.get("text", "")), scope=str(body.get("scope", "")),
-                meta={"source": str(body.get("source") or "text")}, request_id=str(body.get("request_id", "")),
+                meta={"source": str(body.get("source") or "text"), "mode": str(body.get("mode") or "")},
+                request_id=str(body.get("request_id", "")),
             ),
             "/api/status": lambda _: self.core.status(),
+            # The model gateway: chat modes, spend against the monthly cap,
+            # provider roles and credentials.  Credentials are write-only
+            # here -- the store never returns a value, only presence.
+            "/api/gateway/status": lambda _: self.core.gateway_status(),
+            "/api/gateway/mode": lambda body: self.core.set_chat_mode(str(body.get("mode", ""))),
+            "/api/gateway/estimate": lambda body: self.core.gateway_estimate(str(body.get("text", "")), mode=str(body.get("mode", ""))),
+            "/api/gateway/ledger": lambda body: self.core.gateway_ledger(limit=int(body.get("limit", 50) or 50)),
+            "/api/providers": lambda _: self.core.providers_status(),
+            "/api/providers/credential": lambda body: self.core.provider_set_credential(
+                str(body.get("provider", "")), str(body.get("value", "")), authorization=str(body.get("authorization", ""))),
+            "/api/providers/credential/clear": lambda body: self.core.provider_clear_credential(
+                str(body.get("provider", "")), authorization=str(body.get("authorization", ""))),
+            "/api/providers/enable": lambda body: self.core.provider_enable(
+                str(body.get("provider", "")), bool(body.get("enabled", True)), authorization=str(body.get("authorization", ""))),
             # Polled far more often than /api/status, because the whole value
             # of a live load readout is that it is live. Answered from a
             # cached background reading, so the extra polling costs nothing.

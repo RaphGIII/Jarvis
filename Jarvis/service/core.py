@@ -135,6 +135,12 @@ class JarvisCore:
         #: changes the recogniser hint and the voice, which sounds worse than
         #: occasionally answering in the wrong language.
         self.language = ""
+        #: The owner's chat mode -- AUTO / FREE / SMART / DEEP / BUILD -- for
+        #: the live conversation.  Read by the model gateway for every model
+        #: call this conversation makes; FREE makes paid calls impossible.
+        from gateway.modes import ChatMode
+
+        self.chat_mode: ChatMode = ChatMode.AUTO
         #: Readiness, restart and shutdown -- the supervisor's view of this
         #: process. Constructed here because it must exist before warm().
         from service.lifecycle import Lifecycle
@@ -368,6 +374,8 @@ class JarvisCore:
             for key in list(seen)[:-400]:
                 del seen[key]
         meta["request_id"] = request_id
+        if meta.get("mode"):
+            self.set_chat_mode(meta["mode"], announce=False)
 
         # Touched before the first event is published, so the request that
         # started everything is in the record rather than missing from it.
@@ -390,7 +398,7 @@ class JarvisCore:
         # once and the client watches the event stream, which is what makes
         # "Jarvis starts speaking before the answer is finished" possible.
         thread = threading.Thread(
-            target=self._answer_guarded, args=(text, scope), daemon=True, name="jarvis-answer"
+            target=self._answer_guarded, args=(text, scope, request_id), daemon=True, name="jarvis-answer"
         )
         with self._lock:
             self._current_work = thread
@@ -398,7 +406,7 @@ class JarvisCore:
         thread.start()
         return {"ok": True, "accepted": text, "request_id": request_id}
 
-    def _answer_guarded(self, text: str, scope: str) -> None:
+    def _answer_guarded(self, text: str, scope: str, request_id: str = "") -> None:
         """Run :meth:`_answer`, and never let it fail in silence.
 
         ``say()`` returns ``{"ok": True, "accepted": text}`` the moment the
@@ -422,6 +430,18 @@ class JarvisCore:
 
         import traceback
 
+        # Every model call this answer makes -- semantic interpretation,
+        # composition, the reply itself -- reads the chat mode and the task
+        # facts from this context.  Set once here, on the answering thread.
+        from gateway.gateway import RequestContext, reset_context, set_context
+        from gateway.task import TaskFacts
+
+        with self._lock:
+            turns = len(self._history)
+        context = RequestContext(mode=self.chat_mode, task_id=request_id or "", conversation_id=self._conversation_id(),
+                                 facts=TaskFacts(text=text, turns_in_conversation=turns, is_question=text.rstrip().endswith("?")),
+                                 language=self.language)
+        token = set_context(context)
         try:
             self._answer(text, scope)
         except BaseException as exc:  # noqa: BLE001 - a thread boundary swallows everything
@@ -447,6 +467,68 @@ class JarvisCore:
                 )
             except Exception:
                 pass
+        finally:
+            try:
+                reset_context(token)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _conversation_id(self) -> str:
+        try:
+            first = self._history[0].at if self._history else ""
+        except Exception:  # noqa: BLE001
+            first = ""
+        return str(first)
+
+    def _gateway_facts(self, **changes: Any) -> None:
+        """Refine the objective task facts the gateway routes on, as ZEUS learns them.
+
+        Called from the answer path once the registry, the router and the
+        intent layer have spoken: whether a capability matched, whether the
+        request writes or destroys, how many subsystems it touches.  These
+        are ZEUS's facts, not a model's opinion, which is why they are set
+        here and not asked for.
+        """
+
+        try:
+            from dataclasses import replace
+
+            from gateway.gateway import active_context
+            from gateway.task import TaskFacts
+
+            # Only a context the answer thread opened is refined.  Setting one
+            # here would leak into whatever runs on this thread next -- a test
+            # calling _answer() directly taught the following test's request
+            # that it was engineering.
+            context = active_context()
+            if context is None:
+                return
+            facts = context.facts or TaskFacts()
+            context.facts = replace(facts, **changes)
+        except Exception:  # noqa: BLE001 - routing facts are best effort
+            pass
+
+    def set_chat_mode(self, mode: Any, *, announce: bool = True) -> dict[str, Any]:
+        """The owner picks how much this conversation may spend and what kind of work it is."""
+
+        from gateway.modes import ChatMode, policy_for
+
+        parsed = ChatMode.parse(mode, default=None)
+        if not isinstance(mode, ChatMode) and str(mode or "").strip().upper() not in ChatMode.__members__:
+            return {"ok": False, "error": f"unknown chat mode {mode!r}; one of {', '.join(m.value for m in ChatMode)}"}
+        previous = self.chat_mode
+        self.chat_mode = parsed
+        policy = policy_for(parsed)
+        try:
+            self.preferences.set("gateway.mode", parsed.value)
+        except Exception:  # noqa: BLE001
+            pass
+        if announce and previous is not parsed:
+            self.emit(EventType.TOOL, {"summary": f"chat mode: {parsed.value}", "source": "gateway",
+                                       "mode": parsed.value, "previous": previous.value})
+        return {"ok": True, "mode": parsed.value, "previous": previous.value,
+                "hint": policy.owner_hint_de if self.language == "de" else policy.owner_hint_en,
+                "allow_metered": policy.allow_metered}
 
     def _answer(self, text: str, scope: str) -> None:
         """Route the request, then let the right machinery answer it.
@@ -484,6 +566,17 @@ class JarvisCore:
              "router_ms": round((time.perf_counter() - started) * 1000, 1)},
             scope=scope,
         )
+        try:
+            reading = getattr(route, "reading", None)
+            self._gateway_facts(
+                is_question=bool(getattr(reading, "is_question", False)) or text.rstrip().endswith("?"),
+                refers_to_context=bool(getattr(classification, "refers_to_context", False)),
+                is_engineering=classification.intent.value in {"self_development", "capability"},
+                writes_filesystem=classification.intent.value in {"action", "project"},
+                destructive=bool(getattr(classification, "destructive", False)),
+            )
+        except Exception:  # noqa: BLE001
+            pass
         if route is not None:
             # Routing evidence in Activity: what was decided, on what, and what
             # was overruled.  A wrong route is then correctable rather than
@@ -4179,6 +4272,20 @@ class JarvisCore:
             except Exception:
                 pass
             self.emit(EventType.DIAGNOSTIC, {"warming": "started"})
+            # The owner's last chat mode survives a restart; the gateway then
+            # reports what it can reach so the UI shows AUTO/FREE truthfully.
+            try:
+                from gateway.modes import ChatMode
+
+                remembered = self.preferences.get("gateway.mode", "")
+                if remembered:
+                    self.chat_mode = ChatMode.parse(remembered)
+                status = self.gateway_status()
+                self.emit(EventType.DIAGNOSTIC, {"warming": "gateway ready", "mode": self.chat_mode.value,
+                                                 "cloud_reasoning_available": status.get("cloud_reasoning_available"),
+                                                 "configured_roles": [r for r, v in status.get("roles", {}).items() if v.get("configured")]})
+            except Exception as exc:  # noqa: BLE001
+                self.emit(EventType.DIAGNOSTIC, {"warming": f"gateway unavailable: {exc}"})
             # Bounded retries, because the first attempt races the machine:
             # a freshly started Ollama loads the 4B model on the first
             # request (71 s measured cold), and one failed probe used to
@@ -4188,7 +4295,7 @@ class JarvisCore:
 
             for attempt in range(4):
                 try:
-                    provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                    provider = self._local_fast()
                     answer = provider.generate("Reply with the single word: OK", max_tokens=4, temperature=0.0)
                     text = answer if isinstance(answer, str) else "".join(str(piece) for piece in answer)
                     if not text.strip():
@@ -5678,9 +5785,7 @@ class JarvisCore:
                         total = int(usage.get("memory_total_mib") or 0)
                         free = total - int(usage.get("memory_used_mib") or 0) if total else 0
                         if free and free < NEEDED_VRAM_MIB:
-                            from brain.tiers import ModelTier
-
-                            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                            provider = self._local_fast()
                             if hasattr(provider, "unload"):
                                 provider.unload()
                                 evicted = True
@@ -5712,9 +5817,7 @@ class JarvisCore:
                     nonlocal restore_started
                     restore_started = time.time()
                     try:
-                        from brain.tiers import ModelTier
-
-                        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+                        provider = self._local_fast()
                         provider.generate("OK", max_tokens=2)
                         self.emit(EventType.TOOL, {"summary": f"FAST_LOCAL restored in {time.time() - restore_started:.1f}s",
                                                    "source": "imagegen"}, scope=scope)
@@ -7510,6 +7613,95 @@ class JarvisCore:
         self._expert_probe_running.clear()
         self.emit(EventType.DIAGNOSTIC, {"experts": status})
 
+    # ------------------------------------------------------------------
+    # Model gateway: modes, spend, providers, credentials
+    # ------------------------------------------------------------------
+
+    def _local_fast(self) -> Any:
+        """The local conversational model itself, for GPU housekeeping."""
+
+        from brain.tiers import ModelTier
+
+        local = getattr(self.kernel, "local_provider", None)
+        return local(ModelTier.FAST_LOCAL) if callable(local) else self.kernel.provider(ModelTier.FAST_LOCAL)
+
+    @property
+    def model_gateway(self) -> Any:
+        """The model gateway (roles, modes, budget).  ``gateway`` is the device gateway."""
+
+        return self.kernel.gateway
+
+    def gateway_status(self) -> dict[str, Any]:
+        status = self.model_gateway.status()
+        status["mode"] = self.chat_mode.value
+        return status
+
+    def gateway_estimate(self, text: str, *, mode: str = "") -> dict[str, Any]:
+        """What this request would cost and where it would go -- without running it."""
+
+        from gateway.gateway import GatewayRequest
+        from gateway.modes import ChatMode
+        from gateway.task import TaskFacts
+
+        text = str(text or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty text"}
+        request = GatewayRequest(prompt=text, mode=ChatMode.parse(mode) if mode else self.chat_mode,
+                                 facts=TaskFacts(text=text, is_question=text.endswith("?")))
+        decision, privacy = self.model_gateway.plan(request)
+        return {"ok": True, "decision": decision.to_dict(), "privacy": privacy.to_dict(),
+                "spend": self.model_gateway.governor.summary().to_dict()}
+
+    def providers_status(self) -> dict[str, Any]:
+        status = self.model_gateway.status()
+        return {"ok": True, "providers": status["providers"], "roles": status["roles"], "credentials": status["credentials"],
+                "budget": status["budget"], "spend": status["spend"], "config_source": status["config_source"]}
+
+    def provider_set_credential(self, name: str, value: str, *, authorization: str = "") -> dict[str, Any]:
+        """Store a provider API key.  Owner-authorized (CREDENTIALS); the value is never echoed."""
+
+        denied = self.require_auth(authorization, "CREDENTIALS")
+        if denied is not None:
+            return denied
+        try:
+            self.model_gateway.credentials.set(str(name), str(value))
+        except (KeyError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        self.emit(EventType.TOOL, {"summary": f"provider credential stored: {name}", "source": "gateway", "provider": name})
+        return {"ok": True, "credentials": self.model_gateway.credentials.status()}
+
+    def provider_clear_credential(self, name: str, *, authorization: str = "") -> dict[str, Any]:
+        denied = self.require_auth(authorization, "CREDENTIALS")
+        if denied is not None:
+            return denied
+        existed = self.model_gateway.credentials.clear(str(name))
+        self.emit(EventType.TOOL, {"summary": f"provider credential removed: {name}", "source": "gateway", "provider": name})
+        return {"ok": True, "removed": existed, "credentials": self.model_gateway.credentials.status()}
+
+    def provider_enable(self, name: str, enabled: bool, *, authorization: str = "") -> dict[str, Any]:
+        """Switch a provider on or off.  Owner-authorized; persisted to config/providers.json."""
+
+        denied = self.require_auth(authorization, "CREDENTIALS")
+        if denied is not None:
+            return denied
+        try:
+            config = self.model_gateway.config.with_provider_enabled(str(name), bool(enabled))
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        path = Path(self.kernel.config_root) / "providers.json" if hasattr(self.kernel, "config_root") else None
+        try:
+            config.save(path)
+        except OSError as exc:
+            return {"ok": False, "error": f"could not persist provider configuration: {exc}"}
+        self.model_gateway.reconfigure(config)
+        self.emit(EventType.TOOL, {"summary": f"provider {name} {'enabled' if enabled else 'disabled'}", "source": "gateway",
+                                   "provider": name, "enabled": bool(enabled)})
+        return {"ok": True, **self.providers_status()}
+
+    def gateway_ledger(self, *, limit: int = 50) -> dict[str, Any]:
+        return {"ok": True, "spend": self.model_gateway.governor.summary().to_dict(), "entries": self.model_gateway.governor.history(limit=limit),
+                "reliability": self.model_gateway.reliability.table()}
+
     def diagnostics(self, *, refresh: bool = False) -> dict[str, Any]:
         """The truth about the machinery, for when the user asks for it.
 
@@ -7539,6 +7731,10 @@ class JarvisCore:
             payload["cost_policy"] = CostPolicy.load().to_dict()
         except Exception as exc:
             payload["cost_policy"] = {"error": str(exc)}
+        try:
+            payload["gateway"] = self.gateway_status()
+        except Exception as exc:
+            payload["gateway"] = {"error": str(exc)}
         payload["events"] = {"sequence": self.bus.sequence, "subscribers": self.bus.subscriber_count}
         payload["state"] = self.state.snapshot.to_dict()
         return payload

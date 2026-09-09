@@ -42,6 +42,8 @@ REQUIRED_IDS = (
     "btnSend", "btnMic", "connPill", "panel", "panelBody",
     # the operating environment: workspace, inspector, palette, HUD
     "workspacePane", "workspaceTitle", "inspector", "inspectorBody", "palette", "paletteInput", "hud", "readiness", "rail",
+    # the model gateway: the owner's chat mode and spend, always visible at the composer
+    "modebar",
 )
 
 #: Files the page cannot render without.  app.js is an ES module and imports
@@ -49,7 +51,7 @@ REQUIRED_IDS = (
 #: is exactly the failure a verifier exists to catch before promotion.
 REQUIRED_ASSETS = (
     "index.html", "eye.js", "graph.js", "app.js", "zeus.css",
-    "core/dom.js", "core/api.js", "core/bus.js", "core/state.js", "core/views.js",
+    "core/dom.js", "core/api.js", "core/bus.js", "core/state.js", "core/views.js", "core/gateway.js",
     "views/chat.js", "views/activity.js", "views/projects.js", "views/missions.js", "views/knowledge.js",
     "views/corrections.js", "views/diagnostics.js", "views/owner.js", "views/release.js", "views/capabilities.js",
     "views/voice.js", "views/palette.js", "voice/mic.js", "voice/playback.js",

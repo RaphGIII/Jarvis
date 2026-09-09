@@ -201,6 +201,20 @@ main.presence { display: flex; flex-direction: column; min-height: 0; }
 @keyframes blink { to { visibility: hidden; } }
 
 footer.compose { padding: 12px 4px 18px; }
+/* ---- mode bar: AUTO / FREE / SMART / DEEP / BUILD + spend ------------- */
+.modebar { display: flex; align-items: center; gap: 10px; padding: 0 6px 8px; font-size: 11.5px; color: var(--dim); flex-wrap: wrap; }
+.modebar .modes { display: inline-flex; gap: 4px; }
+.modebar .chip { font-size: 10.5px; letter-spacing: .08em; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-soft); background: transparent; color: var(--dim); cursor: pointer; font-family: inherit; transition: color var(--t-micro), border-color var(--t-micro), background var(--t-micro); }
+.modebar .chip:hover { color: #dff2ff; border-color: var(--blue); }
+.modebar .chip.on { color: #0b1220; background: var(--blue); border-color: var(--blue); }
+.modebar .estimate { padding: 2px 9px; border-radius: 999px; border: 1px dashed var(--line); color: var(--text-soft); }
+.modebar .estimate[data-tone="cost"] { color: var(--amber); border-color: var(--amber-deep); }
+.modebar .estimate[data-tone="warn"] { color: var(--red); border-color: var(--red-deep); }
+.modebar .spend { margin-left: auto; display: inline-flex; gap: 7px; align-items: center; font-variant-numeric: tabular-nums; }
+.modebar .spend .mode-now { color: var(--text); letter-spacing: .08em; }
+.modebar .spend .sep { color: var(--faint); }
+.modebar .spend .warn { color: var(--amber); }
+.modebar .spend .dim { color: var(--faint); }
 #app.workspace footer.compose { display: none; }
 .composer { display: flex; gap: 10px; align-items: flex-end; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 12px; transition: border-color var(--t-micro); }
 .composer:focus-within { border-color: #24435c; }
