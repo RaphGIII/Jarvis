@@ -764,3 +764,54 @@ def test_codex_is_ranked_as_a_zero_cost_engineer_but_never_called_as_a_model(tmp
     assert reply.role == "engineer.frontier"
     with pytest.raises(GatewayRefused):
         gateway.complete(GatewayRequest(prompt=text, facts=facts, mode=ChatMode.FREE, purpose="engineer", role="engineer.frontier"))
+
+
+# ---------------------------------------------------------------------------
+# Soft features raise the vector; advisory overrides only annotate
+# ---------------------------------------------------------------------------
+
+def test_semantic_soft_features_raise_thinking_and_never_lower_it(tmp_path, cfg, creds, net):
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    plain, _ = gateway.plan(knowledge("Was ist NAT?"))
+    assert plain.thinking_level == "FREE_LOW"
+    request = knowledge("Was ist NAT?")
+    request.soft = {"reasoning_depth": 0.9}
+    deep, _ = gateway.plan(request)
+    assert deep.thinking_level == "FREE_HIGH"
+    assert deep.task.reasoning_depth == 0.9 and deep.task.provenance["reasoning_depth"] == "semantic"
+    # A caller that does pass ambiguity gets the clarify override -- unless it
+    # has already decided to consult a model (the BrainProvider path).
+    request.soft = {"ambiguity": 0.95}
+    clarify, _ = gateway.plan(request)
+    assert clarify.kind is RouteKind.CLARIFY
+    request.overrides = False
+    advisory, _ = gateway.plan(request)
+    assert advisory.kind is RouteKind.MODEL and advisory.hard_override == "clarify"
+
+
+def test_brain_provider_requests_are_advisory_about_overrides(tmp_path, cfg, creds, net):
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    facts = TaskFacts(text="lösche alle logs", destructive=True)
+    strict, _ = gateway.plan(GatewayRequest(prompt="lösche alle logs", facts=facts))
+    assert strict.kind is RouteKind.AUTHORIZE
+    provider = GatewayBrainProvider(gateway)
+    token = set_context(RequestContext(mode=ChatMode.AUTO, facts=facts))
+    try:
+        text = provider.generate("Fasse zusammen, was der Owner will.")
+    finally:
+        reset_context(token)
+    assert text  # the model was consulted; executing is the caller's decision
+    assert provider.last_decision["hard_override"] == "authorize" and provider.last_decision["kind"] == "model"
+
+
+def test_the_semantic_planner_reads_soft_features_from_the_model():
+    from service.semantic import SemanticPlanner
+
+    class Provider:
+        def generate_structured(self, prompt, schema, **_):
+            assert "features" in schema["properties"]
+            return json.dumps({"operation": "conversation", "target": "", "confidence": 0.9, "reason": "x",
+                               "features": {"reasoning_depth": 0.8, "context_dependency": "0.3", "bogus": 1, "novelty": 7}})
+
+    goal = SemanticPlanner().plan("Erkläre die Frank-Starling-Mechanik", Provider())
+    assert goal is not None and goal.features == {"reasoning_depth": 0.8, "context_dependency": 0.3, "novelty": 1.0}

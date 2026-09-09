@@ -52,6 +52,12 @@ OPERATIONS = (
     "conversation",
 )
 
+#: Soft task features the planner estimates in the same call (0..1 each).
+#: They may only RAISE the routing vector (D_final = max(rule, semantic)) and
+#: decide how much thinking the answer gets; ambiguity is not among them
+#: because the planner already says "clarify" when it is really ambiguous.
+SOFT_FEATURES = ("reasoning_depth", "context_dependency", "long_horizon", "novelty")
+
 GOAL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -60,6 +66,10 @@ GOAL_SCHEMA: dict[str, Any] = {
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "question": {"type": "string"},
         "reason": {"type": "string"},
+        "features": {
+            "type": "object",
+            "properties": {name: {"type": "number", "minimum": 0.0, "maximum": 1.0} for name in SOFT_FEATURES},
+        },
     },
     "required": ["operation", "target", "confidence", "reason"],
 }
@@ -75,11 +85,14 @@ class SemanticGoal:
     question: str = ""
     reason: str = ""
     elapsed_ms: float = 0.0
+    #: The planner's estimate of the soft task features, 0..1 each.
+    features: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {"operation": self.operation, "target": self.target,
                 "confidence": round(self.confidence, 2), "question": self.question,
-                "reason": self.reason, "elapsed_ms": round(self.elapsed_ms, 1)}
+                "reason": self.reason, "elapsed_ms": round(self.elapsed_ms, 1),
+                "features": {k: round(v, 2) for k, v in self.features.items()}}
 
 
 PROMPT = """Du bist die semantische Steuerung von ZEUS, einem lokalen Assistenten auf einem Windows-PC.
@@ -119,6 +132,7 @@ Regeln:
 - Erfinde keine Pfade und keine Ziele. Ist der Ort unbekannt, aber das Ziel klar, wähle das Werkzeug trotzdem - die Ausführung fragt nach dem Ort.
 - confidence ehrlich: über 0.85 nur, wenn die Absicht eindeutig ist.
 - reason: ein kurzer Satz.
+- features: schätze je 0..1 — reasoning_depth (wie viel Denkarbeit eine gute Antwort braucht: Faktenfrage 0.1, Herleitung/Planung 0.7+), context_dependency (wie stark die Anfrage auf Gesprächskontext, Projekte oder Vorheriges Bezug nimmt), long_horizon (mehrere Schritte über längere Zeit), novelty (etwas, das ZEUS so noch nicht kann).
 
 {context}Anfrage: {request}
 JSON:"""
@@ -182,6 +196,15 @@ class SemanticPlanner:
             confidence = max(0.0, min(1.0, float(payload.get("confidence") or 0.0)))
         except (TypeError, ValueError):
             confidence = 0.0
+        features: dict[str, float] = {}
+        raw_features = payload.get("features")
+        if isinstance(raw_features, dict):
+            for name in SOFT_FEATURES:
+                try:
+                    value = float(raw_features.get(name))
+                except (TypeError, ValueError):
+                    continue
+                features[name] = max(0.0, min(1.0, value))
         return SemanticGoal(
             operation=operation,
             target=str(payload.get("target") or "").strip()[:400],
@@ -189,4 +212,5 @@ class SemanticPlanner:
             question=str(payload.get("question") or "").strip()[:300],
             reason=str(payload.get("reason") or "").strip()[:300],
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            features=features,
         )

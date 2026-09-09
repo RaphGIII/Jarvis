@@ -243,7 +243,11 @@ class ModelRouter:
     # -- the decision ---------------------------------------------------------
 
     def decide(self, task: TaskVector, mode: ChatMode | str, privacy: PrivacyDecision | None = None, *, prompt: str,
-               system: str = "", expected_output_tokens: int = 512, task_id: str = "", only_role: str = "") -> RouteDecision:
+               system: str = "", expected_output_tokens: int = 512, task_id: str = "", only_role: str = "",
+               apply_overrides: bool = True) -> RouteDecision:
+        """Route.  With ``apply_overrides=False`` the hard rules only annotate the
+        decision: the caller has already decided that a model is to be consulted
+        (interpretation, summary) and only asks which one."""
         mode = ChatMode.parse(mode)
         tau = task.required_reliability
         if mode is ChatMode.DEEP:
@@ -252,9 +256,11 @@ class ModelRouter:
 
         kind, why = hard_override(task, privacy)
         if kind is not None and not only_role:
-            decision.kind, decision.hard_override, decision.reason = kind, kind.value, why
-            if kind is not RouteKind.MODEL:
-                return decision
+            decision.hard_override = kind.value
+            if apply_overrides:
+                decision.kind, decision.reason = kind, why
+                if kind is not RouteKind.MODEL:
+                    return decision
 
         candidates = self.candidates(task, mode, privacy, prompt=prompt, system=system,
                                      expected_output_tokens=expected_output_tokens, task_id=task_id, only_role=only_role)

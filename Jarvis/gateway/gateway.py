@@ -65,6 +65,9 @@ class RequestContext:
     #: Context chunks beyond the prompt itself (memory, documents ...).
     chunks: list[Chunk] = field(default_factory=list)
     facts: TaskFacts | None = None
+    #: Soft task features a semantic model estimated (reasoning_depth,
+    #: context_dependency, long_horizon, novelty).  Only ever raise the vector.
+    soft: dict[str, float] = field(default_factory=dict)
     language: str = ""
 
 
@@ -106,6 +109,11 @@ class GatewayRequest:
     #: Pin one role (an engineer chosen by the engineering router).  Every
     #: mode, budget and privacy check still applies; only the ranking is skipped.
     role: str = ""
+    #: Semantic soft features, merged as max(rule, semantic).
+    soft: dict[str, float] = field(default_factory=dict)
+    #: False when the caller has already decided a model is to be consulted
+    #: (the BrainProvider path): hard overrides then annotate, never refuse.
+    overrides: bool = True
 
 
 @dataclass
@@ -209,13 +217,14 @@ class ModelGateway:
 
     def task_for(self, request: GatewayRequest) -> TaskVector:
         if request.task_vector is not None:
-            return request.task_vector
+            return request.task_vector.merged_with_semantic(request.soft) if request.soft else request.task_vector
         facts = request.facts or TaskFacts(text=request.prompt)
         if request.purpose == "engineer" and not facts.is_engineering:
             from dataclasses import replace
 
             facts = replace(facts, is_engineering=True)
-        return rule_based(facts)
+        vector = rule_based(facts)
+        return vector.merged_with_semantic(request.soft) if request.soft else vector
 
     def privacy_for(self, request: GatewayRequest, *, provider_may_train: bool) -> PrivacyDecision:
         chunks = [Chunk(text=request.prompt, source="owner_message")] + list(request.chunks)
@@ -231,7 +240,8 @@ class ModelGateway:
         privacy = self.privacy_for(request, provider_may_train=True)
         expected_output = request.max_output_tokens or 512
         decision = self.router.decide(task, mode, privacy, prompt=request.prompt, system=request.system or "",
-                                      expected_output_tokens=expected_output, task_id=request.task_id, only_role=request.role)
+                                      expected_output_tokens=expected_output, task_id=request.task_id, only_role=request.role,
+                                      apply_overrides=request.overrides)
         return decision, privacy
 
     # -- executing ---------------------------------------------------------------------
@@ -489,8 +499,13 @@ class GatewayBrainProvider:
     def _request(self, prompt: str, *, schema: dict[str, Any] | None, max_tokens: int | None, temperature: float | None,
                  system: str | None) -> GatewayRequest:
         context = current_context()
+        # The caller (semantic planner, composer, the conversation) has already
+        # decided to consult a model; the gateway picks which one.  Hard
+        # overrides -- "this is a destructive action", "a capability matches"
+        # -- are about executing, and are decided by the caller, not here.
         return GatewayRequest(prompt=prompt, mode=context.mode, chunks=list(context.chunks), facts=context.facts, schema=schema,
-                              max_output_tokens=max_tokens, temperature=temperature, system=system or "", task_id=context.task_id)
+                              max_output_tokens=max_tokens, temperature=temperature, system=system or "", task_id=context.task_id,
+                              soft=dict(context.soft), overrides=False)
 
     def _run(self, prompt: str, *, schema: dict[str, Any] | None = None, max_tokens: int | None = None,
              temperature: float | None = None, system: str | None = None) -> str:

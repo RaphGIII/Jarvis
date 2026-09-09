@@ -516,6 +516,25 @@ class JarvisCore:
         except Exception:  # noqa: BLE001 - routing facts are best effort
             pass
 
+    def _gateway_soft(self, features: dict[str, float]) -> None:
+        """Soft task features from a semantic model, for this request's later model calls."""
+
+        try:
+            from gateway.gateway import active_context
+
+            context = active_context()
+            if context is None:
+                return
+            for name, value in (features or {}).items():
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if number > float(context.soft.get(name, 0.0)):
+                    context.soft[name] = max(0.0, min(1.0, number))
+        except Exception:  # noqa: BLE001
+            pass
+
     def _gateway_outcome(self, verified: bool, *, failure_class: str = "task_failure", task_id: str = "") -> None:
         """Tell the gateway how this request ended, so routing learns from the world.
 
@@ -1755,6 +1774,11 @@ class JarvisCore:
             self.emit(EventType.TOOL,
                       {"summary": f"semantic goal: {goal.operation} „{goal.target}“ ({goal.confidence:.2f}, {goal.elapsed_ms:.0f}ms)",
                        "goal": goal.to_dict(), "source": "semantic", "text": text[:160]}, scope=scope)
+            # D_final = max(rule, semantic): the planner's reading of depth and
+            # context raises the routing vector for the calls that follow --
+            # the answer itself is where FREE versus DEEP matters.
+            if goal.features:
+                self._gateway_soft(goal.features)
         return goal
 
     def _dispatch_semantic_goal(self, goal: Any, text: str, scope: str, classification: Any) -> bool:
