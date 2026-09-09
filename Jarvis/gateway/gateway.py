@@ -103,6 +103,9 @@ class GatewayRequest:
     task_id: str = ""
     #: Force a role family: "reasoning" or "engineer".  Empty = from the task.
     purpose: str = ""
+    #: Pin one role (an engineer chosen by the engineering router).  Every
+    #: mode, budget and privacy check still applies; only the ranking is skipped.
+    role: str = ""
 
 
 @dataclass
@@ -140,8 +143,16 @@ class ModelGateway:
         local_available: Callable[[str], bool] | None = None,
         opener: Callable[..., Any] | None = None,
         emit: Callable[[str, dict[str, Any]], None] | None = None,
+        cost_policy: Any = None,
+        subscription_available: Callable[[str], bool] | None = None,
     ) -> None:
         self.state_root = Path(state_root)
+        #: The owner's spending policy (runtime.cost_policy).  A CostPolicy, or
+        #: a callable returning one so a change to the owner document is seen
+        #: without a restart.  Default: the repository's own configuration.
+        self._cost_policy = cost_policy
+        #: provider name -> READY, for subscription engineers the expert gateway drives.
+        self._subscription_available = subscription_available or (lambda name: False)
         self.config = config or GatewayConfig.load()
         self.credentials = credentials or CredentialStore(self.state_root / "owner" / "provider_credentials.json")
         self.governor = BudgetGovernor(self.state_root / "gateway" / "spend.jsonl", self.config.budget)
@@ -153,9 +164,7 @@ class ModelGateway:
         #: role -> a local BrainProvider (the kernel's Ollama tier), for local.* roles.
         self._local_provider = local_provider
         self._local_available = local_available or (lambda role: local_provider is not None)
-        self.router = ModelRouter(self.config, self.reliability, self.governor, self.health,
-                                  credential_present=lambda name: self.credentials.has(name),
-                                  local_available=self._local_available)
+        self.router = self._make_router(self.config)
         self._emit = emit or (lambda kind, payload: None)
         self._lock = threading.RLock()
         self.recent: list[dict[str, Any]] = []
@@ -172,9 +181,29 @@ class ModelGateway:
             self.config = config
             self.governor.config = config.budget
             self.reliability = ReliabilityModel(config, self.ledger)
-            self.router = ModelRouter(config, self.reliability, self.governor, self.health,
-                                      credential_present=lambda name: self.credentials.has(name),
-                                      local_available=self._local_available)
+            self.router = self._make_router(config)
+
+    def _make_router(self, config: GatewayConfig) -> ModelRouter:
+        return ModelRouter(config, self.reliability, self.governor, self.health,
+                           credential_present=lambda name: self.credentials.has(name),
+                           local_available=self._local_available,
+                           paid_allowed=lambda: bool(self.cost_policy.allow_paid_api),
+                           subscription_available=self._subscription_available)
+
+    @property
+    def cost_policy(self) -> Any:
+        """The owner's spending policy, read fresh when it was given as a loader."""
+
+        source = self._cost_policy
+        if source is None:
+            from runtime.cost_policy import CostPolicy
+
+            return CostPolicy.load()
+        return source() if callable(source) else source
+
+    def set_subscription_available(self, probe: Callable[[str], bool]) -> None:
+        self._subscription_available = probe
+        self.router = self._make_router(self.config)
 
     # -- planning without calling ---------------------------------------------------
 
@@ -202,7 +231,7 @@ class ModelGateway:
         privacy = self.privacy_for(request, provider_may_train=True)
         expected_output = request.max_output_tokens or 512
         decision = self.router.decide(task, mode, privacy, prompt=request.prompt, system=request.system or "",
-                                      expected_output_tokens=expected_output, task_id=request.task_id)
+                                      expected_output_tokens=expected_output, task_id=request.task_id, only_role=request.role)
         return decision, privacy
 
     # -- executing ---------------------------------------------------------------------
@@ -216,6 +245,9 @@ class ModelGateway:
         provider = self.config.provider_for(decision.role)
         if binding is None or provider is None:
             decision.kind, decision.reason = RouteKind.REFUSED, f"role {decision.role} is not bound"
+            raise GatewayRefused(decision)
+        if not self.config.is_model_role(decision.role):
+            decision.kind, decision.reason = RouteKind.REFUSED, f"{decision.role} is driven by the expert gateway, not called as a model"
             raise GatewayRefused(decision)
 
         # Privacy, now for the provider that will actually receive the request.
@@ -411,6 +443,7 @@ class ModelGateway:
             "modes": {m.value: {"allow_metered": p.allow_metered, "hint_de": p.owner_hint_de, "hint_en": p.owner_hint_en,
                                 "task_cap_eur": p.task_cap_eur} for m, p in MODE_POLICIES.items()},
             "budget": self.config.budget.to_dict(), "config_source": self.config.source,
+            "paid_api_allowed": bool(self.cost_policy.allow_paid_api), "cost_policy_source": str(getattr(self.cost_policy, "source", "")),
             "transport": {"issued": self.transport.issued, "refused": len(self.transport.refused)},
             "recent": list(self.recent[-20:]),
             "pending_outcomes": len(self._pending),

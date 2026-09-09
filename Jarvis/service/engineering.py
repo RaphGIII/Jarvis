@@ -37,6 +37,17 @@ The policy, in full:
 The last rule is the one the old path broke, and it is the reason this module
 returns a decision object rather than a boolean: "we did not do this, and here
 is exactly why" has to survive all the way to the Activity log.
+
+With the model gateway the question gains candidates and a method.  The
+engineering task is a typed vector; every engineer -- Codex (subscription,
+zero marginal cost), ``engineer.standard`` and ``engineer.frontier`` (metered
+API roles) -- has a learned reliability per engineering class; the cheapest
+one predicted to be reliable enough is chosen *before* anything runs.  No
+"try Codex, then Opus, then Fable": a large new subsystem goes to the
+frontier engineer directly.  Metered engineers exist only in BUILD mode,
+only with the owner's spending policy allowing paid billing, and only within
+the budget governor's caps; without those, Codex remains the engineer when
+it is READY, and otherwise the work is queued as before.
 """
 
 from __future__ import annotations
@@ -61,6 +72,9 @@ class Engineer(str, Enum):
     """Who is going to write the code."""
 
     CODEX = "CODEX"
+    #: A metered engineer role behind an API (engineer.standard / engineer.frontier),
+    #: driven by :class:`experts.api_engineer.ApiEngineerExpert`.
+    API = "API"
     #: The local coder. Only ever by explicit owner authorization.
     BUILD_LOCAL = "BUILD_LOCAL"
     #: Nobody, right now. The work is queued and the owner is told.
@@ -79,10 +93,29 @@ class EngineerDecision:
     codex_checked: bool = True
     owner_authorized_local: bool = False
     queued: bool = True
+    #: The gateway role that does the work (engineer.codex / engineer.standard / engineer.frontier).
+    role: str = ""
+    #: The expert-gateway provider name to submit to ("codex" or the role name).
+    provider_name: str = ""
+    task_class: str = ""
+    q: float = 0.0
+    tau: float = 0.0
+    estimated_eur: float = 0.0
+    estimate_range_eur: tuple[float, float] = (0.0, 0.0)
+    mode: str = ""
+    candidates: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def is_codex(self) -> bool:
         return self.engineer is Engineer.CODEX
+
+    @property
+    def is_api(self) -> bool:
+        return self.engineer is Engineer.API
+
+    @property
+    def uses_expert_gateway(self) -> bool:
+        return self.engineer in {Engineer.CODEX, Engineer.API}
 
     @property
     def is_local(self) -> bool:
@@ -103,6 +136,15 @@ class EngineerDecision:
             "owner_authorized_local": self.owner_authorized_local,
             "queued": self.queued,
             "build_local_invocations": 1 if self.is_local else 0,
+            "role": self.role,
+            "provider_name": self.provider_name,
+            "task_class": self.task_class,
+            "q": round(self.q, 4),
+            "tau": round(self.tau, 4),
+            "estimated_eur": round(self.estimated_eur, 4),
+            "estimate_range_eur": [round(self.estimate_range_eur[0], 4), round(self.estimate_range_eur[1], 4)],
+            "mode": self.mode,
+            "candidates": list(self.candidates),
         }
 
     def owner_sentence(self, *, german: bool = True) -> str:
@@ -112,6 +154,15 @@ class EngineerDecision:
             return ("Codex übernimmt das (isolierter Arbeitsbaum, Verifikation, dann Freigabe durch dich)."
                     if german else
                     "Codex is taking this (isolated worktree, verification, then your authorization).")
+        if self.engineer is Engineer.API:
+            low, high = self.estimate_range_eur
+            who = "der Frontier-Engineer" if self.role.endswith("frontier") else "der Standard-Engineer"
+            who_en = "the frontier engineer" if self.role.endswith("frontier") else "the standard engineer"
+            return (f"{who.capitalize()} ({self.role}) übernimmt das – geschätzt €{low:.2f}–€{high:.2f}, "
+                    f"hartes Maximum durch das Budget; isolierter Arbeitsbaum, Verifikation, dann Freigabe durch dich."
+                    if german else
+                    f"{who_en.capitalize()} ({self.role}) is taking this – estimated €{low:.2f}–€{high:.2f}, "
+                    f"hard maximum set by the budget; isolated worktree, verification, then your authorization.")
         if self.engineer is Engineer.BUILD_LOCAL:
             return ("Du hast das lokale Coder-Modell freigegeben — ich baue es lokal."
                     if german else
@@ -128,8 +179,20 @@ def choose_engineer(
     *,
     availability: Any = None,
     owner_authorized_local: bool = False,
+    task: Any = None,
+    gateway: Any = None,
+    mode: Any = None,
+    prompt: str = "",
 ) -> EngineerDecision:
     """The one decision. Codex first, always; BUILD_LOCAL only by authorization.
+
+    With ``task`` (a :class:`gateway.task.TaskVector`) and ``gateway`` (the
+    :class:`gateway.gateway.ModelGateway`) the choice is made the gateway's
+    way: the cheapest engineer whose learned reliability meets the task's
+    requirement, decided before execution.  Codex is that engineer whenever
+    it is READY and reliable enough for the class; a metered engineer is
+    chosen directly when Codex is not predicted to manage it and the mode,
+    the owner's spending policy and the budget allow.
 
     ``availability`` is anything with a ``status()`` returning a
     :class:`~capabilities.codex.CodexAvailability`. It is consulted before
@@ -155,11 +218,18 @@ def choose_engineer(
     else:
         state, detail = "NOT_CONFIGURED", "no Codex availability was wired in"
 
+    if task is not None and gateway is not None:
+        decided = _choose_with_gateway(need, task, gateway, mode=mode, prompt=prompt, codex_ready=ready,
+                                       codex_state=state, codex_detail=detail, codex_checked=checked)
+        if decided is not None:
+            return decided
+
     if ready:
         return EngineerDecision(
             need=need, engineer=Engineer.CODEX,
             reason="Codex is READY and owns engineering work",
             codex_state=state, codex_detail=detail, codex_checked=checked, queued=False,
+            role="engineer.codex", provider_name="codex",
         )
     if owner_authorized_local:
         # The owner asked for it explicitly, knowing Codex is not available.
@@ -175,6 +245,47 @@ def choose_engineer(
         reason=f"Codex is {state} and the local coder is not an automatic fallback",
         codex_state=state, codex_detail=detail, codex_checked=checked, queued=True,
     )
+
+
+def _choose_with_gateway(need: EngineeringNeed, task: Any, gateway: Any, *, mode: Any, prompt: str, codex_ready: bool,
+                         codex_state: str, codex_detail: str, codex_checked: bool) -> EngineerDecision | None:
+    """Rank Codex and the API engineers on reliability and cost; pick before running."""
+
+    from gateway.modes import ChatMode
+    from gateway.router import RouteKind
+
+    chat_mode = ChatMode.parse(mode) if mode is not None else ChatMode.AUTO
+    try:
+        gateway.set_subscription_available(lambda name: codex_ready if name == "codex" else False)
+        decision = gateway.router.decide(task, chat_mode, None, prompt=prompt or task.facts.get("text", "") or "engineering",
+                                         expected_output_tokens=4096)
+    except Exception:  # noqa: BLE001 - a gateway that cannot answer leaves the classic rule in charge
+        return None
+    candidates = [c.to_dict() for c in decision.candidates]
+    common = dict(need=need, codex_state=codex_state, codex_detail=codex_detail, codex_checked=codex_checked,
+                  task_class=task.task_class.value, tau=decision.tau, mode=chat_mode.value, candidates=candidates)
+    if decision.kind is RouteKind.MODEL and decision.role:
+        estimate = decision.estimate
+        low, high = estimate.range_eur() if estimate else (0.0, 0.0)
+        if decision.role == "engineer.codex":
+            reason = (f"Codex is READY and {decision.reason}" if decision.meets_threshold else
+                      f"Codex is READY; no engineer met the reliability bar for {task.task_class.value} "
+                      f"(q={decision.q:.2f} < tau={decision.tau:.2f}) and no metered engineer is permitted in {chat_mode.value}")
+            return EngineerDecision(engineer=Engineer.CODEX, reason=reason, queued=False,
+                                    role="engineer.codex", provider_name="codex", q=decision.q, **common)
+        return EngineerDecision(engineer=Engineer.API, reason=decision.reason, queued=False, role=decision.role,
+                                provider_name=decision.role, q=decision.q, estimated_eur=estimate.estimated_eur if estimate else 0.0,
+                                estimate_range_eur=(low, high), **common)
+    # Nothing met the bar or nothing was permitted.  Codex, when READY, still
+    # does zero-cost work the owner asked for -- said plainly as "best
+    # available", never as "reliable enough".
+    if codex_ready:
+        codex = next((c for c in candidates if c["role"] == "engineer.codex"), None)
+        return EngineerDecision(engineer=Engineer.CODEX, queued=False, role="engineer.codex", provider_name="codex",
+                                q=float(codex["q"]) if codex else 0.0,
+                                reason=("Codex is READY; no engineer met the reliability bar and no metered engineer is permitted "
+                                        f"({decision.reason[:160]})"), **common)
+    return None
 
 
 def default_availability(gateway: Any = None) -> Any:

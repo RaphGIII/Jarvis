@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from enum import Enum
 
 
+# ``engineer.codex`` -- the subscription CLI engineer -- costs nothing per
+# request and is permitted in every mode, as it always was; the metered
+# engineer roles need BUILD.
+
+
 class ChatMode(str, Enum):
     #: ZEUS chooses the cheapest route predicted to satisfy the task reliably.
     AUTO = "AUTO"
@@ -74,33 +79,33 @@ class ModePolicy:
 MODE_POLICIES: dict[ChatMode, ModePolicy] = {
     ChatMode.FREE: ModePolicy(
         ChatMode.FREE, allow_metered=False,
-        roles=("local.*", "reasoning.free"),
+        roles=("local.*", "reasoning.free", "engineer.codex"),
         task_cap_eur=0.0,
         owner_hint_de="FREE: nur lokale und kostenlose Wege; bezahlte Anbieter sind technisch gesperrt.",
         owner_hint_en="FREE: local and zero-cost routes only; paid providers are technically blocked.",
     ),
     ChatMode.AUTO: ModePolicy(
         ChatMode.AUTO, allow_metered=True,
-        roles=("local.*", "reasoning.free", "reasoning.deep"),
+        roles=("local.*", "reasoning.free", "reasoning.deep", "engineer.codex"),
         owner_hint_de="AUTO: der günstigste Weg, der die Aufgabe voraussichtlich zuverlässig löst.",
         owner_hint_en="AUTO: the cheapest route predicted to solve the task reliably.",
     ),
     ChatMode.SMART: ModePolicy(
         ChatMode.SMART, allow_metered=True,
-        roles=("local.*", "reasoning.free", "reasoning.deep"),
+        roles=("local.*", "reasoning.free", "reasoning.deep", "engineer.codex"),
         task_cap_eur=0.50,
         owner_hint_de="SMART: günstiges Cloud-Denken innerhalb des Budgets.",
         owner_hint_en="SMART: inexpensive cloud reasoning within budget.",
     ),
     ChatMode.DEEP: ModePolicy(
         ChatMode.DEEP, allow_metered=True,
-        roles=("local.*", "reasoning.free", "reasoning.deep"),
+        roles=("local.*", "reasoning.free", "reasoning.deep", "engineer.codex"),
         owner_hint_de="DEEP: das stärkste konfigurierte Denkmodell, wenn die Aufgabe es braucht.",
         owner_hint_en="DEEP: the strongest configured reasoning model when the task needs it.",
     ),
     ChatMode.BUILD: ModePolicy(
         ChatMode.BUILD, allow_metered=True,
-        roles=("local.*", "reasoning.free", "reasoning.deep", "engineer.standard", "engineer.frontier"),
+        roles=("local.*", "reasoning.free", "reasoning.deep", "engineer.codex", "engineer.standard", "engineer.frontier"),
         owner_hint_de="BUILD: Engineering-Modus zum Erstellen und Reparieren von Fähigkeiten.",
         owner_hint_en="BUILD: engineering mode for creating and repairing capabilities.",
     ),

@@ -318,7 +318,15 @@ class JarvisCore:
             from experts.codex import CodexExpert
             from experts.gateway import ExpertGateway
 
-            self._expert_gateway = ExpertGateway([CodexExpert()])
+            providers: list[Any] = [CodexExpert()]
+            try:
+                from experts.api_engineer import ApiEngineerExpert
+
+                gateway = self.model_gateway
+                providers += [ApiEngineerExpert(gateway, "engineer.standard"), ApiEngineerExpert(gateway, "engineer.frontier")]
+            except Exception as exc:  # noqa: BLE001 - no model gateway, no API engineers; Codex still works
+                self.emit(EventType.DIAGNOSTIC, {"warming": f"API engineers unavailable: {exc}"[:200]})
+            self._expert_gateway = ExpertGateway(providers)
         return self._expert_gateway
 
     # ------------------------------------------------------------------
@@ -4757,7 +4765,7 @@ class JarvisCore:
             )
             return
 
-        mission = SelfDevMission(request=text, scope=scope, language=self.language)
+        mission = SelfDevMission(request=text, scope=scope, language=self.language, chat_mode=self.chat_mode.value)
         if classification is not None and getattr(classification, "route", None) is not None:
             mission.routing = classification.route.to_dict()
         self.selfdev_store.save(mission)
@@ -4772,10 +4780,18 @@ class JarvisCore:
         # decision, and announce that promotion needs the owner.
         from service.engineering import EngineeringNeed, choose_engineer, owner_authorized_local_build
 
+        try:
+            from gateway.task import TaskFacts, rule_based
+
+            coarse_task = rule_based(TaskFacts(text=text, is_engineering=True, estimated_files_changed=1))
+            model_gateway = self.model_gateway
+        except Exception:  # noqa: BLE001 - the classic rule still decides
+            coarse_task, model_gateway = None, None
         decision = choose_engineer(
             EngineeringNeed.CORE_ENGINEERING,
             availability=self.codex_availability,
             owner_authorized_local=owner_authorized_local_build(text),
+            task=coarse_task, gateway=model_gateway, mode=self.chat_mode, prompt=text,
         )
         self.emit(EventType.TOOL,
                   {"summary": (f"engineering routing: {decision.engineer.value} — {decision.reason}"),
@@ -7690,7 +7706,8 @@ class JarvisCore:
     def providers_status(self) -> dict[str, Any]:
         status = self.model_gateway.status()
         return {"ok": True, "providers": status["providers"], "roles": status["roles"], "credentials": status["credentials"],
-                "budget": status["budget"], "spend": status["spend"], "config_source": status["config_source"]}
+                "budget": status["budget"], "spend": status["spend"], "config_source": status["config_source"],
+                "paid_api_allowed": status.get("paid_api_allowed", False), "cost_policy_source": status.get("cost_policy_source", "")}
 
     def provider_set_credential(self, name: str, value: str, *, authorization: str = "") -> dict[str, Any]:
         """Store a provider API key.  Owner-authorized (CREDENTIALS); the value is never echoed."""

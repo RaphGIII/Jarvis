@@ -53,6 +53,9 @@ def world(tmp_path: Path, monkeypatch):
     config_root.mkdir()
     cfg = GatewayConfig.defaults().with_provider_enabled("gemini", True).with_provider_enabled("openai", True)
     cfg.save(config_root / "providers.json")
+    # The owner has enabled metered billing through their spending document.
+    (config_root / "owner").mkdir()
+    (config_root / "owner" / "spending.json").write_text(json.dumps({"paid_api": True}), encoding="utf-8")
 
     kernel = JarvisKernel(KernelConfig(state_root=tmp_path / "state", config_root=config_root, enable_research_tools=False))
     kernel.local_provider = lambda tier: local  # type: ignore[assignment]

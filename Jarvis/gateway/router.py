@@ -155,6 +155,8 @@ class ModelRouter:
         *,
         credential_present=None,
         local_available=None,
+        paid_allowed=None,
+        subscription_available=None,
     ) -> None:
         self.config = config
         self.reliability = reliability
@@ -164,22 +166,33 @@ class ModelRouter:
         self._credential_present = credential_present or (lambda name: False)
         #: role -> bool; whether the local tier behind a local role is usable.
         self._local_available = local_available or (lambda role: True)
+        #: Whether the owner's spending policy permits metered API billing at all.
+        self._paid_allowed = paid_allowed or (lambda: False)
+        #: provider name -> bool; whether a subscription engineer (Codex) is READY.
+        self._subscription_available = subscription_available or (lambda name: False)
 
     # -- candidates -----------------------------------------------------------
 
     def _families_for(self, task: TaskVector, mode: ChatMode) -> set[RoleFamily]:
         engineering = task.task_class in {TaskClass.ENGINEERING_SMALL, TaskClass.ENGINEERING_MEDIUM, TaskClass.ENGINEERING_LARGE}
         if engineering:
-            return {RoleFamily.ENGINEER, RoleFamily.LOCAL} if mode is ChatMode.BUILD else {RoleFamily.LOCAL}
+            # Which engineer roles a mode permits is the mode policy's call
+            # (metered engineers need BUILD; the subscription engineer is free
+            # in every mode); the family is the same everywhere.
+            return {RoleFamily.ENGINEER, RoleFamily.LOCAL}
         return {RoleFamily.REASONING, RoleFamily.LOCAL}
 
     def candidates(self, task: TaskVector, mode: ChatMode, privacy: PrivacyDecision | None, *, prompt: str,
-                   system: str = "", expected_output_tokens: int = 512, task_id: str = "") -> list[Candidate]:
+                   system: str = "", expected_output_tokens: int = 512, task_id: str = "",
+                   only_role: str = "") -> list[Candidate]:
         policy = policy_for(mode)
         families = self._families_for(task, mode)
         out: list[Candidate] = []
+        paid_allowed = bool(self._paid_allowed())
         for role, binding in self.config.roles.items():
-            if binding.family not in families:
+            if only_role and role != only_role:
+                continue
+            if binding.family not in families and not only_role:
                 continue
             if binding.family is RoleFamily.LOCAL and (role == "local.build") != (RoleFamily.ENGINEER in families):
                 continue
@@ -202,6 +215,10 @@ class ModelRouter:
                 candidate.eligible, candidate.reason = False, f"mode {mode.value} does not permit {role}"
             elif cost_class is CostClass.METERED and not policy.allow_metered:
                 candidate.eligible, candidate.reason = False, f"mode {mode.value} forbids metered routes"
+            elif cost_class is CostClass.METERED and not paid_allowed:
+                candidate.eligible, candidate.reason = False, "paid API billing is disabled by the owner spending policy"
+            elif provider.kind == "subscription_cli" and not self._subscription_available(provider.name):
+                candidate.eligible, candidate.reason = False, f"{provider.name} is not available"
             elif cost_class is CostClass.METERED and pricing is None:
                 candidate.eligible, candidate.reason = False, "metered role without a price cannot be estimated"
             elif provider.secret and not self._credential_present(provider.name):
@@ -226,7 +243,7 @@ class ModelRouter:
     # -- the decision ---------------------------------------------------------
 
     def decide(self, task: TaskVector, mode: ChatMode | str, privacy: PrivacyDecision | None = None, *, prompt: str,
-               system: str = "", expected_output_tokens: int = 512, task_id: str = "") -> RouteDecision:
+               system: str = "", expected_output_tokens: int = 512, task_id: str = "", only_role: str = "") -> RouteDecision:
         mode = ChatMode.parse(mode)
         tau = task.required_reliability
         if mode is ChatMode.DEEP:
@@ -234,13 +251,13 @@ class ModelRouter:
         decision = RouteDecision(kind=RouteKind.MODEL, mode=mode, task=task, tau=tau)
 
         kind, why = hard_override(task, privacy)
-        if kind is not None:
+        if kind is not None and not only_role:
             decision.kind, decision.hard_override, decision.reason = kind, kind.value, why
             if kind is not RouteKind.MODEL:
                 return decision
 
         candidates = self.candidates(task, mode, privacy, prompt=prompt, system=system,
-                                     expected_output_tokens=expected_output_tokens, task_id=task_id)
+                                     expected_output_tokens=expected_output_tokens, task_id=task_id, only_role=only_role)
         decision.candidates = candidates
         eligible = [c for c in candidates if c.eligible]
         if not eligible:
@@ -279,6 +296,8 @@ class ModelRouter:
         reasons = " ".join(c.reason for c in candidates)
         if mode is ChatMode.FREE and ("metered" in reasons or "does not permit" in reasons):
             return "This needs SMART, DEEP or BUILD. Switch the chat mode to allow a paid route."
+        if "owner spending policy" in reasons:
+            return "Paid API billing is off. Enable paid_api in Owner Settings > Spending (an owner transaction) to allow it."
         if "no credential" in reasons:
             return "Enter a provider API key under Owner Settings > Providers."
         if "budget" in reasons:

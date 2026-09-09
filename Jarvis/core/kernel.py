@@ -216,10 +216,14 @@ class JarvisKernel:
                 except Exception:  # noqa: BLE001
                     return False
 
+            from runtime.cost_policy import CostPolicy
+
             config_path = Path(self.config_root) / "providers.json"
             config = GatewayConfig.load(config_path) if config_path.is_file() else GatewayConfig.defaults()
+            config_root = Path(self.config_root)
             self._gateway = ModelGateway(state_root=self.state_root, config=config,
-                                         local_provider=local_for_role, local_available=local_available)
+                                         local_provider=local_for_role, local_available=local_available,
+                                         cost_policy=lambda: CostPolicy.load(config_dir=config_root))
         return self._gateway
 
     def engine(self, *, tier: ModelTier = ModelTier.BUILD_LOCAL, hooks: EngineHooks | None = None) -> ProjectEngine:

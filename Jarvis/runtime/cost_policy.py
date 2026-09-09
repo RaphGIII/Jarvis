@@ -228,7 +228,12 @@ class CostPolicy:
 
     @classmethod
     def load(cls, *, config_dir: str | Path | None = None, environ: dict[str, str] | None = None) -> "CostPolicy":
-        """Defaults, then the config file, then the environment.
+        """Defaults, then the config file, then the owner's spending document, then the environment.
+
+        ``config/owner/spending.json`` is the owner's word on what may be
+        billed (``paid_api``, ``usage_credits``, ``cloud_gpu`` ...), written
+        only through an owner transaction.  It outranks ``cost_policy.json``:
+        the owner's document is the decision, the file is machine setup.
 
         The environment can only be *read* for explicit policy switches --
         ``JARVIS_ALLOW_PAID_API`` and friends.  It is never consulted for
@@ -256,6 +261,22 @@ class CostPolicy:
                     policy = replace(policy, **fields)
                     source = str(path)
 
+        owner_path = Path(config_dir or _default_config_dir()) / "owner" / "spending.json"
+        if owner_path.is_file():
+            try:
+                owner_data = json.loads(owner_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                owner_data = {}
+            if isinstance(owner_data, dict):
+                owner_fields = {
+                    field_name: bool(owner_data[key])
+                    for key, field_name in _OWNER_SPENDING_KEYS.items()
+                    if key in owner_data and isinstance(owner_data[key], (bool, int))
+                }
+                if owner_fields:
+                    policy = replace(policy, **owner_fields)
+                    source = f"{source}+owner" if source != "defaults" else "owner"
+
         env = os.environ if environ is None else environ
         overrides: dict[str, bool] = {}
         for name in _BOOLEAN_FIELDS:
@@ -268,6 +289,16 @@ class CostPolicy:
 
         return replace(policy, source=source)
 
+
+#: config/owner/spending.json key -> policy field.
+_OWNER_SPENDING_KEYS = {
+    "local_model": "allow_local_models",
+    "subscription_cli": "allow_subscription_cli",
+    "paid_api": "allow_paid_api",
+    "usage_credits": "allow_usage_credits",
+    "cloud_gpu": "allow_runpod",
+    "browser_ai_automation": "allow_browser_automation_for_ai_chat",
+}
 
 _BOOLEAN_FIELDS = (
     "allow_local_models",

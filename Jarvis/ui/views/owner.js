@@ -354,6 +354,11 @@ export async function providersPanel(reload) {
   box.append(el("div", { class: "meta" },
     badge(`Monat ${eur(spend.month)} / ${eur(spend.monthly_hard_cap)}`, Number(spend.month) >= Number(spend.monthly_hard_cap) * 0.9 ? "warn" : "ok"),
     el("span", { text: ` heute ${eur(spend.day)} / ${eur(spend.daily_hard_cap)} · pro Aufgabe max. ${eur(spend.per_task_hard_cap)} · Denken ${eur(spend.reasoning_month)} / ${eur(spend.reasoning_hard_cap)} · Engineering ${eur(spend.engineering_month)} / ${eur(spend.engineering_hard_cap)}` })));
+  box.append(el("div", { class: "meta" },
+    badge(data.paid_api_allowed ? "BEZAHLTE API FREIGEGEBEN" : "BEZAHLTE API GESPERRT", data.paid_api_allowed ? "warn" : "dim"),
+    el("span", { text: data.paid_api_allowed
+      ? " Der Owner hat paid_api im Spending-Dokument freigegeben; das Monatslimit begrenzt die Ausgaben."
+      : " paid_api ist im Spending-Dokument aus: SMART/DEEP/BUILD können nur kostenlose Wege nutzen. Freigabe über das Dokument „spending“ unten (Owner-Transaktion)." })));
   box.append(el("div", { class: "kv" }, el("span", { class: "k", text: "Regel" }),
     el("span", { class: "v", text: "Kein bezahlter Aufruf ohne Reservierung gegen das Monatslimit. FREE sperrt bezahlte Anbieter technisch. Private Inhalte gehen nie an Anbieter, die mit Anfragen trainieren dürfen." })));
 

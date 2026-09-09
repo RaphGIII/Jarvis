@@ -130,10 +130,17 @@ def net() -> FakeNetwork:
     return network
 
 
-def make_gateway(tmp_path: Path, cfg: GatewayConfig, creds: CredentialStore, net: FakeNetwork, *, local: LocalStub | None = None) -> ModelGateway:
+def make_gateway(tmp_path: Path, cfg: GatewayConfig, creds: CredentialStore, net: FakeNetwork, *, local: LocalStub | None = None,
+                 paid_api: bool = True) -> ModelGateway:
+    from runtime.cost_policy import CostPolicy
+
+    # The owner has enabled metered billing (an owner transaction in the
+    # product); without it every metered route is ineligible -- see the test
+    # for exactly that.
     return ModelGateway(state_root=tmp_path / "state", config=cfg, credentials=creds, opener=net,
                         local_provider=(lambda role: local) if local else None,
-                        local_available=(lambda role: local is not None))
+                        local_available=(lambda role: local is not None),
+                        cost_policy=CostPolicy(allow_paid_api=paid_api, source="test"))
 
 
 def knowledge(text: str = "Was ist Beta-Oxidation?") -> GatewayRequest:
@@ -710,3 +717,50 @@ def test_unjudged_tasks_are_forgotten_not_counted(tmp_path, cfg, creds, net):
         gateway.complete(request)
     assert gateway.status()["pending_outcomes"] == 200
     assert gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE).observations == 0
+
+
+# ---------------------------------------------------------------------------
+# The owner's spending document outranks everything below it
+# ---------------------------------------------------------------------------
+
+def test_without_the_owner_enabling_paid_api_no_metered_route_exists(tmp_path, cfg, creds, net):
+    gateway = make_gateway(tmp_path, cfg.with_provider_enabled("gemini", False), creds, net, paid_api=False)
+    text = "Plane für mich die nächsten sechs Wochen Lernplan " * 8
+    with pytest.raises(GatewayRefused) as info:
+        gateway.complete(GatewayRequest(prompt=text, facts=TaskFacts(text=text), mode=ChatMode.DEEP))
+    assert "owner spending policy" in info.value.decision.reason
+    assert "Owner Settings" in info.value.decision.suggestion
+    assert net.requests == []
+    assert gateway.status()["paid_api_allowed"] is False
+
+
+def test_the_cost_policy_reads_the_owner_spending_document(tmp_path):
+    from runtime.cost_policy import CostPolicy
+
+    config_dir = tmp_path / "config"
+    (config_dir / "owner").mkdir(parents=True)
+    assert CostPolicy.load(config_dir=config_dir, environ={}).allow_paid_api is False
+    (config_dir / "owner" / "spending.json").write_text(json.dumps({"paid_api": True, "cloud_gpu": False}), encoding="utf-8")
+    policy = CostPolicy.load(config_dir=config_dir, environ={})
+    assert policy.allow_paid_api is True and policy.allow_runpod is False and "owner" in policy.source
+    # The owner's document outranks the machine file.
+    (config_dir / "cost_policy.json").write_text(json.dumps({"allow_paid_api": False}), encoding="utf-8")
+    assert CostPolicy.load(config_dir=config_dir, environ={}).allow_paid_api is True
+
+
+def test_codex_is_ranked_as_a_zero_cost_engineer_but_never_called_as_a_model(tmp_path, cfg, creds, net):
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    gateway.set_subscription_available(lambda name: name == "codex")
+    text = "Korrigiere den Tippfehler in der Fehlermeldung"
+    facts = TaskFacts(text=text, is_engineering=True, estimated_files_changed=1)
+    decision, _ = gateway.plan(GatewayRequest(prompt=text, facts=facts, mode=ChatMode.BUILD, purpose="engineer"))
+    assert decision.role == "engineer.codex" and decision.cost_class is CostClass.ZERO
+    with pytest.raises(GatewayRefused) as info:
+        gateway.complete(GatewayRequest(prompt=text, facts=facts, mode=ChatMode.BUILD, purpose="engineer"))
+    assert "expert gateway" in info.value.decision.reason
+    assert net.requests == []
+    # Pinning the frontier role skips the ranking but keeps every gate.
+    reply = gateway.complete(GatewayRequest(prompt=text, facts=facts, mode=ChatMode.BUILD, purpose="engineer", role="engineer.frontier"))
+    assert reply.role == "engineer.frontier"
+    with pytest.raises(GatewayRefused):
+        gateway.complete(GatewayRequest(prompt=text, facts=facts, mode=ChatMode.FREE, purpose="engineer", role="engineer.frontier"))

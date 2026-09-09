@@ -41,6 +41,19 @@
       "secret": "anthropic",
       "timeout_seconds": 600.0
     },
+    "codex": {
+      "base_url": "",
+      "enabled": true,
+      "kind": "subscription_cli",
+      "may_train_on_requests": false,
+      "metered": false,
+      "monthly_cap_eur": null,
+      "name": "codex",
+      "options": {},
+      "pricing": {},
+      "secret": "",
+      "timeout_seconds": 120.0
+    },
     "gemini": {
       "base_url": "https://generativelanguage.googleapis.com",
       "enabled": false,
@@ -97,6 +110,31 @@
   },
   "risk_aversion": 1.0,
   "roles": {
+    "engineer.codex": {
+      "enabled": true,
+      "max_output_tokens": 2048,
+      "model": "codex-cli",
+      "offline_fallback": false,
+      "provider": "codex",
+      "reliability_prior": {
+        "engineering.large": [
+          2.0,
+          4.0
+        ],
+        "engineering.medium": [
+          6.0,
+          2.0
+        ],
+        "engineering.small": [
+          7.0,
+          1.0
+        ]
+      },
+      "role": "engineer.codex",
+      "temperature": 0.3,
+      "thinking": {},
+      "tier": ""
+    },
     "engineer.frontier": {
       "enabled": true,
       "max_output_tokens": 16384,

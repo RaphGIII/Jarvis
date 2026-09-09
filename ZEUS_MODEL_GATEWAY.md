@@ -51,14 +51,22 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 4. **Private Inhalte gehen nie an trainierende Provider.** Owner-Nachricht mit IBAN/Befund/Passwort schließt die Free-Lane komplett.
 5. **ZEUS bleibt ZEUS.** Identitätsklausel im System-Prompt plus Ausgabe-Guard; Provider nur in Diagnostics.
 
+## Sprint 2 (gleicher Tag): Outcomes, Engineering-Router, Owner-Kostenpolitik
+
+- **Goal-Verification als Lernsignal.** Jede Gateway-Antwort hängt an ihrer Request-ID, bis die Welt geprüft wurde: Receipt einer Projektoperation, `GOAL_SATISFIED` einer Komposition, Verifikation einer Fähigkeit/Aktion, oder der Daumen des Owners auf eine Konversationsantwort (`/api/feedback`). Erst dann bewegt sich die Zuverlässigkeitsschätzung. Nie beurteilte Antworten werden vergessen, nicht als Erfolg gezählt.
+- **Owner-Spending-Dokument ist die Kostenpolitik.** `CostPolicy.load()` liest `config/owner/spending.json` (`paid_api`, `usage_credits`, `cloud_gpu` …) über `cost_policy.json`. Der Router lässt metered Routen nur zu, wenn `paid_api` freigegeben ist. Heute ist es aus: SMART/DEEP/BUILD nutzen bis zur Owner-Transaktion nur kostenlose Wege, und die UI sagt das.
+- **Engineering-Router auf Gateway-Rollen.** `engineer.codex` (Subscription, €0), `engineer.standard`, `engineer.frontier` werden auf gelernter Zuverlässigkeit je Engineering-Klasse und Kosten gerankt, *vor* der Ausführung. Kleine Änderung → Codex; großes neues Subsystem → direkt Frontier (nur in BUILD, nur mit freigegebener bezahlter API, nur im Budget). Sonst Codex als „best available“ mit ehrlicher Begründung, oder die Warteschlange.
+- **API-Engineer** (`experts/api_engineer.py`): Brief plus relevante Dateien an die gewählte Rolle, Unified Diff zurück, `git apply` im Kandidaten-Worktree, eine Reparaturrunde, dann die unabhängige Verifikation des Expert-Gateways. Als `explicit_only` markiert: das Expert-Gateway iteriert nie von einem nicht verfügbaren Codex zu einem bezahlten Engineer.
+- **SelfDev** trägt den Chat-Modus der Anfrage (`mission.chat_mode`), baut den Engineering-Task-Vektor aus den INVESTIGATE-Fakten und reicht den Job an den benannten Provider.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:
 
 - **§9 Semantic World Model, §10 Capability Semantic Contract, §11 Capability Graph/Komposition** — nicht begonnen. Der Router hat einen `COMPOSE`-Override, aber keine Effekt/Vorbedingungs-Suche über existierende Fähigkeiten.
-- **§12/§13 Engineering Router** — das Gateway hat `engineer.standard`/`engineer.frontier` mit Auswahl nach Aufgabenklasse (getestet), aber `service/engineering.py` und `service/selfdev.py` sind noch nicht auf diese Rollen umgestellt. Codex bleibt der Engineer. Es gibt noch keine `EngineeringSpec`.
+- **§12/§13 Engineering Router** — umgestellt (Sprint 2). Offen: eine strukturierte `EngineeringSpec` und ein „Start build“-Dialog mit Schätzung *vor* dem Spending; heute begrenzen BUILD-Modus, Owner-Spending-Freigabe und die Caps das Ausgeben. Der API-Engineer arbeitet als Diff-Generator mit einer Reparaturrunde, nicht als mehrstufiger Agent mit Werkzeugen.
 - **§7 weiche Features** — `merged_with_semantic()` existiert; noch kein Modellaufruf schätzt Ambiguität/Tiefe. Heute nur Regeln.
-- **§20 Goal Verification als Lernsignal** — `report_outcome(goal_verified=…)` existiert; die Konversations- und Aktionspfade rufen es noch nicht auf. Das Lernmodell lernt bisher nur dort, wo ein Aufrufer berichtet.
+- **§20 Goal Verification als Lernsignal** — verdrahtet (Sprint 2) für Projektoperationen, Kompositionen, Fähigkeiten, Aktionen und Owner-Feedback. Konversationsantworten ohne Feedback bleiben unbeurteilt.
 - **Preise** — die Werte in `config/providers.json` sind unbestätigte Platzhalter (`confirmed: false`); die UI sagt das dazu. Der Owner muss sie gegen die Preislisten prüfen.
 - **Kein echter Provider-Aufruf** ist bisher erfolgt (keine Schlüssel hinterlegt). Die Adapter sind gegen die dokumentierten Antwortformen getestet, nicht gegen den Live-Dienst. Gemini-`thinkingBudget` und OpenAI-`max_completion_tokens`/`reasoning_effort` sind nach Doku, nicht live verifiziert.
 - **Threadsicherheit der Reservierungen** ist per RLock gegeben; zwei ZEUS-Prozesse über *ein* Ledger sind nicht abgesichert (bekannte Falle, siehe Registry).

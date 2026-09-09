@@ -210,10 +210,14 @@ class ExpertGateway:
     def submit(self, job: ExpertJob, *, provider_name: str = "") -> ExpertResult:
         """Run a job through the first usable provider, then verify it."""
 
+        # A provider marked ``explicit_only`` (the metered API engineers) runs
+        # only when the engineering router named it.  Iterating into it because
+        # Codex was unavailable would be exactly the paid fallback cascade the
+        # cost policy exists to prevent.
         candidates = [
             provider
             for provider in self.providers
-            if not provider_name or provider.name == provider_name
+            if ((provider.name == provider_name) if provider_name else not getattr(provider, "explicit_only", False))
         ]
         if not candidates:
             return ExpertResult(

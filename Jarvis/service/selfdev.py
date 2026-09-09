@@ -98,6 +98,9 @@ class SelfDevMission:
     #: Acceptance: human-readable criteria and the commands that decide them.
     acceptance: list[dict[str, Any]] = field(default_factory=list)
     area: str = "code"  # ui | code
+    #: The owner's chat mode when the mission was asked for.  BUILD is what
+    #: permits a metered engineer; anything else keeps Codex and the queue.
+    chat_mode: str = "AUTO"
     #: What INVESTIGATE found: files and why.
     investigation: dict[str, Any] = field(default_factory=dict)
     worktree: str = ""
@@ -453,9 +456,9 @@ class SelfDevRunner:
             if not decision.proceeds:
                 return self._queue(mission, decision)
 
-            if decision.is_codex:
+            if decision.uses_expert_gateway:
                 self._prepare_workspace(mission)
-                self.set_state(JarvisState.CODING, detail="Codex is developing the change", scope=mission.scope)
+                self.set_state(JarvisState.CODING, detail=f"{decision.role or 'Codex'} is developing the change", scope=mission.scope)
                 self._timed(mission, "escalate", lambda: self._escalate(mission))
                 self._audit(mission, "ESCALATE")
                 self.set_state(JarvisState.VERIFYING, detail="verifying the engineer's work", scope=mission.scope)
@@ -832,7 +835,31 @@ class SelfDevRunner:
             EngineeringNeed.CORE_ENGINEERING,
             availability=self.availability,
             owner_authorized_local=owner_authorized_local_build(mission.request),
+            task=self._engineering_task(mission),
+            gateway=self._model_gateway(),
+            mode=mission.chat_mode,
+            prompt=mission.request,
         )
+
+    def _model_gateway(self) -> Any:
+        gateway = getattr(self.kernel, "gateway", None)
+        return gateway if gateway is not None and hasattr(gateway, "router") else None
+
+    def _engineering_task(self, mission: SelfDevMission) -> Any:
+        """The engineering task vector from what INVESTIGATE established -- ZEUS's facts, not a guess."""
+
+        from gateway.task import TaskFacts, rule_based
+
+        files = [str(f) for f in mission.investigation.get("files", [])]
+        subsystems = {Path(f).parts[0] for f in files if Path(f).parts}
+        words = len(mission.request.split())
+        text = mission.request.lower()
+        new_subsystem = len(subsystems) >= 4 or words > 70 or any(
+            marker in text for marker in ("neues subsystem", "new subsystem", "neues projekt", "bildschirm", "screen", "beobachte"))
+        facts = TaskFacts(text=mission.request, is_engineering=True, estimated_files_changed=max(1, len(files)),
+                          subsystems=len(subsystems), new_subsystem=new_subsystem,
+                          needs_screen=any(m in text for m in ("bildschirm", "screen")))
+        return rule_based(facts)
 
     def _prepare_workspace(self, mission: SelfDevMission) -> Any:
         """The isolation boundary, created before an engineer is handed anything.
@@ -1271,17 +1298,25 @@ class SelfDevRunner:
             acceptance=[(item["criterion"], list(item["command"])) for item in mission.acceptance],
             previous_failures=[f for f in failures if f][-4:],
             max_seconds=1500.0,
+            metadata={"files": list(mission.investigation.get("files", [])), "tests": list(mission.investigation.get("tests", [])),
+                      "mission_id": mission.mission_id, "task_id": mission.mission_id},
         )
-        self._phase(mission, "ESCALATE", f"submitting to {status.get('provider', 'expert')}")
+        # The engineer the router chose, by name.  Codex is "codex"; a metered
+        # role is submitted to its own expert (experts.api_engineer).
+        provider_name = str((mission.engineering or {}).get("provider_name") or "")
+        self._phase(mission, "ESCALATE", f"submitting to {provider_name or status.get('provider', 'expert')}")
         started = time.monotonic()
-        result = self.gateway.submit(job)
+        result = self.gateway.submit(job, provider_name=provider_name)
         mission.changed_files = self._changed_files(mission.worktree)
+        raw = getattr(result, "raw", None) or {}
         mission.expert = {
             "status": str(getattr(getattr(result, "status", None), "value", getattr(result, "status", ""))),
             "verified": bool(getattr(result, "verified", False)),
             "seconds": round(time.monotonic() - started, 1),
             "provider": str(getattr(result, "provider", "")),
             "summary": str(getattr(result, "summary", ""))[:500],
+            "blocker": str(getattr(result, "blocker", ""))[:300],
+            "cost_eur": float(raw.get("cost_eur", 0.0) or 0.0) if isinstance(raw, dict) else 0.0,
         }
         self._phase(mission, "ESCALATE", f"expert {mission.expert['status']} in {mission.expert['seconds']}s; "
                                          f"{len(mission.changed_files)} changed files")

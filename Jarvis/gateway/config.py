@@ -32,13 +32,18 @@ ROLE_NAMES: tuple[str, ...] = (
     "reasoning.deep",
     "engineer.standard",
     "engineer.frontier",
+    "engineer.codex",
     "speech.stt",
     "speech.tts",
     "local.fast",
     "local.build",
 )
 
-PROVIDER_KINDS: tuple[str, ...] = ("gemini", "openai", "anthropic", "ollama", "openai_compatible")
+PROVIDER_KINDS: tuple[str, ...] = ("gemini", "openai", "anthropic", "ollama", "openai_compatible", "subscription_cli")
+
+#: Provider kinds the gateway can call itself.  ``subscription_cli`` (Codex)
+#: is an engineer the expert gateway drives; the model gateway only ranks it.
+MODEL_KINDS: frozenset[str] = frozenset({"gemini", "openai", "anthropic", "ollama", "openai_compatible"})
 
 #: Reasoning effort levels the free role exposes.  Mapped per provider to
 #: whatever that provider calls it (a thinking budget, a reasoning effort).
@@ -188,6 +193,10 @@ class GatewayConfig:
             return Pricing(0.0, 0.0, 0.0, confirmed=True)
         return provider.price_for(binding.model)
 
+    def is_model_role(self, role: str) -> bool:
+        provider = self.provider_for(role)
+        return provider is not None and provider.kind in MODEL_KINDS
+
     def configured_roles(self) -> list[str]:
         """Roles whose binding and provider are both enabled."""
 
@@ -302,6 +311,10 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "reliability_prior": {"engineering.small": [9, 1], "engineering.medium": [9, 1], "engineering.large": [7, 1]},
             "max_output_tokens": 16384, "temperature": 0.1,
         },
+        "engineer.codex": {
+            "provider": "codex", "model": "codex-cli", "enabled": True,
+            "reliability_prior": {"engineering.small": [7, 1], "engineering.medium": [6, 2], "engineering.large": [2, 4]},
+        },
         "speech.stt": {"provider": "gemini", "model": "gemini-2.5-flash", "enabled": False},
         "speech.tts": {"provider": "gemini", "model": "gemini-2.5-flash-preview-tts", "enabled": False},
         "local.fast": {"provider": "ollama", "model": "", "tier": "FAST_LOCAL", "enabled": True, "offline_fallback": True,
@@ -329,6 +342,7 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             },
         },
         "ollama": {"kind": "ollama", "base_url": "http://127.0.0.1:11434", "enabled": True, "metered": False, "may_train_on_requests": False},
+        "codex": {"kind": "subscription_cli", "base_url": "", "enabled": True, "metered": False, "may_train_on_requests": False},
     },
     "budget": {
         "monthly_hard_cap": 40.0, "daily_hard_cap": 6.0, "per_task_hard_cap": 5.0,
