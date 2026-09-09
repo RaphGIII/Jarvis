@@ -2668,30 +2668,49 @@ class JarvisCore:
             outcome = self.music.run(MusicRequest(name.split(".", 1)[1], query=str(args.get("query", ""))))
             return outcome.receipt
         if name.startswith("capability:"):
-            from runtime.paths import PathError, resolve_workspace_path
+            from runtime.paths import PathError, resolve_argument_path
 
             cid = name.split(":", 1)[1]
+            denied = self._unreadable_roots()
             # A relative file argument means the workspace, as it does for
             # every built-in action; a capability sees an absolute path.  One
             # resolver, idempotent, existence-checked for inputs that are read.
+            # What it WRITES stays in the workspace; what it READS may be any
+            # file the owner named -- see runtime.paths.
             workspace = Path(self.kernel.state_root) / "workspace"
             try:
                 for key, value in list(args.items()):
                     if isinstance(value, str) and ("path" in key.lower() or key.lower() in {"file", "source", "folder", "directory"}) and value:
-                        args[key] = str(resolve_workspace_path(workspace, value, must_exist=key.lower() not in {"output", "output_path", "target", "destination"}))
+                        args[key] = str(resolve_argument_path(workspace, key, value, denied_roots=denied))
             except PathError as exc:
                 return Receipt(kind=f"capability.{cid}", executor=cid, ok=False, detail=str(exc)[:300],
-                               verifications=[Verification(check="input path resolves inside the workspace", passed=False, observed=str(exc)[:200])],
+                               verifications=[Verification(check="input path resolves under the filesystem policy", passed=False, observed=str(exc)[:200])],
                                evidence={"capability_id": cid, "arguments": args})
             execution = self.capabilities.execute(cid, args)
             ok = bool(getattr(execution, "ok", False))
             output = getattr(execution, "output", {}) or {}
             error = str(getattr(execution, "error", "") or (output.get("error", "") if isinstance(output, dict) else ""))
             summary = ", ".join(f"{k}={v}" for k, v in output.items() if k not in {"ok", "error"} and not isinstance(v, (dict, list)))[:240] if isinstance(output, dict) else str(output)[:240]
-            return Receipt(kind=f"capability.{cid}", executor=cid, ok=ok, detail=summary if ok else (error or "the capability reported a failure")[:300],
+            # A capability run inside a composed mission is a real execution and
+            # is evidence about the capability, exactly as a directly routed one
+            # is. It used to be neither recorded nor classified, so the three
+            # live failures of mission m_ea63437b82 left the registry believing
+            # nothing had gone wrong. What is recorded here is only what the
+            # classification says belongs to the capability -- a refused path is
+            # not the capability's fault and does not count against it.
+            classification = None
+            if not ok:
+                from runtime.failure_kind import classify_failure
+
+                classification = classify_failure(error, return_code=getattr(execution, "return_code", None))
+            evidence = {"capability_id": cid, "arguments": args, "output": output if isinstance(output, dict) else {}}
+            if classification is not None:
+                evidence["failure"] = classification.to_dict()
+            return Receipt(kind=f"capability.{cid}", executor=cid, ok=ok,
+                           detail=(summary if ok else f"[{classification.kind}] {error or 'the capability reported a failure'}"[:300]),
                            verifications=[Verification(check="capability reported ok", passed=ok, observed=summary or error[:200]),
                                           Verification(check="capability duration", passed=True, observed=f"{getattr(execution, 'duration_seconds', 0.0):.2f}s")],
-                           evidence={"capability_id": cid, "arguments": args, "output": output if isinstance(output, dict) else {}})
+                           evidence=evidence)
         if name == "note.create":
             title = str(args.get("title", "note")).strip() or "note"
             safe = "".join(ch for ch in title if ch.isalnum() or ch in " -_").strip().replace(" ", "_")[:60] or "note"
@@ -2841,7 +2860,7 @@ class JarvisCore:
         cannot supply are reported back by name instead of being guessed.
         """
 
-        from runtime.paths import PathError, resolve_workspace_path
+        from runtime.paths import PathError, resolve_argument_path
 
         schema = dict(getattr(manifest, "input_schema", {}) or {})
         properties = dict(schema.get("properties") or {})
@@ -2849,13 +2868,14 @@ class JarvisCore:
         payload: dict[str, Any] = {}
         unmet: list[str] = []
         workspace = Path(self.kernel.state_root) / "workspace"
+        denied = self._unreadable_roots()
         names = self._filenames_in(text, workspace)
         for key in properties:
             lowered = key.lower()
             if "path" in lowered or lowered in {"file", "source", "folder", "directory", "filename", "file_name"}:
                 if names:
                     try:
-                        payload[key] = str(resolve_workspace_path(workspace, names[0], must_exist=True))
+                        payload[key] = str(resolve_argument_path(workspace, key, names[0], denied_roots=denied))
                     except PathError as exc:
                         payload[key] = str(exc)
                         unmet.append(f"{key} ({exc})")
@@ -2877,11 +2897,26 @@ class JarvisCore:
             declared = dict(properties.get(only) or {})
             if str(declared.get("type", "string")) == "string":
                 try:
-                    payload[only] = str(resolve_workspace_path(workspace, names[0], must_exist=True))
+                    payload[only] = str(resolve_argument_path(workspace, only, names[0], denied_roots=denied))
                     unmet = []
                 except PathError:
                     pass
         return payload, unmet
+
+    def _unreadable_roots(self) -> tuple[Path, ...]:
+        """Where a capability may not read, however the owner phrases it.
+
+        Computed once per call rather than cached: a state root can move under
+        a test, and a stale answer here is a stale security decision.
+        """
+
+        from runtime.paths import protected_roots
+
+        try:
+            repository = self.selfdev_repository()
+        except Exception:  # noqa: BLE001
+            repository = None
+        return protected_roots(self.kernel.state_root, repository)
 
     @staticmethod
     def _filenames_in(text: str, workspace: Path) -> list[str]:
@@ -2897,19 +2932,27 @@ class JarvisCore:
         tail that exists in the workspace wins; when none exists, the bare
         ``name.ext`` is what gets reported as missing, because that is what the
         owner will recognise in the reply.
+
+        An absolute path the owner spelled out comes FIRST, ahead of any bare
+        name: it is the least ambiguous thing a request can contain, and until
+        it was read here a request naming a file in full was answered with
+        "tell me which file".
         """
 
-        from service.intent import FILENAME
+        from service.intent import FILENAME, absolute_paths
 
+        found: list[str] = list(absolute_paths(text))
         if not hasattr(FILENAME, "finditer"):
-            return []
-        found: list[str] = []
+            return found
         for match in FILENAME.finditer(text):
             words = match.group(0).split(" ")
             tails = [" ".join(words[index:]) for index in range(len(words))]
             chosen = next((tail for tail in reversed(tails) if (workspace / tail).exists()), tails[-1])
-            if chosen and chosen not in found:
-                found.append(chosen)
+            if not chosen or chosen in found:
+                continue
+            if any(existing.replace("/", "\\").endswith("\\" + chosen) for existing in found):
+                continue
+            found.append(chosen)
         return found
 
     def _answer_by_capability(self, text: str, scope: str, plan: Any) -> None:
@@ -3072,6 +3115,16 @@ class JarvisCore:
                 self.capabilities.registry.learn_alias(capability_id, phrase)
         except Exception:  # noqa: BLE001 - health bookkeeping must not break the answer
             pass
+        # A failure is not one event. What KIND of failure it was decides what
+        # happens next -- repair, ask, explain, retry -- and until that decision
+        # existed every one of them ended the same way: an answer saying it did
+        # not work, and an INSIGHT saying the capability was "ausgefallen".
+        # See runtime.failure_kind and _handle_capability_failure.
+        if not receipt.ok and self._handle_capability_failure(
+                manifest, receipt, goal, text, scope, execution, error_text=str(
+                    getattr(execution, "error", "") or (output.get("error", "") if isinstance(output, dict) else ""))):
+            return
+
         lines = [receipt.detail]
         # A capability that returns a value and no prose left the owner with
         # the word "ran". What it produced IS the answer to the request, so it
@@ -3096,6 +3149,116 @@ class JarvisCore:
             context_text=f"[capability {capability_id}: {standing}, receipt {receipt.id}]",
             final_state=JarvisState.ERROR if (not ok or contradicted) else JarvisState.IDLE,
         )
+
+    def _handle_capability_failure(self, manifest: Any, receipt: Any, goal: str, text: str, scope: str,
+                                   execution: Any, *, error_text: str = "") -> bool:
+        """One failed capability run -> the response that failure actually calls for.
+
+        Returns ``True`` when this method has answered the owner and nothing
+        more should be said about the run.
+
+        The live defect this replaces: ``local.berechne.sha.256_pruefsumme``
+        failed on a real request, ZEUS reported the failure, and a background
+        observer separately emitted "Fähigkeit ... ist ausgefallen" as an
+        INSIGHT. An insight is a note about the system. It is not a repair, it
+        does not resume the owner's request, and it was the only thing that
+        happened. What happens now is decided by the classification:
+
+        * ``DEFECT``      -> mark BROKEN on this one occurrence, then the same
+                             Codex repair path a BROKEN capability reaches
+                             before execution -- which ends by re-running the
+                             ORIGINAL request through the ordinary executor.
+        * ``PERMISSION``  -> say what was refused and what would permit it.
+                             Never counted against the capability: refusing
+                             correctly is not a defect.
+        * ``INPUT``       -> ask for the input the request did not name.
+        * ``TRANSIENT``   -> one bounded retry, then the honest report.
+        * ``UNSUPPORTED`` -> the acquisition path, not the repair path.
+        """
+
+        from runtime.failure_kind import DEFECT, INPUT, PERMISSION, TRANSIENT, UNSUPPORTED, classify_failure
+
+        de = self.language.startswith("de")
+        capability_id = str(getattr(manifest, "capability_id", "") or "")
+        classification = classify_failure(error_text, return_code=getattr(execution, "return_code", None))
+        detail = (error_text or receipt.detail or "").strip()
+
+        # The classification is evidence, and Activity is where evidence goes.
+        self.emit(
+            EventType.TOOL,
+            {"summary": f"capability failure: {capability_id} -> {classification.kind}",
+             "capability_failure": {"capability_id": capability_id, "goal": goal[:200],
+                                    "error": detail[:300], "receipt_id": receipt.id,
+                                    **classification.to_dict()}},
+            scope=scope,
+        )
+        # Health itself was already written by CapabilityService.execute, which
+        # classifies the same way and is on every execution path. What is left
+        # here is the decision the classification implies.
+
+        if classification.kind == PERMISSION:
+            self._deliver(
+                (f"Das ist mir nicht erlaubt: {detail[:220]}" if de
+                 else f"That is not permitted: {detail[:220]}"),
+                scope=scope, backend=capability_id, final_state=JarvisState.WAITING,
+                context_text=f"[capability {capability_id}: PERMISSION denial, receipt {receipt.id}]",
+            )
+            return True
+
+        if classification.kind == INPUT:
+            self._deliver(
+                (f"Damit kann ich nicht arbeiten: {detail[:220]}. Sag mir die richtige Angabe, dann führe ich es aus." if de
+                 else f"I cannot work with that: {detail[:220]}. Give me the right input and I will run it."),
+                scope=scope, backend=capability_id, final_state=JarvisState.WAITING,
+                context_text=f"[capability {capability_id}: INPUT failure, receipt {receipt.id}]",
+            )
+            return True
+
+        if classification.kind == TRANSIENT:
+            # Bounded: exactly one. A second identical timeout is a report, not
+            # another attempt.
+            retried = getattr(self, "_capability_retried", None)
+            if retried is None:
+                retried = set()
+                self._capability_retried = retried
+            token = f"{capability_id}|{goal[:120]}"
+            if token not in retried:
+                retried.add(token)
+                self.emit(EventType.TOOL, {"summary": f"transient failure; retrying {capability_id} once",
+                                           "source": "capability.retry"}, scope=scope)
+                self._execute_capability(manifest, goal, text, scope, phrase=goal)
+                return True
+            return False
+
+        if classification.kind == UNSUPPORTED:
+            self._start_capability_teaching_for_request(goal, text, scope)
+            return True
+
+        if classification.kind == DEFECT and capability_id:
+            current = self.capabilities.registry.get(capability_id)
+            broken = bool(current is not None and current.is_broken())
+            self.emit(
+                EventType.TOOL,
+                {"summary": (f"health after failure: {capability_id} -> "
+                             f"{(current.health_state().value if current is not None else 'UNKNOWN')}"),
+                 "capability_health": {"capability_id": capability_id,
+                                       "health": current.health_state().value if current is not None else "UNKNOWN",
+                                       "broken": broken, "kind": classification.kind,
+                                       "reason": classification.reason}},
+                scope=scope,
+            )
+            if broken:
+                # The same door a BROKEN capability goes through when the
+                # resolver sees it BEFORE execution, reached now that execution
+                # is the evidence. It ends by resuming this exact request.
+                from capabilities.models import CapabilityResolution
+
+                self._start_capability_repair_for_request(
+                    CapabilityResolution("broken", capability_id, classification.reason, 1.0, current,
+                                         result="BROKEN"),
+                    goal, text, scope)
+                return True
+        return False
 
     def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str) -> None:
         """A capability ZEUS does not have: Codex engineers one, then the request resumes."""

@@ -229,6 +229,64 @@ SEPARABLE_ACTION = re.compile(
 #: A filename is about as clear a side-effect signal as exists.
 FILENAME = re.compile(r"\b[\w\-. ]{1,60}\.(txt|md|py|json|csv|yaml|yml|log|ini|cfg|html|js|toml)\b", re.I)
 
+#: An absolute path the owner typed.  ``FILENAME`` above only ever matched a
+#: bare name with one of a dozen extensions, so a request naming
+#: ``C:\Users\...\Desktop\Keine Ahnung Python oder so\ffmpeg-7.0.1`` named no
+#: file at all as far as ZEUS was concerned, and the answer was "tell me which
+#: file" about a file the owner had spelled out in full.
+#:
+#: Matched greedily to the end of the line and then peeled word by word from
+#: the RIGHT, because real directory names contain spaces and so does the rest
+#: of the sentence: the longest leading run that exists on disk is the path.
+ABSOLUTE_PATH = re.compile(
+    "(?P<quoted>\"[^\"\\n]+\"|'[^'\\n]+')"
+    "|(?P<bare>(?:[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\/\\s]+[\\\\/])[^\\n\"']*)"
+)
+
+
+def absolute_paths(text: str) -> list[str]:
+    """The absolute paths a request names, longest existing tail first.
+
+    Existence is checked wherever the path points -- this is the reading of the
+    sentence, not the security decision.  Whether ZEUS may open what it found
+    is :mod:`runtime.paths`'s answer, made once, later.
+    """
+
+    from pathlib import Path as _Path
+
+    found: list[str] = []
+    for match in ABSOLUTE_PATH.finditer(text or ""):
+        quoted = match.group("quoted")
+        if quoted:
+            # Quotes alone do not make a path: `sag "hallo"` names no file, and
+            # treating it as one would answer a greeting with "no such file".
+            candidate = quoted[1:-1].strip()
+            looks_like_path = ("\\" in candidate or "/" in candidate
+                               or (len(candidate) > 2 and candidate[1] == ":"))
+            if candidate and looks_like_path and candidate not in found:
+                found.append(candidate)
+            continue
+        raw = (match.group("bare") or "").strip()
+        if not raw:
+            continue
+        words = raw.split(" ")
+        chosen = ""
+        for index in range(len(words), 0, -1):
+            head = " ".join(words[:index]).rstrip(".,;:!?")
+            try:
+                if head and _Path(head).exists():
+                    chosen = head
+                    break
+            except OSError:
+                continue
+        # Nothing exists: report the run without spaces, because that is the
+        # part the owner will recognise in "no such file: ...".
+        chosen = chosen or words[0].rstrip(".,;:!?")
+        if chosen and chosen not in found:
+            found.append(chosen)
+    return found
+
+
 #: "Learn to do X".  Distinct from a READ question about capabilities, which is
 #: why READ_HINTS is checked first.
 CAPABILITY_HINTS = (

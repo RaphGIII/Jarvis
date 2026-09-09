@@ -365,13 +365,21 @@ class CapabilityRegistry:
         self._save()
         return manifest
 
-    def note_execution(self, capability_id: str, ok: bool, detail: str = "", *, repair: bool = False) -> CapabilityManifest | None:
+    def note_execution(self, capability_id: str, ok: bool, detail: str = "", *,
+                       repair: bool = False, kind: str = "") -> CapabilityManifest | None:
         """Record one real execution outcome on the manifest's runtime health.
 
         Policy: a failure sets DEGRADED at once and FAILING after
         ``FAILING_AFTER`` in a row; a success after failures sets DEGRADED
         (one good call is not a clean bill), a second consecutive success
         HEALTHY.  Persisted, so the state survives a restart.
+
+        ``kind`` is :mod:`runtime.failure_kind`'s reading of the failure, and
+        it overrides the streak in one direction only: a ``DEFECT`` -- a
+        traceback out of the capability's own module -- is FAILING on the
+        first occurrence, because waiting for a second identical crash to
+        confirm the first is a second failed owner request bought for nothing.
+        The streak still governs everything the classifier is not sure about.
         """
 
         import time as _time
@@ -391,16 +399,25 @@ class CapabilityRegistry:
             healthy_now = streak >= 2 or health.get("state") in {"unverified", "healthy"}
             health["state"] = "healthy" if healthy_now else "degraded"
             health["health"] = CapabilityHealth.HEALTHY.value if healthy_now else CapabilityHealth.AT_RISK.value
+            if healthy_now:
+                # The defect is over, so the record of it stops being current.
+                # A repaired capability that kept quoting the error of the
+                # version before it told the owner, a day later, that
+                # ``hex_digest`` was still broken.
+                health["last_error"] = ""
+                health["last_failure_kind"] = ""
         else:
             failures = int(health.get("consecutive_failures", 0)) + 1
             health["consecutive_failures"] = failures
             health["consecutive_ok"] = 0
             health["last_error_at"] = now
             health["last_error"] = str(detail)[:300]
-            broken = failures >= FAILING_AFTER
+            broken = failures >= FAILING_AFTER or str(kind).upper() == "DEFECT"
             health["state"] = "failing" if broken else "degraded"
             health["health"] = CapabilityHealth.BROKEN.value if broken else CapabilityHealth.AT_RISK.value
             health["failure_count"] = int(health.get("failure_count", 0)) + 1
+            if kind:
+                health["last_failure_kind"] = str(kind)[:40]
         if repair:
             health.setdefault("repairs", []).append({"at": now, "ok": ok, "detail": str(detail)[:200]})
             health["repairs"] = health["repairs"][-10:]

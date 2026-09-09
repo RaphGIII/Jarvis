@@ -45,6 +45,21 @@ UI_TERMS = (
     "show", "display", "button", "panel", "farbe", "colour", "color", "animation", "seite", "page", "badge",
 )
 
+#: The words an owner uses to ASK for something, in either language. They say
+#: nothing about what is being asked for, so a survey that searched for them
+#: would report that "bringe" and "kann" already appear in the code -- true, and
+#: not an answer to anything. Distinct from STOPWORDS, which is about ranking.
+REQUEST_VOCABULARY = {
+    "bringe", "bring", "beibringen", "bei", "lerne", "lernen", "learn", "teach", "koennen", "können",
+    "kann", "kannst", "can", "could", "should", "soll", "sollst", "moechte", "möchte", "will", "want",
+    "immer", "always", "nie", "never", "keine", "kein", "keinen", "not", "nicht", "nur", "only",
+    "faehigkeit", "fähigkeit", "capability", "feature", "funktion", "function", "ability",
+    "ich", "you", "und", "oder", "aber", "wenn", "dann", "damit", "jetzt", "now", "ab", "bitte",
+    "machen", "mache", "make", "do", "run", "laufst", "läufst", "laeufst", "have", "hast", "hat",
+    "ansicht", "view", "mode", "modus", "standard", "default", "wieder", "again", "das", "diese",
+}
+
+
 #: Words that carry no signal for the code index.
 STOPWORDS = {
     "zeus", "bitte", "please", "the", "and", "und", "der", "die", "das", "ein", "eine", "einen", "mein", "meine",
@@ -52,6 +67,19 @@ STOPWORDS = {
     "with", "für", "for", "dezent", "subtly", "aktuelle", "current", "show", "zeige", "zeig", "change", "ändere",
     "aendere", "about", "yourself", "dich", "selbst", "dir", "so", "dass", "that", "it", "es", "is", "ist",
 }
+
+
+def _is_ordinary_word(token: str) -> bool:
+    """Whether this token is request vocabulary rather than a thing in the code.
+
+    A German umlaut settles it on its own: no identifier, key or literal in this
+    repository contains one, so a token that does is a word from the sentence.
+    """
+
+    lowered = token.lower()
+    if any(ch in lowered for ch in "äöüß"):
+        return True
+    return lowered in REQUEST_VOCABULARY or lowered in STOPWORDS
 
 
 def _now() -> str:
@@ -105,6 +133,10 @@ class SelfDevMission:
     evidence_patch: str = ""
     #: The goal question, answered separately from execution: {answer, why, kind}.
     verification_goal: dict[str, Any] = field(default_factory=dict)
+    #: What SURVEY found already implemented for this request: the code that is
+    #: there before anything is written, so the engineer completes it instead of
+    #: building a second one beside it.
+    existing: dict[str, Any] = field(default_factory=dict)
 
     @property
     def finished(self) -> bool:
@@ -118,8 +150,41 @@ class SelfDevMission:
 
         return self.phase in {"DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "WAITING"}
 
+    def control_summary(self) -> dict[str, Any]:
+        """The board Mission Control shows: real state, no chain of thought.
+
+        Live mission 5eaac370d3 ended with the single line "no verified
+        candidate", followed by the six targeted test files that had all
+        PASSED. Everything the owner needed -- that Codex had changed the
+        router instead of implementing fullscreen, and that the one failing
+        check said so in words -- was in the record and none of it was on
+        screen. Each field below is a fact the mission already holds.
+        """
+
+        checks = list(self.verification.get("checks") or [])
+        failed = [c for c in checks if not c.get("ok")]
+        return {
+            "GOAL": self.request[:300],
+            "ROUTE": (f"{self.routing.get('top_level', 'self_development')} "
+                      f"({self.routing.get('confidence', '')})").strip(),
+            "ENGINEER": str(self.engineering.get("engineer", "")) or ("CODEX" if self.escalated else ""),
+            "BUILD_LOCAL_INVOCATIONS": int(self.engineering.get("build_local_invocations", self.local_attempts) or 0),
+            "PHASE": self.phase,
+            "FILES_CHANGED": list(self.changed_files),
+            "TESTS": list(self.verification.get("tests") or []),
+            "CHECKS_PASSED": [str(c.get("criterion", ""))[:120] for c in checks if c.get("ok")],
+            "CHECKS_FAILED": [f"{str(c.get('criterion', ''))[:120]}: {str(c.get('output', ''))[:200]}" for c in failed],
+            "FAILURE_REASON": str(self.verification.get("failure_reason", "") or (self.reason if self.outcome == "failed" else ""))[:400],
+            "ALREADY_IMPLEMENTED": list(self.existing.get("lines") or [])[:8],
+            "CANDIDATE": self.worktree or self.evidence_patch or "",
+            "AWAITING_OWNER": self.phase == "AWAITING_AUTHORIZATION",
+            "RESULT": self.outcome or ("running" if not self.finished else self.phase),
+        }
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["control"] = self.control_summary()
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SelfDevMission":
@@ -329,7 +394,8 @@ class SelfDevRunner:
         mission.events.append({"at": _now(), "phase": phase, "detail": detail[:400]})
         self.store.save(mission)
         self.emit(EventType.PROGRESS, {"summary": f"selfdev {phase}: {detail}"[:300], "kind": "selfdev",
-                                       "mission_id": mission.mission_id, "phase": phase})
+                                       "mission_id": mission.mission_id, "phase": phase,
+                                       "control": mission.control_summary()})
 
     def _cancel(self, mission: SelfDevMission, reason: str) -> SelfDevMission:
         mission.outcome = "cancelled"
@@ -395,7 +461,12 @@ class SelfDevRunner:
                 verified = self._timed(mission, "verify", lambda: self._verify(mission))
                 self._audit(mission, "VERIFY")
             if not verified:
-                return self._fail(mission, f"no verified candidate: {mission.verification.get('detail', '')[:400]}")
+                reason = str(mission.verification.get("failure_reason") or mission.verification.get("detail", ""))
+                passed = mission.verification.get("passed") or []
+                return self._fail(
+                    mission,
+                    f"no verified candidate — {reason[:600]}"
+                    + (f" (the other {len(passed)} check(s) passed)" if passed else ""))
             # Promoting code into the running product is the owner's decision,
             # proven by their password, and nothing else may stand in for it --
             # not this mission, not the engineer's verdict, not a policy flag.
@@ -499,32 +570,184 @@ class SelfDevRunner:
         self._phase(mission, "UNDERSTAND", f"area={mission.area}, {len(acceptance)} acceptance checks")
 
     def _investigate(self, mission: SelfDevMission) -> None:
-        """Deterministic: which files does this request touch?  No model."""
+        """Deterministic: which files does this request touch?  No model.
+
+        Two corrections, both paid for by live mission 5eaac370d3, whose owner
+        request was "bringe dir die Fähigkeit bei, dass du immer im fullscreen
+        läufst … mit f11 togglen":
+
+        *   Every matching term counted one point, so the words that carry no
+            information about the CHANGE -- "bringe", "fähigkeit", "keine",
+            "kann", the vocabulary an owner uses to ask for anything at all --
+            outvoted "fullscreen" and "f11", which appear in three files each.
+            A term is now worth the inverse of how common it is, and a term
+            that matches half the repository is worth nothing.
+        *   ``tests/test_routing.py`` came second in that ranking, the brief
+            said "read them first", and Codex read them first and concluded the
+            job was a routing-classification fix. It changed ``service/routing``
+            and ``tests/test_routing``, both correctly, and implemented no
+            fullscreen. Tests are kept -- they say what the behaviour is
+            supposed to be -- but they are listed as tests, separately, below
+            the implementation files, and they can no longer take the top slot.
+        """
 
         from development.code_index import CodeIndex
 
-        terms = [w for w in re.findall(r"[a-zA-ZäöüÄÖÜß_]{3,}", mission.request.lower()) if w not in STOPWORDS]
-        files: dict[str, int] = {}
+        terms = [w for w in re.findall(r"[a-zA-ZäöüÄÖÜß_0-9]{2,}", mission.request.lower())
+                 if not _is_ordinary_word(w) and (len(w) >= 3 or (w[:1].isalpha() and w[-1:].isdigit()))]
+        source: dict[str, float] = {}
+        tests: dict[str, float] = {}
         index = CodeIndex(self.repository)
         for term in terms[:12]:
             try:
-                for hit in index.find_literal(term, limit=20):
-                    rel = index.relative(Path(hit.path)) if hasattr(hit, "path") else str(hit)
-                    # Promotion snapshots and other runtime copies under data/
-                    # are not the code; the second live mission ranked two of
-                    # them above ui/index.html.
-                    if rel.replace("\\", "/").startswith(("data/", ".venv", ".pytest")):
-                        continue
-                    files[rel] = files.get(rel, 0) + 1
+                hits = list(index.find_literal(term, limit=40))
             except Exception:
                 continue
+            paths = []
+            for hit in hits:
+                rel = index.relative(Path(hit.path)) if hasattr(hit, "path") else str(hit)
+                # Promotion snapshots and other runtime copies under data/
+                # are not the code; the second live mission ranked two of
+                # them above ui/index.html.
+                if rel.replace("\\", "/").startswith(("data/", ".venv", ".pytest")):
+                    continue
+                # A comment or docstring that MENTIONS the request is not the
+                # code that implements it. This module is the sharpest case:
+                # every live mission is written up in its own docstrings, so a
+                # request quoted there made service/selfdev.py the top-ranked
+                # place to implement the request it describes.
+                if int(getattr(hit, "role", 30)) <= 10:
+                    continue
+                paths.append(rel)
+            distinct = sorted(set(paths))
+            spread = len(distinct)
+            if spread == 0 or spread > 15:
+                # A term in sixteen files is telling us about the language, not
+                # about the change. ``du`` and ``im`` survived a length filter
+                # once and between them ranked four capability modules above
+                # jarvis/window.py.
+                continue
+            # Inverse document frequency, coarsely: a term in three files says
+            # something, a term in twelve says very little.
+            weight = 4.0 if spread <= 3 else 2.0 if spread <= 8 else 1.0
+            # Per FILE, not per occurrence: a file that mentions a word twenty
+            # times is one piece of evidence, not twenty.
+            for rel in distinct:
+                bucket = tests if rel.replace("\\", "/").startswith("tests/") else source
+                bucket[rel] = bucket.get(rel, 0.0) + weight
         # The UI is not Python; the index does not see it, so name it directly.
         if mission.area == "ui":
             for name in ("ui/index.html", "ui/app.js", "ui/eye.js", "service/http.py", "service/core.py"):
-                files[name] = files.get(name, 0) + 3
-        ranked = sorted(files.items(), key=lambda kv: -kv[1])[:8]
-        mission.investigation = {"terms": terms[:12], "files": [f for f, _ in ranked]}
-        self._phase(mission, "INVESTIGATE", f"{len(terms)} terms, {len(ranked)} candidate files")
+                source[name] = source.get(name, 0.0) + 12.0
+        ranked = sorted(source.items(), key=lambda kv: -kv[1])[:8]
+        ranked_tests = sorted(tests.items(), key=lambda kv: -kv[1])[:4]
+        mission.investigation = {"terms": terms[:12], "files": [f for f, _ in ranked],
+                                 "tests": [f for f, _ in ranked_tests]}
+        self._phase(mission, "INVESTIGATE",
+                    f"{len(terms)} terms, {len(ranked)} candidate files, {len(ranked_tests)} test files")
+        self._survey(mission)
+
+    #: Non-Python parts of the product the code index cannot see.  The F11
+    #: handler that already existed lives in ui/app.js, and no Python-only
+    #: search was ever going to find it.
+    _SURVEY_EXTRA_GLOBS = ("ui/*.js", "ui/*.html", "ui/*.css", "ui/core/*.js", "ui/views/*.js")
+
+    def _survey(self, mission: SelfDevMission) -> None:
+        """What of this request is already implemented, before anything is written.
+
+        Live mission 5eaac370d3 asked for fullscreen and F11.  Both had been
+        built the day before by mission d1309425e9 and promoted --
+        ``DEFAULT_WINDOW_MODE = "fullscreen"`` in ``jarvis/window.py``,
+        ``toggle_fullscreen`` in ``service/desktop.py``, the ``F11`` key
+        handler in ``ui/app.js``.  Nothing in the pipeline looked, so the brief
+        described the request as if the repository were empty, and the engineer
+        had no way to know it was being asked to finish something rather than
+        start it.
+
+        Deterministic and cheap: the request's own distinctive tokens, looked
+        up literally, reported as file:line with the line itself.  It is
+        evidence for the engineer to read, never a decision -- "this already
+        exists" is not a verdict this method is allowed to reach.
+        """
+
+        # Umlauts are matched and then REJECTED, never stripped: a class that
+        # excluded them from the pattern split "Fähigkeit" into "higkeit" and
+        # "läufst" into "ufst", and then searched the repository for those.
+        tokens = [t for t in re.findall(r"[a-zA-ZäöüÄÖÜß][a-zA-ZäöüÄÖÜß0-9_]{2,}", mission.request)
+                  if not _is_ordinary_word(t)]
+        # Keys like "f11" survive the filter above only if spelled out here:
+        # two characters and a digit is exactly the shape of a shortcut name.
+        tokens += [t for t in re.findall(r"\b[a-zA-Z]{1,3}[0-9]{1,2}\b", mission.request)]
+        seen: list[str] = []
+        for token in tokens:
+            if token.lower() not in [t.lower() for t in seen]:
+                seen.append(token)
+        lines: list[str] = []
+        found_terms: list[str] = []
+        try:
+            from development.code_index import CodeIndex
+
+            index = CodeIndex(self.repository)
+        except Exception:  # noqa: BLE001
+            index = None
+        for token in seen[:8]:
+            python_hits: list[str] = []
+            other_hits: list[str] = []
+            if index is not None:
+                try:
+                    for hit in index.find_literal(token, limit=12):
+                        rel = index.relative(Path(hit.path))
+                        if rel.replace("\\", "/").startswith(("data/", "tests/", ".venv", ".pytest")):
+                            continue
+                        # Code only. A survey that reports its own docstring
+                        # back to the engineer as "already in the code" is
+                        # describing this module, not the product.
+                        if int(getattr(hit, "role", 30)) <= 10:
+                            continue
+                        python_hits.append(f"{rel}:{getattr(hit, 'line', 0)}  {str(getattr(hit, 'text', '')).strip()[:110]}")
+                        if len(python_hits) >= 3:
+                            break
+                except Exception:  # noqa: BLE001
+                    pass
+            for pattern in self._SURVEY_EXTRA_GLOBS:
+                if len(other_hits) >= 2:
+                    break
+                for path in sorted(self.repository.glob(pattern)):
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    if token.lower() not in text.lower():
+                        continue
+                    for number, line in enumerate(text.splitlines(), start=1):
+                        if token.lower() in line.lower():
+                            rel = str(path.relative_to(self.repository)).replace("\\", "/")
+                            other_hits.append(f"{rel}:{number}  {line.strip()[:110]}")
+                            break
+                    if len(other_hits) >= 2:
+                        break
+            # Kept apart on purpose: the Python index cannot see the interface,
+            # so its silence about ui/app.js is not evidence of absence, and a
+            # token with three Python hits must not be able to hide the one
+            # line that answers the question.
+            hits = python_hits + other_hits
+            if hits:
+                found_terms.append(token)
+                lines.extend(hits)
+        prior = []
+        try:
+            for entry in self.experience.relevant(mission.request, subsystem=mission.area, limit=3):
+                if str(getattr(entry, "outcome", "")) == "promoted":
+                    prior.append(f"{entry.goal[:110]} -> {', '.join(entry.relevant_files[:4])}")
+        except Exception:  # noqa: BLE001 - experience is help, never a blocker
+            pass
+        ranked = {name: position for position, name in enumerate(mission.investigation.get("files", []))}
+        lines.sort(key=lambda line: ranked.get(line.split(":", 1)[0], 99))
+        mission.existing = {"terms": found_terms, "lines": lines[:16], "prior_promoted": prior[:3]}
+        self._phase(mission, "SURVEY",
+                    (f"{len(found_terms)} of the request's terms already appear in the code"
+                     f"{f'; {len(prior)} earlier promoted mission(s) on this subject' if prior else ''}")
+                    if (found_terms or prior) else "nothing of this request is in the code yet")
 
     def _goal_text(self, mission: SelfDevMission) -> str:
         from owner.protected import PROTECTED_PATHS
@@ -537,6 +760,9 @@ class SelfDevRunner:
             "so the request is satisfied. Keep every existing behaviour working.",
             "Files most likely relevant (from a deterministic index; read them first): " + ", ".join(files)
             if files else "",
+            "Tests that describe the surrounding behaviour (context, not the place to implement it): "
+            + ", ".join(mission.investigation.get("tests", []))
+            if mission.investigation.get("tests") else "",
             "The web interface has no build step: ui/index.html loads ui/eye.js and ui/app.js directly, "
             "the server is service/http.py (stdlib, JSON API under /api/ plus an SSE stream at /events) "
             "and the state/values it serves come from service/core.py." if mission.area == "ui" else "",
@@ -544,6 +770,18 @@ class SelfDevRunner:
             if mission.area == "ui" else "",
             "Never touch these owner-protected paths: " + ", ".join(PROTECTED_PATHS) + ".",
             "Do not add dependencies. Do not print secrets. Small, targeted edits.",
+            "",
+            # The criterion the candidate is actually judged on. It existed and
+            # was applied and was never shown to the engineer: mission
+            # 5eaac370d3 failed on "a reader of the diff sees the request
+            # implemented", having been told only that the kernel must still
+            # import. Failing work on a rule it was never given is this
+            # system's fault, not the engineer's.
+            "HOW THIS IS JUDGED, in addition to the acceptance commands: a reviewer reads your diff "
+            "against the request above and answers whether the requested behaviour is now implemented. "
+            "A change that makes the request ROUTE better, CLASSIFY better, or be TESTED for, without "
+            "the behaviour itself working, fails that review. Implement the behaviour.",
+            self._existing_text(mission),
         ]
         try:
             guidance = self.experience.guidance(mission.request, subsystem=mission.area)
@@ -554,6 +792,26 @@ class SelfDevRunner:
             lines.append(guidance)
             mission.events.append({"at": _now(), "phase": "EXPERIENCE", "detail": f"{guidance.count(chr(10))} lines of verified experience retrieved"})
         return "\n".join(line for line in lines if line)
+
+    def _existing_text(self, mission: SelfDevMission) -> str:
+        """The "this is already here" paragraph of the brief, or nothing."""
+
+        existing = mission.existing or {}
+        lines = list(existing.get("lines") or [])
+        prior = list(existing.get("prior_promoted") or [])
+        if not lines and not prior:
+            return ""
+        out = ["", "ALREADY IN THE CODE -- read these before writing anything:"]
+        out += [f"  {line}" for line in lines[:12]]
+        if prior:
+            out.append("An earlier self-development mission on this subject was already promoted:")
+            out += [f"  {item}" for item in prior]
+        out.append(
+            "Some or all of this request may therefore be built already. Read what is there, decide what "
+            "part of the request it does NOT yet satisfy, and complete only that. Do not add a second "
+            "implementation next to the existing one, and do not re-implement what already works. If the "
+            "request is fully satisfied by the code above, say so in your summary and change nothing.")
+        return "\n".join(out)
 
     # -- who engineers this --------------------------------------------
 
@@ -866,8 +1124,20 @@ class SelfDevRunner:
             checks.append({"criterion": "a reader of the diff sees the request implemented (model inference)", "ok": False,
                            "output": f"{inferred.get('answer')}: {inferred.get('why', '')[:360]}"})
             ok_all = False
-        mission.verification = {"ok": ok_all, "checks": checks, "tests": tests,
-                                "detail": "; ".join(f"{c['criterion']}: {'ok' if c['ok'] else 'FAILED'}" for c in checks)}
+        # "no verified candidate: <every check, passing ones first, truncated at
+        # 300 characters>" is what the owner was shown for mission 5eaac370d3,
+        # and the one failing check -- the only line that said anything -- was
+        # past the cut. The reason a candidate was rejected is the checks that
+        # FAILED, and what they observed.
+        failed = [c for c in checks if not c["ok"]]
+        failure_reason = "; ".join(f"{c['criterion']}: {str(c['output']).strip()[:220]}" for c in failed)
+        mission.verification = {
+            "ok": ok_all, "checks": checks, "tests": tests,
+            "detail": "; ".join(f"{c['criterion']}: {'ok' if c['ok'] else 'FAILED'}" for c in checks),
+            "failure_reason": failure_reason,
+            "passed": [c["criterion"] for c in checks if c["ok"]],
+            "failed": [c["criterion"] for c in failed],
+        }
         self._phase(mission, "VERIFY", mission.verification["detail"])
         return ok_all
 

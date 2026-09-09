@@ -1035,9 +1035,23 @@ class CapabilityService:
         if manifest is None or manifest.status != "active":
             return ExecutionOutcome(capability_id=capability_id, ok=False, error=f"no active capability {capability_id!r}")
         outcome = self._execute(manifest, capability_id, payload)
-        # Runtime health is written by what actually happened, every time.
+        # Runtime health is written by what actually happened, every time -- but
+        # only by what happened TO THIS CAPABILITY. "every time" used to include
+        # the failures that are not its doing: a path the owner is not allowed
+        # to read, a file the request named that is not there. Three such
+        # refusals were on their way to marking a correct capability BROKEN,
+        # which would then have sent perfectly good code to Codex for repair.
+        # See runtime.failure_kind for the five kinds and who owns each.
         try:
-            self.registry.note_execution(capability_id, bool(outcome.ok), str(outcome.error or ((outcome.output or {}).get("error", "") if isinstance(outcome.output, dict) else ""))[:300])
+            error = str(outcome.error or ((outcome.output or {}).get("error", "") if isinstance(outcome.output, dict) else ""))[:300]
+            if outcome.ok:
+                self.registry.note_execution(capability_id, True, error)
+            else:
+                from runtime.failure_kind import classify_failure
+
+                classification = classify_failure(error, return_code=getattr(outcome, "return_code", None))
+                if classification.counts_against_health:
+                    self.registry.note_execution(capability_id, False, error, kind=classification.kind)
         except Exception:  # noqa: BLE001 - health bookkeeping never masks the outcome
             pass
         return outcome

@@ -12,7 +12,7 @@ import * as bus from "../core/bus.js";
 import * as views from "../core/views.js";
 
 const PHASES = {
-  selfdev: ["UNDERSTAND", "INVESTIGATE", "BUILD", "VERIFY", "ESCALATE", "PROMOTE", "RESTARTING", "DONE"],
+  selfdev: ["UNDERSTAND", "INVESTIGATE", "SURVEY", "ENGINEER", "BUILD", "ESCALATE", "VERIFY", "PROMOTE", "RESTARTING", "DONE"],
   engine: ["CREATED", "UNDERSTAND", "PLAN", "EXECUTE", "VERIFY", "DIAGNOSE", "COMPLETE"],
   acquisition: ["UNDERSTAND", "SPECIFY", "BUILD", "VERIFY", "PROMOTE", "DONE"],
 };
@@ -130,7 +130,8 @@ async function inspect(row) {
 
 function inspectSelfdev(m, row) {
   const acceptance = (m.acceptance || []).map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: "criterion" }), el("span", { class: "v", text: a.criterion })));
-  const checks = (m.verification?.checks || []).map((c) => el("div", { class: "kv" }, el("span", { class: "k", text: c.ok ? "✓" : "✗" }), el("span", { class: "v", text: c.criterion })));
+  const checks = (m.verification?.checks || []).map((c) => el("div", { class: "kv" }, el("span", { class: "k", text: c.ok ? "✓" : "✗" }),
+    el("span", { class: "v", text: c.ok ? c.criterion : `${c.criterion} — ${String(c.output || "").trim().slice(0, 240)}` })));
   const isolation = (m.isolation || []).map((r) => el("div", { class: "kv" }, el("span", { class: "k", text: r.phase }),
     el("span", { class: "v", text: r.clean ? "live tree unchanged" : `BREACH: ${r.contamination.join(", ")} — restored ${r.restored.join(", ")}` })));
   const events = (m.events || []).slice(-30).map((e) => el("div", { class: "tl " + (e.phase === "FAILED" ? "bad" : e.phase === "DONE" ? "ok" : "work") },
@@ -158,8 +159,24 @@ function inspectSelfdev(m, row) {
   if (m.outcome === "failed" && m.verification?.ok) actions.append(button("Resume (verified candidate)", async () => { await api("/api/selfdev/resume", { mission_id: m.mission_id }); }, "primary"));
   if (m.evidence_patch) actions.append(button("Diff (kept)", () => showDiff(m, row)));
   if (m.expected_revision) actions.append(button("Version", () => views.open("release")));
+  const c = m.control || {};
+  const already = (c.ALREADY_IMPLEMENTED || []).map((line) => el("div", { class: "kv" },
+    el("span", { class: "k", text: "exists" }), el("span", { class: "v", text: String(line).slice(0, 200) })));
   views.inspect(row.title || `Mission ${m.mission_id}`,
     section("Requested modification (the owner's words)", el("div", { class: "kv" }, el("span", { class: "v", text: m.request }))),
+    section("Mission Control",
+      kv("goal", c.GOAL || m.request),
+      kv("route", c.ROUTE),
+      kv("engineer", c.ENGINEER || "not chosen yet"),
+      kv("BUILD_LOCAL invocations", String(c.BUILD_LOCAL_INVOCATIONS ?? m.local_attempts ?? 0)),
+      kv("current phase", c.PHASE || m.phase),
+      kv("files changed", (c.FILES_CHANGED || []).join(", ") || "none"),
+      kv("tests", (c.TESTS || []).join(", ") || "none"),
+      kv("failure reason", c.FAILURE_REASON || ""),
+      kv("candidate", c.CANDIDATE || "none"),
+      kv("awaiting owner", c.AWAITING_OWNER ? "yes — the password promotes it, nothing else does" : "no"),
+      kv("result", c.RESULT || m.outcome || "running")),
+    already.length ? section("Already implemented before this mission started", ...already) : null,
     section("State", kv("phase", m.phase), kv("result", row.state), kv("deployment", row.deployment || "not deployed"), kv("reason", m.reason),
       kv("attempts of this request", row.attempts), kv("started", m.started_at), kv("updated", m.updated_at),
       kv("baseline → candidate", m.expected_revision ? `→ ${m.expected_revision.slice(0, 12)}` : ""), kv("area", m.area)),

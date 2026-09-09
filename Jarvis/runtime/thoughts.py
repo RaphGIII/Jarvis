@@ -220,6 +220,22 @@ def repeated_corrections(corrections: Iterable[dict[str, Any]], *, language: str
 
 
 def capability_degradation(manifests: Iterable[dict[str, Any]], *, language: str = "de") -> list[Thought]:
+    """One thought per unhealthy capability -- and only while it IS unhealthy.
+
+    The key used to carry the state (``capability|<id>|failing``), which gave
+    every state a capability had ever been in its own immortal thought. On
+    2026-09-08 this capability was FAILING with ``'_hashlib.HASH' object has no
+    attribute 'hex_digest'``; Codex repaired it, the registry left FAILING --
+    and nothing ever revisited that thought, so on 2026-09-09 ZEUS told the
+    owner about a defect that had been fixed the day before, quoting a version
+    of the code that was no longer installed.
+
+    Keying on the capability alone means the same thought is refreshed as the
+    state changes, and :meth:`ThoughtStore.retire` closes it when the
+    capability is healthy again.  The version is carried in the evidence so a
+    stale reading is visible as one.
+    """
+
     out = []
     for m in manifests:
         health = m.get("health") or {}
@@ -228,17 +244,24 @@ def capability_degradation(manifests: Iterable[dict[str, Any]], *, language: str
             continue
         de = language.startswith("de")
         cid = str(m.get("capability_id", ""))
+        version = str(m.get("version", "") or "")
+        kind = str(health.get("last_failure_kind", "") or "")
         out.append(Thought(
             type="WARNING",
             title=(f"Fähigkeit {cid} ist {'ausgefallen' if state == 'failing' else 'angeschlagen'}" if de else f"Capability {cid} is {state}"),
-            text=(f"Letzter Fehler: {health.get('last_error', '')[:120] or 'unbekannt'} ({health.get('consecutive_failures', 0)} in Folge)."
-                  if de else f"Last error: {health.get('last_error', '')[:120] or 'unknown'} ({health.get('consecutive_failures', 0)} in a row)."),
+            text=(f"Letzter Fehler in {version or 'der installierten Fassung'}: {health.get('last_error', '')[:120] or 'unbekannt'}"
+                  f" ({health.get('consecutive_failures', 0)} in Folge{f', {kind}' if kind else ''})."
+                  if de else
+                  f"Last error in {version or 'the installed version'}: {health.get('last_error', '')[:120] or 'unknown'}"
+                  f" ({health.get('consecutive_failures', 0)} in a row{f', {kind}' if kind else ''})."),
             why_it_matters="Der Planer wählt sie weiterhin, wenn auch nachrangig; ein Auftrag scheitert daran real." if de
                             else "The planner still offers it, demoted; a real request can fail on it.",
-            evidence=[{"kind": "capability", "ref": cid, "summary": f"health {state}; last_error_at {health.get('last_error_at', '')}"}],
-            context={"capability_id": cid}, confidence=0.9, importance="HIGH" if state == "failing" else "MEDIUM",
-            suggested_action="Reparieren (Capability Center → Repair)." if de else "Repair it (Capability Center → Repair).",
-            key=f"capability|{cid}|{state}",
+            evidence=[{"kind": "capability", "ref": cid,
+                       "summary": f"health {state}; version {version or '?'}; last_error_at {health.get('last_error_at', '')}"}],
+            context={"capability_id": cid, "state": state, "version": version},
+            confidence=0.9, importance="HIGH" if state == "failing" else "MEDIUM",
+            suggested_action=("Reparieren (Capability Center → Repair)." if de else "Repair it (Capability Center → Repair)."),
+            key=f"capability|{cid}",
         ))
     return out
 
@@ -349,6 +372,27 @@ class ThoughtStore:
             self.save()
             return thought, "new"
 
+    def retire(self, keys: set[str]) -> int:
+        """Close the thoughts whose subject is no longer in the state that made them.
+
+        ``ACTED_ON`` rather than deletion: the record that ZEUS once warned
+        about this, and that the condition ended, is worth keeping. A thought
+        already dismissed or saved by the owner is theirs and is left alone.
+        """
+
+        if not keys:
+            return 0
+        retired = 0
+        with self._lock:
+            for thought in self.thoughts.values():
+                if thought.key in keys and thought.status in {"NEW", "IMPORTANT"}:
+                    thought.status = "ACTED_ON"
+                    thought.updated_at = _now()
+                    retired += 1
+            if retired:
+                self.save()
+        return retired
+
     def get(self, thought_id: str) -> Thought | None:
         return self.thoughts.get(thought_id)
 
@@ -442,7 +486,13 @@ class ThoughtEngine:
                 found.extend(detector())
             except Exception as exc:  # noqa: BLE001 - one detector never stops the others
                 self.emit("diagnostic", {"thoughts": f"detector failed: {exc}"})
-        outcomes = {"new": 0, "refreshed": 0, "cooling": 0, "muted": 0, "dismissed": 0}
+        # A warning about a capability that is healthy again is not a warning,
+        # it is a stale claim about the system -- and it was delivered to the
+        # owner as a live one for a whole day. Close it before offering.
+        healthy = {str(m.get("capability_id", "")) for m in facts.get("capabilities", [])
+                   if str((m.get("health") or {}).get("state", "")) not in {"failing", "degraded"}}
+        outcomes = {"new": 0, "refreshed": 0, "cooling": 0, "muted": 0, "dismissed": 0,
+                    "retired": self.store.retire({f"capability|{cid}" for cid in healthy if cid})}
         new: list[Thought] = []
         for thought in found:
             stored, outcome = self.store.offer(thought)
