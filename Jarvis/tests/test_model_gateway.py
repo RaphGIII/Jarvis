@@ -680,3 +680,33 @@ def test_status_report_carries_spend_roles_and_no_secret(tmp_path, cfg, creds, n
     assert status["cloud_reasoning_available"] is True
     for secret in creds.values():
         assert secret not in json.dumps(status)
+
+
+# ---------------------------------------------------------------------------
+# Outcomes arrive later, by task id
+# ---------------------------------------------------------------------------
+
+def test_replies_are_judged_by_task_id_when_the_world_has_been_checked(tmp_path, cfg, creds, net):
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    request = knowledge("Was ist NAT?")
+    request.task_id = "req-1"
+    gateway.complete(request)
+    gateway.complete(request)  # a second call in the same request (e.g. interpretation + answer)
+    before = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
+    assert gateway.status()["pending_outcomes"] == 1
+    judged = gateway.report_task_outcome("req-1", goal_verified=True)
+    assert judged == 2
+    after = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
+    assert after.observations == 2 and after.alpha == pytest.approx(before.alpha + 2, abs=0.05)  # decay on the older one
+    assert gateway.report_task_outcome("req-1", goal_verified=True) == 0, "a task is judged once"
+    assert gateway.report_task_outcome("never-seen", goal_verified=False) == 0
+
+
+def test_unjudged_tasks_are_forgotten_not_counted(tmp_path, cfg, creds, net):
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    for i in range(205):
+        request = knowledge("Was ist NAT?")
+        request.task_id = f"req-{i}"
+        gateway.complete(request)
+    assert gateway.status()["pending_outcomes"] == 200
+    assert gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE).observations == 0

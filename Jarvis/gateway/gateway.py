@@ -159,6 +159,11 @@ class ModelGateway:
         self._emit = emit or (lambda kind, payload: None)
         self._lock = threading.RLock()
         self.recent: list[dict[str, Any]] = []
+        #: task_id -> replies made for that task and not yet judged.  The
+        #: conversation loop reports the verdict later -- an action's receipt,
+        #: a composition's GOAL_SATISFIED, the owner's thumbs -- by task id.
+        self._pending: dict[str, list[GatewayReply]] = {}
+        self._pending_order: list[str] = []
 
     # -- configuration changes at runtime ---------------------------------------
 
@@ -282,6 +287,7 @@ class ModelGateway:
                               latency_seconds=reply.latency_seconds, identity_rewrites=rewrites, privacy=privacy,
                               reservation_id=reservation.reservation_id if reservation else "")
         self._remember(result)
+        self._track(request.task_id, result)
         return result
 
     def _complete_local(self, request: GatewayRequest, decision: RouteDecision, binding: RoleBinding,
@@ -312,6 +318,7 @@ class ModelGateway:
                               model=str(getattr(provider, "model_name", "") or binding.model), usage=usage, estimated_eur=0.0,
                               actual_eur=0.0, latency_seconds=time.perf_counter() - started, identity_rewrites=rewrites, privacy=privacy)
         self._remember(result)
+        self._track(request.task_id, result)
         return result
 
     # -- learning -------------------------------------------------------------------------
@@ -337,6 +344,37 @@ class ModelGateway:
             cached_input_tokens=int(usage.get("cached_input_tokens", 0)), output_tokens=int(usage.get("output_tokens", 0)),
             task_vector=decision.task.as_features(), mode=mode.value,
         ))
+
+    def report_task_outcome(self, task_id: str, *, goal_verified: bool, failure_class: str = "task_failure") -> int:
+        """Judge every reply made for ``task_id``.  Returns how many were judged.
+
+        Called once the world has been checked: the receipt verified, the
+        goal was satisfied, the owner said it was right or wrong.  A task
+        with no gateway reply (a deterministic route) judges nothing.
+        """
+
+        if not task_id:
+            return 0
+        with self._lock:
+            replies = self._pending.pop(task_id, [])
+            if task_id in self._pending_order:
+                self._pending_order.remove(task_id)
+        for reply in replies:
+            self.report_outcome(reply, goal_verified=goal_verified, failure_class=failure_class)
+        return len(replies)
+
+    def _track(self, task_id: str, reply: GatewayReply) -> None:
+        if not task_id:
+            return
+        with self._lock:
+            if task_id not in self._pending:
+                self._pending[task_id] = []
+                self._pending_order.append(task_id)
+            self._pending[task_id].append(reply)
+            # Unjudged tasks are forgotten, not counted: silence is not success.
+            while len(self._pending_order) > 200:
+                stale = self._pending_order.pop(0)
+                self._pending.pop(stale, None)
 
     def _remember(self, reply: GatewayReply) -> None:
         with self._lock:
@@ -375,6 +413,8 @@ class ModelGateway:
             "budget": self.config.budget.to_dict(), "config_source": self.config.source,
             "transport": {"issued": self.transport.issued, "refused": len(self.transport.refused)},
             "recent": list(self.recent[-20:]),
+            "pending_outcomes": len(self._pending),
+            "reliability": self.reliability.table(),
             "cloud_reasoning_available": any(roles[r]["configured"] for r in ("reasoning.free", "reasoning.deep") if r in roles),
         }
 

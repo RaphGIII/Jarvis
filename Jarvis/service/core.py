@@ -508,6 +508,30 @@ class JarvisCore:
         except Exception:  # noqa: BLE001 - routing facts are best effort
             pass
 
+    def _gateway_outcome(self, verified: bool, *, failure_class: str = "task_failure", task_id: str = "") -> None:
+        """Tell the gateway how this request ended, so routing learns from the world.
+
+        GOAL_VERIFIED, never the model's self-report: a receipt that verified,
+        a composition whose goal was satisfied, an owner's thumb.  The task id
+        is the request id the answer thread was started with.
+        """
+
+        try:
+            from gateway.gateway import active_context
+
+            if not task_id:
+                context = active_context()
+                task_id = context.task_id if context is not None else ""
+            if not task_id:
+                return
+            judged = self.model_gateway.report_task_outcome(task_id, goal_verified=bool(verified),
+                                                            failure_class="" if verified else failure_class)
+            if judged:
+                self.emit(EventType.DIAGNOSTIC, {"gateway": "outcome", "task_id": task_id, "goal_verified": bool(verified),
+                                                 "replies_judged": judged})
+        except Exception:  # noqa: BLE001 - learning is best effort, never a failure of the answer
+            pass
+
     def set_chat_mode(self, mode: Any, *, announce: bool = True) -> dict[str, Any]:
         """The owner picks how much this conversation may spend and what kind of work it is."""
 
@@ -904,6 +928,7 @@ class JarvisCore:
         # GOAL_SATISFIED is the contract, not the return code: every success
         # criterion of the intent has a verification behind it.
         satisfied = receipt.verified
+        self._gateway_outcome(satisfied)
         reasons = [v.check for v in receipt.failures] or (["every success criterion verified"] if satisfied else [receipt.detail])
         self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if satisfied else 'NOT satisfied'} — {action.operation} {action.target or ''}".strip(),
                                    "goal": {"ACTION_EXECUTED": receipt.ok, "EXECUTION_VERIFIED": receipt.verified, "GOAL_SATISFIED": satisfied, "reasons": reasons},
@@ -2716,6 +2741,7 @@ class JarvisCore:
         failed = [s for s in plan.steps if s.status == "failed"]
         required_failed = [s for s in failed if s.required]
         goal = evaluate_goal(plan, receipts)
+        self._gateway_outcome(bool(goal.goal_satisfied))
         self.missions.transition(mission, "VERIFY", f"{len(done)} done, {len(failed)} failed; "
                                  f"EXECUTION_VERIFIED={goal.execution_verified} GOAL_SATISFIED={goal.goal_satisfied}")
         self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if goal.goal_satisfied else 'NOT satisfied'}"
@@ -3234,6 +3260,10 @@ class JarvisCore:
         # was asked. What decides the state is whether the run failed or a
         # check contradicted it.
         contradicted = bool(checks) and not all(item.passed for item in checks)
+        # A capability that ran with nothing external to check is not a
+        # verified goal; only VERIFIED teaches the router anything.
+        if receipt.verified or not ok or contradicted:
+            self._gateway_outcome(bool(receipt.verified))
         standing = ("verified" if receipt.verified
                     else "ran; nothing external to check" if ok and not checks
                     else "not verified")
@@ -3872,6 +3902,7 @@ class JarvisCore:
             {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()},
             scope=scope,
         )
+        self._gateway_outcome(bool(receipt.verified))
         self._deliver(
             compose(receipt, language=self.language),
             scope=scope,
@@ -6058,6 +6089,10 @@ class JarvisCore:
             context = classify_context(request=request_text, answer=answer_text, backend=backend)
             out = self.adaptation.record_response_feedback(rating=rating, category=category, text=text, context=context,
                                                            request=request_text, answer=answer_text, request_id=request_id)
+            # The owner's verdict on a conversational answer is the only
+            # GOAL_VERIFIED a conversation can have; it reaches the router.
+            if request_id and rating in {"up", "down"}:
+                self._gateway_outcome(rating == "up", task_id=request_id)
             learned = out.get("learned") or []
             self.emit(EventType.NOTIFICATION, {"kind": "feedback", "text": f"Feedback: {'👍' if rating == 'up' else '👎'}"
                                                + (f" · {category}" if category else ""), "rating": rating, "category": category,

@@ -177,3 +177,23 @@ def test_diagnostics_show_the_provider_identity_the_conversation_hides(world):
     assert "Gemini" not in text and "Google" not in text and "NAT ist" in text
     recent = core.gateway_status()["recent"]
     assert recent and recent[-1]["provider"] == "gemini"
+
+
+def test_owner_feedback_on_an_answer_teaches_the_router(world):
+    core, kernel, net, local = world
+    gateway = kernel.gateway
+    from gateway.task import TaskClass
+
+    before = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
+    with core.bus.subscribe(replay=False) as sub:
+        core.send_message("Was ist Beta-Oxidation?", meta={"source": "test"}, request_id="fb-1")
+        deadline = time.time() + 20
+        while time.time() < deadline and not any(e.type is EventType.MESSAGE for e in sub.drain()):
+            time.sleep(0.05)
+    unchanged = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
+    assert (unchanged.alpha, unchanged.beta) == (before.alpha, before.beta), "an answer alone proves nothing"
+    core.feedback("response", rating="down", request_id="fb-1")
+    after = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
+    assert after.beta > before.beta and after.observations >= 1
+    rows = gateway.ledger.observations()
+    assert rows[-1].goal_verified is False and rows[-1].failure_class == "task_failure"
