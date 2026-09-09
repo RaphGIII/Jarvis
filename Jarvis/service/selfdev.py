@@ -910,6 +910,35 @@ class SelfDevRunner:
             prompt=mission.request,
         )
 
+    def _catalog_context(self, mission: SelfDevMission) -> str:
+        """Contracts, dependents and tests of the files INVESTIGATE named -- read before the source."""
+
+        try:
+            from catalog.context import build_context
+
+            files = [str(f) for f in mission.investigation.get("files", []) if str(f).endswith(".py")]
+            if not files or not mission.worktree:
+                return ""
+            return build_context(files, request=mission.request[:300], repo=Path(mission.worktree), budget_chars=20_000).text
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _refresh_catalog(self, mission: SelfDevMission) -> None:
+        """The catalog is derived from the code: regenerate it in the candidate so the change carries it.
+
+        A stale catalog is a verification failure; regenerating here means an
+        engineer never has to remember to.  Failure to regenerate is recorded,
+        not fatal -- the catalog check in the test suite will say so later.
+        """
+
+        if not mission.worktree or not (Path(mission.worktree) / "catalog" / "build.py").is_file():
+            return
+        ok, output = self._run([self.python, "-m", "catalog.build"], mission.worktree, timeout=300)
+        mission.events.append({"at": _now(), "phase": "VERIFY", "detail": "catalog regenerated in the candidate" if ok
+                               else f"catalog regeneration failed: {output[-200:]}"})
+        if ok:
+            mission.changed_files = self._changed_files(mission.worktree)
+
     def _model_gateway(self) -> Any:
         gateway = getattr(self.kernel, "gateway", None)
         return gateway if gateway is not None and hasattr(gateway, "router") else None
@@ -1185,6 +1214,7 @@ class SelfDevRunner:
             mission.verification = {"ok": False, "detail": f"candidate touched owner-protected paths: {violations}"}
             self._phase(mission, "VERIFY", mission.verification["detail"])
             return False
+        self._refresh_catalog(mission)
 
         checks: list[dict[str, Any]] = []
         ok_all = True
@@ -1362,6 +1392,7 @@ class SelfDevRunner:
         job = ExpertJob(
             goal=self._goal_text(mission),
             workspace=Path(mission.worktree),
+            context=self._catalog_context(mission),
             constraints=[f"never modify: {', '.join(PROTECTED_PATHS)}", "no new dependencies", "small targeted edits",
                          "the change must be complete and working in this worktree; ZEUS verifies with the commands below"],
             acceptance=[(item["criterion"], list(item["command"])) for item in mission.acceptance],

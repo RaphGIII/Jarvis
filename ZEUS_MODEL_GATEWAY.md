@@ -59,20 +59,28 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 - **API-Engineer** (`experts/api_engineer.py`): Brief plus relevante Dateien an die gewählte Rolle, Unified Diff zurück, `git apply` im Kandidaten-Worktree, eine Reparaturrunde, dann die unabhängige Verifikation des Expert-Gateways. Als `explicit_only` markiert: das Expert-Gateway iteriert nie von einem nicht verfügbaren Codex zu einem bezahlten Engineer.
 - **SelfDev** trägt den Chat-Modus der Anfrage (`mission.chat_mode`), baut den Engineering-Task-Vektor aus den INVESTIGATE-Fakten und reicht den Job an den benannten Provider.
 
+## Sprint 3: ZEUS Catalog (P0.6), Build-Freigabe, weiche Features, Intent-Fix
+
+- **Katalog** (`Jarvis/catalog/`): `python -m catalog.build` erzeugt deterministisch `ZEUS_MAP.yaml` (Pakete, Module, Zweck, Tests je Modul, API-Routen, UI-Module, Entry Points), `INTERFACES.yaml` (öffentliche Klassen/Methoden/Funktionen mit Signaturen), `DEPENDENCY_GRAPH.json` (Imports und Dependents), `ARCHITECTURE.md` (Überblick) und `CAPABILITIES.yaml` (Laufzeitfakten, nicht Teil der Aktualitätsprüfung). `python -m catalog.check` meldet veraltete Module, Verträge, Abhängigkeiten, Tests, Zwecke, Routen; `tests/test_catalog.py` macht einen veralteten Katalog zum Testfehler. Die SelfDev-Verifikation regeneriert den Katalog im Kandidaten, damit jede Änderung ihren Katalog mitbringt.
+- **Engineering Context Builder** (`catalog/context.py`): aus den betroffenen Dateien die Manifeste, Verträge, direkten Dependents, zugehörigen Tests und Vertrags-Ausschnitte der direkten Abhängigkeiten, in einem Zeichenbudget und nach Relevanz geordnet. Codex bekommt ihn als `ExpertJob.context`, der API-Engineer vor den Dateiinhalten. Gemessen: zwei Module → ~15 KB Kontext statt Repository-Exploration.
+- **Build-Freigabe** (§15): ein bezahlter Engineer parkt die Mission bei AWAITING_BUILD mit Schätzbereich und hartem Maximum; ausgegeben wird erst nach „Build starten“ unter Missions.
+- **Weiche Features** (§7): der semantische Planer schätzt im selben Aufruf reasoning_depth, context_dependency, long_horizon, novelty; sie heben nur an (`max(rule, semantic)`) und steuern Denkstufe und Modellwahl der folgenden Aufrufe.
+- **Intent-Fix**: „Was ist NAT? Antworte in einem Satz.“ ist keine Ordnersuche mehr.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:
 
 - **§9 Semantic World Model, §10 Capability Semantic Contract, §11 Capability Graph/Komposition** — nicht begonnen. Der Router hat einen `COMPOSE`-Override, aber keine Effekt/Vorbedingungs-Suche über existierende Fähigkeiten.
 - **§12/§13 Engineering Router** — umgestellt (Sprint 2). Offen: eine strukturierte `EngineeringSpec` und ein „Start build“-Dialog mit Schätzung *vor* dem Spending; heute begrenzen BUILD-Modus, Owner-Spending-Freigabe und die Caps das Ausgeben. Der API-Engineer arbeitet als Diff-Generator mit einer Reparaturrunde, nicht als mehrstufiger Agent mit Werkzeugen.
-- **§7 weiche Features** — `merged_with_semantic()` existiert; noch kein Modellaufruf schätzt Ambiguität/Tiefe. Heute nur Regeln.
+- **§7 weiche Features** — verdrahtet (Sprint 3) über den semantischen Planer; Ambiguität bleibt dessen `clarify`-Entscheidung.
 - **§20 Goal Verification als Lernsignal** — verdrahtet (Sprint 2) für Projektoperationen, Kompositionen, Fähigkeiten, Aktionen und Owner-Feedback. Konversationsantworten ohne Feedback bleiben unbeurteilt.
 - **Preise** — die Werte in `config/providers.json` sind unbestätigte Platzhalter (`confirmed: false`); die UI sagt das dazu. Der Owner muss sie gegen die Preislisten prüfen.
 - **Kein echter Provider-Aufruf** ist bisher erfolgt (keine Schlüssel hinterlegt). Die Adapter sind gegen die dokumentierten Antwortformen getestet, nicht gegen den Live-Dienst. Gemini-`thinkingBudget` und OpenAI-`max_completion_tokens`/`reasoning_effort` sind nach Doku, nicht live verifiziert.
 - **Threadsicherheit der Reservierungen** ist per RLock gegeben; zwei ZEUS-Prozesse über *ein* Ledger sind nicht abgesichert (bekannte Falle, siehe Registry).
 
 P0.5 (Voice: TEXT/LISTEN/TALK, `speech.stt/tts`) — nur die Rollen sind in der Config deklariert, keine Adapter, keine UI.
-P0.6 (ZEUS Catalog, Engineering Context Builder) — nicht begonnen.
+P0.6 (ZEUS Catalog, Engineering Context Builder) — gebaut (Sprint 3). Offen: Modul-Manifeste mit Permissions je Capability und ein Impact-Test-Lauf statt der vollen Suite bei isolierten Änderungen.
 UI-Komplettumbau — nicht begonnen; die Modus-Leiste und die Provider-Sektion folgen dem bestehenden Design.
 
 ## Beobachtungen aus dem Live-Test

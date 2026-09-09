@@ -1,0 +1,2569 @@
+{
+ "dependents": {
+  "agent/__init__.py": [],
+  "agent/developmental_agent.py": [
+   "agent/__init__.py"
+  ],
+  "brain/__init__.py": [],
+  "brain/json_utils.py": [
+   "capabilities/resolver.py",
+   "capabilities/specification.py",
+   "development/qa.py",
+   "development/repository_engineer.py",
+   "development/software_engineer.py",
+   "experts/api_engineer.py",
+   "projects/engine.py",
+   "runtime/action_generator.py",
+   "service/actions.py",
+   "service/coach.py",
+   "service/composer.py",
+   "service/core.py",
+   "service/selfdev.py",
+   "service/semantic.py"
+  ],
+  "brain/model.py": [
+   "brain/providers.py",
+   "main.py"
+  ],
+  "brain/ollama.py": [
+   "brain/providers.py",
+   "jarvis/measure_voice.py"
+  ],
+  "brain/providers.py": [
+   "brain/__init__.py",
+   "brain/ollama.py",
+   "brain/resources.py",
+   "brain/router.py",
+   "brain/tiers.py",
+   "core/kernel.py",
+   "development/repository_engineer.py",
+   "jarvis/record_evidence.py",
+   "runtime/self_developer.py",
+   "service/core.py",
+   "training/capability_acquisition_v04_demo.py",
+   "training/coding_brain_v03_demo.py",
+   "training/self_improvement_demo.py"
+  ],
+  "brain/registry.py": [
+   "brain/__init__.py",
+   "training/coding_brain_v03_demo.py"
+  ],
+  "brain/resources.py": [
+   "core/kernel.py",
+   "jarvis/cli.py",
+   "jarvis/record_evidence.py",
+   "jarvis/tune_resources.py",
+   "runtime/self_developer.py",
+   "service/core.py"
+  ],
+  "brain/router.py": [
+   "jarvis/cli.py"
+  ],
+  "brain/tiers.py": [
+   "brain/ollama.py",
+   "brain/resources.py",
+   "brain/router.py",
+   "core/kernel.py",
+   "jarvis/cli.py",
+   "jarvis/measure_pipeline.py",
+   "jarvis/measure_voice.py",
+   "jarvis/record_evidence.py",
+   "jarvis/tune_resources.py",
+   "runtime/self_developer.py",
+   "service/core.py",
+   "service/selfdev.py"
+  ],
+  "capabilities/__init__.py": [],
+  "capabilities/artifacts.py": [],
+  "capabilities/codex.py": [
+   "runtime/capability_runtime.py",
+   "service/acquisition.py",
+   "service/core.py",
+   "service/engineering.py"
+  ],
+  "capabilities/executor.py": [
+   "runtime/capability_runtime.py"
+  ],
+  "capabilities/generalize.py": [
+   "capabilities/registry.py",
+   "service/composer.py",
+   "service/core.py"
+  ],
+  "capabilities/models.py": [
+   "capabilities/__init__.py",
+   "capabilities/executor.py",
+   "capabilities/permissions.py",
+   "capabilities/promotion.py",
+   "capabilities/registry.py",
+   "capabilities/resolver.py",
+   "capabilities/service.py",
+   "capabilities/specification.py",
+   "capabilities/workspace.py",
+   "development/qa.py",
+   "development/software_engineer.py",
+   "runtime/capability_runtime.py",
+   "service/composer.py",
+   "service/core.py",
+   "service/engineering.py",
+   "training/capability_acquisition_v04_demo.py",
+   "training/capability_curriculum.py"
+  ],
+  "capabilities/permissions.py": [
+   "runtime/capability_runtime.py"
+  ],
+  "capabilities/promotion.py": [
+   "runtime/capability_runtime.py"
+  ],
+  "capabilities/registry.py": [
+   "capabilities/__init__.py",
+   "capabilities/promotion.py",
+   "capabilities/resolver.py",
+   "capabilities/service.py",
+   "experts/memory.py",
+   "jarvis/cli.py",
+   "jarvis/record_evidence.py",
+   "runtime/capability_runtime.py",
+   "service/core.py"
+  ],
+  "capabilities/research.py": [
+   "runtime/capability_runtime.py"
+  ],
+  "capabilities/resolver.py": [
+   "capabilities/service.py",
+   "runtime/capability_runtime.py",
+   "service/core.py"
+  ],
+  "capabilities/service.py": [
+   "capabilities/artifacts.py",
+   "jarvis/cli.py",
+   "jarvis/record_evidence.py",
+   "service/core.py",
+   "service/music.py"
+  ],
+  "capabilities/specification.py": [
+   "runtime/capability_runtime.py"
+  ],
+  "capabilities/static_check.py": [],
+  "capabilities/trajectory.py": [
+   "runtime/capability_runtime.py"
+  ],
+  "capabilities/workspace.py": [
+   "capabilities/promotion.py",
+   "runtime/capability_runtime.py"
+  ],
+  "config.py": [
+   "brain/model.py",
+   "brain/providers.py",
+   "brain/registry.py",
+   "gateway/persona.py",
+   "service/core.py"
+  ],
+  "conftest.py": [],
+  "core/__init__.py": [
+   "service/core.py"
+  ],
+  "core/identity.py": [
+   "config.py",
+   "gateway/persona.py",
+   "jarvis/measure_voice.py",
+   "persona/profiles.py",
+   "service/core.py",
+   "speech/listener.py",
+   "tools/desktop.py"
+  ],
+  "core/kernel.py": [
+   "jarvis/cli.py",
+   "jarvis/measure_pipeline.py",
+   "jarvis/record_evidence.py",
+   "service/core.py"
+  ],
+  "deployment/__init__.py": [],
+  "deployment/promotion.py": [
+   "development/ui_developer.py",
+   "service/core.py",
+   "service/doctor.py",
+   "service/selfdev.py"
+  ],
+  "deployment/release.py": [
+   "service/core.py",
+   "zeus_supervisor/build.py"
+  ],
+  "developer/__init__.py": [],
+  "developer/self_programming.py": [
+   "developer/__init__.py"
+  ],
+  "development/__init__.py": [],
+  "development/code_index.py": [
+   "development/repository_engineer.py",
+   "service/selfdev.py"
+  ],
+  "development/edit_engine.py": [
+   "development/repository_engineer.py",
+   "tools/builtin.py"
+  ],
+  "development/experience.py": [
+   "service/core.py",
+   "service/selfdev.py"
+  ],
+  "development/memory.py": [
+   "development/__init__.py",
+   "development/qa.py",
+   "development/software_engineer.py",
+   "runtime/capability_runtime.py"
+  ],
+  "development/qa.py": [
+   "development/__init__.py",
+   "development/software_engineer.py"
+  ],
+  "development/repository_engineer.py": [
+   "development/__init__.py",
+   "development/ui_developer.py",
+   "jarvis/build_executor.py",
+   "jarvis/record_evidence.py",
+   "runtime/self_developer.py",
+   "service/selfdev.py",
+   "training/self_improvement_demo.py"
+  ],
+  "development/software_engineer.py": [
+   "development/__init__.py",
+   "development/qa.py",
+   "runtime/capability_runtime.py"
+  ],
+  "development/ui_developer.py": [],
+  "devices/__init__.py": [],
+  "devices/client.py": [],
+  "devices/gateway.py": [
+   "service/core.py"
+  ],
+  "environments/__init__.py": [],
+  "environments/base.py": [
+   "environments/coding/environment.py",
+   "environments/coding/reward.py"
+  ],
+  "environments/coding/__init__.py": [],
+  "environments/coding/actions.py": [
+   "environments/coding/__init__.py",
+   "environments/coding/environment.py",
+   "environments/coding/reward.py",
+   "learning/experience/persistent_store.py",
+   "learning/representations/action_encoding.py",
+   "runtime/action_generator.py",
+   "runtime/jarvis_runtime.py",
+   "training/generic_mutation_generator.py"
+  ],
+  "environments/coding/environment.py": [
+   "environments/coding/__init__.py",
+   "runtime/capability_runtime.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "environments/coding/observation.py": [
+   "environments/coding/__init__.py",
+   "environments/coding/environment.py",
+   "environments/coding/reward.py",
+   "runtime/action_generator.py",
+   "runtime/jarvis_runtime.py",
+   "training/generic_mutation_generator.py"
+  ],
+  "environments/coding/reward.py": [
+   "environments/coding/__init__.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "environments/coding/sandbox_backend.py": [
+   "capabilities/executor.py",
+   "development/qa.py",
+   "development/software_engineer.py",
+   "environments/coding/__init__.py",
+   "environments/coding/environment.py",
+   "runtime/capability_runtime.py",
+   "runtime/jarvis_runtime.py",
+   "training/capability_acquisition_v04_demo.py",
+   "training/coding_brain_v02_demo.py",
+   "training/coding_brain_v03_demo.py",
+   "training/coding_learning_demo.py"
+  ],
+  "environments/coding/task.py": [
+   "capabilities/workspace.py",
+   "environments/coding/__init__.py",
+   "environments/coding/environment.py",
+   "runtime/jarvis_runtime.py",
+   "training/coding_benchmark.py",
+   "training/coding_curriculum.py"
+  ],
+  "evaluator/__init__.py": [],
+  "experts/__init__.py": [],
+  "experts/api_engineer.py": [
+   "service/core.py"
+  ],
+  "experts/claude_code.py": [],
+  "experts/codex.py": [
+   "service/acquisition.py",
+   "service/core.py"
+  ],
+  "experts/contracts.py": [
+   "experts/__init__.py",
+   "experts/api_engineer.py",
+   "experts/claude_code.py",
+   "experts/codex.py",
+   "experts/gateway.py",
+   "service/acquisition.py",
+   "service/selfdev.py"
+  ],
+  "experts/escalation.py": [
+   "service/acquisition.py"
+  ],
+  "experts/gateway.py": [
+   "experts/__init__.py",
+   "experts/api_engineer.py",
+   "experts/claude_code.py",
+   "experts/codex.py",
+   "service/acquisition.py",
+   "service/core.py"
+  ],
+  "experts/memory.py": [
+   "service/acquisition.py"
+  ],
+  "gateway/__init__.py": [],
+  "gateway/budget.py": [
+   "gateway/gateway.py",
+   "gateway/router.py",
+   "gateway/transport.py"
+  ],
+  "gateway/config.py": [
+   "core/kernel.py",
+   "gateway/budget.py",
+   "gateway/estimate.py",
+   "gateway/gateway.py",
+   "gateway/learning.py",
+   "gateway/providers.py",
+   "gateway/router.py",
+   "gateway/transport.py"
+  ],
+  "gateway/estimate.py": [
+   "gateway/gateway.py",
+   "gateway/router.py"
+  ],
+  "gateway/gateway.py": [
+   "core/kernel.py",
+   "experts/api_engineer.py",
+   "service/core.py"
+  ],
+  "gateway/health.py": [
+   "experts/api_engineer.py",
+   "gateway/gateway.py",
+   "gateway/providers.py",
+   "gateway/router.py",
+   "gateway/transport.py"
+  ],
+  "gateway/learning.py": [
+   "gateway/gateway.py",
+   "gateway/router.py"
+  ],
+  "gateway/modes.py": [
+   "experts/api_engineer.py",
+   "gateway/__init__.py",
+   "gateway/budget.py",
+   "gateway/config.py",
+   "gateway/gateway.py",
+   "gateway/router.py",
+   "gateway/transport.py",
+   "service/core.py",
+   "service/engineering.py",
+   "service/selfdev.py"
+  ],
+  "gateway/persona.py": [
+   "gateway/gateway.py"
+  ],
+  "gateway/privacy.py": [
+   "gateway/gateway.py",
+   "gateway/router.py"
+  ],
+  "gateway/providers.py": [
+   "gateway/gateway.py"
+  ],
+  "gateway/router.py": [
+   "gateway/gateway.py",
+   "service/engineering.py"
+  ],
+  "gateway/secrets.py": [
+   "gateway/gateway.py",
+   "gateway/transport.py"
+  ],
+  "gateway/task.py": [
+   "experts/api_engineer.py",
+   "gateway/gateway.py",
+   "gateway/learning.py",
+   "gateway/router.py",
+   "service/core.py",
+   "service/selfdev.py"
+  ],
+  "gateway/transport.py": [
+   "gateway/gateway.py",
+   "gateway/providers.py"
+  ],
+  "imagegen/__init__.py": [],
+  "imagegen/generate.py": [],
+  "imagegen/worker.py": [],
+  "jarvis/__init__.py": [],
+  "jarvis/__main__.py": [],
+  "jarvis/build_executor.py": [],
+  "jarvis/cli.py": [],
+  "jarvis/doctor.py": [],
+  "jarvis/measure_pipeline.py": [],
+  "jarvis/measure_voice.py": [],
+  "jarvis/record_evidence.py": [],
+  "jarvis/self_develop.py": [],
+  "jarvis/serve.py": [],
+  "jarvis/tune_resources.py": [],
+  "jarvis/verify_ui.py": [
+   "development/ui_developer.py"
+  ],
+  "jarvis/window.py": [
+   "jarvis/serve.py",
+   "service/desktop.py",
+   "zeus_supervisor/supervisor.py"
+  ],
+  "knowledge/__init__.py": [],
+  "knowledge/graph.py": [
+   "capabilities/service.py",
+   "jarvis/cli.py",
+   "jarvis/record_evidence.py",
+   "knowledge/ingest.py",
+   "knowledge/memory.py",
+   "knowledge/operations.py",
+   "research/agent.py",
+   "service/core.py"
+  ],
+  "knowledge/ingest.py": [
+   "service/core.py"
+  ],
+  "knowledge/memory.py": [
+   "capabilities/service.py",
+   "jarvis/cli.py"
+  ],
+  "knowledge/operations.py": [
+   "service/core.py"
+  ],
+  "learning/__init__.py": [],
+  "learning/checkpointing.py": [
+   "learning/policy/policy.py",
+   "learning/policy/value.py",
+   "learning/world_model/model.py",
+   "runtime/checkpoints.py"
+  ],
+  "learning/config.py": [
+   "learning/__init__.py",
+   "learning/experience/prioritization.py",
+   "learning/objectives/losses.py",
+   "learning/policy/action_value.py",
+   "learning/policy/policy.py",
+   "learning/policy/value.py",
+   "learning/representations/encoder.py",
+   "learning/rewards/reward_model.py",
+   "learning/world_model/model.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py"
+  ],
+  "learning/continual/__init__.py": [],
+  "learning/continual/consolidation.py": [
+   "learning/continual/__init__.py"
+  ],
+  "learning/continual/forgetting.py": [
+   "learning/continual/__init__.py",
+   "learning/continual/learner.py"
+  ],
+  "learning/continual/learner.py": [
+   "learning/continual/__init__.py"
+  ],
+  "learning/continual/regularization.py": [],
+  "learning/curriculum/__init__.py": [],
+  "learning/curriculum/curriculum.py": [
+   "learning/curriculum/__init__.py",
+   "training/coding_curriculum.py",
+   "training/coding_learning_demo.py"
+  ],
+  "learning/curriculum/difficulty.py": [
+   "learning/curriculum/__init__.py",
+   "learning/curriculum/curriculum.py",
+   "training/coding_curriculum.py"
+  ],
+  "learning/curriculum/stages.py": [
+   "learning/curriculum/__init__.py"
+  ],
+  "learning/experience/__init__.py": [],
+  "learning/experience/persistent_store.py": [
+   "learning/experience/__init__.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "learning/experience/prioritization.py": [
+   "learning/experience/replay_buffer.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "learning/experience/replay_buffer.py": [
+   "agent/developmental_agent.py",
+   "learning/experience/__init__.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py"
+  ],
+  "learning/experience/trajectory.py": [
+   "learning/continual/consolidation.py",
+   "learning/experience/__init__.py",
+   "learning/skills/discovery.py",
+   "runtime/runtime_state.py",
+   "training/datasets.py"
+  ],
+  "learning/experience/transition.py": [
+   "agent/developmental_agent.py",
+   "learning/experience/__init__.py",
+   "learning/experience/persistent_store.py",
+   "learning/experience/replay_buffer.py",
+   "learning/experience/trajectory.py",
+   "runtime/jarvis_runtime.py",
+   "training/datasets.py"
+  ],
+  "learning/meta/__init__.py": [],
+  "learning/meta/capability_graph.py": [
+   "learning/meta/__init__.py"
+  ],
+  "learning/meta/learning_strategy.py": [
+   "learning/meta/__init__.py"
+  ],
+  "learning/meta/metacognition.py": [],
+  "learning/meta/metrics.py": [
+   "learning/meta/__init__.py",
+   "learning/meta/self_model.py"
+  ],
+  "learning/meta/self_model.py": [
+   "learning/meta/__init__.py",
+   "learning/meta/metacognition.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "learning/objectives/__init__.py": [],
+  "learning/objectives/losses.py": [
+   "learning/objectives/__init__.py",
+   "learning/world_model/model.py"
+  ],
+  "learning/objectives/optimizer.py": [
+   "learning/objectives/__init__.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py",
+   "training/coding_brain_v03_demo.py",
+   "training/learning_demo.py",
+   "training/world_model_demo.py"
+  ],
+  "learning/policy/__init__.py": [],
+  "learning/policy/action_value.py": [
+   "learning/policy/__init__.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py"
+  ],
+  "learning/policy/exploration.py": [
+   "agent/developmental_agent.py",
+   "learning/policy/__init__.py"
+  ],
+  "learning/policy/policy.py": [
+   "learning/policy/__init__.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py",
+   "training/learning_demo.py"
+  ],
+  "learning/policy/value.py": [
+   "learning/policy/__init__.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py",
+   "training/learning_demo.py"
+  ],
+  "learning/pomdp.py": [],
+  "learning/representations/__init__.py": [],
+  "learning/representations/action_encoding.py": [
+   "learning/representations/__init__.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "learning/representations/embeddings.py": [
+   "agent/developmental_agent.py",
+   "learning/world_model/predictor.py",
+   "training/world_model_demo.py"
+  ],
+  "learning/representations/encoder.py": [
+   "agent/developmental_agent.py",
+   "learning/representations/__init__.py"
+  ],
+  "learning/representations/latent_state.py": [
+   "learning/pomdp.py",
+   "learning/representations/__init__.py"
+  ],
+  "learning/representations/semantic.py": [
+   "environments/coding/observation.py",
+   "learning/representations/__init__.py",
+   "learning/representations/action_encoding.py",
+   "runtime/jarvis_runtime.py",
+   "training/coding_brain_v03_demo.py"
+  ],
+  "learning/rewards/__init__.py": [],
+  "learning/rewards/extrinsic.py": [],
+  "learning/rewards/intrinsic.py": [
+   "learning/rewards/__init__.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "learning/rewards/preferences.py": [
+   "training/datasets.py"
+  ],
+  "learning/rewards/reward_model.py": [
+   "agent/developmental_agent.py",
+   "environments/coding/reward.py",
+   "learning/rewards/__init__.py",
+   "learning/rewards/extrinsic.py"
+  ],
+  "learning/skills/__init__.py": [],
+  "learning/skills/abstraction.py": [
+   "learning/skills/__init__.py"
+  ],
+  "learning/skills/discovery.py": [
+   "learning/skills/__init__.py"
+  ],
+  "learning/skills/option.py": [
+   "learning/skills/__init__.py",
+   "learning/skills/discovery.py"
+  ],
+  "learning/skills/transfer.py": [
+   "learning/skills/__init__.py"
+  ],
+  "learning/world_model/__init__.py": [],
+  "learning/world_model/failure.py": [],
+  "learning/world_model/model.py": [
+   "agent/developmental_agent.py",
+   "learning/world_model/__init__.py",
+   "learning/world_model/predictor.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/learning_scheduler.py",
+   "training/world_model_demo.py"
+  ],
+  "learning/world_model/predictor.py": [],
+  "learning/world_model/uncertainty.py": [
+   "learning/world_model/__init__.py",
+   "runtime/jarvis_runtime.py"
+  ],
+  "main.py": [
+   "skills/_staging/data.csv_column_mode/c94775b161/test_public.py",
+   "skills/_staging/files.extension_summary/347171f54d/test_public.py",
+   "skills/_staging/text.line_count/5d7f30a5c2/test_public.py",
+   "skills/_staging/text.line_count/795241047f/test_public.py",
+   "skills/installed/data.csv_column_mode/1.0.0/test_public.py",
+   "skills/installed/files.extension_summary/1.0.0/test_public.py",
+   "skills/installed/text.line_count/1.0.0/test_public.py"
+  ],
+  "memory/__init__.py": [],
+  "owner/__init__.py": [],
+  "owner/core.py": [
+   "config.py",
+   "service/core.py"
+  ],
+  "owner/protected.py": [
+   "deployment/promotion.py",
+   "development/repository_engineer.py",
+   "owner/__init__.py",
+   "runtime/paths.py",
+   "service/selfdev.py"
+  ],
+  "owner/security_gate.py": [
+   "service/core.py"
+  ],
+  "persona/__init__.py": [],
+  "persona/language.py": [
+   "config.py",
+   "service/core.py",
+   "service/voice.py"
+  ],
+  "persona/profiles.py": [
+   "config.py",
+   "jarvis/cli.py",
+   "service/core.py"
+  ],
+  "persona/smalltalk.py": [
+   "service/core.py"
+  ],
+  "projects/__init__.py": [],
+  "projects/acceptance_guard.py": [],
+  "projects/engine.py": [
+   "capabilities/service.py",
+   "core/kernel.py",
+   "jarvis/cli.py",
+   "jarvis/record_evidence.py",
+   "service/core.py"
+  ],
+  "projects/models.py": [
+   "capabilities/service.py",
+   "core/kernel.py",
+   "jarvis/cli.py",
+   "jarvis/record_evidence.py",
+   "knowledge/memory.py",
+   "projects/engine.py",
+   "projects/store.py",
+   "training/dataset_export.py"
+  ],
+  "projects/store.py": [
+   "core/kernel.py",
+   "projects/engine.py",
+   "service/actions.py",
+   "service/project_ops.py"
+  ],
+  "research/__init__.py": [],
+  "research/agent.py": [
+   "knowledge/operations.py",
+   "research/tools.py",
+   "service/core.py"
+  ],
+  "research/tools.py": [
+   "core/kernel.py"
+  ],
+  "runtime/__init__.py": [],
+  "runtime/action_generator.py": [
+   "runtime/jarvis_runtime.py",
+   "training/coding_brain_v03_demo.py",
+   "training/generic_mutation_generator.py"
+  ],
+  "runtime/activity.py": [
+   "service/core.py"
+  ],
+  "runtime/adaptation.py": [
+   "service/core.py"
+  ],
+  "runtime/backup.py": [
+   "service/core.py"
+  ],
+  "runtime/capability_runtime.py": [
+   "training/capability_acquisition_v04_demo.py"
+  ],
+  "runtime/checkpoints.py": [
+   "runtime/jarvis_runtime.py"
+  ],
+  "runtime/cost_policy.py": [
+   "core/kernel.py",
+   "experts/api_engineer.py",
+   "experts/claude_code.py",
+   "experts/codex.py",
+   "experts/gateway.py",
+   "gateway/gateway.py",
+   "service/acquisition.py",
+   "service/core.py"
+  ],
+  "runtime/deadline.py": [
+   "development/repository_engineer.py",
+   "jarvis/record_evidence.py",
+   "projects/engine.py"
+  ],
+  "runtime/device_context.py": [
+   "service/core.py"
+  ],
+  "runtime/environment.py": [
+   "capabilities/service.py",
+   "jarvis/measure_pipeline.py"
+  ],
+  "runtime/events.py": [
+   "runtime/jarvis_runtime.py"
+  ],
+  "runtime/evidence.py": [
+   "runtime/mission_engine.py",
+   "service/core.py"
+  ],
+  "runtime/failure_kind.py": [
+   "capabilities/service.py",
+   "service/core.py"
+  ],
+  "runtime/heartbeat.py": [
+   "development/repository_engineer.py",
+   "jarvis/doctor.py",
+   "jarvis/record_evidence.py",
+   "projects/engine.py"
+  ],
+  "runtime/jarvis_runtime.py": [
+   "main.py",
+   "training/coding_benchmark.py",
+   "training/coding_brain_v02_demo.py",
+   "training/coding_brain_v03_demo.py",
+   "training/coding_learning_demo.py"
+  ],
+  "runtime/learning_scheduler.py": [
+   "runtime/jarvis_runtime.py"
+  ],
+  "runtime/mission_engine.py": [
+   "service/core.py"
+  ],
+  "runtime/missions.py": [
+   "service/acquisition.py",
+   "service/core.py"
+  ],
+  "runtime/paths.py": [
+   "service/core.py"
+  ],
+  "runtime/preferences.py": [
+   "service/core.py"
+  ],
+  "runtime/profiling.py": [
+   "runtime/jarvis_runtime.py"
+  ],
+  "runtime/receipts.py": [
+   "service/actions.py",
+   "service/core.py",
+   "service/music.py",
+   "service/project_ops.py"
+  ],
+  "runtime/runtime_state.py": [
+   "runtime/jarvis_runtime.py",
+   "training/coding_benchmark.py",
+   "training/coding_brain_v02_demo.py",
+   "training/coding_brain_v03_demo.py",
+   "training/coding_learning_demo.py"
+  ],
+  "runtime/secrets.py": [
+   "service/core.py"
+  ],
+  "runtime/self_developer.py": [
+   "jarvis/self_develop.py"
+  ],
+  "runtime/tensorboard.py": [
+   "runtime/jarvis_runtime.py"
+  ],
+  "runtime/thoughts.py": [
+   "service/core.py"
+  ],
+  "sandbox/__init__.py": [],
+  "senses/__init__.py": [],
+  "service/__init__.py": [],
+  "service/acquisition.py": [
+   "service/core.py"
+  ],
+  "service/actions.py": [
+   "jarvis/measure_pipeline.py",
+   "service/core.py"
+  ],
+  "service/aliases.py": [
+   "service/core.py"
+  ],
+  "service/apps.py": [
+   "service/core.py"
+  ],
+  "service/calendar.py": [
+   "service/core.py"
+  ],
+  "service/claims.py": [
+   "service/core.py"
+  ],
+  "service/coach.py": [
+   "service/core.py"
+  ],
+  "service/composer.py": [
+   "service/core.py"
+  ],
+  "service/conversations.py": [
+   "service/core.py"
+  ],
+  "service/core.py": [
+   "jarvis/measure_pipeline.py",
+   "jarvis/serve.py",
+   "jarvis/verify_ui.py",
+   "service/lifecycle.py"
+  ],
+  "service/corrections.py": [
+   "service/core.py"
+  ],
+  "service/defaults.py": [
+   "service/core.py"
+  ],
+  "service/desktop.py": [
+   "service/lifecycle.py"
+  ],
+  "service/doctor.py": [
+   "service/core.py"
+  ],
+  "service/engineering.py": [
+   "service/core.py",
+   "service/selfdev.py"
+  ],
+  "service/events.py": [
+   "service/acquisition.py",
+   "service/core.py",
+   "service/http.py",
+   "service/lifecycle.py",
+   "service/selfdev.py",
+   "service/voice.py"
+  ],
+  "service/filesystem.py": [
+   "service/core.py"
+  ],
+  "service/http.py": [
+   "jarvis/serve.py",
+   "jarvis/verify_ui.py"
+  ],
+  "service/imagegen.py": [
+   "service/core.py",
+   "service/http.py",
+   "service/intents.py"
+  ],
+  "service/intent.py": [
+   "jarvis/measure_pipeline.py",
+   "service/core.py"
+  ],
+  "service/intents.py": [
+   "service/core.py",
+   "service/project_ops.py"
+  ],
+  "service/isolation.py": [
+   "service/core.py",
+   "service/doctor.py",
+   "service/selfdev.py"
+  ],
+  "service/jobs.py": [
+   "service/core.py"
+  ],
+  "service/library.py": [
+   "service/core.py"
+  ],
+  "service/lifecycle.py": [
+   "service/core.py"
+  ],
+  "service/music.py": [
+   "jarvis/measure_pipeline.py",
+   "service/core.py",
+   "service/intent.py"
+  ],
+  "service/observer.py": [
+   "service/core.py"
+  ],
+  "service/processes.py": [
+   "jarvis/serve.py",
+   "service/desktop.py",
+   "service/doctor.py",
+   "service/lifecycle.py"
+  ],
+  "service/project_ops.py": [
+   "service/core.py"
+  ],
+  "service/reads.py": [
+   "service/core.py"
+  ],
+  "service/routing.py": [
+   "service/intent.py",
+   "service/music.py"
+  ],
+  "service/selfdev.py": [
+   "service/core.py"
+  ],
+  "service/semantic.py": [
+   "service/core.py"
+  ],
+  "service/state.py": [
+   "service/core.py",
+   "service/selfdev.py",
+   "service/voice.py"
+  ],
+  "service/system_context.py": [
+   "service/core.py"
+  ],
+  "service/tv.py": [
+   "service/core.py"
+  ],
+  "service/voice.py": [
+   "service/core.py"
+  ],
+  "service/webread.py": [
+   "service/core.py"
+  ],
+  "service/websearch.py": [
+   "service/core.py"
+  ],
+  "skills/__init__.py": [],
+  "skills/_staging/data.csv_column_mode/c94775b161/main.py": [],
+  "skills/_staging/data.csv_column_mode/c94775b161/test_public.py": [],
+  "skills/_staging/files.extension_summary/347171f54d/main.py": [],
+  "skills/_staging/files.extension_summary/347171f54d/test_public.py": [],
+  "skills/_staging/text.line_count/5d7f30a5c2/main.py": [],
+  "skills/_staging/text.line_count/5d7f30a5c2/test_public.py": [],
+  "skills/_staging/text.line_count/795241047f/main.py": [],
+  "skills/_staging/text.line_count/795241047f/test_public.py": [],
+  "skills/installed/data.csv_column_mode/1.0.0/main.py": [],
+  "skills/installed/data.csv_column_mode/1.0.0/test_public.py": [],
+  "skills/installed/files.extension_summary/1.0.0/main.py": [],
+  "skills/installed/files.extension_summary/1.0.0/test_public.py": [],
+  "skills/installed/text.line_count/1.0.0/main.py": [],
+  "skills/installed/text.line_count/1.0.0/test_public.py": [],
+  "speech/__init__.py": [
+   "speech/wake_training.py"
+  ],
+  "speech/benchmark.py": [],
+  "speech/chunker.py": [
+   "service/voice.py",
+   "speech/pipeline.py"
+  ],
+  "speech/contracts.py": [
+   "jarvis/measure_voice.py",
+   "service/core.py",
+   "service/voice.py",
+   "speech/engine.py",
+   "speech/pipeline.py"
+  ],
+  "speech/corpus.py": [
+   "service/core.py",
+   "service/http.py",
+   "speech/benchmark.py"
+  ],
+  "speech/engine.py": [
+   "jarvis/measure_voice.py",
+   "service/core.py",
+   "service/voice.py"
+  ],
+  "speech/listener.py": [],
+  "speech/normalize.py": [
+   "service/core.py",
+   "service/voice.py",
+   "speech/corpus.py"
+  ],
+  "speech/pipeline.py": [
+   "jarvis/measure_voice.py",
+   "service/voice.py"
+  ],
+  "speech/pronounce.py": [
+   "service/voice.py"
+  ],
+  "speech/utterance.py": [
+   "service/core.py",
+   "service/voice.py"
+  ],
+  "speech/wake_eval.py": [],
+  "speech/wake_segment.py": [
+   "service/core.py"
+  ],
+  "speech/wake_training.py": [],
+  "speech/wake_zeus.py": [
+   "service/core.py",
+   "speech/listener.py",
+   "speech/wake_eval.py",
+   "speech/wake_training.py"
+  ],
+  "speech/worker.py": [],
+  "tools/__init__.py": [
+   "jarvis/measure_pipeline.py",
+   "service/music.py"
+  ],
+  "tools/audio_probe.py": [],
+  "tools/builtin.py": [
+   "core/kernel.py",
+   "projects/engine.py"
+  ],
+  "tools/chess_analysis/__init__.py": [],
+  "tools/chess_analysis/__main__.py": [],
+  "tools/chess_analysis/board.py": [],
+  "tools/chess_analysis/engine.py": [
+   "service/core.py"
+  ],
+  "tools/chess_analysis/overlay.py": [],
+  "tools/chess_analysis/position.py": [],
+  "tools/chess_analysis/recognize.py": [
+   "service/core.py"
+  ],
+  "tools/desktop.py": [
+   "core/kernel.py"
+  ],
+  "tools/media_session.py": [],
+  "tools/registry.py": [
+   "core/kernel.py",
+   "projects/engine.py",
+   "research/tools.py",
+   "service/actions.py",
+   "tools/builtin.py",
+   "tools/desktop.py",
+   "tools/vision.py",
+   "tools/web.py"
+  ],
+  "tools/vision.py": [
+   "core/kernel.py"
+  ],
+  "tools/web.py": [
+   "core/kernel.py",
+   "research/agent.py"
+  ],
+  "training/__init__.py": [],
+  "training/benchmark_progress.py": [
+   "training/coding_brain_v03_demo.py"
+  ],
+  "training/capability_acquisition_v04_demo.py": [],
+  "training/capability_curriculum.py": [
+   "training/capability_acquisition_v04_demo.py"
+  ],
+  "training/coding_benchmark.py": [
+   "training/coding_brain_v02_demo.py",
+   "training/coding_brain_v03_demo.py",
+   "training/coding_learning_demo.py"
+  ],
+  "training/coding_brain_v02_demo.py": [
+   "main.py"
+  ],
+  "training/coding_brain_v03_demo.py": [],
+  "training/coding_curriculum.py": [
+   "training/coding_brain_v02_demo.py",
+   "training/coding_brain_v03_demo.py",
+   "training/coding_learning_demo.py"
+  ],
+  "training/coding_learning_demo.py": [],
+  "training/dataset_export.py": [],
+  "training/datasets.py": [],
+  "training/experiments.py": [],
+  "training/generic_mutation_generator.py": [
+   "training/coding_brain_v02_demo.py",
+   "training/coding_learning_demo.py"
+  ],
+  "training/learning_demo.py": [
+   "training/__init__.py"
+  ],
+  "training/self_improvement_demo.py": [],
+  "training/world_model_demo.py": [
+   "training/__init__.py"
+  ],
+  "ui/__init__.py": [],
+  "voice/__init__.py": [],
+  "zeus_supervisor/__init__.py": [
+   "service/lifecycle.py"
+  ],
+  "zeus_supervisor/__main__.py": [
+   "zeus_supervisor/launch.py"
+  ],
+  "zeus_supervisor/build.py": [
+   "deployment/release.py"
+  ],
+  "zeus_supervisor/config.py": [
+   "service/doctor.py"
+  ],
+  "zeus_supervisor/control.py": [
+   "service/lifecycle.py"
+  ],
+  "zeus_supervisor/instance.py": [],
+  "zeus_supervisor/known_good.py": [
+   "service/lifecycle.py"
+  ],
+  "zeus_supervisor/launch.py": [],
+  "zeus_supervisor/ollama.py": [],
+  "zeus_supervisor/preflight.py": [
+   "service/doctor.py"
+  ],
+  "zeus_supervisor/relaunch.py": [],
+  "zeus_supervisor/status_page.py": [],
+  "zeus_supervisor/supervisor.py": []
+ },
+ "imports": {
+  "agent/__init__.py": [
+   "agent/developmental_agent.py"
+  ],
+  "agent/developmental_agent.py": [
+   "learning/experience/replay_buffer.py",
+   "learning/experience/transition.py",
+   "learning/policy/exploration.py",
+   "learning/representations/embeddings.py",
+   "learning/representations/encoder.py",
+   "learning/rewards/reward_model.py",
+   "learning/world_model/model.py"
+  ],
+  "brain/__init__.py": [
+   "brain/providers.py",
+   "brain/registry.py"
+  ],
+  "brain/json_utils.py": [],
+  "brain/model.py": [
+   "config.py"
+  ],
+  "brain/ollama.py": [
+   "brain/providers.py",
+   "brain/tiers.py"
+  ],
+  "brain/providers.py": [
+   "brain/model.py",
+   "brain/ollama.py",
+   "config.py"
+  ],
+  "brain/registry.py": [
+   "config.py"
+  ],
+  "brain/resources.py": [
+   "brain/providers.py",
+   "brain/tiers.py"
+  ],
+  "brain/router.py": [
+   "brain/providers.py",
+   "brain/tiers.py"
+  ],
+  "brain/tiers.py": [
+   "brain/providers.py"
+  ],
+  "capabilities/__init__.py": [
+   "capabilities/models.py",
+   "capabilities/registry.py"
+  ],
+  "capabilities/artifacts.py": [
+   "capabilities/service.py"
+  ],
+  "capabilities/codex.py": [],
+  "capabilities/executor.py": [
+   "capabilities/models.py",
+   "environments/coding/sandbox_backend.py"
+  ],
+  "capabilities/generalize.py": [],
+  "capabilities/models.py": [],
+  "capabilities/permissions.py": [
+   "capabilities/models.py"
+  ],
+  "capabilities/promotion.py": [
+   "capabilities/models.py",
+   "capabilities/registry.py",
+   "capabilities/workspace.py"
+  ],
+  "capabilities/registry.py": [
+   "capabilities/generalize.py",
+   "capabilities/models.py"
+  ],
+  "capabilities/research.py": [],
+  "capabilities/resolver.py": [
+   "brain/json_utils.py",
+   "capabilities/models.py",
+   "capabilities/registry.py"
+  ],
+  "capabilities/service.py": [
+   "capabilities/models.py",
+   "capabilities/registry.py",
+   "capabilities/resolver.py",
+   "knowledge/graph.py",
+   "knowledge/memory.py",
+   "projects/engine.py",
+   "projects/models.py",
+   "runtime/environment.py",
+   "runtime/failure_kind.py"
+  ],
+  "capabilities/specification.py": [
+   "brain/json_utils.py",
+   "capabilities/models.py"
+  ],
+  "capabilities/static_check.py": [],
+  "capabilities/trajectory.py": [],
+  "capabilities/workspace.py": [
+   "capabilities/models.py",
+   "environments/coding/task.py"
+  ],
+  "config.py": [
+   "core/identity.py",
+   "owner/core.py",
+   "persona/language.py",
+   "persona/profiles.py"
+  ],
+  "conftest.py": [],
+  "core/__init__.py": [],
+  "core/identity.py": [],
+  "core/kernel.py": [
+   "brain/providers.py",
+   "brain/resources.py",
+   "brain/tiers.py",
+   "gateway/config.py",
+   "gateway/gateway.py",
+   "projects/engine.py",
+   "projects/models.py",
+   "projects/store.py",
+   "research/tools.py",
+   "runtime/cost_policy.py",
+   "tools/builtin.py",
+   "tools/desktop.py",
+   "tools/registry.py",
+   "tools/vision.py",
+   "tools/web.py"
+  ],
+  "deployment/__init__.py": [],
+  "deployment/promotion.py": [
+   "owner/protected.py"
+  ],
+  "deployment/release.py": [
+   "zeus_supervisor/build.py"
+  ],
+  "developer/__init__.py": [
+   "developer/self_programming.py"
+  ],
+  "developer/self_programming.py": [],
+  "development/__init__.py": [
+   "development/memory.py",
+   "development/qa.py",
+   "development/repository_engineer.py",
+   "development/software_engineer.py"
+  ],
+  "development/code_index.py": [],
+  "development/edit_engine.py": [],
+  "development/experience.py": [],
+  "development/memory.py": [],
+  "development/qa.py": [
+   "brain/json_utils.py",
+   "capabilities/models.py",
+   "development/memory.py",
+   "development/software_engineer.py",
+   "environments/coding/sandbox_backend.py"
+  ],
+  "development/repository_engineer.py": [
+   "brain/json_utils.py",
+   "brain/providers.py",
+   "development/code_index.py",
+   "development/edit_engine.py",
+   "owner/protected.py",
+   "runtime/deadline.py",
+   "runtime/heartbeat.py"
+  ],
+  "development/software_engineer.py": [
+   "brain/json_utils.py",
+   "capabilities/models.py",
+   "development/memory.py",
+   "development/qa.py",
+   "environments/coding/sandbox_backend.py"
+  ],
+  "development/ui_developer.py": [
+   "deployment/promotion.py",
+   "development/repository_engineer.py",
+   "jarvis/verify_ui.py"
+  ],
+  "devices/__init__.py": [],
+  "devices/client.py": [],
+  "devices/gateway.py": [],
+  "environments/__init__.py": [],
+  "environments/base.py": [],
+  "environments/coding/__init__.py": [
+   "environments/coding/actions.py",
+   "environments/coding/environment.py",
+   "environments/coding/observation.py",
+   "environments/coding/reward.py",
+   "environments/coding/sandbox_backend.py",
+   "environments/coding/task.py"
+  ],
+  "environments/coding/actions.py": [],
+  "environments/coding/environment.py": [
+   "environments/base.py",
+   "environments/coding/actions.py",
+   "environments/coding/observation.py",
+   "environments/coding/sandbox_backend.py",
+   "environments/coding/task.py"
+  ],
+  "environments/coding/observation.py": [
+   "learning/representations/semantic.py"
+  ],
+  "environments/coding/reward.py": [
+   "environments/base.py",
+   "environments/coding/actions.py",
+   "environments/coding/observation.py",
+   "learning/rewards/reward_model.py"
+  ],
+  "environments/coding/sandbox_backend.py": [],
+  "environments/coding/task.py": [],
+  "evaluator/__init__.py": [],
+  "experts/__init__.py": [
+   "experts/contracts.py",
+   "experts/gateway.py"
+  ],
+  "experts/api_engineer.py": [
+   "brain/json_utils.py",
+   "experts/contracts.py",
+   "experts/gateway.py",
+   "gateway/gateway.py",
+   "gateway/health.py",
+   "gateway/modes.py",
+   "gateway/task.py",
+   "runtime/cost_policy.py"
+  ],
+  "experts/claude_code.py": [
+   "experts/contracts.py",
+   "experts/gateway.py",
+   "runtime/cost_policy.py"
+  ],
+  "experts/codex.py": [
+   "experts/contracts.py",
+   "experts/gateway.py",
+   "runtime/cost_policy.py"
+  ],
+  "experts/contracts.py": [],
+  "experts/escalation.py": [],
+  "experts/gateway.py": [
+   "experts/contracts.py",
+   "runtime/cost_policy.py"
+  ],
+  "experts/memory.py": [
+   "capabilities/registry.py"
+  ],
+  "gateway/__init__.py": [
+   "gateway/modes.py"
+  ],
+  "gateway/budget.py": [
+   "gateway/config.py",
+   "gateway/modes.py"
+  ],
+  "gateway/config.py": [
+   "gateway/modes.py"
+  ],
+  "gateway/estimate.py": [
+   "gateway/config.py"
+  ],
+  "gateway/gateway.py": [
+   "gateway/budget.py",
+   "gateway/config.py",
+   "gateway/estimate.py",
+   "gateway/health.py",
+   "gateway/learning.py",
+   "gateway/modes.py",
+   "gateway/persona.py",
+   "gateway/privacy.py",
+   "gateway/providers.py",
+   "gateway/router.py",
+   "gateway/secrets.py",
+   "gateway/task.py",
+   "gateway/transport.py",
+   "runtime/cost_policy.py"
+  ],
+  "gateway/health.py": [],
+  "gateway/learning.py": [
+   "gateway/config.py",
+   "gateway/task.py"
+  ],
+  "gateway/modes.py": [],
+  "gateway/persona.py": [
+   "config.py",
+   "core/identity.py"
+  ],
+  "gateway/privacy.py": [],
+  "gateway/providers.py": [
+   "gateway/config.py",
+   "gateway/health.py",
+   "gateway/transport.py"
+  ],
+  "gateway/router.py": [
+   "gateway/budget.py",
+   "gateway/config.py",
+   "gateway/estimate.py",
+   "gateway/health.py",
+   "gateway/learning.py",
+   "gateway/modes.py",
+   "gateway/privacy.py",
+   "gateway/task.py"
+  ],
+  "gateway/secrets.py": [],
+  "gateway/task.py": [],
+  "gateway/transport.py": [
+   "gateway/budget.py",
+   "gateway/config.py",
+   "gateway/health.py",
+   "gateway/modes.py",
+   "gateway/secrets.py"
+  ],
+  "imagegen/__init__.py": [],
+  "imagegen/generate.py": [],
+  "imagegen/worker.py": [],
+  "jarvis/__init__.py": [],
+  "jarvis/__main__.py": [],
+  "jarvis/build_executor.py": [
+   "development/repository_engineer.py"
+  ],
+  "jarvis/cli.py": [
+   "brain/resources.py",
+   "brain/router.py",
+   "brain/tiers.py",
+   "capabilities/registry.py",
+   "capabilities/service.py",
+   "core/kernel.py",
+   "knowledge/graph.py",
+   "knowledge/memory.py",
+   "persona/profiles.py",
+   "projects/engine.py",
+   "projects/models.py"
+  ],
+  "jarvis/doctor.py": [
+   "runtime/heartbeat.py"
+  ],
+  "jarvis/measure_pipeline.py": [
+   "brain/tiers.py",
+   "core/kernel.py",
+   "runtime/environment.py",
+   "service/actions.py",
+   "service/core.py",
+   "service/intent.py",
+   "service/music.py",
+   "tools/__init__.py"
+  ],
+  "jarvis/measure_voice.py": [
+   "brain/ollama.py",
+   "brain/tiers.py",
+   "core/identity.py",
+   "speech/contracts.py",
+   "speech/engine.py",
+   "speech/pipeline.py"
+  ],
+  "jarvis/record_evidence.py": [
+   "brain/providers.py",
+   "brain/resources.py",
+   "brain/tiers.py",
+   "capabilities/registry.py",
+   "capabilities/service.py",
+   "core/kernel.py",
+   "development/repository_engineer.py",
+   "knowledge/graph.py",
+   "projects/engine.py",
+   "projects/models.py",
+   "runtime/deadline.py",
+   "runtime/heartbeat.py"
+  ],
+  "jarvis/self_develop.py": [
+   "runtime/self_developer.py"
+  ],
+  "jarvis/serve.py": [
+   "jarvis/window.py",
+   "service/core.py",
+   "service/http.py",
+   "service/processes.py"
+  ],
+  "jarvis/tune_resources.py": [
+   "brain/resources.py",
+   "brain/tiers.py"
+  ],
+  "jarvis/verify_ui.py": [
+   "service/core.py",
+   "service/http.py"
+  ],
+  "jarvis/window.py": [],
+  "knowledge/__init__.py": [],
+  "knowledge/graph.py": [],
+  "knowledge/ingest.py": [
+   "knowledge/graph.py"
+  ],
+  "knowledge/memory.py": [
+   "knowledge/graph.py",
+   "projects/models.py"
+  ],
+  "knowledge/operations.py": [
+   "knowledge/graph.py",
+   "research/agent.py"
+  ],
+  "learning/__init__.py": [
+   "learning/config.py"
+  ],
+  "learning/checkpointing.py": [],
+  "learning/config.py": [],
+  "learning/continual/__init__.py": [
+   "learning/continual/consolidation.py",
+   "learning/continual/forgetting.py",
+   "learning/continual/learner.py"
+  ],
+  "learning/continual/consolidation.py": [
+   "learning/experience/trajectory.py"
+  ],
+  "learning/continual/forgetting.py": [],
+  "learning/continual/learner.py": [
+   "learning/continual/forgetting.py"
+  ],
+  "learning/continual/regularization.py": [],
+  "learning/curriculum/__init__.py": [
+   "learning/curriculum/curriculum.py",
+   "learning/curriculum/difficulty.py",
+   "learning/curriculum/stages.py"
+  ],
+  "learning/curriculum/curriculum.py": [
+   "learning/curriculum/difficulty.py"
+  ],
+  "learning/curriculum/difficulty.py": [],
+  "learning/curriculum/stages.py": [],
+  "learning/experience/__init__.py": [
+   "learning/experience/persistent_store.py",
+   "learning/experience/replay_buffer.py",
+   "learning/experience/trajectory.py",
+   "learning/experience/transition.py"
+  ],
+  "learning/experience/persistent_store.py": [
+   "environments/coding/actions.py",
+   "learning/experience/transition.py"
+  ],
+  "learning/experience/prioritization.py": [
+   "learning/config.py"
+  ],
+  "learning/experience/replay_buffer.py": [
+   "learning/experience/prioritization.py",
+   "learning/experience/transition.py"
+  ],
+  "learning/experience/trajectory.py": [
+   "learning/experience/transition.py"
+  ],
+  "learning/experience/transition.py": [],
+  "learning/meta/__init__.py": [
+   "learning/meta/capability_graph.py",
+   "learning/meta/learning_strategy.py",
+   "learning/meta/metrics.py",
+   "learning/meta/self_model.py"
+  ],
+  "learning/meta/capability_graph.py": [],
+  "learning/meta/learning_strategy.py": [],
+  "learning/meta/metacognition.py": [
+   "learning/meta/self_model.py"
+  ],
+  "learning/meta/metrics.py": [],
+  "learning/meta/self_model.py": [
+   "learning/meta/metrics.py"
+  ],
+  "learning/objectives/__init__.py": [
+   "learning/objectives/losses.py",
+   "learning/objectives/optimizer.py"
+  ],
+  "learning/objectives/losses.py": [
+   "learning/config.py"
+  ],
+  "learning/objectives/optimizer.py": [],
+  "learning/policy/__init__.py": [
+   "learning/policy/action_value.py",
+   "learning/policy/exploration.py",
+   "learning/policy/policy.py",
+   "learning/policy/value.py"
+  ],
+  "learning/policy/action_value.py": [
+   "learning/config.py"
+  ],
+  "learning/policy/exploration.py": [],
+  "learning/policy/policy.py": [
+   "learning/checkpointing.py",
+   "learning/config.py"
+  ],
+  "learning/policy/value.py": [
+   "learning/checkpointing.py",
+   "learning/config.py"
+  ],
+  "learning/pomdp.py": [
+   "learning/representations/latent_state.py"
+  ],
+  "learning/representations/__init__.py": [
+   "learning/representations/action_encoding.py",
+   "learning/representations/encoder.py",
+   "learning/representations/latent_state.py",
+   "learning/representations/semantic.py"
+  ],
+  "learning/representations/action_encoding.py": [
+   "environments/coding/actions.py",
+   "learning/representations/semantic.py"
+  ],
+  "learning/representations/embeddings.py": [],
+  "learning/representations/encoder.py": [
+   "learning/config.py"
+  ],
+  "learning/representations/latent_state.py": [],
+  "learning/representations/semantic.py": [],
+  "learning/rewards/__init__.py": [
+   "learning/rewards/intrinsic.py",
+   "learning/rewards/reward_model.py"
+  ],
+  "learning/rewards/extrinsic.py": [
+   "learning/rewards/reward_model.py"
+  ],
+  "learning/rewards/intrinsic.py": [],
+  "learning/rewards/preferences.py": [],
+  "learning/rewards/reward_model.py": [
+   "learning/config.py"
+  ],
+  "learning/skills/__init__.py": [
+   "learning/skills/abstraction.py",
+   "learning/skills/discovery.py",
+   "learning/skills/option.py",
+   "learning/skills/transfer.py"
+  ],
+  "learning/skills/abstraction.py": [],
+  "learning/skills/discovery.py": [
+   "learning/experience/trajectory.py",
+   "learning/skills/option.py"
+  ],
+  "learning/skills/option.py": [],
+  "learning/skills/transfer.py": [],
+  "learning/world_model/__init__.py": [
+   "learning/world_model/model.py",
+   "learning/world_model/uncertainty.py"
+  ],
+  "learning/world_model/failure.py": [],
+  "learning/world_model/model.py": [
+   "learning/checkpointing.py",
+   "learning/config.py",
+   "learning/objectives/losses.py"
+  ],
+  "learning/world_model/predictor.py": [
+   "learning/representations/embeddings.py",
+   "learning/world_model/model.py"
+  ],
+  "learning/world_model/uncertainty.py": [],
+  "main.py": [
+   "brain/model.py",
+   "runtime/jarvis_runtime.py",
+   "training/coding_brain_v02_demo.py"
+  ],
+  "memory/__init__.py": [],
+  "owner/__init__.py": [
+   "owner/protected.py"
+  ],
+  "owner/core.py": [],
+  "owner/protected.py": [],
+  "owner/security_gate.py": [],
+  "persona/__init__.py": [],
+  "persona/language.py": [],
+  "persona/profiles.py": [
+   "core/identity.py"
+  ],
+  "persona/smalltalk.py": [],
+  "projects/__init__.py": [],
+  "projects/acceptance_guard.py": [],
+  "projects/engine.py": [
+   "brain/json_utils.py",
+   "projects/models.py",
+   "projects/store.py",
+   "runtime/deadline.py",
+   "runtime/heartbeat.py",
+   "tools/builtin.py",
+   "tools/registry.py"
+  ],
+  "projects/models.py": [],
+  "projects/store.py": [
+   "projects/models.py"
+  ],
+  "research/__init__.py": [],
+  "research/agent.py": [
+   "knowledge/graph.py",
+   "tools/web.py"
+  ],
+  "research/tools.py": [
+   "research/agent.py",
+   "tools/registry.py"
+  ],
+  "runtime/__init__.py": [],
+  "runtime/action_generator.py": [
+   "brain/json_utils.py",
+   "environments/coding/actions.py",
+   "environments/coding/observation.py"
+  ],
+  "runtime/activity.py": [],
+  "runtime/adaptation.py": [],
+  "runtime/backup.py": [],
+  "runtime/capability_runtime.py": [
+   "capabilities/codex.py",
+   "capabilities/executor.py",
+   "capabilities/models.py",
+   "capabilities/permissions.py",
+   "capabilities/promotion.py",
+   "capabilities/registry.py",
+   "capabilities/research.py",
+   "capabilities/resolver.py",
+   "capabilities/specification.py",
+   "capabilities/trajectory.py",
+   "capabilities/workspace.py",
+   "development/memory.py",
+   "development/software_engineer.py",
+   "environments/coding/environment.py",
+   "environments/coding/sandbox_backend.py"
+  ],
+  "runtime/checkpoints.py": [
+   "learning/checkpointing.py"
+  ],
+  "runtime/cost_policy.py": [],
+  "runtime/deadline.py": [],
+  "runtime/device_context.py": [],
+  "runtime/environment.py": [],
+  "runtime/events.py": [],
+  "runtime/evidence.py": [],
+  "runtime/failure_kind.py": [],
+  "runtime/heartbeat.py": [],
+  "runtime/jarvis_runtime.py": [
+   "environments/coding/actions.py",
+   "environments/coding/environment.py",
+   "environments/coding/observation.py",
+   "environments/coding/reward.py",
+   "environments/coding/sandbox_backend.py",
+   "environments/coding/task.py",
+   "learning/config.py",
+   "learning/experience/persistent_store.py",
+   "learning/experience/prioritization.py",
+   "learning/experience/replay_buffer.py",
+   "learning/experience/transition.py",
+   "learning/meta/self_model.py",
+   "learning/objectives/optimizer.py",
+   "learning/policy/action_value.py",
+   "learning/policy/policy.py",
+   "learning/policy/value.py",
+   "learning/representations/action_encoding.py",
+   "learning/representations/semantic.py",
+   "learning/rewards/intrinsic.py",
+   "learning/world_model/model.py",
+   "learning/world_model/uncertainty.py",
+   "runtime/action_generator.py",
+   "runtime/checkpoints.py",
+   "runtime/events.py",
+   "runtime/learning_scheduler.py",
+   "runtime/profiling.py",
+   "runtime/runtime_state.py",
+   "runtime/tensorboard.py"
+  ],
+  "runtime/learning_scheduler.py": [
+   "learning/config.py",
+   "learning/experience/replay_buffer.py",
+   "learning/objectives/optimizer.py",
+   "learning/policy/action_value.py",
+   "learning/policy/policy.py",
+   "learning/policy/value.py",
+   "learning/world_model/model.py"
+  ],
+  "runtime/mission_engine.py": [
+   "runtime/evidence.py"
+  ],
+  "runtime/missions.py": [],
+  "runtime/paths.py": [
+   "owner/protected.py"
+  ],
+  "runtime/preferences.py": [],
+  "runtime/profiling.py": [],
+  "runtime/receipts.py": [],
+  "runtime/runtime_state.py": [
+   "learning/experience/trajectory.py"
+  ],
+  "runtime/secrets.py": [],
+  "runtime/self_developer.py": [
+   "brain/providers.py",
+   "brain/resources.py",
+   "brain/tiers.py",
+   "development/repository_engineer.py"
+  ],
+  "runtime/tensorboard.py": [],
+  "runtime/thoughts.py": [],
+  "sandbox/__init__.py": [],
+  "senses/__init__.py": [],
+  "service/__init__.py": [],
+  "service/acquisition.py": [
+   "capabilities/codex.py",
+   "experts/codex.py",
+   "experts/contracts.py",
+   "experts/escalation.py",
+   "experts/gateway.py",
+   "experts/memory.py",
+   "runtime/cost_policy.py",
+   "runtime/missions.py",
+   "service/events.py"
+  ],
+  "service/actions.py": [
+   "brain/json_utils.py",
+   "projects/store.py",
+   "runtime/receipts.py",
+   "tools/registry.py"
+  ],
+  "service/aliases.py": [],
+  "service/apps.py": [],
+  "service/calendar.py": [],
+  "service/claims.py": [],
+  "service/coach.py": [
+   "brain/json_utils.py"
+  ],
+  "service/composer.py": [
+   "brain/json_utils.py",
+   "capabilities/generalize.py",
+   "capabilities/models.py"
+  ],
+  "service/conversations.py": [],
+  "service/core.py": [
+   "brain/json_utils.py",
+   "brain/providers.py",
+   "brain/resources.py",
+   "brain/tiers.py",
+   "capabilities/codex.py",
+   "capabilities/generalize.py",
+   "capabilities/models.py",
+   "capabilities/registry.py",
+   "capabilities/resolver.py",
+   "capabilities/service.py",
+   "config.py",
+   "core/__init__.py",
+   "core/identity.py",
+   "core/kernel.py",
+   "deployment/promotion.py",
+   "deployment/release.py",
+   "development/experience.py",
+   "devices/gateway.py",
+   "experts/api_engineer.py",
+   "experts/codex.py",
+   "experts/gateway.py",
+   "gateway/gateway.py",
+   "gateway/modes.py",
+   "gateway/task.py",
+   "knowledge/graph.py",
+   "knowledge/ingest.py",
+   "knowledge/operations.py",
+   "owner/core.py",
+   "owner/security_gate.py",
+   "persona/language.py",
+   "persona/profiles.py",
+   "persona/smalltalk.py",
+   "projects/engine.py",
+   "research/agent.py",
+   "runtime/activity.py",
+   "runtime/adaptation.py",
+   "runtime/backup.py",
+   "runtime/cost_policy.py",
+   "runtime/device_context.py",
+   "runtime/evidence.py",
+   "runtime/failure_kind.py",
+   "runtime/mission_engine.py",
+   "runtime/missions.py",
+   "runtime/paths.py",
+   "runtime/preferences.py",
+   "runtime/receipts.py",
+   "runtime/secrets.py",
+   "runtime/thoughts.py",
+   "service/acquisition.py",
+   "service/actions.py",
+   "service/aliases.py",
+   "service/apps.py",
+   "service/calendar.py",
+   "service/claims.py",
+   "service/coach.py",
+   "service/composer.py",
+   "service/conversations.py",
+   "service/corrections.py",
+   "service/defaults.py",
+   "service/doctor.py",
+   "service/engineering.py",
+   "service/events.py",
+   "service/filesystem.py",
+   "service/imagegen.py",
+   "service/intent.py",
+   "service/intents.py",
+   "service/isolation.py",
+   "service/jobs.py",
+   "service/library.py",
+   "service/lifecycle.py",
+   "service/music.py",
+   "service/observer.py",
+   "service/project_ops.py",
+   "service/reads.py",
+   "service/selfdev.py",
+   "service/semantic.py",
+   "service/state.py",
+   "service/system_context.py",
+   "service/tv.py",
+   "service/voice.py",
+   "service/webread.py",
+   "service/websearch.py",
+   "speech/contracts.py",
+   "speech/corpus.py",
+   "speech/engine.py",
+   "speech/normalize.py",
+   "speech/utterance.py",
+   "speech/wake_segment.py",
+   "speech/wake_zeus.py",
+   "tools/chess_analysis/engine.py",
+   "tools/chess_analysis/recognize.py"
+  ],
+  "service/corrections.py": [],
+  "service/defaults.py": [],
+  "service/desktop.py": [
+   "jarvis/window.py",
+   "service/processes.py"
+  ],
+  "service/doctor.py": [
+   "deployment/promotion.py",
+   "service/isolation.py",
+   "service/processes.py",
+   "zeus_supervisor/config.py",
+   "zeus_supervisor/preflight.py"
+  ],
+  "service/engineering.py": [
+   "capabilities/codex.py",
+   "capabilities/models.py",
+   "gateway/modes.py",
+   "gateway/router.py"
+  ],
+  "service/events.py": [],
+  "service/filesystem.py": [],
+  "service/http.py": [
+   "service/events.py",
+   "service/imagegen.py",
+   "speech/corpus.py"
+  ],
+  "service/imagegen.py": [],
+  "service/intent.py": [
+   "service/music.py",
+   "service/routing.py"
+  ],
+  "service/intents.py": [
+   "service/imagegen.py"
+  ],
+  "service/isolation.py": [],
+  "service/jobs.py": [],
+  "service/library.py": [],
+  "service/lifecycle.py": [
+   "service/core.py",
+   "service/desktop.py",
+   "service/events.py",
+   "service/processes.py",
+   "zeus_supervisor/__init__.py",
+   "zeus_supervisor/control.py",
+   "zeus_supervisor/known_good.py"
+  ],
+  "service/music.py": [
+   "capabilities/service.py",
+   "runtime/receipts.py",
+   "service/routing.py",
+   "tools/__init__.py"
+  ],
+  "service/observer.py": [],
+  "service/processes.py": [],
+  "service/project_ops.py": [
+   "projects/store.py",
+   "runtime/receipts.py",
+   "service/intents.py"
+  ],
+  "service/reads.py": [],
+  "service/routing.py": [],
+  "service/selfdev.py": [
+   "brain/json_utils.py",
+   "brain/tiers.py",
+   "deployment/promotion.py",
+   "development/code_index.py",
+   "development/experience.py",
+   "development/repository_engineer.py",
+   "experts/contracts.py",
+   "gateway/modes.py",
+   "gateway/task.py",
+   "owner/protected.py",
+   "service/engineering.py",
+   "service/events.py",
+   "service/isolation.py",
+   "service/state.py"
+  ],
+  "service/semantic.py": [
+   "brain/json_utils.py"
+  ],
+  "service/state.py": [],
+  "service/system_context.py": [],
+  "service/tv.py": [],
+  "service/voice.py": [
+   "persona/language.py",
+   "service/events.py",
+   "service/state.py",
+   "speech/chunker.py",
+   "speech/contracts.py",
+   "speech/engine.py",
+   "speech/normalize.py",
+   "speech/pipeline.py",
+   "speech/pronounce.py",
+   "speech/utterance.py"
+  ],
+  "service/webread.py": [],
+  "service/websearch.py": [],
+  "skills/__init__.py": [],
+  "skills/_staging/data.csv_column_mode/c94775b161/main.py": [],
+  "skills/_staging/data.csv_column_mode/c94775b161/test_public.py": [
+   "main.py"
+  ],
+  "skills/_staging/files.extension_summary/347171f54d/main.py": [],
+  "skills/_staging/files.extension_summary/347171f54d/test_public.py": [
+   "main.py"
+  ],
+  "skills/_staging/text.line_count/5d7f30a5c2/main.py": [],
+  "skills/_staging/text.line_count/5d7f30a5c2/test_public.py": [
+   "main.py"
+  ],
+  "skills/_staging/text.line_count/795241047f/main.py": [],
+  "skills/_staging/text.line_count/795241047f/test_public.py": [
+   "main.py"
+  ],
+  "skills/installed/data.csv_column_mode/1.0.0/main.py": [],
+  "skills/installed/data.csv_column_mode/1.0.0/test_public.py": [
+   "main.py"
+  ],
+  "skills/installed/files.extension_summary/1.0.0/main.py": [],
+  "skills/installed/files.extension_summary/1.0.0/test_public.py": [
+   "main.py"
+  ],
+  "skills/installed/text.line_count/1.0.0/main.py": [],
+  "skills/installed/text.line_count/1.0.0/test_public.py": [
+   "main.py"
+  ],
+  "speech/__init__.py": [],
+  "speech/benchmark.py": [
+   "speech/corpus.py"
+  ],
+  "speech/chunker.py": [],
+  "speech/contracts.py": [],
+  "speech/corpus.py": [
+   "speech/normalize.py"
+  ],
+  "speech/engine.py": [
+   "speech/contracts.py"
+  ],
+  "speech/listener.py": [
+   "core/identity.py",
+   "speech/wake_zeus.py"
+  ],
+  "speech/normalize.py": [],
+  "speech/pipeline.py": [
+   "speech/chunker.py",
+   "speech/contracts.py"
+  ],
+  "speech/pronounce.py": [],
+  "speech/utterance.py": [],
+  "speech/wake_eval.py": [
+   "speech/wake_zeus.py"
+  ],
+  "speech/wake_segment.py": [],
+  "speech/wake_training.py": [
+   "speech/__init__.py",
+   "speech/wake_zeus.py"
+  ],
+  "speech/wake_zeus.py": [],
+  "speech/worker.py": [],
+  "tools/__init__.py": [],
+  "tools/audio_probe.py": [],
+  "tools/builtin.py": [
+   "development/edit_engine.py",
+   "tools/registry.py"
+  ],
+  "tools/chess_analysis/__init__.py": [],
+  "tools/chess_analysis/__main__.py": [],
+  "tools/chess_analysis/board.py": [],
+  "tools/chess_analysis/engine.py": [],
+  "tools/chess_analysis/overlay.py": [],
+  "tools/chess_analysis/position.py": [],
+  "tools/chess_analysis/recognize.py": [],
+  "tools/desktop.py": [
+   "core/identity.py",
+   "tools/registry.py"
+  ],
+  "tools/media_session.py": [],
+  "tools/registry.py": [],
+  "tools/vision.py": [
+   "tools/registry.py"
+  ],
+  "tools/web.py": [
+   "tools/registry.py"
+  ],
+  "training/__init__.py": [
+   "training/learning_demo.py",
+   "training/world_model_demo.py"
+  ],
+  "training/benchmark_progress.py": [],
+  "training/capability_acquisition_v04_demo.py": [
+   "brain/providers.py",
+   "capabilities/models.py",
+   "environments/coding/sandbox_backend.py",
+   "runtime/capability_runtime.py",
+   "training/capability_curriculum.py"
+  ],
+  "training/capability_curriculum.py": [
+   "capabilities/models.py"
+  ],
+  "training/coding_benchmark.py": [
+   "environments/coding/task.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/runtime_state.py"
+  ],
+  "training/coding_brain_v02_demo.py": [
+   "environments/coding/sandbox_backend.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/runtime_state.py",
+   "training/coding_benchmark.py",
+   "training/coding_curriculum.py",
+   "training/generic_mutation_generator.py"
+  ],
+  "training/coding_brain_v03_demo.py": [
+   "brain/providers.py",
+   "brain/registry.py",
+   "environments/coding/sandbox_backend.py",
+   "learning/objectives/optimizer.py",
+   "learning/representations/semantic.py",
+   "runtime/action_generator.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/runtime_state.py",
+   "training/benchmark_progress.py",
+   "training/coding_benchmark.py",
+   "training/coding_curriculum.py"
+  ],
+  "training/coding_curriculum.py": [
+   "environments/coding/task.py",
+   "learning/curriculum/curriculum.py",
+   "learning/curriculum/difficulty.py"
+  ],
+  "training/coding_learning_demo.py": [
+   "environments/coding/sandbox_backend.py",
+   "learning/curriculum/curriculum.py",
+   "runtime/jarvis_runtime.py",
+   "runtime/runtime_state.py",
+   "training/coding_benchmark.py",
+   "training/coding_curriculum.py",
+   "training/generic_mutation_generator.py"
+  ],
+  "training/dataset_export.py": [
+   "projects/models.py"
+  ],
+  "training/datasets.py": [
+   "learning/experience/trajectory.py",
+   "learning/experience/transition.py",
+   "learning/rewards/preferences.py"
+  ],
+  "training/experiments.py": [],
+  "training/generic_mutation_generator.py": [
+   "environments/coding/actions.py",
+   "environments/coding/observation.py",
+   "runtime/action_generator.py"
+  ],
+  "training/learning_demo.py": [
+   "learning/objectives/optimizer.py",
+   "learning/policy/policy.py",
+   "learning/policy/value.py"
+  ],
+  "training/self_improvement_demo.py": [
+   "brain/providers.py",
+   "development/repository_engineer.py"
+  ],
+  "training/world_model_demo.py": [
+   "learning/objectives/optimizer.py",
+   "learning/representations/embeddings.py",
+   "learning/world_model/model.py"
+  ],
+  "ui/__init__.py": [],
+  "voice/__init__.py": [],
+  "zeus_supervisor/__init__.py": [],
+  "zeus_supervisor/__main__.py": [],
+  "zeus_supervisor/build.py": [
+   "deployment/release.py"
+  ],
+  "zeus_supervisor/config.py": [],
+  "zeus_supervisor/control.py": [],
+  "zeus_supervisor/instance.py": [],
+  "zeus_supervisor/known_good.py": [],
+  "zeus_supervisor/launch.py": [
+   "zeus_supervisor/__main__.py"
+  ],
+  "zeus_supervisor/ollama.py": [],
+  "zeus_supervisor/preflight.py": [],
+  "zeus_supervisor/relaunch.py": [],
+  "zeus_supervisor/status_page.py": [],
+  "zeus_supervisor/supervisor.py": [
+   "jarvis/window.py"
+  ]
+ },
+ "nodes": [
+  "agent/__init__.py",
+  "agent/developmental_agent.py",
+  "brain/__init__.py",
+  "brain/json_utils.py",
+  "brain/model.py",
+  "brain/ollama.py",
+  "brain/providers.py",
+  "brain/registry.py",
+  "brain/resources.py",
+  "brain/router.py",
+  "brain/tiers.py",
+  "capabilities/__init__.py",
+  "capabilities/artifacts.py",
+  "capabilities/codex.py",
+  "capabilities/executor.py",
+  "capabilities/generalize.py",
+  "capabilities/models.py",
+  "capabilities/permissions.py",
+  "capabilities/promotion.py",
+  "capabilities/registry.py",
+  "capabilities/research.py",
+  "capabilities/resolver.py",
+  "capabilities/service.py",
+  "capabilities/specification.py",
+  "capabilities/static_check.py",
+  "capabilities/trajectory.py",
+  "capabilities/workspace.py",
+  "config.py",
+  "conftest.py",
+  "core/__init__.py",
+  "core/identity.py",
+  "core/kernel.py",
+  "deployment/__init__.py",
+  "deployment/promotion.py",
+  "deployment/release.py",
+  "developer/__init__.py",
+  "developer/self_programming.py",
+  "development/__init__.py",
+  "development/code_index.py",
+  "development/edit_engine.py",
+  "development/experience.py",
+  "development/memory.py",
+  "development/qa.py",
+  "development/repository_engineer.py",
+  "development/software_engineer.py",
+  "development/ui_developer.py",
+  "devices/__init__.py",
+  "devices/client.py",
+  "devices/gateway.py",
+  "environments/__init__.py",
+  "environments/base.py",
+  "environments/coding/__init__.py",
+  "environments/coding/actions.py",
+  "environments/coding/environment.py",
+  "environments/coding/observation.py",
+  "environments/coding/reward.py",
+  "environments/coding/sandbox_backend.py",
+  "environments/coding/task.py",
+  "evaluator/__init__.py",
+  "experts/__init__.py",
+  "experts/api_engineer.py",
+  "experts/claude_code.py",
+  "experts/codex.py",
+  "experts/contracts.py",
+  "experts/escalation.py",
+  "experts/gateway.py",
+  "experts/memory.py",
+  "gateway/__init__.py",
+  "gateway/budget.py",
+  "gateway/config.py",
+  "gateway/estimate.py",
+  "gateway/gateway.py",
+  "gateway/health.py",
+  "gateway/learning.py",
+  "gateway/modes.py",
+  "gateway/persona.py",
+  "gateway/privacy.py",
+  "gateway/providers.py",
+  "gateway/router.py",
+  "gateway/secrets.py",
+  "gateway/task.py",
+  "gateway/transport.py",
+  "imagegen/__init__.py",
+  "imagegen/generate.py",
+  "imagegen/worker.py",
+  "jarvis/__init__.py",
+  "jarvis/__main__.py",
+  "jarvis/build_executor.py",
+  "jarvis/cli.py",
+  "jarvis/doctor.py",
+  "jarvis/measure_pipeline.py",
+  "jarvis/measure_voice.py",
+  "jarvis/record_evidence.py",
+  "jarvis/self_develop.py",
+  "jarvis/serve.py",
+  "jarvis/tune_resources.py",
+  "jarvis/verify_ui.py",
+  "jarvis/window.py",
+  "knowledge/__init__.py",
+  "knowledge/graph.py",
+  "knowledge/ingest.py",
+  "knowledge/memory.py",
+  "knowledge/operations.py",
+  "learning/__init__.py",
+  "learning/checkpointing.py",
+  "learning/config.py",
+  "learning/continual/__init__.py",
+  "learning/continual/consolidation.py",
+  "learning/continual/forgetting.py",
+  "learning/continual/learner.py",
+  "learning/continual/regularization.py",
+  "learning/curriculum/__init__.py",
+  "learning/curriculum/curriculum.py",
+  "learning/curriculum/difficulty.py",
+  "learning/curriculum/stages.py",
+  "learning/experience/__init__.py",
+  "learning/experience/persistent_store.py",
+  "learning/experience/prioritization.py",
+  "learning/experience/replay_buffer.py",
+  "learning/experience/trajectory.py",
+  "learning/experience/transition.py",
+  "learning/meta/__init__.py",
+  "learning/meta/capability_graph.py",
+  "learning/meta/learning_strategy.py",
+  "learning/meta/metacognition.py",
+  "learning/meta/metrics.py",
+  "learning/meta/self_model.py",
+  "learning/objectives/__init__.py",
+  "learning/objectives/losses.py",
+  "learning/objectives/optimizer.py",
+  "learning/policy/__init__.py",
+  "learning/policy/action_value.py",
+  "learning/policy/exploration.py",
+  "learning/policy/policy.py",
+  "learning/policy/value.py",
+  "learning/pomdp.py",
+  "learning/representations/__init__.py",
+  "learning/representations/action_encoding.py",
+  "learning/representations/embeddings.py",
+  "learning/representations/encoder.py",
+  "learning/representations/latent_state.py",
+  "learning/representations/semantic.py",
+  "learning/rewards/__init__.py",
+  "learning/rewards/extrinsic.py",
+  "learning/rewards/intrinsic.py",
+  "learning/rewards/preferences.py",
+  "learning/rewards/reward_model.py",
+  "learning/skills/__init__.py",
+  "learning/skills/abstraction.py",
+  "learning/skills/discovery.py",
+  "learning/skills/option.py",
+  "learning/skills/transfer.py",
+  "learning/world_model/__init__.py",
+  "learning/world_model/failure.py",
+  "learning/world_model/model.py",
+  "learning/world_model/predictor.py",
+  "learning/world_model/uncertainty.py",
+  "main.py",
+  "memory/__init__.py",
+  "owner/__init__.py",
+  "owner/core.py",
+  "owner/protected.py",
+  "owner/security_gate.py",
+  "persona/__init__.py",
+  "persona/language.py",
+  "persona/profiles.py",
+  "persona/smalltalk.py",
+  "projects/__init__.py",
+  "projects/acceptance_guard.py",
+  "projects/engine.py",
+  "projects/models.py",
+  "projects/store.py",
+  "research/__init__.py",
+  "research/agent.py",
+  "research/tools.py",
+  "runtime/__init__.py",
+  "runtime/action_generator.py",
+  "runtime/activity.py",
+  "runtime/adaptation.py",
+  "runtime/backup.py",
+  "runtime/capability_runtime.py",
+  "runtime/checkpoints.py",
+  "runtime/cost_policy.py",
+  "runtime/deadline.py",
+  "runtime/device_context.py",
+  "runtime/environment.py",
+  "runtime/events.py",
+  "runtime/evidence.py",
+  "runtime/failure_kind.py",
+  "runtime/heartbeat.py",
+  "runtime/jarvis_runtime.py",
+  "runtime/learning_scheduler.py",
+  "runtime/mission_engine.py",
+  "runtime/missions.py",
+  "runtime/paths.py",
+  "runtime/preferences.py",
+  "runtime/profiling.py",
+  "runtime/receipts.py",
+  "runtime/runtime_state.py",
+  "runtime/secrets.py",
+  "runtime/self_developer.py",
+  "runtime/tensorboard.py",
+  "runtime/thoughts.py",
+  "sandbox/__init__.py",
+  "senses/__init__.py",
+  "service/__init__.py",
+  "service/acquisition.py",
+  "service/actions.py",
+  "service/aliases.py",
+  "service/apps.py",
+  "service/calendar.py",
+  "service/claims.py",
+  "service/coach.py",
+  "service/composer.py",
+  "service/conversations.py",
+  "service/core.py",
+  "service/corrections.py",
+  "service/defaults.py",
+  "service/desktop.py",
+  "service/doctor.py",
+  "service/engineering.py",
+  "service/events.py",
+  "service/filesystem.py",
+  "service/http.py",
+  "service/imagegen.py",
+  "service/intent.py",
+  "service/intents.py",
+  "service/isolation.py",
+  "service/jobs.py",
+  "service/library.py",
+  "service/lifecycle.py",
+  "service/music.py",
+  "service/observer.py",
+  "service/processes.py",
+  "service/project_ops.py",
+  "service/reads.py",
+  "service/routing.py",
+  "service/selfdev.py",
+  "service/semantic.py",
+  "service/state.py",
+  "service/system_context.py",
+  "service/tv.py",
+  "service/voice.py",
+  "service/webread.py",
+  "service/websearch.py",
+  "skills/__init__.py",
+  "skills/_staging/data.csv_column_mode/c94775b161/main.py",
+  "skills/_staging/data.csv_column_mode/c94775b161/test_public.py",
+  "skills/_staging/files.extension_summary/347171f54d/main.py",
+  "skills/_staging/files.extension_summary/347171f54d/test_public.py",
+  "skills/_staging/text.line_count/5d7f30a5c2/main.py",
+  "skills/_staging/text.line_count/5d7f30a5c2/test_public.py",
+  "skills/_staging/text.line_count/795241047f/main.py",
+  "skills/_staging/text.line_count/795241047f/test_public.py",
+  "skills/installed/data.csv_column_mode/1.0.0/main.py",
+  "skills/installed/data.csv_column_mode/1.0.0/test_public.py",
+  "skills/installed/files.extension_summary/1.0.0/main.py",
+  "skills/installed/files.extension_summary/1.0.0/test_public.py",
+  "skills/installed/text.line_count/1.0.0/main.py",
+  "skills/installed/text.line_count/1.0.0/test_public.py",
+  "speech/__init__.py",
+  "speech/benchmark.py",
+  "speech/chunker.py",
+  "speech/contracts.py",
+  "speech/corpus.py",
+  "speech/engine.py",
+  "speech/listener.py",
+  "speech/normalize.py",
+  "speech/pipeline.py",
+  "speech/pronounce.py",
+  "speech/utterance.py",
+  "speech/wake_eval.py",
+  "speech/wake_segment.py",
+  "speech/wake_training.py",
+  "speech/wake_zeus.py",
+  "speech/worker.py",
+  "tools/__init__.py",
+  "tools/audio_probe.py",
+  "tools/builtin.py",
+  "tools/chess_analysis/__init__.py",
+  "tools/chess_analysis/__main__.py",
+  "tools/chess_analysis/board.py",
+  "tools/chess_analysis/engine.py",
+  "tools/chess_analysis/overlay.py",
+  "tools/chess_analysis/position.py",
+  "tools/chess_analysis/recognize.py",
+  "tools/desktop.py",
+  "tools/media_session.py",
+  "tools/registry.py",
+  "tools/vision.py",
+  "tools/web.py",
+  "training/__init__.py",
+  "training/benchmark_progress.py",
+  "training/capability_acquisition_v04_demo.py",
+  "training/capability_curriculum.py",
+  "training/coding_benchmark.py",
+  "training/coding_brain_v02_demo.py",
+  "training/coding_brain_v03_demo.py",
+  "training/coding_curriculum.py",
+  "training/coding_learning_demo.py",
+  "training/dataset_export.py",
+  "training/datasets.py",
+  "training/experiments.py",
+  "training/generic_mutation_generator.py",
+  "training/learning_demo.py",
+  "training/self_improvement_demo.py",
+  "training/world_model_demo.py",
+  "ui/__init__.py",
+  "voice/__init__.py",
+  "zeus_supervisor/__init__.py",
+  "zeus_supervisor/__main__.py",
+  "zeus_supervisor/build.py",
+  "zeus_supervisor/config.py",
+  "zeus_supervisor/control.py",
+  "zeus_supervisor/instance.py",
+  "zeus_supervisor/known_good.py",
+  "zeus_supervisor/launch.py",
+  "zeus_supervisor/ollama.py",
+  "zeus_supervisor/preflight.py",
+  "zeus_supervisor/relaunch.py",
+  "zeus_supervisor/status_page.py",
+  "zeus_supervisor/supervisor.py"
+ ],
+ "schema_version": 1
+}

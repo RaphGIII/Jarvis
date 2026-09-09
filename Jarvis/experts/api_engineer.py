@@ -131,9 +131,24 @@ class ApiEngineerExpert:
             included.append(rel)
         return "\n\n".join(parts), included
 
+    def _catalog_context(self, job: ExpertJob) -> str:
+        """The narrow engineering context from the catalog: contracts, dependents, tests."""
+
+        try:
+            from catalog.context import build_context
+
+            files = [f for f in self._files(job) if f.endswith(".py") and not f.startswith("tests/")]
+            if not files:
+                return ""
+            return build_context(files, request=job.goal[:300], repo=Path(job.workspace), budget_chars=30_000).text
+        except Exception:  # noqa: BLE001 - the catalog is help, not a requirement
+            return ""
+
     def _prompt(self, job: ExpertJob, files_text: str, included: list[str], *, previous_error: str = "") -> str:
+        catalog_text = self._catalog_context(job)
         lines = [
             job.brief(),
+            *([catalog_text] if catalog_text else []),
             "WORKSPACE: paths below are relative to the workspace root you are editing. "
             "Answer with ONE JSON object {\"summary\", \"diff\", \"files\"}.",
             "The diff MUST be a unified diff in git format (`diff --git a/<path> b/<path>`, `---`/`+++` lines, hunks with "

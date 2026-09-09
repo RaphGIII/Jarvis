@@ -1,0 +1,39 @@
+schema_version: 1
+note: runtime facts from the capability registry; not part of the staleness check
+capabilities:
+- id: archive.zip.create
+  family: archive
+  health: UNKNOWN
+  permissions: []
+  goal_types: []
+  implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\archive_zip_create\1.0.0
+- id: learned.ausgabe_dateipfad_zeilen
+  family: learned
+  health: HEALTHY
+  permissions: []
+  goal_types: []
+  implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_ausgabe_dateipfad_zeilen\1.0.0
+- id: learned.lösche_galaxy_galaxien
+  family: learned
+  health: HEALTHY
+  permissions: []
+  goal_types: []
+  implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_lösche_galaxy_galaxien\1.0.0
+- id: local.berechne.sha.256_pruefsumme
+  family: local
+  health: HEALTHY
+  permissions: []
+  goal_types: []
+  implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\local_berechne_sha_256_pruefsumme\1.0.1
+- id: music.provider.spotify
+  family: music
+  health: HEALTHY
+  permissions: []
+  goal_types: []
+  implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\music_provider_spotify\1.0.5
+- id: system.screen.capture
+  family: system
+  health: UNKNOWN
+  permissions: []
+  goal_types: []
+  implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\system_screen_capture\1.0.0

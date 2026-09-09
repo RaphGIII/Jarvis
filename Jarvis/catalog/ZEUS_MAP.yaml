@@ -1,0 +1,2902 @@
+schema_version: 1
+packages:
+  (root):
+    purpose: ''
+    modules:
+    - path: config.py
+      purpose: ''
+      lines: 90
+      public: 2
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_owner_core.py
+      - tests/test_personality.py
+    - path: conftest.py
+      purpose: Repository-wide pytest configuration.
+      lines: 50
+      public: 0
+      tests: []
+    - path: main.py
+      purpose: ''
+      lines: 61
+      public: 1
+      tests:
+      - tests/test_capability_learning_end_to_end.py
+  agent:
+    purpose: legacy agent loop
+    modules:
+    - path: agent/__init__.py
+      purpose: ''
+      lines: 4
+      public: 0
+      tests: []
+    - path: agent/developmental_agent.py
+      purpose: ''
+      lines: 102
+      public: 3
+      tests: []
+  brain:
+    purpose: model tiers, providers and the local Ollama client
+    modules:
+    - path: brain/__init__.py
+      purpose: ''
+      lines: 23
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_action_receipts.py
+      - tests/test_brain_router_v1.py
+      - tests/test_build_remote_executor_v1.py
+      - tests/test_console.py
+      - tests/test_gateway_integration.py
+      - tests/test_json_utils.py
+      - tests/test_model_tiers.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_resources.py
+      - tests/test_self_developer_production_gate.py
+      - tests/test_supervisor.py
+    - path: brain/json_utils.py
+      purpose: Shared helpers for parsing JSON emitted by LLM providers.
+      lines: 50
+      public: 1
+      tests:
+      - tests/test_json_utils.py
+    - path: brain/model.py
+      purpose: ''
+      lines: 63
+      public: 1
+      tests: []
+    - path: brain/ollama.py
+      purpose: Ollama provider using the native ``/api/chat`` endpoint.
+      lines: 350
+      public: 1
+      tests: []
+    - path: brain/providers.py
+      purpose: ''
+      lines: 482
+      public: 9
+      tests:
+      - tests/test_build_remote_executor_v1.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_self_developer_production_gate.py
+    - path: brain/registry.py
+      purpose: ''
+      lines: 65
+      public: 3
+      tests: []
+    - path: brain/resources.py
+      purpose: Measure the host, then choose inference settings that fit it.
+      lines: 642
+      public: 10
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_resources.py
+    - path: brain/router.py
+      purpose: Routes a request to the model tier that should handle it.
+      lines: 242
+      public: 4
+      tests:
+      - tests/test_brain_router_v1.py
+      - tests/test_build_remote_executor_v1.py
+    - path: brain/tiers.py
+      purpose: Model tiers, their configuration, and honest availability reporting.
+      lines: 502
+      public: 7
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_action_receipts.py
+      - tests/test_brain_router_v1.py
+      - tests/test_build_remote_executor_v1.py
+      - tests/test_console.py
+      - tests/test_gateway_integration.py
+      - tests/test_model_tiers.py
+      - tests/test_resources.py
+      - tests/test_supervisor.py
+  capabilities:
+    purpose: the capability registry, resolver, acquisition and health
+    modules:
+    - path: capabilities/__init__.py
+      purpose: ''
+      lines: 18
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_research.py
+      - tests/test_capability_resolution.py
+      - tests/test_capability_service.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_engineering_router.py
+      - tests/test_environment.py
+      - tests/test_isolation.py
+      - tests/test_recovery_strategy.py
+      - tests/test_replan_semantic_equivalence.py
+      - tests/test_selfdev.py
+      - tests/test_selfdev_candidate_integrity.py
+      - tests/test_selfdev_promotion_gate.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_semantic_plane.py
+      - tests/test_skill_specification_generator.py
+      - tests/test_stall_recovery.py
+      - tests/test_static_check.py
+    - path: capabilities/artifacts.py
+      purpose: Gates for a capability that claims to have produced something.
+      lines: 156
+      public: 3
+      tests: []
+    - path: capabilities/codex.py
+      purpose: ''
+      lines: 269
+      public: 6
+      tests:
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_engineering_router.py
+      - tests/test_isolation.py
+      - tests/test_selfdev.py
+      - tests/test_selfdev_candidate_integrity.py
+      - tests/test_selfdev_promotion_gate.py
+    - path: capabilities/executor.py
+      purpose: ''
+      lines: 64
+      public: 2
+      tests: []
+    - path: capabilities/generalize.py
+      purpose: Turn one owner request into the capability it is an instance of.
+      lines: 114
+      public: 3
+      tests:
+      - tests/test_capability_teaching_loop.py
+    - path: capabilities/models.py
+      purpose: ''
+      lines: 505
+      public: 10
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_resolution.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_replan_semantic_equivalence.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_semantic_plane.py
+    - path: capabilities/permissions.py
+      purpose: ''
+      lines: 38
+      public: 2
+      tests:
+      - tests/test_capability_acquisition_v04.py
+    - path: capabilities/promotion.py
+      purpose: ''
+      lines: 89
+      public: 2
+      tests:
+      - tests/test_capability_acquisition_v04.py
+    - path: capabilities/registry.py
+      purpose: ''
+      lines: 552
+      public: 1
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_resolution.py
+      - tests/test_capability_service.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_semantic_plane.py
+      - tests/test_stall_recovery.py
+    - path: capabilities/research.py
+      purpose: Minimal external-knowledge research step for capability acquisition.
+      lines: 133
+      public: 4
+      tests:
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_research.py
+    - path: capabilities/resolver.py
+      purpose: ''
+      lines: 399
+      public: 2
+      tests:
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_teaching_loop.py
+    - path: capabilities/service.py
+      purpose: 'Capabilities: things Jarvis can actually do, acquired when it cannot.'
+      lines: 1280
+      public: 6
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_resolution.py
+      - tests/test_capability_service.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_environment.py
+      - tests/test_recovery_strategy.py
+      - tests/test_stall_recovery.py
+      - tests/test_static_check.py
+    - path: capabilities/specification.py
+      purpose: ''
+      lines: 151
+      public: 2
+      tests:
+      - tests/test_skill_specification_generator.py
+    - path: capabilities/static_check.py
+      purpose: Static checks a capability must pass before it is believed.
+      lines: 323
+      public: 6
+      tests:
+      - tests/test_static_check.py
+    - path: capabilities/trajectory.py
+      purpose: ''
+      lines: 50
+      public: 2
+      tests: []
+    - path: capabilities/workspace.py
+      purpose: ''
+      lines: 106
+      public: 2
+      tests:
+      - tests/test_capability_acquisition_v04.py
+  core:
+    purpose: composition root (kernel) and identity
+    modules:
+    - path: core/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_actionability.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_console.py
+      - tests/test_desktop_tools.py
+      - tests/test_devices.py
+      - tests/test_gateway_integration.py
+      - tests/test_identity.py
+      - tests/test_language_and_persona.py
+      - tests/test_selfdev_promotion_gate.py
+      - tests/test_service.py
+      - tests/test_wake_listener.py
+    - path: core/identity.py
+      purpose: What the product is called, in one place.
+      lines: 200
+      public: 5
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_devices.py
+      - tests/test_gateway_integration.py
+      - tests/test_identity.py
+      - tests/test_language_and_persona.py
+      - tests/test_selfdev_promotion_gate.py
+      - tests/test_service.py
+      - tests/test_wake_listener.py
+    - path: core/kernel.py
+      purpose: 'The composition root: one place that assembles a working Jarvis.'
+      lines: 348
+      public: 2
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_actionability.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_console.py
+      - tests/test_desktop_tools.py
+      - tests/test_gateway_integration.py
+      - tests/test_selfdev_promotion_gate.py
+  deployment:
+    purpose: promotion of a verified candidate into the live tree, and rollback
+    modules:
+    - path: deployment/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_owner_core.py
+      - tests/test_promotion.py
+      - tests/test_release.py
+      - tests/test_release_candidate_order.py
+      - tests/test_selfdev_candidate_integrity.py
+    - path: deployment/promotion.py
+      purpose: Promoting a verified candidate into the live installation -- and undoing it.
+      lines: 661
+      public: 12
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_owner_core.py
+      - tests/test_promotion.py
+      - tests/test_selfdev_candidate_integrity.py
+    - path: deployment/release.py
+      purpose: 'The release pipeline: a ZEUS.exe that ZEUS can rebuild, verify, promote and roll back.'
+      lines: 450
+      public: 4
+      tests:
+      - tests/test_release.py
+      - tests/test_release_candidate_order.py
+  developer:
+    purpose: developer tooling
+    modules:
+    - path: developer/__init__.py
+      purpose: ''
+      lines: 4
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+    - path: developer/self_programming.py
+      purpose: ''
+      lines: 59
+      public: 3
+      tests:
+      - tests/test_developmental_system.py
+  development:
+    purpose: the autonomous software engineer (local coder), code index, QA
+    modules:
+    - path: development/__init__.py
+      purpose: ''
+      lines: 39
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_code_index.py
+      - tests/test_edit_engine.py
+      - tests/test_owner_core.py
+      - tests/test_recovery_strategy.py
+      - tests/test_repository_patch_engine_v2.py
+      - tests/test_repository_patch_engine_v3.py
+      - tests/test_repository_write_scope_v2.py
+      - tests/test_self_developer_production_gate.py
+      - tests/test_self_developer_v1.py
+      - tests/test_stall_recovery.py
+      - tests/test_state_foundations.py
+      - tests/test_ui_self_development.py
+    - path: development/code_index.py
+      purpose: 'Deterministic repository intelligence: find the code, don''t make the model hunt.'
+      lines: 702
+      public: 6
+      tests:
+      - tests/test_code_index.py
+    - path: development/edit_engine.py
+      purpose: Deterministic, atomic, multi-operation source edit engine.
+      lines: 1343
+      public: 21
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_edit_engine.py
+      - tests/test_recovery_strategy.py
+      - tests/test_repository_patch_engine_v2.py
+    - path: development/experience.py
+      purpose: 'Verified development experience: what a self-development mission learned.'
+      lines: 211
+      public: 4
+      tests:
+      - tests/test_state_foundations.py
+    - path: development/memory.py
+      purpose: ''
+      lines: 174
+      public: 3
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+    - path: development/qa.py
+      purpose: ''
+      lines: 496
+      public: 8
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+    - path: development/repository_engineer.py
+      purpose: ''
+      lines: 2208
+      public: 11
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_owner_core.py
+      - tests/test_repository_patch_engine_v2.py
+      - tests/test_repository_patch_engine_v3.py
+      - tests/test_repository_write_scope_v2.py
+      - tests/test_self_developer_production_gate.py
+      - tests/test_self_developer_v1.py
+      - tests/test_stall_recovery.py
+    - path: development/software_engineer.py
+      purpose: ''
+      lines: 920
+      public: 9
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+    - path: development/ui_developer.py
+      purpose: Letting Jarvis change its own face, safely.
+      lines: 206
+      public: 2
+      tests:
+      - tests/test_ui_self_development.py
+  devices:
+    purpose: paired devices and their gateway
+    modules:
+    - path: devices/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_devices.py
+    - path: devices/client.py
+      purpose: A reference Jarvis device, in one file, with no hardware.
+      lines: 263
+      public: 4
+      tests: []
+    - path: devices/gateway.py
+      purpose: Identity, pairing and presence for the things that talk to Jarvis Core.
+      lines: 331
+      public: 3
+      tests:
+      - tests/test_devices.py
+  environments:
+    purpose: Controlled environments for JARVIS learning.
+    modules:
+    - path: environments/__init__.py
+      purpose: Controlled environments for JARVIS learning.
+      lines: 2
+      public: 0
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_docker_coding_world.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: environments/base.py
+      purpose: ''
+      lines: 32
+      public: 3
+      tests: []
+    - path: environments/coding/__init__.py
+      purpose: ''
+      lines: 30
+      public: 0
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_docker_coding_world.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: environments/coding/actions.py
+      purpose: ''
+      lines: 85
+      public: 4
+      tests:
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_docker_coding_world.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: environments/coding/environment.py
+      purpose: ''
+      lines: 404
+      public: 2
+      tests:
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_docker_coding_world.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: environments/coding/observation.py
+      purpose: ''
+      lines: 111
+      public: 2
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+    - path: environments/coding/reward.py
+      purpose: ''
+      lines: 86
+      public: 2
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+    - path: environments/coding/sandbox_backend.py
+      purpose: ''
+      lines: 230
+      public: 5
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_docker_coding_world.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: environments/coding/task.py
+      purpose: ''
+      lines: 30
+      public: 1
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_docker_coding_world.py
+  evaluator:
+    purpose: evaluation of generated skills
+    modules:
+    - path: evaluator/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+  experts:
+    purpose: Optional stronger intelligence, recruited on Jarvis' terms.
+    modules:
+    - path: experts/__init__.py
+      purpose: Optional stronger intelligence, recruited on Jarvis' terms.
+      lines: 27
+      public: 0
+      tests:
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_engineering_router_gateway.py
+      - tests/test_escalation.py
+      - tests/test_expert_gateway.py
+      - tests/test_expert_memory.py
+      - tests/test_semantic_acceptance.py
+    - path: experts/api_engineer.py
+      purpose: An engineer behind a metered API, driven through the model gateway.
+      lines: 287
+      public: 1
+      tests:
+      - tests/test_engineering_router_gateway.py
+    - path: experts/claude_code.py
+      purpose: Expert provider backed by the Claude Code CLI on the user's subscription.
+      lines: 309
+      public: 1
+      tests:
+      - tests/test_expert_gateway.py
+    - path: experts/codex.py
+      purpose: Expert provider backed by the Codex CLI on a ChatGPT subscription.
+      lines: 381
+      public: 1
+      tests:
+      - tests/test_capability_teaching_loop.py
+      - tests/test_expert_memory.py
+    - path: experts/contracts.py
+      purpose: The normalized job and result every expert provider speaks.
+      lines: 206
+      public: 4
+      tests:
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_engineering_router_gateway.py
+      - tests/test_expert_gateway.py
+      - tests/test_semantic_acceptance.py
+    - path: experts/escalation.py
+      purpose: Deciding when the local model has had its chance.
+      lines: 304
+      public: 6
+      tests:
+      - tests/test_escalation.py
+    - path: experts/gateway.py
+      purpose: The single door through which stronger intelligence is recruited.
+      lines: 327
+      public: 3
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_expert_gateway.py
+      - tests/test_semantic_acceptance.py
+    - path: experts/memory.py
+      purpose: Remembering how a hard problem was solved, so it is not bought twice.
+      lines: 281
+      public: 3
+      tests:
+      - tests/test_expert_memory.py
+  gateway:
+    purpose: 'The ZEUS model gateway: one boundary between ZEUS and every model provider.'
+    modules:
+    - path: gateway/__init__.py
+      purpose: 'The ZEUS model gateway: one boundary between ZEUS and every model provider.'
+      lines: 31
+      public: 0
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_gateway_integration.py
+      - tests/test_model_gateway.py
+    - path: gateway/budget.py
+      purpose: 'The cost governor: reserve before you spend, and never past the cap.'
+      lines: 296
+      public: 4
+      tests:
+      - tests/test_model_gateway.py
+    - path: gateway/config.py
+      purpose: Roles, providers, prices and caps -- read from configuration, never from code.
+      lines: 412
+      public: 6
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_gateway_integration.py
+      - tests/test_model_gateway.py
+    - path: gateway/estimate.py
+      purpose: Cost estimation before a paid request is made.
+      lines: 99
+      public: 4
+      tests: []
+    - path: gateway/gateway.py
+      purpose: 'The gateway itself: one call, every rule applied, in order.'
+      lines: 614
+      public: 10
+      tests:
+      - tests/test_gateway_integration.py
+      - tests/test_model_gateway.py
+    - path: gateway/health.py
+      purpose: Telling a provider problem from a task problem.
+      lines: 117
+      public: 4
+      tests:
+      - tests/test_gateway_integration.py
+      - tests/test_model_gateway.py
+    - path: gateway/learning.py
+      purpose: What ZEUS has learned about which role is good enough for what.
+      lines: 209
+      public: 4
+      tests:
+      - tests/test_model_gateway.py
+    - path: gateway/modes.py
+      purpose: The five owner-facing chat modes, and what each one permits.
+      lines: 117
+      public: 5
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_gateway_integration.py
+      - tests/test_model_gateway.py
+    - path: gateway/persona.py
+      purpose: ZEUS stays ZEUS, whoever computed the answer.
+      lines: 100
+      public: 4
+      tests:
+      - tests/test_model_gateway.py
+    - path: gateway/privacy.py
+      purpose: 'The privacy router: what may leave the machine, and to whom.'
+      lines: 199
+      public: 6
+      tests:
+      - tests/test_model_gateway.py
+    - path: gateway/providers.py
+      purpose: 'Provider adapters: request shape in, text and usage out.'
+      lines: 238
+      public: 8
+      tests: []
+    - path: gateway/router.py
+      purpose: Choosing the route before anything runs.
+      lines: 314
+      public: 6
+      tests:
+      - tests/test_model_gateway.py
+    - path: gateway/secrets.py
+      purpose: Provider credentials, stored encrypted and never repeated.
+      lines: 226
+      public: 2
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_model_gateway.py
+    - path: gateway/task.py
+      purpose: 'The typed task vector: what a request is, before anyone asks a model.'
+      lines: 237
+      public: 5
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_gateway_integration.py
+      - tests/test_model_gateway.py
+    - path: gateway/transport.py
+      purpose: The only way a provider reaches the network -- and the FREE-mode wall.
+      lines: 147
+      public: 5
+      tests:
+      - tests/test_model_gateway.py
+  imagegen:
+    purpose: local image generation
+    modules:
+    - path: imagegen/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+    - path: imagegen/generate.py
+      purpose: Local image generation on the GTX 1070 — one shot, then the VRAM is free.
+      lines: 89
+      public: 1
+      tests: []
+    - path: imagegen/worker.py
+      purpose: 'The persistent image worker: load once, generate many, hold the GPU briefly.'
+      lines: 157
+      public: 1
+      tests: []
+  jarvis:
+    purpose: JARVIS command entry points.
+    modules:
+    - path: jarvis/__init__.py
+      purpose: JARVIS command entry points.
+      lines: 2
+      public: 0
+      tests:
+      - tests/test_build_remote_executor_v1.py
+      - tests/test_console.py
+      - tests/test_desktop_window.py
+      - tests/test_stall_recovery.py
+      - tests/test_ui_self_development.py
+      - tests/test_voice_measurement.py
+    - path: jarvis/__main__.py
+      purpose: ''
+      lines: 6
+      public: 0
+      tests: []
+      syntax_error: 'line 1: invalid non-printable character U+FEFF'
+    - path: jarvis/build_executor.py
+      purpose: ''
+      lines: 233
+      public: 2
+      tests:
+      - tests/test_build_remote_executor_v1.py
+    - path: jarvis/cli.py
+      purpose: The interactive Jarvis console.
+      lines: 491
+      public: 2
+      tests:
+      - tests/test_console.py
+    - path: jarvis/doctor.py
+      purpose: Tell whether an autonomous run is alive, stalled, dead or finished.
+      lines: 116
+      public: 4
+      tests:
+      - tests/test_stall_recovery.py
+    - path: jarvis/measure_pipeline.py
+      purpose: Where the time actually goes, hop by hop.
+      lines: 212
+      public: 4
+      tests: []
+    - path: jarvis/measure_voice.py
+      purpose: Measure the whole voice path, hop by hop.
+      lines: 327
+      public: 4
+      tests:
+      - tests/test_voice_measurement.py
+    - path: jarvis/record_evidence.py
+      purpose: Run the acceptance scenarios that need real inference, and record what happened.
+      lines: 464
+      public: 6
+      tests:
+      - tests/test_stall_recovery.py
+    - path: jarvis/self_develop.py
+      purpose: ''
+      lines: 8
+      public: 0
+      tests: []
+    - path: jarvis/serve.py
+      purpose: 'Start Jarvis: ``python -m jarvis.serve``.'
+      lines: 197
+      public: 4
+      tests:
+      - tests/test_desktop_window.py
+    - path: jarvis/tune_resources.py
+      purpose: 'CLI: benchmark this machine and persist the resulting resource policy.'
+      lines: 99
+      public: 2
+      tests: []
+    - path: jarvis/verify_ui.py
+      purpose: Does the interface still work after Jarvis edited it?
+      lines: 364
+      public: 11
+      tests:
+      - tests/test_ui_self_development.py
+    - path: jarvis/window.py
+      purpose: The interface in its own desktop window, not in the owner's browser.
+      lines: 335
+      public: 7
+      tests: []
+  knowledge:
+    purpose: the knowledge graph and library
+    modules:
+    - path: knowledge/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_service.py
+      - tests/test_graph_operations.py
+      - tests/test_ingest.py
+      - tests/test_knowledge.py
+      - tests/test_knowledge_view.py
+      - tests/test_stall_recovery.py
+    - path: knowledge/graph.py
+      purpose: 'The knowledge graph: notes, concepts, people, projects, capabilities, links.'
+      lines: 775
+      public: 10
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_service.py
+      - tests/test_graph_operations.py
+      - tests/test_ingest.py
+      - tests/test_knowledge.py
+      - tests/test_knowledge_view.py
+      - tests/test_stall_recovery.py
+    - path: knowledge/ingest.py
+      purpose: Turning the user's files into a knowledge graph they can actually navigate.
+      lines: 461
+      public: 6
+      tests:
+      - tests/test_ingest.py
+    - path: knowledge/memory.py
+      purpose: 'Experience memory: what Jarvis learned by doing, stored so it can be found.'
+      lines: 303
+      public: 2
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_knowledge.py
+    - path: knowledge/operations.py
+      purpose: Doing things to the knowledge graph by asking.
+      lines: 445
+      public: 2
+      tests:
+      - tests/test_graph_operations.py
+  learning:
+    purpose: Developmental learning architecture for JARVIS.
+    modules:
+    - path: learning/__init__.py
+      purpose: Developmental learning architecture for JARVIS.
+      lines: 10
+      public: 0
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_developmental_system.py
+      - tests/test_experience.py
+      - tests/test_policy_learning.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_rewards_and_representations.py
+      - tests/test_semantic_runtime_v02.py
+      - tests/test_world_model.py
+    - path: learning/checkpointing.py
+      purpose: ''
+      lines: 62
+      public: 3
+      tests: []
+    - path: learning/config.py
+      purpose: ''
+      lines: 66
+      public: 1
+      tests: []
+    - path: learning/continual/__init__.py
+      purpose: ''
+      lines: 12
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/continual/consolidation.py
+      purpose: ''
+      lines: 41
+      public: 2
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/continual/forgetting.py
+      purpose: ''
+      lines: 46
+      public: 4
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/continual/learner.py
+      purpose: ''
+      lines: 30
+      public: 1
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/continual/regularization.py
+      purpose: ''
+      lines: 27
+      public: 2
+      tests: []
+    - path: learning/curriculum/__init__.py
+      purpose: ''
+      lines: 13
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/curriculum/curriculum.py
+      purpose: ''
+      lines: 42
+      public: 2
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/curriculum/difficulty.py
+      purpose: ''
+      lines: 34
+      public: 3
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/curriculum/stages.py
+      purpose: ''
+      lines: 62
+      public: 3
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/experience/__init__.py
+      purpose: ''
+      lines: 14
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+      - tests/test_experience.py
+    - path: learning/experience/persistent_store.py
+      purpose: ''
+      lines: 263
+      public: 2
+      tests: []
+    - path: learning/experience/prioritization.py
+      purpose: ''
+      lines: 51
+      public: 5
+      tests:
+      - tests/test_experience.py
+    - path: learning/experience/replay_buffer.py
+      purpose: ''
+      lines: 127
+      public: 2
+      tests:
+      - tests/test_experience.py
+    - path: learning/experience/trajectory.py
+      purpose: ''
+      lines: 55
+      public: 1
+      tests:
+      - tests/test_developmental_system.py
+      - tests/test_experience.py
+    - path: learning/experience/transition.py
+      purpose: ''
+      lines: 48
+      public: 1
+      tests:
+      - tests/test_developmental_system.py
+      - tests/test_experience.py
+    - path: learning/meta/__init__.py
+      purpose: ''
+      lines: 15
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/meta/capability_graph.py
+      purpose: ''
+      lines: 46
+      public: 2
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/meta/learning_strategy.py
+      purpose: ''
+      lines: 41
+      public: 3
+      tests: []
+    - path: learning/meta/metacognition.py
+      purpose: ''
+      lines: 23
+      public: 2
+      tests: []
+    - path: learning/meta/metrics.py
+      purpose: ''
+      lines: 17
+      public: 1
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/meta/self_model.py
+      purpose: ''
+      lines: 48
+      public: 2
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/objectives/__init__.py
+      purpose: ''
+      lines: 5
+      public: 0
+      tests:
+      - tests/test_rewards_and_representations.py
+      - tests/test_world_model.py
+    - path: learning/objectives/losses.py
+      purpose: ''
+      lines: 37
+      public: 2
+      tests:
+      - tests/test_rewards_and_representations.py
+    - path: learning/objectives/optimizer.py
+      purpose: ''
+      lines: 24
+      public: 3
+      tests:
+      - tests/test_world_model.py
+    - path: learning/policy/__init__.py
+      purpose: ''
+      lines: 35
+      public: 0
+      tests:
+      - tests/test_policy_learning.py
+      - tests/test_semantic_runtime_v02.py
+    - path: learning/policy/action_value.py
+      purpose: ''
+      lines: 48
+      public: 3
+      tests:
+      - tests/test_semantic_runtime_v02.py
+    - path: learning/policy/exploration.py
+      purpose: ''
+      lines: 104
+      public: 8
+      tests:
+      - tests/test_policy_learning.py
+    - path: learning/policy/policy.py
+      purpose: ''
+      lines: 77
+      public: 3
+      tests:
+      - tests/test_policy_learning.py
+    - path: learning/policy/value.py
+      purpose: ''
+      lines: 109
+      public: 6
+      tests:
+      - tests/test_policy_learning.py
+    - path: learning/pomdp.py
+      purpose: ''
+      lines: 36
+      public: 2
+      tests: []
+    - path: learning/representations/__init__.py
+      purpose: ''
+      lines: 26
+      public: 0
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_rewards_and_representations.py
+      - tests/test_semantic_runtime_v02.py
+    - path: learning/representations/action_encoding.py
+      purpose: ''
+      lines: 130
+      public: 1
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: learning/representations/embeddings.py
+      purpose: ''
+      lines: 26
+      public: 3
+      tests: []
+    - path: learning/representations/encoder.py
+      purpose: ''
+      lines: 66
+      public: 2
+      tests:
+      - tests/test_rewards_and_representations.py
+    - path: learning/representations/latent_state.py
+      purpose: ''
+      lines: 39
+      public: 2
+      tests:
+      - tests/test_rewards_and_representations.py
+    - path: learning/representations/semantic.py
+      purpose: ''
+      lines: 171
+      public: 7
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: learning/rewards/__init__.py
+      purpose: ''
+      lines: 11
+      public: 0
+      tests:
+      - tests/test_rewards_and_representations.py
+    - path: learning/rewards/extrinsic.py
+      purpose: ''
+      lines: 13
+      public: 1
+      tests: []
+    - path: learning/rewards/intrinsic.py
+      purpose: ''
+      lines: 24
+      public: 3
+      tests:
+      - tests/test_rewards_and_representations.py
+    - path: learning/rewards/preferences.py
+      purpose: ''
+      lines: 20
+      public: 2
+      tests: []
+    - path: learning/rewards/reward_model.py
+      purpose: ''
+      lines: 64
+      public: 3
+      tests:
+      - tests/test_rewards_and_representations.py
+    - path: learning/skills/__init__.py
+      purpose: ''
+      lines: 7
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/skills/abstraction.py
+      purpose: ''
+      lines: 17
+      public: 1
+      tests: []
+    - path: learning/skills/discovery.py
+      purpose: ''
+      lines: 60
+      public: 2
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/skills/option.py
+      purpose: ''
+      lines: 24
+      public: 1
+      tests:
+      - tests/test_developmental_system.py
+    - path: learning/skills/transfer.py
+      purpose: ''
+      lines: 14
+      public: 1
+      tests: []
+    - path: learning/world_model/__init__.py
+      purpose: ''
+      lines: 11
+      public: 0
+      tests:
+      - tests/test_developmental_system.py
+      - tests/test_world_model.py
+    - path: learning/world_model/failure.py
+      purpose: ''
+      lines: 42
+      public: 3
+      tests: []
+    - path: learning/world_model/model.py
+      purpose: ''
+      lines: 122
+      public: 3
+      tests:
+      - tests/test_world_model.py
+    - path: learning/world_model/predictor.py
+      purpose: ''
+      lines: 18
+      public: 1
+      tests: []
+    - path: learning/world_model/uncertainty.py
+      purpose: ''
+      lines: 64
+      public: 3
+      tests:
+      - tests/test_developmental_system.py
+  memory:
+    purpose: conversation memory
+    modules:
+    - path: memory/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+  owner:
+    purpose: 'The owner''s domain: what ZEUS is, how it behaves, what it may spend.'
+    modules:
+    - path: owner/__init__.py
+      purpose: 'The owner''s domain: what ZEUS is, how it behaves, what it may spend.'
+      lines: 26
+      public: 0
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_owner_core.py
+      - tests/test_personality.py
+      - tests/test_security_gate.py
+      - tests/test_selfdev_candidate_integrity.py
+      - tests/test_selfdev_promotion_gate.py
+    - path: owner/core.py
+      purpose: 'The owner core: five documents, one way to change them.'
+      lines: 479
+      public: 6
+      tests:
+      - tests/test_owner_core.py
+      - tests/test_personality.py
+      - tests/test_selfdev_promotion_gate.py
+    - path: owner/protected.py
+      purpose: Paths no generated change may touch.
+      lines: 51
+      public: 2
+      tests:
+      - tests/test_owner_core.py
+      - tests/test_personality.py
+    - path: owner/security_gate.py
+      purpose: 'The Owner Security Gate: a manually typed password in front of the changes that matter.'
+      lines: 282
+      public: 2
+      tests:
+      - tests/test_engineering_router_gateway.py
+      - tests/test_personality.py
+      - tests/test_security_gate.py
+      - tests/test_selfdev_candidate_integrity.py
+      - tests/test_selfdev_promotion_gate.py
+  persona:
+    purpose: persona profiles and language
+    modules:
+    - path: persona/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_language_and_persona.py
+      - tests/test_persona_and_datasets.py
+      - tests/test_personality.py
+    - path: persona/language.py
+      purpose: Working out what language the user is speaking, without asking a model.
+      lines: 172
+      public: 4
+      tests:
+      - tests/test_language_and_persona.py
+    - path: persona/profiles.py
+      purpose: 'Personas: who Jarvis is when it talks, kept out of the code that thinks.'
+      lines: 256
+      public: 3
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_persona_and_datasets.py
+    - path: persona/smalltalk.py
+      purpose: Small talk, answered as Zeus rather than as a system description.
+      lines: 90
+      public: 4
+      tests:
+      - tests/test_personality.py
+  projects:
+    purpose: the project engine and store
+    modules:
+    - path: projects/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_action_receipts.py
+      - tests/test_capability_service.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_console.py
+      - tests/test_knowledge.py
+      - tests/test_persona_and_datasets.py
+      - tests/test_project_engine.py
+      - tests/test_recovery_strategy.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_stall_recovery.py
+    - path: projects/acceptance_guard.py
+      purpose: Making sure an acceptance check cannot be satisfied by reading the answers.
+      lines: 214
+      public: 5
+      tests: []
+    - path: projects/engine.py
+      purpose: The autonomous control loop.
+      lines: 1949
+      public: 3
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_service.py
+      - tests/test_project_engine.py
+      - tests/test_recovery_strategy.py
+      - tests/test_stall_recovery.py
+    - path: projects/models.py
+      purpose: The durable representation of a piece of work.
+      lines: 552
+      public: 15
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_service.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_console.py
+      - tests/test_knowledge.py
+      - tests/test_persona_and_datasets.py
+      - tests/test_project_engine.py
+      - tests/test_recovery_strategy.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_stall_recovery.py
+    - path: projects/store.py
+      purpose: Durable storage for projects.
+      lines: 153
+      public: 1
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_action_receipts.py
+      - tests/test_capability_service.py
+      - tests/test_persona_and_datasets.py
+      - tests/test_project_engine.py
+      - tests/test_stall_recovery.py
+  research:
+    purpose: web research tools
+    modules:
+    - path: research/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_research.py
+    - path: research/agent.py
+      purpose: Answering a technical question from public sources, with the receipts.
+      lines: 496
+      public: 5
+      tests:
+      - tests/test_research.py
+    - path: research/tools.py
+      purpose: The research agent, exposed as a tool a project can call.
+      lines: 64
+      public: 1
+      tests: []
+  runtime:
+    purpose: 'Runtime services: deadlines, heartbeats, cost policy, the older runtimes.'
+    modules:
+    - path: runtime/__init__.py
+      purpose: 'Runtime services: deadlines, heartbeats, cost policy, the older runtimes.'
+      lines: 51
+      public: 0
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_activity.py
+      - tests/test_adaptation.py
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_cost_policy.py
+      - tests/test_engineering_router_gateway.py
+      - tests/test_environment.py
+      - tests/test_expert_gateway.py
+      - tests/test_expert_memory.py
+      - tests/test_mission_engine.py
+      - tests/test_missions.py
+      - tests/test_model_gateway.py
+      - tests/test_music.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_repository_patch_engine_v3.py
+      - tests/test_self_developer_v1.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_semantic_runtime_v02.py
+      - tests/test_stall_recovery.py
+      - tests/test_state_foundations.py
+      - tests/test_thoughts.py
+    - path: runtime/action_generator.py
+      purpose: ''
+      lines: 512
+      public: 9
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: runtime/activity.py
+      purpose: The durable record of what this system actually did, in order.
+      lines: 240
+      public: 2
+      tests:
+      - tests/test_activity.py
+    - path: runtime/adaptation.py
+      purpose: 'The Adaptive Owner Model: what ZEUS has learned about how this owner wants it to behave.'
+      lines: 323
+      public: 3
+      tests:
+      - tests/test_adaptation.py
+    - path: runtime/backup.py
+      purpose: Backup and restore of non-secret runtime state.
+      lines: 164
+      public: 1
+      tests:
+      - tests/test_state_foundations.py
+    - path: runtime/capability_runtime.py
+      purpose: ''
+      lines: 387
+      public: 2
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_first_architecture.py
+    - path: runtime/checkpoints.py
+      purpose: ''
+      lines: 135
+      public: 1
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: runtime/cost_policy.py
+      purpose: What Jarvis is allowed to spend, and the refusal to spend it quietly.
+      lines: 376
+      public: 5
+      tests:
+      - tests/test_capability_teaching_loop.py
+      - tests/test_cost_policy.py
+      - tests/test_engineering_router_gateway.py
+      - tests/test_expert_gateway.py
+      - tests/test_expert_memory.py
+      - tests/test_model_gateway.py
+      - tests/test_semantic_acceptance.py
+    - path: runtime/deadline.py
+      purpose: Time budgets that are actually enforced, and calls that cannot outlive them.
+      lines: 176
+      public: 4
+      tests:
+      - tests/test_stall_recovery.py
+    - path: runtime/device_context.py
+      purpose: 'The execution context: which device ZEUS is acting through, and what it has.'
+      lines: 115
+      public: 3
+      tests:
+      - tests/test_state_foundations.py
+    - path: runtime/environment.py
+      purpose: What is true about this machine, determined once and remembered.
+      lines: 448
+      public: 10
+      tests:
+      - tests/test_environment.py
+    - path: runtime/events.py
+      purpose: ''
+      lines: 13
+      public: 1
+      tests: []
+    - path: runtime/evidence.py
+      purpose: 'Evidence, first-class: what actually proves this?'
+      lines: 188
+      public: 12
+      tests:
+      - tests/test_mission_engine.py
+    - path: runtime/failure_kind.py
+      purpose: What kind of failure this was, and therefore what to do about it.
+      lines: 155
+      public: 2
+      tests:
+      - tests/test_capability_failure_policy.py
+    - path: runtime/heartbeat.py
+      purpose: A liveness signal, so a long run can be told apart from a dead one.
+      lines: 310
+      public: 5
+      tests:
+      - tests/test_repository_patch_engine_v3.py
+      - tests/test_stall_recovery.py
+    - path: runtime/jarvis_runtime.py
+      purpose: ''
+      lines: 1346
+      public: 4
+      tests:
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: runtime/learning_scheduler.py
+      purpose: ''
+      lines: 484
+      public: 3
+      tests: []
+    - path: runtime/mission_engine.py
+      purpose: 'The durable Mission Engine: work larger than one model context.'
+      lines: 421
+      public: 6
+      tests:
+      - tests/test_mission_engine.py
+    - path: runtime/missions.py
+      purpose: Long missions, written down as they go, so a restart is not a restart.
+      lines: 247
+      public: 4
+      tests:
+      - tests/test_missions.py
+    - path: runtime/paths.py
+      purpose: One path model for everything that hands a file to a capability or action.
+      lines: 203
+      public: 7
+      tests:
+      - tests/test_capability_failure_policy.py
+    - path: runtime/preferences.py
+      purpose: What the user prefers, kept out of the code that acts on it.
+      lines: 104
+      public: 1
+      tests:
+      - tests/test_music.py
+    - path: runtime/profiling.py
+      purpose: ''
+      lines: 93
+      public: 2
+      tests:
+      - tests/test_provider_infra_v03.py
+    - path: runtime/receipts.py
+      purpose: 'Receipts: the only thing in this system allowed to say an action succeeded.'
+      lines: 298
+      public: 7
+      tests:
+      - tests/test_action_receipts.py
+    - path: runtime/runtime_state.py
+      purpose: ''
+      lines: 32
+      public: 2
+      tests:
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_coding_environment_runtime.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: runtime/secrets.py
+      purpose: Credentials, kept out of configuration and out of the repository.
+      lines: 131
+      public: 3
+      tests:
+      - tests/test_music.py
+    - path: runtime/self_developer.py
+      purpose: ''
+      lines: 213
+      public: 3
+      tests:
+      - tests/test_self_developer_v1.py
+    - path: runtime/tensorboard.py
+      purpose: ''
+      lines: 34
+      public: 1
+      tests:
+      - tests/test_semantic_runtime_v02.py
+    - path: runtime/thoughts.py
+      purpose: 'Proactive thoughts: ZEUS noticing things, bounded and evidence-backed.'
+      lines: 520
+      public: 10
+      tests:
+      - tests/test_capability_failure_policy.py
+      - tests/test_thoughts.py
+  sandbox:
+    purpose: sandboxing
+    modules:
+    - path: sandbox/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+  senses:
+    purpose: perception
+    modules:
+    - path: senses/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+  service:
+    purpose: 'the product service: core, HTTP API, intents, routing, self-development, isolation'
+    modules:
+    - path: service/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_acquisition.py
+      - tests/test_action_receipts.py
+      - tests/test_actionability.py
+      - tests/test_activity.py
+      - tests/test_basics_sprint.py
+      - tests/test_calendar.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_composer.py
+      - tests/test_corrections.py
+      - tests/test_desktop_lifecycle.py
+      - tests/test_devices.py
+      - tests/test_engineering_router.py
+      - tests/test_engineering_router_gateway.py
+      - tests/test_filesystem.py
+      - tests/test_fs_intelligence.py
+      - tests/test_gateway_integration.py
+      - tests/test_identity.py
+      - tests/test_intents.py
+      - tests/test_isolation.py
+      - tests/test_jobs.py
+      - tests/test_knowledge_view.py
+      - tests/test_language_and_persona.py
+      - tests/test_missions.py
+      - tests/test_model_gateway.py
+      - tests/test_music.py
+      - tests/test_personality.py
+      - tests/test_pronunciation.py
+      - tests/test_replan_semantic_equivalence.py
+      - tests/test_routing.py
+      - tests/test_selfdev.py
+      - tests/test_selfdev_brief.py
+      - tests/test_selfdev_candidate_integrity.py
+      - tests/test_selfdev_promotion_gate.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_semantic_plane.py
+      - tests/test_service.py
+      - tests/test_supervisor.py
+      - tests/test_thoughts.py
+      - tests/test_utterance_gate.py
+      - tests/test_voice_service.py
+      - tests/test_voice_session.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_segmentation.py
+    - path: service/acquisition.py
+      purpose: When ZEUS is asked for something it cannot do yet.
+      lines: 980
+      public: 4
+      tests:
+      - tests/test_acquisition.py
+      - tests/test_capability_first_architecture.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_missions.py
+    - path: service/actions.py
+      purpose: Execute what the user asked for, and report only what actually happened.
+      lines: 495
+      public: 3
+      tests:
+      - tests/test_action_receipts.py
+    - path: service/aliases.py
+      purpose: 'Owner aliases: "Uni-Planer" means D:\Studium\Planer.xlsx.'
+      lines: 160
+      public: 5
+      tests:
+      - tests/test_semantic_plane.py
+    - path: service/apps.py
+      purpose: 'Deterministic application launching: "Öffne Spotify" without a model.'
+      lines: 227
+      public: 1
+      tests:
+      - tests/test_basics_sprint.py
+    - path: service/calendar.py
+      purpose: 'The local-first calendar: real events, real times, no cloud required.'
+      lines: 307
+      public: 2
+      tests:
+      - tests/test_calendar.py
+    - path: service/claims.py
+      purpose: Catch a success claim that no receipt supports.
+      lines: 129
+      public: 4
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_corrections.py
+    - path: service/coach.py
+      purpose: 'The language coach: a real adaptive tutor inside the conversation.'
+      lines: 219
+      public: 2
+      tests: []
+    - path: service/composer.py
+      purpose: Capability composition and the general action planner.
+      lines: 745
+      public: 13
+      tests:
+      - tests/test_composer.py
+      - tests/test_replan_semantic_equivalence.py
+      - tests/test_semantic_acceptance.py
+    - path: service/conversations.py
+      purpose: 'Conversation archive: recent chats survive, with compact summaries.'
+      lines: 145
+      public: 2
+      tests: []
+    - path: service/core.py
+      purpose: 'Jarvis Core: the system, with no user interface attached to it.'
+      lines: 7890
+      public: 2
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_actionability.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_capability_learning_end_to_end.py
+      - tests/test_capability_teaching_loop.py
+      - tests/test_devices.py
+      - tests/test_gateway_integration.py
+      - tests/test_identity.py
+      - tests/test_knowledge_view.py
+      - tests/test_language_and_persona.py
+      - tests/test_personality.py
+      - tests/test_selfdev_promotion_gate.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_service.py
+      - tests/test_supervisor.py
+      - tests/test_thoughts.py
+      - tests/test_utterance_gate.py
+      - tests/test_voice_service.py
+      - tests/test_voice_session.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_segmentation.py
+    - path: service/corrections.py
+      purpose: 'Korrigieren: what the owner meant, kept apart from what the model guessed.'
+      lines: 448
+      public: 9
+      tests:
+      - tests/test_corrections.py
+    - path: service/defaults.py
+      purpose: 'Owner creation defaults: where generated things go and what they are named.'
+      lines: 77
+      public: 1
+      tests: []
+    - path: service/desktop.py
+      purpose: The desktop window as something the core owns, shows, hides and finds again.
+      lines: 711
+      public: 10
+      tests:
+      - tests/test_desktop_lifecycle.py
+    - path: service/doctor.py
+      purpose: 'The internal doctor: "is ZEUS healthy?", answered from deterministic checks.'
+      lines: 489
+      public: 2
+      tests:
+      - tests/test_semantic_acceptance.py
+    - path: service/engineering.py
+      purpose: Who does engineering work, decided once, for every path that needs it.
+      lines: 341
+      public: 6
+      tests:
+      - tests/test_engineering_router.py
+      - tests/test_engineering_router_gateway.py
+    - path: service/events.py
+      purpose: The event bus every Jarvis client watches.
+      lines: 238
+      public: 4
+      tests:
+      - tests/test_actionability.py
+      - tests/test_activity.py
+      - tests/test_gateway_integration.py
+      - tests/test_pronunciation.py
+      - tests/test_selfdev.py
+      - tests/test_service.py
+      - tests/test_utterance_gate.py
+      - tests/test_voice_service.py
+      - tests/test_voice_session.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_segmentation.py
+    - path: service/filesystem.py
+      purpose: 'The filesystem as ZEUS sees it: real paths, staged indexing, live watchers.'
+      lines: 362
+      public: 4
+      tests:
+      - tests/test_filesystem.py
+    - path: service/http.py
+      purpose: The local HTTP + Server-Sent Events interface to Jarvis Core.
+      lines: 814
+      public: 1
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_devices.py
+      - tests/test_identity.py
+      - tests/test_knowledge_view.py
+      - tests/test_service.py
+      - tests/test_voice_service.py
+    - path: service/imagegen.py
+      purpose: 'image.generate: local, free, and now FAST after the first image.'
+      lines: 255
+      public: 3
+      tests: []
+    - path: service/intent.py
+      purpose: What kind of request this is, decided before anything answers it.
+      lines: 522
+      public: 4
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_capability_failure_policy.py
+      - tests/test_corrections.py
+      - tests/test_music.py
+      - tests/test_personality.py
+      - tests/test_routing.py
+    - path: service/intents.py
+      purpose: Top-level intent and typed action contracts, decided before any domain parser.
+      lines: 847
+      public: 18
+      tests:
+      - tests/test_basics_sprint.py
+      - tests/test_calendar.py
+      - tests/test_fs_intelligence.py
+      - tests/test_intents.py
+      - tests/test_jobs.py
+    - path: service/isolation.py
+      purpose: 'Hard isolation for self-development: experimental code never touches the live tree.'
+      lines: 494
+      public: 5
+      tests:
+      - tests/test_isolation.py
+      - tests/test_selfdev_candidate_integrity.py
+    - path: service/jobs.py
+      purpose: 'WorkItems: every long-running action is a visible, durable job.'
+      lines: 211
+      public: 2
+      tests:
+      - tests/test_jobs.py
+    - path: service/library.py
+      purpose: 'The knowledge library: the owner''s study shelf as REAL files.'
+      lines: 214
+      public: 1
+      tests:
+      - tests/test_basics_sprint.py
+    - path: service/lifecycle.py
+      purpose: 'Readiness, restart and shutdown: the core''s side of the supervisor contract.'
+      lines: 365
+      public: 1
+      tests:
+      - tests/test_desktop_lifecycle.py
+    - path: service/music.py
+      purpose: Music as an intent, not as a provider.
+      lines: 1134
+      public: 16
+      tests:
+      - tests/test_music.py
+      - tests/test_routing.py
+    - path: service/observer.py
+      purpose: 'Desktop observation, the honest foundation: WHAT the owner uses, never a'
+      lines: 182
+      public: 1
+      tests: []
+    - path: service/processes.py
+      purpose: What ZEUS-related processes exist on this machine, and how to end them.
+      lines: 173
+      public: 8
+      tests:
+      - tests/test_desktop_lifecycle.py
+    - path: service/project_ops.py
+      purpose: Deterministic project operations with independent verification.
+      lines: 261
+      public: 2
+      tests: []
+    - path: service/reads.py
+      purpose: Answer questions about this system from the registries, not from the model.
+      lines: 161
+      public: 1
+      tests: []
+    - path: service/routing.py
+      purpose: 'Top-level routing: *what kind of thing is being asked* before *which tool*.'
+      lines: 509
+      public: 8
+      tests:
+      - tests/test_intents.py
+      - tests/test_routing.py
+    - path: service/selfdev.py
+      purpose: 'Self-development through ZEUS: "change something about yourself."'
+      lines: 1656
+      public: 5
+      tests:
+      - tests/test_engineering_router.py
+      - tests/test_engineering_router_gateway.py
+      - tests/test_isolation.py
+      - tests/test_selfdev.py
+      - tests/test_selfdev_brief.py
+      - tests/test_selfdev_candidate_integrity.py
+      - tests/test_selfdev_promotion_gate.py
+    - path: service/semantic.py
+      purpose: 'The semantic control plane: FAST_LOCAL understands the goal, tools execute.'
+      lines: 217
+      public: 2
+      tests:
+      - tests/test_model_gateway.py
+      - tests/test_semantic_plane.py
+    - path: service/state.py
+      purpose: What Jarvis is doing, as one small vocabulary shared by every surface.
+      lines: 201
+      public: 3
+      tests:
+      - tests/test_action_receipts.py
+      - tests/test_service.py
+      - tests/test_voice_session.py
+    - path: service/system_context.py
+      purpose: 'SystemContext: the bounded facts ZEUS knows about its own installation.'
+      lines: 74
+      public: 1
+      tests:
+      - tests/test_fs_intelligence.py
+    - path: service/tv.py
+      purpose: 'LG webOS TV control: real local protocol, no Bluetooth fiction.'
+      lines: 366
+      public: 3
+      tests: []
+    - path: service/voice.py
+      purpose: 'Voice as a service: audio arrives over the wire, audio goes back over the wire.'
+      lines: 480
+      public: 5
+      tests:
+      - tests/test_pronunciation.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_utterance_gate.py
+      - tests/test_voice_service.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_segmentation.py
+    - path: service/webread.py
+      purpose: 'Real page reading: fetch an article and make it summarizable.'
+      lines: 91
+      public: 2
+      tests: []
+    - path: service/websearch.py
+      purpose: 'A small, honest web search: Bing''s HTML results page, stdlib only.'
+      lines: 150
+      public: 3
+      tests:
+      - tests/test_basics_sprint.py
+      - tests/test_semantic_plane.py
+  skills:
+    purpose: skill packaging
+    modules:
+    - path: skills/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+    - path: skills/_staging/data.csv_column_mode/c94775b161/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/_staging/data.csv_column_mode/c94775b161/test_public.py
+      purpose: ''
+      lines: 39
+      public: 1
+      tests: []
+    - path: skills/_staging/files.extension_summary/347171f54d/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/_staging/files.extension_summary/347171f54d/test_public.py
+      purpose: ''
+      lines: 43
+      public: 1
+      tests: []
+    - path: skills/_staging/text.line_count/5d7f30a5c2/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/_staging/text.line_count/5d7f30a5c2/test_public.py
+      purpose: ''
+      lines: 37
+      public: 1
+      tests: []
+    - path: skills/_staging/text.line_count/795241047f/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/_staging/text.line_count/795241047f/test_public.py
+      purpose: ''
+      lines: 37
+      public: 1
+      tests: []
+    - path: skills/installed/data.csv_column_mode/1.0.0/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/installed/data.csv_column_mode/1.0.0/test_public.py
+      purpose: ''
+      lines: 39
+      public: 1
+      tests: []
+    - path: skills/installed/files.extension_summary/1.0.0/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/installed/files.extension_summary/1.0.0/test_public.py
+      purpose: ''
+      lines: 43
+      public: 1
+      tests: []
+    - path: skills/installed/text.line_count/1.0.0/main.py
+      purpose: ''
+      lines: 122
+      public: 1
+      tests: []
+    - path: skills/installed/text.line_count/1.0.0/test_public.py
+      purpose: ''
+      lines: 37
+      public: 1
+      tests: []
+  speech:
+    purpose: speech recognition, synthesis, wake word
+    modules:
+    - path: speech/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_identity.py
+      - tests/test_pronunciation.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_speech_chunker.py
+      - tests/test_speech_corpus.py
+      - tests/test_speech_pipeline.py
+      - tests/test_utterance_gate.py
+      - tests/test_voice_service.py
+      - tests/test_voice_session.py
+      - tests/test_wake_listener.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_rearm.py
+      - tests/test_wake_segmentation.py
+    - path: speech/benchmark.py
+      purpose: 'STT benchmark on the OWNER''s corpus: measured on this machine, this voice.'
+      lines: 121
+      public: 2
+      tests: []
+    - path: speech/chunker.py
+      purpose: Deciding when Jarvis has heard enough of its own thought to start saying it.
+      lines: 252
+      public: 3
+      tests:
+      - tests/test_speech_chunker.py
+      - tests/test_speech_pipeline.py
+    - path: speech/contracts.py
+      purpose: Interfaces for the speech components, and the registry that swaps them.
+      lines: 261
+      public: 7
+      tests:
+      - tests/test_pronunciation.py
+      - tests/test_semantic_acceptance.py
+      - tests/test_speech_pipeline.py
+      - tests/test_utterance_gate.py
+      - tests/test_voice_service.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_segmentation.py
+    - path: speech/corpus.py
+      purpose: 'The owner speech corpus: real recordings with owner-verified transcripts.'
+      lines: 295
+      public: 4
+      tests:
+      - tests/test_speech_corpus.py
+    - path: speech/engine.py
+      purpose: 'Main-process view of the speech engines: a worker on the other side of a pipe.'
+      lines: 285
+      public: 4
+      tests: []
+    - path: speech/listener.py
+      purpose: 'Hands-free listening: the first Jarvis device client.'
+      lines: 762
+      public: 7
+      tests:
+      - tests/test_identity.py
+      - tests/test_voice_session.py
+      - tests/test_wake_listener.py
+      - tests/test_wake_pipeline.py
+      - tests/test_wake_rearm.py
+    - path: speech/normalize.py
+      purpose: 'Conservative post-STT normalisation: fix what is known, never rewrite meaning.'
+      lines: 216
+      public: 5
+      tests: []
+    - path: speech/pipeline.py
+      purpose: Turning a token stream into speech that starts before the thought finishes.
+      lines: 256
+      public: 5
+      tests:
+      - tests/test_speech_pipeline.py
+    - path: speech/pronounce.py
+      purpose: 'What ZEUS says versus what ZEUS shows: the pronunciation pipeline.'
+      lines: 261
+      public: 6
+      tests:
+      - tests/test_pronunciation.py
+    - path: speech/utterance.py
+      purpose: One human utterance = one authoritative, evidence-backed event.
+      lines: 481
+      public: 9
+      tests:
+      - tests/test_utterance_gate.py
+    - path: speech/wake_eval.py
+      purpose: Score recordings through the real detector, and evaluate the owner's samples.
+      lines: 245
+      public: 7
+      tests:
+      - tests/test_semantic_acceptance.py
+      - tests/test_wake_pipeline.py
+    - path: speech/wake_segment.py
+      purpose: Keep the wake word out of the owner's request.
+      lines: 124
+      public: 3
+      tests:
+      - tests/test_wake_rearm.py
+      - tests/test_wake_segmentation.py
+    - path: speech/wake_training.py
+      purpose: Train a local "Zeus" wake-word detector.  Runs inside .venv-speech.
+      lines: 378
+      public: 7
+      tests: []
+    - path: speech/wake_zeus.py
+      purpose: 'The "Zeus" detector at the microphone: openWakeWord features, our classifier.'
+      lines: 177
+      public: 5
+      tests:
+      - tests/test_semantic_acceptance.py
+      - tests/test_wake_pipeline.py
+    - path: speech/worker.py
+      purpose: 'The speech worker: runs inside the speech virtualenv, talks JSON over stdio.'
+      lines: 249
+      public: 2
+      tests: []
+  tools:
+    purpose: 'Schach Analyse: a screen-watching chess assistant (board finder, piece recogniser, Stockfish, overlay).'
+    modules:
+    - path: tools/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_action_receipts.py
+      - tests/test_capability_service.py
+      - tests/test_chess_analysis.py
+      - tests/test_desktop_tools.py
+      - tests/test_music.py
+      - tests/test_project_engine.py
+      - tests/test_recovery_strategy.py
+      - tests/test_stall_recovery.py
+      - tests/test_static_check.py
+      - tests/test_tool_runtime.py
+    - path: tools/audio_probe.py
+      purpose: Did sound actually come out of the speakers?
+      lines: 288
+      public: 8
+      tests: []
+    - path: tools/builtin.py
+      purpose: 'The standard Jarvis toolset: filesystem, search, git, processes, packages.'
+      lines: 1270
+      public: 22
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_capability_service.py
+      - tests/test_project_engine.py
+      - tests/test_stall_recovery.py
+      - tests/test_tool_runtime.py
+    - path: tools/chess_analysis/__init__.py
+      purpose: 'Schach Analyse: a screen-watching chess assistant (board finder, piece recogniser, Stockfish, overlay).'
+      lines: 2
+      public: 0
+      tests:
+      - tests/test_chess_analysis.py
+    - path: tools/chess_analysis/__main__.py
+      purpose: 'Schach Analyse: watch the screen for a chessboard, analyse it, show the five best moves.'
+      lines: 169
+      public: 3
+      tests: []
+    - path: tools/chess_analysis/board.py
+      purpose: Find a chessboard on a screen image.
+      lines: 212
+      public: 6
+      tests:
+      - tests/test_chess_analysis.py
+    - path: tools/chess_analysis/engine.py
+      purpose: 'Stockfish over UCI (python-chess): the five best moves for a FEN.'
+      lines: 107
+      public: 4
+      tests:
+      - tests/test_chess_analysis.py
+    - path: tools/chess_analysis/overlay.py
+      purpose: The always-on-top panel in the top-left corner of the screen.
+      lines: 91
+      public: 3
+      tests:
+      - tests/test_chess_analysis.py
+    - path: tools/chess_analysis/position.py
+      purpose: From a recognised 8x8 grid to a FEN, with orientation and side to move.
+      lines: 179
+      public: 7
+      tests:
+      - tests/test_chess_analysis.py
+    - path: tools/chess_analysis/recognize.py
+      purpose: 'Pieces on the board: the owner''s trained YOLO detector, on the CPU.'
+      lines: 137
+      public: 4
+      tests:
+      - tests/test_chess_analysis.py
+    - path: tools/desktop.py
+      purpose: 'Tools that reach outside the workspace: the machine itself.'
+      lines: 591
+      public: 12
+      tests:
+      - tests/test_desktop_tools.py
+      - tests/test_static_check.py
+    - path: tools/media_session.py
+      purpose: What Windows itself says is playing.
+      lines: 335
+      public: 6
+      tests:
+      - tests/test_music.py
+    - path: tools/registry.py
+      purpose: A declarative, audited tool runtime.
+      lines: 485
+      public: 10
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_action_receipts.py
+      - tests/test_capability_service.py
+      - tests/test_desktop_tools.py
+      - tests/test_project_engine.py
+      - tests/test_recovery_strategy.py
+      - tests/test_stall_recovery.py
+      - tests/test_tool_runtime.py
+    - path: tools/vision.py
+      purpose: Letting a text model find out what is in an image.
+      lines: 254
+      public: 4
+      tests: []
+    - path: tools/web.py
+      purpose: 'Research tools: fetching and searching public technical documentation.'
+      lines: 302
+      public: 9
+      tests:
+      - tests/test_acceptance.py
+      - tests/test_tool_runtime.py
+  training:
+    purpose: training data and wake-word training
+    modules:
+    - path: training/__init__.py
+      purpose: ''
+      lines: 5
+      public: 0
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+      - tests/test_coding_brain_v03.py
+      - tests/test_docker_coding_world.py
+      - tests/test_persona_and_datasets.py
+      - tests/test_policy_learning.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: training/benchmark_progress.py
+      purpose: ''
+      lines: 91
+      public: 1
+      tests:
+      - tests/test_coding_brain_v03.py
+    - path: training/capability_acquisition_v04_demo.py
+      purpose: ''
+      lines: 428
+      public: 6
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+    - path: training/capability_curriculum.py
+      purpose: ''
+      lines: 255
+      public: 2
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+      - tests/test_capability_acquisition_v04.py
+    - path: training/coding_benchmark.py
+      purpose: ''
+      lines: 312
+      public: 2
+      tests:
+      - tests/test_coding_brain_v03.py
+    - path: training/coding_brain_v02_demo.py
+      purpose: ''
+      lines: 137
+      public: 1
+      tests: []
+    - path: training/coding_brain_v03_demo.py
+      purpose: ''
+      lines: 825
+      public: 4
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_provider_infra_v03.py
+    - path: training/coding_curriculum.py
+      purpose: ''
+      lines: 377
+      public: 2
+      tests:
+      - tests/test_coding_brain_v03.py
+      - tests/test_docker_coding_world.py
+      - tests/test_provider_infra_v03.py
+      - tests/test_semantic_runtime_v02.py
+    - path: training/coding_learning_demo.py
+      purpose: ''
+      lines: 103
+      public: 1
+      tests: []
+    - path: training/dataset_export.py
+      purpose: Turning verified work into training data -- without training on failure.
+      lines: 274
+      public: 3
+      tests:
+      - tests/test_persona_and_datasets.py
+    - path: training/datasets.py
+      purpose: ''
+      lines: 72
+      public: 6
+      tests: []
+    - path: training/experiments.py
+      purpose: ''
+      lines: 43
+      public: 2
+      tests: []
+    - path: training/generic_mutation_generator.py
+      purpose: ''
+      lines: 63
+      public: 1
+      tests: []
+    - path: training/learning_demo.py
+      purpose: ''
+      lines: 86
+      public: 2
+      tests:
+      - tests/test_policy_learning.py
+    - path: training/self_improvement_demo.py
+      purpose: ''
+      lines: 204
+      public: 4
+      tests:
+      - tests/test_autonomous_engineering_v04.py
+    - path: training/world_model_demo.py
+      purpose: ''
+      lines: 63
+      public: 2
+      tests: []
+  ui:
+    purpose: ''
+    modules:
+    - path: ui/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+  voice:
+    purpose: voice pipeline
+    modules:
+    - path: voice/__init__.py
+      purpose: ''
+      lines: 1
+      public: 0
+      tests: []
+  zeus_supervisor:
+    purpose: 'The ZEUS supervisor: the small process that is *not* ZEUS.'
+    modules:
+    - path: zeus_supervisor/__init__.py
+      purpose: 'The ZEUS supervisor: the small process that is *not* ZEUS.'
+      lines: 36
+      public: 0
+      tests:
+      - tests/test_desktop_lifecycle.py
+      - tests/test_desktop_window.py
+      - tests/test_release.py
+      - tests/test_supervisor.py
+      - tests/test_supervisor_ollama.py
+    - path: zeus_supervisor/__main__.py
+      purpose: '``python -m zeus_supervisor`` -- the same entry point ZEUS.exe is built from.'
+      lines: 154
+      public: 3
+      tests: []
+    - path: zeus_supervisor/build.py
+      purpose: 'Build ``ZEUS.exe``: ``python -m zeus_supervisor.build``.'
+      lines: 143
+      public: 2
+      tests: []
+    - path: zeus_supervisor/config.py
+      purpose: 'Where everything is: the repository, the interpreter, Ollama, the models.'
+      lines: 278
+      public: 4
+      tests:
+      - tests/test_desktop_window.py
+      - tests/test_supervisor.py
+      - tests/test_supervisor_ollama.py
+    - path: zeus_supervisor/control.py
+      purpose: 'How the application talks to the supervisor: files, not imports.'
+      lines: 130
+      public: 4
+      tests:
+      - tests/test_supervisor.py
+    - path: zeus_supervisor/instance.py
+      purpose: One ZEUS per machine.
+      lines: 75
+      public: 1
+      tests: []
+    - path: zeus_supervisor/known_good.py
+      purpose: The known-good pointer and the deployment receipts.
+      lines: 109
+      public: 3
+      tests:
+      - tests/test_supervisor.py
+    - path: zeus_supervisor/launch.py
+      purpose: The frozen entry point.  PyInstaller runs its script as ``__main__`` with no
+      lines: 39
+      public: 1
+      tests: []
+    - path: zeus_supervisor/ollama.py
+      purpose: 'Ollama as a managed background service: start it once, prove it answers, never wait on it.'
+      lines: 344
+      public: 3
+      tests:
+      - tests/test_supervisor_ollama.py
+    - path: zeus_supervisor/preflight.py
+      purpose: What has to be true before ZEUS is worth starting.
+      lines: 399
+      public: 6
+      tests:
+      - tests/test_supervisor_ollama.py
+    - path: zeus_supervisor/relaunch.py
+      purpose: 'The relaunch watchdog: start the new ZEUS.exe, and undo it if it never gets READY.'
+      lines: 259
+      public: 1
+      tests: []
+    - path: zeus_supervisor/status_page.py
+      purpose: What the browser sees while ZEUS itself is not answering.
+      lines: 215
+      public: 1
+      tests: []
+    - path: zeus_supervisor/supervisor.py
+      purpose: 'The loop: start ZEUS, prove it is up, keep it up, undo what breaks it.'
+      lines: 766
+      public: 1
+      tests:
+      - tests/test_desktop_lifecycle.py
+      - tests/test_supervisor.py
+      - tests/test_supervisor_ollama.py
+entry_points:
+  serve: jarvis/serve.py
+  cli: jarvis/cli.py
+  http_api: service/http.py
+  core: service/core.py
+  kernel: core/kernel.py
+  supervisor: zeus_supervisor
+  ui: ui/index.html
+  tests: python -m pytest tests/ -q
+  ui_gate: python -m jarvis.verify_ui
+  catalog: python -m catalog.build / python -m catalog.check
+api_routes:
+- /api/activity
+- /api/activity/correct
+- /api/activity/corrections
+- /api/adaptation
+- /api/adaptation/rule
+- /api/app/open
+- /api/auth/lock
+- /api/auth/setup
+- /api/auth/status
+- /api/auth/unlock
+- /api/backup
+- /api/backup/create
+- /api/backup/restore
+- /api/backup/verify
+- /api/calendar/create
+- /api/calendar/delete
+- /api/calendar/export
+- /api/calendar/import
+- /api/calendar/list
+- /api/calendar/update
+- /api/capabilities
+- /api/capabilities/report
+- /api/capabilities/requests
+- /api/compose
+- /api/conversation
+- /api/conversation/delete
+- /api/conversation/restore
+- /api/conversations
+- /api/corpus/add
+- /api/corpus/benchmark
+- /api/corpus/delete
+- /api/corpus/list
+- /api/corpus/phrases
+- /api/corpus/reports
+- /api/correction/classify
+- /api/correction/context
+- /api/correction/delete
+- /api/correction/save
+- /api/correction/update
+- /api/corrections
+- /api/defaults
+- /api/defaults/set
+- /api/device/approve
+- /api/device/collect
+- /api/device/context
+- /api/device/context/set
+- /api/device/deny
+- /api/device/display
+- /api/device/heartbeat
+- /api/device/list
+- /api/device/pair
+- /api/device/revoke
+- /api/diagnostics
+- /api/doctor
+- /api/experience
+- /api/feedback
+- /api/fs/list
+- /api/fs/open
+- /api/fs/roots
+- /api/fs/status
+- /api/fs/unwatch
+- /api/fs/watch
+- /api/gateway/estimate
+- /api/gateway/ledger
+- /api/gateway/mode
+- /api/gateway/status
+- /api/gpu
+- /api/health
+- /api/image/generate
+- /api/image/status
+- /api/jobs
+- /api/jobs/cancel
+- /api/knowledge/backlinks
+- /api/knowledge/create
+- /api/knowledge/delete
+- /api/knowledge/do
+- /api/knowledge/graph
+- /api/knowledge/ingest
+- /api/knowledge/link
+- /api/knowledge/node
+- /api/knowledge/read
+- /api/knowledge/stats
+- /api/language
+- /api/library/folder
+- /api/library/import
+- /api/library/move
+- /api/library/note
+- /api/library/read
+- /api/library/tree
+- /api/message
+- /api/mission
+- /api/mission/cancel
+- /api/mission/pause
+- /api/mission/resume
+- /api/missions
+- /api/new
+- /api/observer/enable
+- /api/observer/patterns
+- /api/observer/status
+- /api/owner
+- /api/owner/approve
+- /api/owner/personality
+- /api/owner/propose
+- /api/owner/reject
+- /api/owner/rollback
+- /api/pdf/extract
+- /api/pdf/summarize
+- /api/persona
+- /api/personas
+- /api/processes
+- /api/project
+- /api/project/delete
+- /api/project/timeline
+- /api/project/update
+- /api/projects
+- /api/projects/graph
+- /api/projects/overview
+- /api/providers
+- /api/providers/credential
+- /api/providers/credential/clear
+- /api/providers/enable
+- /api/quit
+- /api/receipt
+- /api/receipts
+- /api/release
+- /api/release/build
+- /api/release/promote
+- /api/release/rollback
+- /api/release/verify
+- /api/research
+- /api/restart
+- /api/search
+- /api/selfdev
+- /api/selfdev/authorize
+- /api/selfdev/build
+- /api/selfdev/cancel
+- /api/selfdev/diff
+- /api/selfdev/resume
+- /api/shutdown
+- /api/state
+- /api/status
+- /api/stop
+- /api/supervisor
+- /api/thoughts
+- /api/thoughts/act
+- /api/thoughts/think
+- /api/timers
+- /api/tools/chess
+- /api/tools/chess/start
+- /api/tools/chess/stop
+- /api/tv/command
+- /api/tv/diagnostics
+- /api/tv/discover
+- /api/tv/pair
+- /api/tv/status
+- /api/voice
+- /api/voice/interrupt
+- /api/voice/pronunciation
+- /api/voice/pronunciation/remove
+- /api/voice/pronunciation/set
+- /api/voice/session
+- /api/voice/wake
+- /api/voice/wake/evaluate
+- /api/voice/wake/listener
+- /api/voice/wake/train
+- /api/window
+- /api/window/hide
+- /api/window/show
+ui_modules:
+- path: ui/app.js
+  purpose: '* The client entry point. Subscribes to the event stream, keeps the shared'
+  lines: 468
+  imports:
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/state.js
+  - core/views.js
+  - views/activity.js
+  - views/calendar.js
+  - views/capabilities.js
+  - views/chat.js
+  - views/chess.js
+  - views/corrections.js
+  - views/diagnostics.js
+  - views/files.js
+  - views/knowledge.js
+  - views/missions.js
+  - views/owner.js
+  - views/palette.js
+  - views/personality.js
+  - views/projects.js
+  - views/release.js
+  - views/thoughts.js
+  - views/voice.js
+  - voice/mic.js
+  - voice/playback.js
+- path: ui/core/api.js
+  purpose: The one way to talk to the core. GET when there is no body, POST otherwise;
+  lines: 42
+  imports: []
+- path: ui/core/authgate.js
+  purpose: 'The Owner Security Gate, client side: a compact modal where the owner'
+  lines: 89
+  imports:
+  - api.js
+  - dom.js
+- path: ui/core/bus.js
+  purpose: The client-side event bus. Server events (over SSE) and UI events share it,
+  lines: 30
+  imports: []
+- path: ui/core/dom.js
+  purpose: DOM helpers. Every view builds nodes with these, so there is one place that
+  lines: 85
+  imports: []
+- path: ui/core/gateway.js
+  purpose: 'The mode bar above the composer: AUTO / FREE / SMART / DEEP / BUILD, the'
+  lines: 127
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+- path: ui/core/state.js
+  purpose: 'One observable holding what the server last said: the state event, the'
+  lines: 55
+  imports:
+  - bus.js
+- path: ui/core/themes.js
+  purpose: 'Visual themes: one accent system, not a random recolor.'
+  lines: 28
+  imports: []
+- path: ui/core/views.js
+  purpose: 'The view registry: Presence (the eye and the conversation), Workspace (a'
+  lines: 210
+  imports:
+  - bus.js
+  - dom.js
+  - state.js
+- path: ui/core/workrail.js
+  purpose: 'The left dock: ACTIVE work, recent results, recent conversations.'
+  lines: 165
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+- path: ui/eye.js
+  purpose: '* The ZEUS eye.'
+  lines: 640
+  imports: []
+- path: ui/graph.js
+  purpose: '* The knowledge graph as a starfield.'
+  lines: 325
+  imports: []
+- path: ui/views/activity.js
+  purpose: 'Activity: the owner''s transparent operation log, request-centric. Rows'
+  lines: 339
+  imports:
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/state.js
+  - core/views.js
+- path: ui/views/calendar.js
+  purpose: 'Kalender: the owner''s local-first calendar.'
+  lines: 188
+  imports:
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/views.js
+- path: ui/views/capabilities.js
+  purpose: 'Capability Center: every acquired capability with its LIFECYCLE'
+  lines: 142
+  imports:
+  - chat.js
+  - core/api.js
+  - core/dom.js
+  - core/views.js
+- path: ui/views/chat.js
+  purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
+  lines: 257
+  imports:
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/gateway.js
+  - core/state.js
+  - core/views.js
+  - corrections.js
+  - voice/playback.js
+- path: ui/views/chess.js
+  purpose: 'Schach Analyse: one button starts a separate process that watches the'
+  lines: 45
+  imports:
+  - core/api.js
+  - core/dom.js
+- path: ui/views/corrections.js
+  purpose: 'Korrekturen: what the owner has corrected, with scope, provenance and use'
+  lines: 161
+  imports:
+  - chat.js
+  - core/api.js
+  - core/dom.js
+  - core/views.js
+- path: ui/views/diagnostics.js
+  purpose: 'Diagnostics: "is ZEUS healthy?" from the doctor (deterministic, never wakes'
+  lines: 82
+  imports:
+  - core/api.js
+  - core/dom.js
+  - core/state.js
+  - core/views.js
+- path: ui/views/files.js
+  purpose: 'Files: the OS universe.'
+  lines: 451
+  imports:
+  - chat.js
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/views.js
+  - projects.js
+- path: ui/views/knowledge.js
+  purpose: 'Wissen: the knowledge universe.'
+  lines: 542
+  imports:
+  - chat.js
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/views.js
+  - projects.js
+- path: ui/views/missions.js
+  purpose: 'Mission Control: every long-running autonomous job — self-development'
+  lines: 219
+  imports:
+  - core/api.js
+  - core/authgate.js
+  - core/bus.js
+  - core/dom.js
+  - core/views.js
+- path: ui/views/owner.js
+  purpose: 'Owner Settings: the five owner-core documents (identity, personality,'
+  lines: 587
+  imports:
+  - core/api.js
+  - core/authgate.js
+  - core/dom.js
+  - core/state.js
+  - core/views.js
+- path: ui/views/palette.js
+  purpose: 'The command palette (Ctrl+K) and universal search (Ctrl+P): ask ZEUS,'
+  lines: 155
+  imports:
+  - chat.js
+  - core/api.js
+  - core/dom.js
+  - core/state.js
+  - core/views.js
+  - knowledge.js
+- path: ui/views/personality.js
+  purpose: 'Persönlichkeit: the owner''s behavioural control centre.'
+  lines: 186
+  imports:
+  - core/api.js
+  - core/dom.js
+  - core/views.js
+  - owner.js
+- path: ui/views/projects.js
+  purpose: 'Projects: the owner''s project universe.'
+  lines: 892
+  imports:
+  - chat.js
+  - core/api.js
+  - core/dom.js
+  - core/state.js
+  - core/views.js
+- path: ui/views/release.js
+  purpose: 'Version / Rollback center: the running revision, the known-good pointer,'
+  lines: 60
+  imports:
+  - core/api.js
+  - core/authgate.js
+  - core/dom.js
+  - core/views.js
+- path: ui/views/thoughts.js
+  purpose: 'Thoughts: what ZEUS noticed on its own — typed observations with the'
+  lines: 68
+  imports:
+  - core/api.js
+  - core/dom.js
+  - core/views.js
+- path: ui/views/voice.js
+  purpose: 'Voice Studio: wake word, microphone/speaker/voice settings, live input'
+  lines: 303
+  imports:
+  - core/api.js
+  - core/dom.js
+  - core/state.js
+  - voice/mic.js
+  - voice/playback.js
+- path: ui/voice/mic.js
+  purpose: 'Microphone: capture here, recognise on the server. The browser records and'
+  lines: 116
+  imports:
+  - core/api.js
+  - core/dom.js
+  - playback.js
+  - views/chat.js
+- path: ui/voice/playback.js
+  purpose: 'Speech playback: a queue of audio the server synthesised, played in order,'
+  lines: 75
+  imports:
+  - core/api.js
+  - core/bus.js
+totals:
+  modules: 322
+  packages: 33
+  api_routes: 168
+  ui_modules: 31
+  tests: 112
