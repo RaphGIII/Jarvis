@@ -588,14 +588,26 @@ _FS_LARGEST = re.compile(
     r"|\b(ordner|verzeichnis|folder)\b.{0,40}?\b(gr(?:oe|ö)(?:ss|ß)te[rns]?|am\s+gr(?:oe|ö)(?:ss|ß)ten|biggest|largest)\b"
     r"|\bam\s+meisten\s+(platz|speicher)\b|\bfrisst\b.{0,20}\bplatz\b|\bbelegt\b.{0,20}\b(?:am\s+meisten|platz)\b", re.I)
 #: "was ist in deinem Repo", "was liegt in X", "zeig mir den Inhalt von X", "was ist direkt drin"
+#: "Inhalt von X", "liste den Ordner", "was ist direkt drin": the sentence names a container.
 _FS_LIST = re.compile(
-    r"\bwas\s+(?:ist|liegt|steckt)\b.{0,40}?\b(in|unter|drin)\b|\binhalt\b.{0,20}\b(von|des|vom)\b"
+    r"\binhalt\b.{0,20}\b(von|des|vom)\b"
     r"|\bwas\s+ist\b.{0,20}\bdirekt\s+drin\b|\blist\w*\b.{0,20}\b(inhalt|ordner|verzeichnis)\b", re.I)
+#: "was ist/liegt … in/im/unter X" is only a listing when the sentence has a
+#: filesystem subject.  "Was ist NAT? Antworte in einem Satz." matched ``was
+#: ist … in`` across the sentence boundary and went looking for a folder called
+#: "Satz" (live, 2026-09-09); "was ist in der Schweiz los" is not about disks
+#: either.  The cue is bounded to one sentence and needs a path, a drive, a
+#: self-reference, a folder word, or a folder name everyone has.
+_FS_LIST_WEAK = re.compile(r"\bwas\s+(?:ist|liegt|steckt)\b[^.?!]{0,40}?\b(in|im|unter|drin)\b", re.I)
+_FS_SUBJECT = re.compile(r"\b(ordner|verzeichnis\w*|folder|directory|dateien|files|repo\w*|laufwerk|drive|unterordner)\b", re.I)
+_KNOWN_FOLDERS = {"downloads", "desktop", "dokumente", "documents", "bilder", "pictures", "musik", "music", "videos",
+                  "projekte", "projects", "temp", "tmp", "appdata", "programme", "programs", "users", "windows"}
 #: a bare "... hat X" / "von X" / "unter X" folder name after a count/list cue
 _FS_TRAILING_NAME = re.compile(
     r"\b(?:hat|von|unter|in|im|f(?:ue|ü)r|des|vom|zu)\s+(?:dem\s+|der\s+|das\s+|den\s+|meinem?\s+|deinem?\s+|einem?\s+)?"
     r"(?:ordner\s+|verzeichnis\s+|projekt\s+)?(?P<name>[A-Za-z0-9._][\w.\-]{1,48})\b", re.I)
 _FS_NAME_STOP = {"platz", "speicher", "d", "c", "der", "die", "das", "dem", "den", "welt", "internet",
+                 "im", "in", "am", "vom", "zum", "zur", "beim", "unter", "auf", "an",
                  "heute", "morgen", "einem", "einer", "deinem", "meinem", "raum", "namen", "er", "es", "sie",
                  "groesste", "groesster", "groessten", "groesse", "welcher", "welche", "welches", "meisten",
                  "biggest", "largest", "kleinste", "kleinster", "dein", "deine", "your", "own", "ordner",
@@ -643,13 +655,18 @@ def parse_fs_operation(text: str) -> ActionIntent | None:
 
     largest = bool(_FS_LARGEST.search(body))
     counting = bool(_FS_COUNT.search(body))
-    listing = bool(_FS_LIST.search(body)) or (self_ref and re.search(r"\b(was|zeig\w*|inhalt|drin|direkt)\b", body, re.I))
+    weak_listing = bool(_FS_LIST_WEAK.search(body))
+    listing = bool(_FS_LIST.search(body)) or weak_listing or bool(self_ref and re.search(r"\b(was|zeig\w*|inhalt|drin|direkt)\b", body, re.I))
     opening = self_ref and bool(re.search(r"\b(oeffne\w*|öffne\w*|open|bring\s+mich\s+zu|geh\s+(?:zu|in)|zeig\s+mir|go\s+to|take\s+me\s+to)\b", body, re.I))
 
     if not (largest or counting or listing or opening or (self_ref and re.search(r"\b(unterordner|ordner|verzeichnis\w*|dateien)\b", body, re.I))):
         return None
 
     path, name, drive = _fs_targets(body)
+    if listing and not (largest or counting or opening) and not _FS_LIST.search(body):
+        subject = bool(path or drive or self_ref or _FS_SUBJECT.search(body) or fold(name) in _KNOWN_FOLDERS)
+        if not subject:
+            return None
 
     if largest:
         which = "files" if re.search(r"\bdatei|file\b", body, re.I) else "dirs"

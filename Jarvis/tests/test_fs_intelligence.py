@@ -55,3 +55,16 @@ def test_system_context_resolves_real_paths():
     key2, path2 = sc.resolve_self_reference("zeig mir deine modelle")
     assert key2 == "model_root"
     assert sc.resolve_self_reference("wie spät ist es") == ("", "")
+
+
+def test_a_knowledge_question_with_in_einem_satz_is_not_a_folder_listing():
+    """Live, 2026-09-09: "Was ist NAT? Antworte in einem Satz." went looking for a folder "Satz"."""
+
+    assert parse_fs_operation("Was ist NAT? Antworte in einem Satz.") is None
+    assert parse_fs_operation("Was ist in einem Satz das Wichtigste an NAT?") is None
+    assert parse_fs_operation("was ist in der Schweiz los") is None
+    # Real listings keep working: a folder word, a known folder, a path, a self-reference.
+    assert op("Was ist im Ordner Jarvis?") == ("fs.list", {"path": "", "name": "Jarvis", "drive": "", "self_ref": False})
+    assert op("Was liegt in Downloads?")[0] == "fs.list"
+    assert op("Zeig mir den Inhalt von Jarvis")[1]["name"] == "Jarvis"
+    assert op("Was liegt in D:/Projekte?")[1]["path"] == "D:/Projekte"
