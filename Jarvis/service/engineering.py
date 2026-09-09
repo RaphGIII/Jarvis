@@ -105,6 +105,25 @@ class EngineerDecision:
     mode: str = ""
     candidates: list[dict[str, Any]] = field(default_factory=list)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "EngineerDecision":
+        """The decision a mission recorded, back as an object (to continue after the owner's go)."""
+
+        data = dict(data or {})
+        rng = data.get("estimate_range_eur") or (0.0, 0.0)
+        return cls(
+            need=EngineeringNeed(str(data.get("need") or EngineeringNeed.CORE_ENGINEERING.value)),
+            engineer=Engineer(str(data.get("engineer") or Engineer.NONE.value)),
+            reason=str(data.get("reason", "")), codex_state=str(data.get("codex_state", "")),
+            codex_detail=str(data.get("codex_detail", "")), codex_checked=bool(data.get("codex_checked", True)),
+            owner_authorized_local=bool(data.get("owner_authorized_local", False)), queued=bool(data.get("queued", False)),
+            role=str(data.get("role", "")), provider_name=str(data.get("provider_name", "")),
+            task_class=str(data.get("task_class", "")), q=float(data.get("q", 0.0) or 0.0), tau=float(data.get("tau", 0.0) or 0.0),
+            estimated_eur=float(data.get("estimated_eur", 0.0) or 0.0),
+            estimate_range_eur=(float(rng[0]), float(rng[1])) if len(rng) == 2 else (0.0, 0.0),
+            mode=str(data.get("mode", "")), candidates=list(data.get("candidates") or []),
+        )
+
     @property
     def is_codex(self) -> bool:
         return self.engineer is Engineer.CODEX

@@ -5094,6 +5094,34 @@ class JarvisCore:
         threading.Thread(target=work, daemon=True, name=f"selfdev-promote-{mission.mission_id}").start()
         return {"ok": True, "mission_id": mission.mission_id, "promoting": True}
 
+    def selfdev_start_build(self, mission_id: str) -> dict[str, Any]:
+        """The owner pressed Start build on a mission parked with a metered engineer's estimate."""
+
+        from service.selfdev import SelfDevRunner, describe
+
+        mission = self.selfdev_store.load(mission_id) if mission_id else None
+        if mission is None:
+            return {"ok": False, "error": f"no self-development mission {mission_id!r}"}
+        if mission.phase != "AWAITING_BUILD":
+            return {"ok": False, "error": f"mission {mission_id} is {mission.phase}, not awaiting a build decision"}
+        runner = SelfDevRunner(
+            repository=self.selfdev_repository(), store=self.selfdev_store, kernel=self.kernel, owner=self.owner,
+            lifecycle=self.lifecycle, gateway=self.experts, security=self.security,
+            emit=lambda kind, payload: self.emit(kind, payload, scope=mission.scope), set_state=self.state.set,
+        )
+        self.emit(EventType.TOOL, {"summary": f"build started by the owner: {mission.mission_id} "
+                                              f"({(mission.engineering or {}).get('role', '?')})",
+                                   "source": "engineering.router", "mission_id": mission.mission_id})
+
+        def work() -> None:
+            finished = runner.start_build(mission)
+            if finished.phase != "RESTARTING":
+                self._deliver(describe(finished, finished.language or self.language), scope=finished.scope, backend="selfdev",
+                              final_state=JarvisState.IDLE if finished.outcome != "failed" else JarvisState.ERROR)
+
+        threading.Thread(target=work, daemon=True, name=f"selfdev-build-{mission.mission_id}").start()
+        return {"ok": True, "mission_id": mission.mission_id, "building": True}
+
     def selfdev_diff(self, mission_id: str) -> dict[str, Any]:
         """The candidate's diff: from the kept evidence patch, or the live worktree."""
 

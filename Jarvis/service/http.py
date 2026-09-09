@@ -478,6 +478,7 @@ class JarvisHTTPServer:
             "/api/search": lambda body: self.core.universal_search(str(body.get("q", body.get("query", ""))), limit=int(body.get("limit", 30) or 30),
                                                                    types=[t for t in str(body.get("types", "")).split(",") if t]),
             "/api/selfdev/diff": lambda body: self.core.selfdev_diff(str(body.get("mission_id", ""))),
+            "/api/selfdev/build": lambda body: self.core.selfdev_start_build(str(body.get("mission_id", ""))),
             "/api/missions": lambda body: self.core.list_missions(status=str(body.get("status", ""))),
             "/api/projects/overview": lambda _: self.core.projects_overview(),
             "/api/projects/graph": lambda body: self.core.project_graph(everything=bool(body.get("everything", False))),

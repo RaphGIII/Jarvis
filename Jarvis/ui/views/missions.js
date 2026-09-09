@@ -136,8 +136,22 @@ function inspectSelfdev(m, row) {
     el("span", { class: "v", text: r.clean ? "live tree unchanged" : `BREACH: ${r.contamination.join(", ")} — restored ${r.restored.join(", ")}` })));
   const events = (m.events || []).slice(-30).map((e) => el("div", { class: "tl " + (e.phase === "FAILED" ? "bad" : e.phase === "DONE" ? "ok" : "work") },
     el("span", { class: "when", text: clockOf(e.at) }), el("span", { class: "text", text: `${e.phase}: ${e.detail || ""}` }), e.error ? el("span", { class: "sub", text: e.error }) : null));
-  const finished = ["DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "WAITING"].includes(m.phase);
+  const finished = ["DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "AWAITING_BUILD", "WAITING"].includes(m.phase);
   const actions = el("div", { class: "toolbar" });
+  /* A metered engineer costs money. The mission shows the estimate and the
+     hard maximum and spends nothing until the owner starts the build here. */
+  if (m.phase === "AWAITING_BUILD") {
+    const eng = m.engineering || {};
+    const rng = eng.estimate_range_eur || [0, 0];
+    const eur = (v) => "€" + Number(v || 0).toFixed(2);
+    actions.append(el("span", { class: "meta", text: `${eng.role || "?"} · geschätzt ${eur(rng[0])}–${eur(rng[1])} · hartes Maximum ${eur(eng.hard_max_eur)}` }));
+    actions.append(button(`Build starten (max. ${eur(eng.hard_max_eur)})`, async () => {
+      if (!confirm(`Diesen Build mit ${eng.role || "dem Engineer"} starten?\n\nGeschätzt ${eur(rng[0])}–${eur(rng[1])}, hartes Maximum ${eur(eng.hard_max_eur)}.\nDas Ergebnis wird verifiziert und erst nach deinem Passwort übernommen.`)) return;
+      const r = await api("/api/selfdev/build", { mission_id: m.mission_id });
+      alert(r.ok ? "Build gestartet." : (r.error || "?"));
+      views.open("missions");
+    }, "primary"));
+  }
   /* The owner's half of the promotion gate, and the only way through it. The
      change is engineered, tested and verified in its isolated worktree and
      goes no further until a password typed HERE mints a short-lived, scoped,

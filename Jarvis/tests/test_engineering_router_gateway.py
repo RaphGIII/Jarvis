@@ -249,3 +249,50 @@ def test_codex_unavailability_never_falls_through_to_a_metered_engineer(tmp_path
     result = experts.submit(_job(worktree))  # no provider named: the classic path
     assert result.status is not ExpertStatus.COMPLETED and net.requests == []
     assert (worktree / "service" / "greet.py").read_text(encoding="utf-8").endswith("'hello'\n")
+
+
+# --------------------------------------------------------------------------
+# The whole flow: estimate -> owner starts the build -> engineer -> verify -> promotion gate
+# --------------------------------------------------------------------------
+
+def test_a_metered_build_waits_for_the_owner_then_engineers_and_parks_for_promotion(tmp_path, cfg, creds, worktree, monkeypatch):
+    from owner.security_gate import SecurityGate
+    from service.selfdev import SelfDevMission, SelfDevRunner, SelfDevStore
+
+    monkeypatch.setenv("TEMP", str(tmp_path / "temp"))
+    (tmp_path / "temp").mkdir()
+    net = FakeNetwork()
+    net.responses["api.anthropic.com"] = anthropic_reply(json.dumps({"summary": "greet now says hello world", "diff": GOOD_DIFF}))
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    experts = ExpertGateway([ApiEngineerExpert(gateway, "engineer.standard"), ApiEngineerExpert(gateway, "engineer.frontier")],
+                            policy=CostPolicy(allow_paid_api=True), ledger=CostLedger(CostPolicy(allow_paid_api=True)))
+    gate = SecurityGate(tmp_path / "state" / "owner" / "auth.json")
+    gate.setup("the-owner-types-this-into-the-ui")
+    runner = SelfDevRunner(
+        repository=worktree, store=SelfDevStore(tmp_path / "state" / "selfdev"),
+        kernel=SimpleNamespace(state_root=tmp_path / "state", gateway=gateway),
+        owner=SimpleNamespace(read=lambda _name: {}), lifecycle=SimpleNamespace(supervised=False), gateway=experts,
+        availability=Availability(False), security=gate, emit=lambda *a, **k: None, set_state=lambda *a, **k: None,
+    )
+    runner.health_command = [sys.executable, "-c", "print('JARVIS_HEALTH_OK')"]
+    mission = SelfDevMission(request="Zeus, lass greet() 'hello world' zurückgeben", chat_mode="BUILD")
+    mission.investigation = {"files": ["service/greet.py"], "tests": [], "terms": ["greet"]}
+    monkeypatch.setattr(runner, "_investigate", lambda m: None)
+
+    parked = runner.run(mission)
+
+    assert parked.phase == "AWAITING_BUILD" and parked.outcome == "awaiting_build_authorization"
+    assert parked.engineering["engineer"] == "API" and parked.engineering["role"] == "engineer.standard"
+    assert parked.engineering["hard_max_eur"] > 0 and "EUR" in parked.reason
+    assert net.requests == [] and gateway.governor.summary().month == 0.0, "nothing spent before the owner's go"
+    assert parked.finished
+
+    built = runner.start_build(parked)
+
+    assert built.phase == "AWAITING_AUTHORIZATION", (built.reason, [e for e in built.events if e["phase"] in {"ESCALATE", "VERIFY", "FAILED"}])
+    assert built.outcome == "verified_awaiting_authorization"
+    assert built.changed_files == ["service/greet.py"]
+    assert built.expert["provider"] == "engineer.standard" and built.expert["cost_eur"] > 0
+    assert gateway.governor.summary().month == pytest.approx(built.expert["cost_eur"])
+    assert Path(built.worktree, "service", "greet.py").read_text(encoding="utf-8").endswith("'hello world'\n")
+    assert (worktree / "service" / "greet.py").read_text(encoding="utf-8").endswith("'hello'\n"), "the live tree waits for the password"

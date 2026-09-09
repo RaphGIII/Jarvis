@@ -101,6 +101,9 @@ class SelfDevMission:
     #: The owner's chat mode when the mission was asked for.  BUILD is what
     #: permits a metered engineer; anything else keeps Codex and the queue.
     chat_mode: str = "AUTO"
+    #: The owner pressed "Start build" for a metered engineer, having seen the
+    #: estimate.  Nothing is spent on an engineer before this is True.
+    build_authorized: bool = False
     #: What INVESTIGATE found: files and why.
     investigation: dict[str, Any] = field(default_factory=dict)
     worktree: str = ""
@@ -151,7 +154,7 @@ class SelfDevMission:
         could unblock, and the dock showed it as running.
         """
 
-        return self.phase in {"DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "WAITING"}
+        return self.phase in {"DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "AWAITING_BUILD", "WAITING"}
 
     def control_summary(self) -> dict[str, Any]:
         """The board Mission Control shows: real state, no chain of thought.
@@ -455,48 +458,11 @@ class SelfDevRunner:
             self.store.save(mission)
             if not decision.proceeds:
                 return self._queue(mission, decision)
-
-            if decision.uses_expert_gateway:
-                self._prepare_workspace(mission)
-                self.set_state(JarvisState.CODING, detail=f"{decision.role or 'Codex'} is developing the change", scope=mission.scope)
-                self._timed(mission, "escalate", lambda: self._escalate(mission))
-                self._audit(mission, "ESCALATE")
-                self.set_state(JarvisState.VERIFYING, detail="verifying the engineer's work", scope=mission.scope)
-                verified = self._timed(mission, "verify", lambda: self._verify(mission))
-                self._audit(mission, "VERIFY")
-            else:
-                self.set_state(JarvisState.CODING, detail="developing a change to myself", scope=mission.scope)
-                self._timed(mission, "build", lambda: self._build(mission, max_seconds))
-                self._audit(mission, "BUILD")
-                self.set_state(JarvisState.VERIFYING, detail="verifying the candidate", scope=mission.scope)
-                verified = self._timed(mission, "verify", lambda: self._verify(mission))
-                self._audit(mission, "VERIFY")
-            if not verified:
-                reason = str(mission.verification.get("failure_reason") or mission.verification.get("detail", ""))
-                passed = mission.verification.get("passed") or []
-                return self._fail(
-                    mission,
-                    f"no verified candidate — {reason[:600]}"
-                    + (f" (the other {len(passed)} check(s) passed)" if passed else ""))
-            # Promoting code into the running product is the owner's decision,
-            # proven by their password, and nothing else may stand in for it --
-            # not this mission, not the engineer's verdict, not a policy flag.
-            # Mission d1309425e9 promoted seven files into the live tree and
-            # restarted ZEUS on the strength of a chat sentence, with no entry
-            # in the owner's audit log.
-            #
-            # `policy.self_development.auto_promote` is deliberately not read
-            # here. It used to be the switch that let this happen, and a switch
-            # that can only ever weaken this invariant is worse than no switch:
-            # it reads like a supported configuration.
-            refusal = self._promotion_refusal(mission)
-            if refusal:
-                return self._await_authorization(mission, refusal)
-            self._timed(mission, "promote", lambda: self._promote(mission))
-            if mission.outcome == "failed":
-                return mission
-            self._restart(mission)
-            return mission
+            # A metered engineer spends the owner's money.  The estimate is shown
+            # and the owner starts the build; nothing is spent before that.
+            if decision.is_api and not mission.build_authorized:
+                return self._await_build(mission, decision)
+            return self._engineer_verify_promote(mission, decision, max_seconds)
         except MissionCancelled as exc:
             return self._cancel(mission, str(exc))
         except Exception as exc:  # noqa: BLE001 - the mission file must say what raised
@@ -507,6 +473,109 @@ class SelfDevRunner:
             self._finish(mission)
             if mission.phase not in {"RESTARTING"}:
                 self.set_state(JarvisState.IDLE, scope=mission.scope)
+
+    def start_build(self, mission: SelfDevMission) -> SelfDevMission:
+        """The owner has seen the estimate and pressed Start build: engineer, verify, park for promotion."""
+
+        from service.engineering import EngineerDecision
+
+        policy = self.owner.read("policy").get("self_development", {})
+        max_seconds = float(policy.get("max_seconds", 2400))
+        mission.build_authorized = True
+        mission.outcome, mission.reason, mission.cancel_requested = "", "", False
+        try:
+            self._baseline = self._guard.fingerprint()
+            decision = EngineerDecision.from_dict(mission.engineering)
+            self._phase(mission, "BUILD_AUTHORIZED", f"owner started the build with {decision.role or decision.engineer.value} "
+                                                    f"(estimated EUR {decision.estimate_range_eur[0]:.2f}-{decision.estimate_range_eur[1]:.2f})")
+            self.store.save(mission)
+            return self._engineer_verify_promote(mission, decision, max_seconds)
+        except MissionCancelled as exc:
+            return self._cancel(mission, str(exc))
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            return self._fail(mission, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1500:]}")
+        finally:
+            self._finish(mission)
+            if mission.phase not in {"RESTARTING"}:
+                self.set_state(JarvisState.IDLE, scope=mission.scope)
+
+    def _await_build(self, mission: SelfDevMission, decision: Any) -> SelfDevMission:
+        """Parked on the owner: a metered engineer, its estimate, and the hard maximum."""
+
+        low, high = decision.estimate_range_eur
+        hard_max = self._build_hard_max(decision)
+        mission.outcome = "awaiting_build_authorization"
+        mission.reason = (f"{decision.role} would do this for an estimated EUR {low:.2f}-{high:.2f} "
+                          f"(hard maximum EUR {hard_max:.2f}); waiting for you to start the build")
+        self._phase(mission, "AWAITING_BUILD", mission.reason)
+        mission.phase = "AWAITING_BUILD"
+        mission.engineering = {**(mission.engineering or {}), "hard_max_eur": round(hard_max, 2)}
+        self.store.save(mission)
+        return mission
+
+    def _build_hard_max(self, decision: Any) -> float:
+        """What this build can cost at most: the tightest of the governor's caps and the mode's."""
+
+        gateway = self._model_gateway()
+        if gateway is None:
+            return float(decision.estimated_eur) * 1.5
+        from gateway.modes import policy_for
+
+        summary = gateway.governor.summary()
+        caps = [gateway.config.budget.per_task_hard_cap, max(0.0, summary.config.monthly_hard_cap - summary.month),
+                max(0.0, summary.config.daily_hard_cap - summary.day),
+                max(0.0, summary.config.engineering_hard_cap - summary.engineering_month)]
+        mode_cap = policy_for(decision.mode or "BUILD").task_cap_eur
+        if mode_cap is not None:
+            caps.append(mode_cap)
+        return round(min(caps), 2)
+
+    def _engineer_verify_promote(self, mission: SelfDevMission, decision: Any, max_seconds: float) -> SelfDevMission:
+        """Engineer in the isolated worktree, verify independently, park for the owner's promotion."""
+
+        if decision.uses_expert_gateway:
+            self._prepare_workspace(mission)
+            self.set_state(JarvisState.CODING, detail=f"{decision.role or 'Codex'} is developing the change", scope=mission.scope)
+            self._timed(mission, "escalate", lambda: self._escalate(mission))
+            self._audit(mission, "ESCALATE")
+            self.set_state(JarvisState.VERIFYING, detail="verifying the engineer's work", scope=mission.scope)
+            verified = self._timed(mission, "verify", lambda: self._verify(mission))
+            self._audit(mission, "VERIFY")
+        else:
+            self.set_state(JarvisState.CODING, detail="developing a change to myself", scope=mission.scope)
+            self._timed(mission, "build", lambda: self._build(mission, max_seconds))
+            self._audit(mission, "BUILD")
+            self.set_state(JarvisState.VERIFYING, detail="verifying the candidate", scope=mission.scope)
+            verified = self._timed(mission, "verify", lambda: self._verify(mission))
+            self._audit(mission, "VERIFY")
+        if not verified:
+            reason = str(mission.verification.get("failure_reason") or mission.verification.get("detail", ""))
+            passed = mission.verification.get("passed") or []
+            return self._fail(
+                mission,
+                f"no verified candidate — {reason[:600]}"
+                + (f" (the other {len(passed)} check(s) passed)" if passed else ""))
+        # Promoting code into the running product is the owner's decision,
+        # proven by their password, and nothing else may stand in for it --
+        # not this mission, not the engineer's verdict, not a policy flag.
+        # Mission d1309425e9 promoted seven files into the live tree and
+        # restarted ZEUS on the strength of a chat sentence, with no entry
+        # in the owner's audit log.
+        #
+        # `policy.self_development.auto_promote` is deliberately not read
+        # here. It used to be the switch that let this happen, and a switch
+        # that can only ever weaken this invariant is worse than no switch:
+        # it reads like a supported configuration.
+        refusal = self._promotion_refusal(mission)
+        if refusal:
+            return self._await_authorization(mission, refusal)
+        self._timed(mission, "promote", lambda: self._promote(mission))
+        if mission.outcome == "failed":
+            return mission
+        self._restart(mission)
+        return mission
 
     def resume(self, mission: SelfDevMission) -> SelfDevMission:
         """Continue a mission whose candidate still exists on disk.
@@ -1527,6 +1596,17 @@ def describe(mission: SelfDevMission, language: str = "") -> str:
         return (f"Engineered and verified: “{mission.request[:80]}”. Changed: {files}. It is in the isolated "
                 f"worktree and is NOT promoted — that needs your password (SELFDEV_PROMOTE). Say the word and "
                 f"I will promote it. {total:.0f}s, engineer: {mission.engineering.get('engineer', '?')}.")
+    if mission.outcome == "awaiting_build_authorization":
+        eng = mission.engineering or {}
+        rng = eng.get("estimate_range_eur") or [0.0, 0.0]
+        hard_max = eng.get("hard_max_eur", 0.0)
+        if de:
+            return (f"Bereit zu bauen: „{mission.request[:80]}“. Engineer: {eng.get('role', '?')} "
+                    f"(Klasse {eng.get('task_class', '?')}). Geschätzt €{float(rng[0]):.2f}–€{float(rng[1]):.2f}, "
+                    f"hartes Maximum €{float(hard_max):.2f}. Ich gebe nichts aus, bevor du unter Missions auf „Build starten“ klickst.")
+        return (f"Ready to build: “{mission.request[:80]}”. Engineer: {eng.get('role', '?')} "
+                f"(class {eng.get('task_class', '?')}). Estimated €{float(rng[0]):.2f}–€{float(rng[1]):.2f}, "
+                f"hard maximum €{float(hard_max):.2f}. Nothing is spent until you press “Start build” under Missions.")
     if mission.outcome == "queued":
         if de:
             return (f"Noch nicht gebaut: „{mission.request[:80]}“ — {mission.reason[:200]}. "

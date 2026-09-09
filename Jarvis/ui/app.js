@@ -245,7 +245,7 @@ bus.on("progress", (payload) => {
 async function reconcileMission() {
   try {
     const { missions = [] } = await api("/api/selfdev");
-    const live = missions.filter((m) => !["DONE", "FAILED", "CANCELLED", "WAITING", "AWAITING_AUTHORIZATION"].includes(m.phase));
+    const live = missions.filter((m) => !["DONE", "FAILED", "CANCELLED", "WAITING", "AWAITING_AUTHORIZATION", "AWAITING_BUILD"].includes(m.phase));
     if (!live.length) {
       set("mission", null);
       $("hud").hidden = true;
