@@ -355,7 +355,8 @@
    "gateway/learning.py",
    "gateway/providers.py",
    "gateway/router.py",
-   "gateway/transport.py"
+   "gateway/transport.py",
+   "service/core.py"
   ],
   "gateway/estimate.py": [
    "capabilities/intelligence.py",
@@ -1937,6 +1938,7 @@
    "experts/api_engineer.py",
    "experts/codex.py",
    "experts/gateway.py",
+   "gateway/config.py",
    "gateway/gateway.py",
    "gateway/modes.py",
    "gateway/task.py",

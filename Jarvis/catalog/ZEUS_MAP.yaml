@@ -196,7 +196,7 @@ packages:
       - tests/test_capability_teaching_loop.py
     - path: capabilities/intelligence.py
       purpose: 'The authoritative semantic flow: the reasoning provider understands and proposes,'
-      lines: 837
+      lines: 839
       public: 17
       tests:
       - tests/test_intelligence_flow.py
@@ -353,7 +353,7 @@ packages:
       - tests/test_wake_listener.py
     - path: core/kernel.py
       purpose: 'The composition root: one place that assembles a working Jarvis.'
-      lines: 348
+      lines: 351
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -713,8 +713,8 @@ packages:
       - tests/test_provider_stack.py
     - path: gateway/config.py
       purpose: Roles, providers, prices and caps -- read from configuration, never from code.
-      lines: 657
-      public: 7
+      lines: 872
+      public: 8
       tests:
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
@@ -731,7 +731,7 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 663
+      lines: 752
       public: 10
       tests:
       - tests/test_gateway_integration.py
@@ -740,8 +740,8 @@ packages:
       - tests/test_provider_stack.py
     - path: gateway/health.py
       purpose: Telling a provider problem from a task problem.
-      lines: 126
-      public: 4
+      lines: 143
+      public: 5
       tests:
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
@@ -750,7 +750,7 @@ packages:
       - tests/test_semantic_composition.py
     - path: gateway/learning.py
       purpose: What ZEUS has learned about which role is good enough for what.
-      lines: 212
+      lines: 219
       public: 4
       tests:
       - tests/test_model_gateway.py
@@ -1812,7 +1812,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8442
+      lines: 8446
       public: 2
       tests:
       - tests/test_action_receipts.py

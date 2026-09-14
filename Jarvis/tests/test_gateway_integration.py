@@ -20,7 +20,7 @@ import pytest
 from brain.tiers import ModelTier
 from core.identity import Identity
 from core.kernel import JarvisKernel, KernelConfig
-from gateway.config import GatewayConfig
+from gateway.config import GatewayConfig, owner_override_path
 from gateway.gateway import GatewayBrainProvider
 from gateway.modes import ChatMode
 from service.core import JarvisCore
@@ -169,7 +169,10 @@ def test_credential_endpoints_are_owner_gated_and_never_echo_the_key(world):
     token = core.security.unlock("correct horse battery", "CREDENTIALS")["authorization"]
     enabled = core.provider_enable("anthropic", True, authorization=token)
     assert enabled["ok"] and enabled["providers"]["anthropic"]["enabled"]
-    assert GatewayConfig.load(kernel.config_root / "providers.json").providers["anthropic"].enabled
+    assert GatewayConfig.load(
+        kernel.config_root / "providers.json",
+        override_path=owner_override_path(kernel.state_root),
+    ).providers["anthropic"].enabled
 
 
 def test_diagnostics_show_the_provider_identity_the_conversation_hides(world):

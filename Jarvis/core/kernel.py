@@ -199,7 +199,7 @@ class JarvisKernel:
         """The model gateway: roles, modes, budget, privacy -- built once."""
 
         if self._gateway is None:
-            from gateway.config import GatewayConfig
+            from gateway.config import GatewayConfig, owner_override_path
             from gateway.gateway import ModelGateway
 
             def local_for_role(role: str) -> Any:
@@ -219,7 +219,10 @@ class JarvisKernel:
             from runtime.cost_policy import CostPolicy
 
             config_path = Path(self.config_root) / "providers.json"
-            config = GatewayConfig.load(config_path) if config_path.is_file() else GatewayConfig.defaults()
+            config = GatewayConfig.load(
+                config_path if config_path.is_file() else None,
+                override_path=owner_override_path(self.state_root),
+            )
             config_root = Path(self.config_root)
             self._gateway = ModelGateway(state_root=self.state_root, config=config,
                                          local_provider=local_for_role, local_available=local_available,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -150,6 +151,74 @@ def test_the_configuration_round_trips_with_dated_prices_and_rates(tmp_path):
     again = GatewayConfig.load(path)
     assert again.pricing_for("reasoning.deep") == config.pricing_for("reasoning.deep")
     assert again.roles["reasoning.deep"].thinking == {"FAST": "low", "NORMAL": "medium", "DEEP": "high", "MAX": "xhigh"}
+
+
+def test_provider_defaults_load_without_owner_override(tmp_path):
+    defaults = GatewayConfig.defaults().save(tmp_path / "config" / "providers.json")
+    override = tmp_path / "data" / "jarvis" / "owner" / "providers.local.json"
+
+    loaded = GatewayConfig.load(defaults, override_path=override)
+
+    assert loaded.providers["gemini"].enabled is False
+    assert loaded.roles["reasoning.free"].model == "gemini-3.8-flash"
+    assert not override.exists()
+
+
+def test_owner_provider_override_wins(tmp_path):
+    defaults = GatewayConfig.defaults().save(tmp_path / "config" / "providers.json")
+    override = tmp_path / "data" / "jarvis" / "owner" / "providers.local.json"
+    override.parent.mkdir(parents=True)
+    override.write_text(json.dumps({"schema_version": 2, "providers": {"gemini": {"enabled": True}}}), encoding="utf-8")
+
+    loaded = GatewayConfig.load(defaults, override_path=override)
+
+    assert loaded.providers["gemini"].enabled is True
+    assert loaded.providers["openai"].enabled is False
+
+
+def test_provider_override_never_serializes_secrets(tmp_path):
+    defaults = GatewayConfig.defaults().save(tmp_path / "config" / "providers.json")
+    override = tmp_path / "data" / "jarvis" / "owner" / "providers.local.json"
+
+    GatewayConfig.defaults().with_provider_enabled("gemini", True).save_owner_override(defaults, override_path=override)
+
+    text = override.read_text(encoding="utf-8")
+    assert '"secret"' not in text
+    assert "credential_env" not in text
+    assert "AIza" not in text
+    assert json.loads(text) == {"providers": {"gemini": {"enabled": True}}, "schema_version": 2}
+
+
+def test_dirty_tracked_provider_enablement_migrates_to_owner_override(tmp_path):
+    defaults = GatewayConfig.defaults().with_provider_enabled("gemini", True).save(tmp_path / "config" / "providers.json")
+    override = tmp_path / "data" / "jarvis" / "owner" / "providers.local.json"
+
+    loaded = GatewayConfig.load(defaults, override_path=override)
+
+    assert loaded.providers["gemini"].enabled is True
+    assert json.loads(override.read_text(encoding="utf-8")) == {"providers": {"gemini": {"enabled": True}}, "schema_version": 2}
+
+
+def test_enabling_gemini_writes_only_ignored_owner_state(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".gitignore").write_text("data/jarvis/\n", encoding="utf-8")
+    defaults = GatewayConfig.defaults().save(root / "config" / "providers.json")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", ".gitignore", "config/providers.json"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "defaults"],
+        cwd=root,
+        check=True,
+    )
+
+    override = root / "data" / "jarvis" / "owner" / "providers.local.json"
+    config = GatewayConfig.load(defaults, override_path=override).with_provider_enabled("gemini", True)
+    config.save_owner_override(defaults, override_path=override)
+
+    status = subprocess.run(["git", "status", "--short"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    assert status == ""
+    assert json.loads(override.read_text(encoding="utf-8"))["providers"]["gemini"]["enabled"] is True
 
 
 def test_legacy_level_names_in_an_old_file_are_read_as_the_abstract_ones():
@@ -351,7 +420,7 @@ def test_entering_a_credential_through_the_core_enables_the_provider_and_persist
     if not result.get("ok"):
         pytest.skip(f"owner authorization shape differs in this build: {result}")
     assert result["enabled_provider"] == "anthropic" and result["providers"]["anthropic"]["state"] == "CONFIGURED"
-    saved = json.loads((tmp_path / "config" / "providers.json").read_text(encoding="utf-8"))
+    saved = json.loads((tmp_path / "state" / "owner" / "providers.local.json").read_text(encoding="utf-8"))
     assert saved["providers"]["anthropic"]["enabled"] is True
     assert "sk-ant-entered" not in json.dumps(result) and "sk-ant-entered" not in json.dumps(saved)
 

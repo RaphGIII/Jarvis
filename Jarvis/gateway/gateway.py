@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from gateway.budget import BudgetGovernor, BudgetRefused, Reservation
-from gateway.config import GatewayConfig, RoleBinding, THINKING_LEVELS
+from gateway.config import GatewayConfig, RoleBinding, THINKING_LEVELS, owner_override_path
 from gateway.estimate import actual_cost, estimate_cost
 from gateway.health import FreeIntelligenceUnavailable, GatewayError, ProviderHealth, ProviderStatus
 from gateway.learning import Observation, PerformanceLedger, ReliabilityModel
@@ -177,7 +177,7 @@ class ModelGateway:
         self._cost_policy = cost_policy
         #: provider name -> READY, for subscription engineers the expert gateway drives.
         self._subscription_available = subscription_available or (lambda name: False)
-        self.config = config or GatewayConfig.load()
+        self.config = config or GatewayConfig.load(override_path=owner_override_path(self.state_root))
         self.credentials = credentials or CredentialStore(self.state_root / "owner" / "provider_credentials.json")
         try:
             # An owner who exported OPENAI_API_KEY (or the Gemini / Anthropic

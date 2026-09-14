@@ -8319,11 +8319,15 @@ class JarvisCore:
                 "providers": self.model_gateway.status()["providers"]}
 
     def _persist_gateway_config(self, config: Any) -> str:
-        """Write a changed gateway configuration to config/providers.json and apply it.  Returns an error text or ""."""
+        """Write owner-local provider state and apply it. Returns an error text or ""."""
 
-        path = Path(self.kernel.config_root) / "providers.json" if hasattr(self.kernel, "config_root") else None
+        from gateway.config import owner_override_path
+
+        defaults = Path(self.kernel.config_root) / "providers.json" if hasattr(self.kernel, "config_root") else None
+        state_root = getattr(self.kernel, "state_root", None)
+        override = owner_override_path(state_root)
         try:
-            config.save(path)
+            config.save_owner_override(defaults, override_path=override)
         except OSError as exc:
             return f"could not persist provider configuration: {exc}"
         self.model_gateway.reconfigure(config)
@@ -8338,7 +8342,7 @@ class JarvisCore:
         return {"ok": True, "removed": existed, "credentials": self.model_gateway.credentials.status()}
 
     def provider_enable(self, name: str, enabled: bool, *, authorization: str = "") -> dict[str, Any]:
-        """Switch a provider on or off.  Owner-authorized; persisted to config/providers.json."""
+        """Switch a provider on or off. Owner-authorized; persisted as local owner state."""
 
         denied = self.require_auth(authorization, "CREDENTIALS")
         if denied is not None:

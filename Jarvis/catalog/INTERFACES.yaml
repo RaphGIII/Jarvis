@@ -1457,6 +1457,7 @@ modules:
       methods:
       - def family(self) -> RoleFamily
       - 'def thinking_for(self, level: str) -> Any'
+      - def model_pool(self) -> tuple[str, ...]
       - def to_dict(self) -> dict[str, Any]
     - name: BudgetConfig
       doc: Hard caps in EUR.  Soft allocations are advisory and may move; these do not.
@@ -1468,18 +1469,22 @@ modules:
       - 'def provider_for(self, role: str) -> ProviderConfig | None'
       - 'def cost_class(self, role: str) -> CostClass'
       - 'def pricing_for(self, role: str) -> Pricing | None'
+      - 'def pricing_for_model(self, role: str, model: str) -> Pricing | None'
       - 'def is_model_role(self, role: str) -> bool'
       - def configured_roles(self) -> list[str]
       - def to_dict(self) -> dict[str, Any]
       - def defaults(cls) -> 'GatewayConfig'
-      - 'def load(cls, path: str | Path | None=None) -> ''GatewayConfig'''
+      - 'def load(cls, path: str | Path | None=None, *, override_path: str | Path | None=None, migrate_owner_state: bool=True)
+        -> ''GatewayConfig'''
       - 'def save(self, path: str | Path | None=None) -> Path'
+      - 'def save_owner_override(self, defaults_path: str | Path | None=None, override_path: str | Path | None=None) -> Path'
       - 'def with_provider_enabled(self, name: str, enabled: bool) -> ''GatewayConfig'''
       - 'def with_role_binding(self, role: str, *, provider: str | None=None, model: str | None=None, enabled: bool | None=None)
         -> ''GatewayConfig'''
       - 'def provider_for_secret(self, slot: str) -> ProviderConfig | None'
     functions:
     - signature: def default_path() -> Path
+    - signature: 'def owner_override_path(state_root: str | Path | None=None) -> Path'
   gateway/estimate.py:
     module: gateway.estimate
     classes:
@@ -1560,6 +1565,12 @@ modules:
       bases:
       - RuntimeError
       doc: A provider call did not produce a usable answer, and here is what kind of not.
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: FreeIntelligenceUnavailable
+      bases:
+      - GatewayError
+      doc: The configured zero-cost reasoning pool could not produce an answer.
       methods:
       - def to_dict(self) -> dict[str, Any]
     - name: ProviderHealth

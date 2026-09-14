@@ -18,8 +18,8 @@
 - **(root)** — (no purpose recorded) (3 modules, 201 lines)
 - **agent** — legacy agent loop (2 modules, 106 lines)
 - **brain** — model tiers, providers and the local Ollama client (9 modules, 2419 lines)
-- **capabilities** — the capability registry, resolver, acquisition and health (20 modules, 6001 lines)
-- **core** — composition root (kernel) and identity (3 modules, 549 lines)
+- **capabilities** — the capability registry, resolver, acquisition and health (20 modules, 6003 lines)
+- **core** — composition root (kernel) and identity (3 modules, 552 lines)
 - **deployment** — promotion of a verified candidate into the live tree, and rollback (3 modules, 1112 lines)
 - **developer** — developer tooling (2 modules, 63 lines)
 - **development** — the autonomous software engineer (local coder), code index, QA (9 modules, 6299 lines)
@@ -27,7 +27,7 @@
 - **environments** — Controlled environments for JARVIS learning. (9 modules, 1010 lines)
 - **evaluator** — evaluation of generated skills (1 modules, 1 lines)
 - **experts** — Optional stronger intelligence, recruited on Jarvis' terms. (8 modules, 2216 lines)
-- **gateway** — The ZEUS model gateway: one boundary between ZEUS and every model provider. (15 modules, 3744 lines)
+- **gateway** — The ZEUS model gateway: one boundary between ZEUS and every model provider. (15 modules, 4072 lines)
 - **imagegen** — local image generation (3 modules, 247 lines)
 - **jarvis** — JARVIS command entry points. (13 modules, 2854 lines)
 - **knowledge** — the knowledge graph and library (5 modules, 1985 lines)
@@ -40,7 +40,7 @@
 - **runtime** — Runtime services: deadlines, heartbeats, cost policy, the older runtimes. (28 modules, 7719 lines)
 - **sandbox** — sandboxing (1 modules, 1 lines)
 - **senses** — perception (1 modules, 1 lines)
-- **service** — the product service: core, HTTP API, intents, routing, self-development, isolation (42 modules, 24357 lines)
+- **service** — the product service: core, HTTP API, intents, routing, self-development, isolation (42 modules, 24361 lines)
 - **skills** — skill packaging (15 modules, 1130 lines)
 - **speech** — speech recognition, synthesis, wake word (16 modules, 4364 lines)
 - **tools** — Schach Analyse: a screen-watching chess assistant (board finder, piece recogniser, Stockfish, overlay). (15 modules, 4423 lines)
@@ -58,8 +58,8 @@
 - `gateway/modes.py` ← 11 modules
 - `learning/config.py` ← 11 modules
 - `capabilities/registry.py` ← 9 modules
+- `gateway/config.py` ← 9 modules
 - `environments/coding/actions.py` ← 8 modules
-- `gateway/config.py` ← 8 modules
 - `gateway/task.py` ← 8 modules
 - `knowledge/graph.py` ← 8 modules
 - `projects/models.py` ← 8 modules

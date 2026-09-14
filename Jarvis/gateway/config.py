@@ -1,6 +1,10 @@
 """Roles, providers, prices and caps -- read from configuration, never from code.
 
-``config/providers.json`` binds each abstract role to a provider and model.
+``config/providers.json`` is the tracked provider defaults/template. It binds
+each abstract role to a provider and model, and carries provider definitions,
+model IDs, pricing metadata and non-secret static configuration. Owner-local
+state such as provider enablement lives in an ignored overlay below
+``data/jarvis/owner`` and is merged at load time.
 The four intelligence roles ZEUS's core knows, and their initial bindings:
 
     reasoning.free      -> google    / a Gemini Flash free-tier model   (zero cost; may train)
@@ -72,6 +76,15 @@ THINKING_LEVELS: tuple[str, ...] = ("FAST", "NORMAL", "DEEP", "MAX")
 
 #: Level names from configuration files written before the abstract names.
 _LEGACY_THINKING = {"FREE_LOW": "FAST", "FREE_MEDIUM": "NORMAL", "FREE_HIGH": "DEEP"}
+
+OWNER_PROVIDER_STATE = "providers.local.json"
+
+MUTABLE_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"currency", "risk_aversion", "exchange_rates", "budget"})
+MUTABLE_PROVIDER_KEYS: frozenset[str] = frozenset({"enabled", "monthly_cap_eur", "timeout_seconds", "options"})
+MUTABLE_ROLE_KEYS: frozenset[str] = frozenset({
+    "enabled", "provider", "model", "models", "thinking", "reliability_prior",
+    "max_output_tokens", "temperature", "tier", "offline_fallback",
+})
 
 
 def _today() -> str:
@@ -371,17 +384,26 @@ class GatewayConfig:
         return _parse(DEFAULT_DOCUMENT, source="defaults")
 
     @classmethod
-    def load(cls, path: str | Path | None = None) -> "GatewayConfig":
+    def load(
+        cls,
+        path: str | Path | None = None,
+        *,
+        override_path: str | Path | None = None,
+        migrate_owner_state: bool = True,
+    ) -> "GatewayConfig":
         target = Path(path) if path else default_path()
-        if not target.is_file():
-            return cls.defaults()
-        try:
-            document = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"invalid gateway configuration at {target}: {exc}") from exc
-        if not isinstance(document, dict):
-            raise ValueError(f"invalid gateway configuration at {target}: not an object")
-        return _parse(document, source=str(target))
+        document = _load_defaults_document(target)
+        source = str(target) if target.is_file() else "defaults"
+
+        overlay = Path(override_path) if override_path is not None else (owner_override_path() if path is None else None)
+        if overlay is not None:
+            if migrate_owner_state:
+                _migrate_owner_state(document, overlay)
+            owner = _load_owner_override(overlay, document)
+            if _has_owner_override(owner):
+                document = _deep_merge(document, owner)
+                source = f"{source} + {overlay}"
+        return _parse(document, source=source)
 
     def save(self, path: str | Path | None = None) -> Path:
         target = Path(path) if path else default_path()
@@ -392,6 +414,11 @@ class GatewayConfig:
         tmp.write_text(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8")
         tmp.replace(target)
         return target
+
+    def save_owner_override(self, defaults_path: str | Path | None = None, override_path: str | Path | None = None) -> Path:
+        defaults = _parse(_load_defaults_document(Path(defaults_path) if defaults_path else default_path()), source="defaults")
+        document = _owner_override_document(self, defaults)
+        return _write_owner_override(Path(override_path) if override_path is not None else owner_override_path(), document)
 
     def with_provider_enabled(self, name: str, enabled: bool) -> "GatewayConfig":
         if name not in self.providers:
@@ -431,6 +458,163 @@ def default_path() -> Path:
     if configured:
         return Path(configured)
     return Path(__file__).resolve().parent.parent / "config" / "providers.json"
+
+
+def owner_override_path(state_root: str | Path | None = None) -> Path:
+    configured = os.environ.get("ZEUS_PROVIDERS_OVERRIDE", "").strip()
+    if configured:
+        return Path(configured)
+    if state_root is not None:
+        return Path(state_root) / "owner" / OWNER_PROVIDER_STATE
+    return Path(__file__).resolve().parent.parent / "data" / "jarvis" / "owner" / OWNER_PROVIDER_STATE
+
+
+def _load_defaults_document(target: Path) -> dict[str, Any]:
+    if not target.is_file():
+        return json.loads(json.dumps(DEFAULT_DOCUMENT))
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"invalid gateway configuration at {target}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"invalid gateway configuration at {target}: not an object")
+    return document
+
+
+def _load_owner_override(path: Path, defaults: dict[str, Any]) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"invalid gateway owner override at {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"invalid gateway owner override at {path}: not an object")
+    return _sanitize_owner_override(document, defaults)
+
+
+def _sanitize_owner_override(document: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    """Keep owner state local and non-secret, even if a hand-edited overlay drifts."""
+
+    out: dict[str, Any] = {"schema_version": 2}
+    for key in MUTABLE_TOP_LEVEL_KEYS:
+        if key in document:
+            out[key] = document[key]
+
+    default_providers = set((defaults.get("providers") or {}).keys())
+    providers: dict[str, Any] = {}
+    for name, raw in (document.get("providers") or {}).items():
+        if name not in default_providers or not isinstance(raw, dict):
+            continue
+        kept = {key: value for key, value in raw.items() if key in MUTABLE_PROVIDER_KEYS}
+        if kept:
+            providers[str(name)] = kept
+    if providers:
+        out["providers"] = providers
+
+    default_roles = set((defaults.get("roles") or {}).keys())
+    roles: dict[str, Any] = {}
+    for name, raw in (document.get("roles") or {}).items():
+        if name not in default_roles or not isinstance(raw, dict):
+            continue
+        kept = {key: value for key, value in raw.items() if key in MUTABLE_ROLE_KEYS}
+        if kept:
+            roles[str(name)] = kept
+    if roles:
+        out["roles"] = roles
+    return out
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = json.loads(json.dumps(base))
+    for key, value in override.items():
+        if key == "schema_version":
+            continue
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+_NO_DIFF = object()
+
+
+def _deep_diff(current: Any, default: Any) -> Any:
+    if isinstance(current, dict) and isinstance(default, dict):
+        out = {}
+        for key, value in current.items():
+            diff = _deep_diff(value, default.get(key, _NO_DIFF))
+            if diff is not _NO_DIFF:
+                out[key] = diff
+        return out if out else _NO_DIFF
+    return current if current != default else _NO_DIFF
+
+
+def _owner_override_document(config: GatewayConfig, defaults: GatewayConfig) -> dict[str, Any]:
+    current = config.to_dict()
+    base = defaults.to_dict()
+    out: dict[str, Any] = {"schema_version": 2}
+
+    for key in MUTABLE_TOP_LEVEL_KEYS:
+        diff = _deep_diff(current.get(key), base.get(key))
+        if diff is not _NO_DIFF:
+            out[key] = diff
+
+    providers: dict[str, Any] = {}
+    for name, raw in current.get("providers", {}).items():
+        default_raw = base.get("providers", {}).get(name)
+        if not isinstance(raw, dict) or not isinstance(default_raw, dict):
+            continue
+        kept = {key: raw[key] for key in MUTABLE_PROVIDER_KEYS if key in raw and raw.get(key) != default_raw.get(key)}
+        if kept:
+            providers[str(name)] = kept
+    if providers:
+        out["providers"] = providers
+
+    roles: dict[str, Any] = {}
+    for name, raw in current.get("roles", {}).items():
+        default_raw = base.get("roles", {}).get(name)
+        if not isinstance(raw, dict) or not isinstance(default_raw, dict):
+            continue
+        kept = {key: raw[key] for key in MUTABLE_ROLE_KEYS if key in raw and raw.get(key) != default_raw.get(key)}
+        if kept:
+            roles[str(name)] = kept
+    if roles:
+        out["roles"] = roles
+    return out
+
+
+def _has_owner_override(document: dict[str, Any]) -> bool:
+    return any(key != "schema_version" for key in document)
+
+
+def _write_owner_override(path: Path, document: dict[str, Any]) -> Path:
+    if not _has_owner_override(document):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def _migrate_owner_state(document: dict[str, Any], override: Path) -> None:
+    if override.is_file():
+        return
+    try:
+        current = _parse(document, source="migration")
+        defaults = GatewayConfig.defaults()
+        owner = _owner_override_document(current, defaults)
+    except Exception:  # noqa: BLE001 - loading should not fail because migration could not classify an old file
+        return
+    if _has_owner_override(owner):
+        _write_owner_override(override, owner)
 
 
 # ---------------------------------------------------------------------------
