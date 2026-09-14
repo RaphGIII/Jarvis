@@ -72,9 +72,16 @@ def gemini_reply(text: str, *, prompt_tokens: int = 100, out_tokens: int = 50) -
             "usageMetadata": {"promptTokenCount": prompt_tokens, "candidatesTokenCount": out_tokens}}
 
 
-def openai_reply(text: str, *, prompt_tokens: int = 1000, out_tokens: int = 500, cached: int = 0) -> dict:
-    return {"choices": [{"message": {"content": text}, "finish_reason": "stop"}], "model": "gpt-x",
-            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": out_tokens, "prompt_tokens_details": {"cached_tokens": cached}}}
+def openai_reply(text: str, *, prompt_tokens: int = 1000, out_tokens: int = 500, cached: int = 0, reasoning: int = 0) -> dict:
+    """A Responses API reply: a reasoning item, then the message, then the usage with cached and reasoning tokens."""
+
+    return {"id": "resp_test", "object": "response", "status": "completed", "model": "gpt-x",
+            "output": [{"type": "reasoning", "id": "rs_test", "summary": []},
+                       {"type": "message", "id": "msg_test", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": text, "annotations": []}]}],
+            "usage": {"input_tokens": prompt_tokens, "input_tokens_details": {"cached_tokens": cached},
+                      "output_tokens": out_tokens, "output_tokens_details": {"reasoning_tokens": reasoning},
+                      "total_tokens": prompt_tokens + out_tokens}}
 
 
 def anthropic_reply(text: str) -> dict:
@@ -657,11 +664,14 @@ def test_openai_usage_and_cached_tokens_drive_the_actual_cost(tmp_path, cfg, cre
     gateway = make_gateway(tmp_path, cfg.with_provider_enabled("gemini", False), creds, net)
     text = "Plane für mich die nächsten sechs Wochen Lernplan " * 8
     reply = gateway.complete(GatewayRequest(prompt=text, facts=TaskFacts(text=text), mode=ChatMode.DEEP))
-    price = cfg.providers["openai"].pricing["gpt-5.6"]
+    price = cfg.providers["openai"].pricing[cfg.roles["reasoning.deep"].model]
     expected = 0.5 * price.input_per_m + 0.5 * price.cached_input_per_m
     assert reply.actual_eur == pytest.approx(expected, rel=1e-6)
+    assert price.currency == "USD" and price.rate_to_eur < 1.0, "listed in USD, settled in EUR through the configured rate"
     body = net.requests[-1]["body"]
-    assert body["reasoning_effort"] in {"low", "medium", "high"} and "temperature" not in body
+    assert net.requests[-1]["url"].endswith("/v1/responses"), "the Responses API"
+    assert body["reasoning"]["effort"] in {"low", "medium", "high", "xhigh"} and "temperature" not in body
+    assert body["store"] is False and body["input"][0]["content"][0]["text"]
 
 
 def test_gemini_schema_is_sanitised_for_structured_output(tmp_path, cfg, creds, net):
@@ -773,11 +783,11 @@ def test_codex_is_ranked_as_a_zero_cost_engineer_but_never_called_as_a_model(tmp
 def test_semantic_soft_features_raise_thinking_and_never_lower_it(tmp_path, cfg, creds, net):
     gateway = make_gateway(tmp_path, cfg, creds, net)
     plain, _ = gateway.plan(knowledge("Was ist NAT?"))
-    assert plain.thinking_level == "FREE_LOW"
+    assert plain.thinking_level == "FAST"
     request = knowledge("Was ist NAT?")
     request.soft = {"reasoning_depth": 0.9}
     deep, _ = gateway.plan(request)
-    assert deep.thinking_level == "FREE_HIGH"
+    assert deep.thinking_level == "DEEP"
     assert deep.task.reasoning_depth == 0.9 and deep.task.provenance["reasoning_depth"] == "semantic"
     # A caller that does pass ambiguity gets the clarify override -- unless it
     # has already decided to consult a model (the BrainProvider path).

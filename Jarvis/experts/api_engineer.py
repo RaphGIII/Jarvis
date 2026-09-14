@@ -41,11 +41,17 @@ DIFF_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "summary": {"type": "string", "description": "one paragraph: what was changed and why"},
-        "diff": {"type": "string", "description": "a unified diff (git format, a/ and b/ prefixes) applying at the workspace root"},
+        "diff": {"type": "string", "description": "a unified diff (git format, a/ and b/ prefixes) applying at the workspace root; "
+                                                   "empty when you first need more source (see request_files)"},
         "files": {"type": "array", "items": {"type": "string"}},
+        "request_files": {"type": "array", "items": {"type": "string"},
+                          "description": "workspace-relative paths you must read before you can write the diff; leave empty otherwise"},
     },
     "required": ["summary", "diff"],
 }
+
+#: How many times the engineer may ask for more source before it must answer.
+MAX_CONTEXT_ROUNDS = 2
 
 
 def _git(cwd: Path, *args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
@@ -109,12 +115,22 @@ class ApiEngineerExpert:
                 seen.append(rel)
         return seen
 
-    def _read_files(self, job: ExpertJob) -> tuple[str, list[str]]:
+    def _read_files(self, job: ExpertJob, extra: list[str] | None = None) -> tuple[str, list[str]]:
+        text, included, _texts = self._read_files_detailed(job, extra)
+        return text, included
+
+    def _read_files_detailed(self, job: ExpertJob, extra: list[str] | None = None) -> tuple[str, list[str], dict[str, str]]:
         root = Path(job.workspace)
         parts: list[str] = []
         included: list[str] = []
+        texts: dict[str, str] = {}
         budget = FILE_BUDGET_CHARS
-        for rel in self._files(job):
+        wanted = self._files(job)
+        for rel in extra or []:
+            rel = str(rel).replace("\\", "/")
+            if rel not in wanted:
+                wanted.append(rel)
+        for rel in wanted:
             path = root / rel
             if not path.is_file():
                 continue
@@ -129,34 +145,65 @@ class ApiEngineerExpert:
             budget -= len(text)
             parts.append(f"===== {rel} =====\n{text}")
             included.append(rel)
-        return "\n\n".join(parts), included
+            texts[rel] = text
+        return "\n\n".join(parts), included, texts
 
-    def _catalog_context(self, job: ExpertJob) -> str:
-        """The narrow engineering context from the catalog: contracts, dependents, tests."""
+    def _catalog_context(self, job: ExpertJob) -> tuple[str, dict[str, int]]:
+        """The narrow engineering context from the catalog: contracts, dependents, tests -- with its token counts."""
 
         try:
             from catalog.context import build_context
 
             files = [f for f in self._files(job) if f.endswith(".py") and not f.startswith("tests/")]
             if not files:
-                return ""
-            return build_context(files, request=job.goal[:300], repo=Path(job.workspace), budget_chars=30_000).text
+                return "", {}
+            context = build_context(files, request=job.goal[:300], repo=Path(job.workspace), budget_chars=30_000)
+            return context.text, dict(context.tokens)
         except Exception:  # noqa: BLE001 - the catalog is help, not a requirement
-            return ""
+            return "", {}
 
-    def _prompt(self, job: ExpertJob, files_text: str, included: list[str], *, previous_error: str = "") -> str:
-        catalog_text = self._catalog_context(job)
+    def context_pack(self, job: ExpertJob, extra_files: list[str] | None = None) -> dict[str, Any]:
+        """The Engineering Context Pack: spec + catalog + relevant source + tests, and what each part costs in tokens.
+
+        Nothing unrelated is included by default; the engineer asks for more
+        source by name (``request_files``) and gets it in the next round.
+        """
+
+        from gateway.estimate import estimate_tokens
+
+        catalog_text, catalog_tokens = self._catalog_context(job)
+        files_text, included, texts = self._read_files_detailed(job, extra=extra_files)
+        test_files = [f for f in included if f.startswith("tests/") or "/tests/" in f or Path(f).name.startswith("test_")]
+        source_files = [f for f in included if f not in test_files]
+        source_tokens = sum(estimate_tokens(texts[f]) for f in source_files)
+        test_tokens_src = sum(estimate_tokens(texts[f]) for f in test_files)
+        tokens = {"spec_tokens": estimate_tokens(job.brief()), "catalog_tokens": int(catalog_tokens.get("catalog_tokens", 0)),
+                  "interface_tokens": int(catalog_tokens.get("interface_tokens", 0)),
+                  "source_tokens": source_tokens, "test_tokens": int(catalog_tokens.get("test_tokens", 0)) + test_tokens_src}
+        tokens["total_engineering_context_tokens"] = sum(tokens.values())
+        return {"catalog_text": catalog_text, "files_text": files_text, "included": included, "source_files": source_files,
+                "test_files": test_files, "tokens": tokens}
+
+    def _prompt(self, job: ExpertJob, pack: dict[str, Any], *, previous_error: str = "", refused_files: list[str] | None = None) -> str:
+        catalog_text = str(pack.get("catalog_text") or "")
+        included = list(pack.get("included") or [])
         lines = [
             job.brief(),
             *([catalog_text] if catalog_text else []),
             "WORKSPACE: paths below are relative to the workspace root you are editing. "
-            "Answer with ONE JSON object {\"summary\", \"diff\", \"files\"}.",
+            "Answer with ONE JSON object {\"summary\", \"diff\", \"files\", \"request_files\"}.",
             "The diff MUST be a unified diff in git format (`diff --git a/<path> b/<path>`, `---`/`+++` lines, hunks with "
             "correct line counts) that applies cleanly with `git apply` at the workspace root. Include full context lines. "
             "Create new files with `--- /dev/null`. Do not include any file you were not shown unless you create it.",
+            "If you need to read further existing files before you can write a correct diff, answer with an empty diff and "
+            f"list them in request_files (workspace-relative; at most {MAX_CONTEXT_ROUNDS} such rounds). Do not ask for files "
+            "unrelated to this change.",
         ]
         if included:
-            lines.append("FILES (current content):\n" + files_text)
+            lines.append("FILES (current content):\n" + str(pack.get("files_text") or ""))
+        if refused_files:
+            lines.append("These requested files do not exist in the workspace or are outside it: " + ", ".join(refused_files)
+                         + ". Proceed without them.")
         if previous_error:
             lines.append("YOUR PREVIOUS DIFF DID NOT APPLY. git said:\n" + previous_error[:2000]
                          + "\nProduce a corrected diff against the files as shown above.")
@@ -237,49 +284,78 @@ class ApiEngineerExpert:
         from gateway.task import TaskFacts
 
         started = time.perf_counter()
-        files_text, included = self._read_files(job)
-        facts = TaskFacts(text=job.goal, is_engineering=True, estimated_files_changed=max(1, len(included)),
+        extra_files: list[str] = []
+        pack = self.context_pack(job)
+        facts = TaskFacts(text=job.goal, is_engineering=True, estimated_files_changed=max(1, len(pack["included"])),
                           subsystems=int(job.metadata.get("subsystems", 0) or 0),
                           new_subsystem=bool(job.metadata.get("new_subsystem", False)))
         commands: list[str] = []
         previous_error = ""
+        refused_files: list[str] = []
         before = self._snapshot(job)
         total_cost = 0.0
         usage_total: dict[str, int] = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
         summary = ""
-        for attempt in range(2):
-            prompt = self._prompt(job, files_text, included, previous_error=previous_error)
+        context_rounds = 0
+        repair_rounds = 0
+        rounds = 0
+        root = Path(job.workspace).resolve()
+        while repair_rounds < 2 and rounds < 2 + MAX_CONTEXT_ROUNDS:
+            rounds += 1
+            prompt = self._prompt(job, pack, previous_error=previous_error, refused_files=refused_files)
             request = GatewayRequest(prompt=prompt, mode=self.mode, facts=facts, schema=DIFF_SCHEMA, purpose="engineer",
                                      role=self.role, task_id=str(job.metadata.get("task_id") or job.metadata.get("mission_id") or ""))
             try:
                 reply = self.gateway.complete(request)
             except GatewayRefused as exc:
                 return ExpertResult(status=ExpertStatus.REFUSED, provider=self.name, blocker=str(exc),
-                                    raw={"decision": exc.decision.to_dict()}, duration_seconds=time.perf_counter() - started)
+                                    raw={"decision": exc.decision.to_dict(), "context_tokens": pack["tokens"]},
+                                    duration_seconds=time.perf_counter() - started)
             except GatewayError as exc:
                 quota = QuotaState(exhausted=exc.status.value == "quota_exhausted", detail=str(exc))
                 return ExpertResult(status=ExpertStatus.UNAVAILABLE if exc.status.is_outage else ExpertStatus.FAILED,
-                                    provider=self.name, blocker=str(exc), quota=quota, duration_seconds=time.perf_counter() - started)
+                                    provider=self.name, blocker=str(exc), quota=quota, duration_seconds=time.perf_counter() - started,
+                                    raw={"context_tokens": pack["tokens"]})
             total_cost += reply.actual_eur
             for key in usage_total:
                 usage_total[key] += int(reply.usage.get(key, 0) or 0)
             data = _parse(reply.text)
             summary = str(data.get("summary", ""))[:800]
             diff = str(data.get("diff", ""))
+            requested = [str(f).replace("\\", "/") for f in (data.get("request_files") or []) if str(f).strip()]
+            if not diff.strip() and requested and context_rounds < MAX_CONTEXT_ROUNDS:
+                # The engineer asks for more source, by name: the pack grows by
+                # exactly those files, nothing else.
+                context_rounds += 1
+                refused_files = []
+                for rel in requested:
+                    candidate = (root / rel).resolve()
+                    if candidate.is_file() and str(candidate).startswith(str(root)):
+                        if rel not in extra_files:
+                            extra_files.append(rel)
+                    else:
+                        refused_files.append(rel)
+                pack = self.context_pack(job, extra_files=extra_files)
+                commands.append(f"context round {context_rounds}: +{len(requested) - len(refused_files)} file(s)")
+                continue
             ok, detail = self._apply(job, diff)
             commands.append(f"git apply ({'ok' if ok else 'failed'})")
             if ok:
                 changed = self._changed(job, before)
-                self.last = {"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": attempt + 1, "files": changed}
+                self.last = {"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": rounds, "files": changed,
+                             "context_tokens": pack["tokens"]}
                 return ExpertResult(status=ExpertStatus.COMPLETED, provider=self.name, summary=summary, files_changed=changed,
                                     commands_run=commands, duration_seconds=time.perf_counter() - started,
-                                    raw={"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": attempt + 1,
-                                         "role": reply.role, "model": reply.model, "files_shown": included})
+                                    raw={"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": rounds,
+                                         "context_rounds": context_rounds, "role": reply.role, "model": reply.model,
+                                         "files_shown": pack["included"], "context_tokens": pack["tokens"]})
             previous_error = detail
+            repair_rounds += 1
         return ExpertResult(status=ExpertStatus.FAILED, provider=self.name, summary=summary, commands_run=commands,
                             blocker=f"the diff did not apply after two attempts: {previous_error[:300]}",
                             duration_seconds=time.perf_counter() - started,
-                            raw={"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": 2})
+                            raw={"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": rounds,
+                                 "context_rounds": context_rounds, "context_tokens": pack["tokens"]})
 
 
 def _parse(text: str) -> dict[str, Any]:

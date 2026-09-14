@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from gateway.budget import BudgetGovernor, BudgetRefused, Reservation
-from gateway.config import GatewayConfig, RoleBinding
+from gateway.config import GatewayConfig, RoleBinding, THINKING_LEVELS
 from gateway.estimate import actual_cost, estimate_cost
 from gateway.health import GatewayError, ProviderHealth, ProviderStatus
 from gateway.learning import Observation, PerformanceLedger, ReliabilityModel
@@ -114,6 +114,10 @@ class GatewayRequest:
     #: False when the caller has already decided a model is to be consulted
     #: (the BrainProvider path): hard overrides then annotate, never refuse.
     overrides: bool = True
+    #: False for decisions the small local model may never take (GoalSpec,
+    #: PlanSpec): when only the offline fallback is reachable the call is
+    #: refused instead of made.
+    allow_offline_fallback: bool = True
 
 
 @dataclass
@@ -163,6 +167,19 @@ class ModelGateway:
         self._subscription_available = subscription_available or (lambda name: False)
         self.config = config or GatewayConfig.load()
         self.credentials = credentials or CredentialStore(self.state_root / "owner" / "provider_credentials.json")
+        try:
+            # An owner who exported OPENAI_API_KEY (or the Gemini / Anthropic
+            # names) has entered the credential: it moves into the encrypted
+            # store once and the provider counts as configured.
+            imported = self.credentials.import_environment({p.secret: p.credential_env for p in self.config.providers.values()
+                                                            if p.secret and p.credential_env})
+        except Exception:  # noqa: BLE001 - a store that cannot be written is reported by status(), not here
+            imported = []
+        if imported:
+            for slot in imported:
+                provider = self.config.provider_for_secret(slot)
+                if provider is not None and not provider.enabled:
+                    self.config = self.config.with_provider_enabled(provider.name, True)
         self.governor = BudgetGovernor(self.state_root / "gateway" / "spend.jsonl", self.config.budget)
         self.ledger = PerformanceLedger(self.state_root / "gateway" / "performance.jsonl")
         self.reliability = ReliabilityModel(self.config, self.ledger)
@@ -192,8 +209,14 @@ class ModelGateway:
             self.router = self._make_router(config)
 
     def _make_router(self, config: GatewayConfig) -> ModelRouter:
+        def credential_present(name: str) -> bool:
+            provider = self.config.providers.get(name)
+            if provider is None:
+                return False
+            return self.credentials.has(provider.secret) if provider.secret else True
+
         return ModelRouter(config, self.reliability, self.governor, self.health,
-                           credential_present=lambda name: self.credentials.has(name),
+                           credential_present=credential_present,
                            local_available=self._local_available,
                            paid_allowed=lambda: bool(self.cost_policy.allow_paid_api),
                            subscription_available=self._subscription_available)
@@ -251,6 +274,13 @@ class ModelGateway:
         decision, privacy = self.plan(request)
         if decision.kind is not RouteKind.MODEL:
             raise GatewayRefused(decision)
+        if decision.offline_fallback and not request.allow_offline_fallback:
+            # Semantic decisions never go to the small local model: the
+            # caller said so, and the call is refused before it is made.
+            decision.kind = RouteKind.REFUSED
+            decision.reason = "only the offline fallback model is reachable; this request does not accept it (" + decision.reason[:160] + ")"
+            decision.suggestion = decision.suggestion or "Configure or re-enable a cloud reasoning provider, or change the mode."
+            raise GatewayRefused(decision)
         binding = self.config.binding(decision.role)
         provider = self.config.provider_for(decision.role)
         if binding is None or provider is None:
@@ -302,9 +332,9 @@ class ModelGateway:
             self._observe(decision, binding, provider.name, goal_verified=False, failure_class="mode_refused", mode=mode)
             raise GatewayRefused(decision, str(exc)) from None
 
-        thinking = binding.thinking.get(decision.thinking_level) if decision.thinking_level else None
+        thinking = binding.thinking_for(decision.thinking_level) if decision.thinking_level else None
         provider_request = ProviderRequest(system=system, prompt=prompt_text, max_output_tokens=max_out, temperature=temperature,
-                                           thinking=thinking, schema=request.schema)
+                                           thinking=thinking, schema=request.schema, thinking_level=decision.thinking_level)
         adapter = adapter_for(provider.kind)
         started = time.perf_counter()
         try:
@@ -384,7 +414,7 @@ class ModelGateway:
             goal_verified=goal_verified, failure_class=failure_class, estimated_eur=estimated, actual_eur=actual,
             latency_seconds=round(latency, 3), input_tokens=int(usage.get("input_tokens", 0)),
             cached_input_tokens=int(usage.get("cached_input_tokens", 0)), output_tokens=int(usage.get("output_tokens", 0)),
-            task_vector=decision.task.as_features(), mode=mode.value,
+            task_vector=decision.task.as_features(), mode=mode.value, thinking_level=decision.thinking_level,
         ))
 
     def report_task_outcome(self, task_id: str, *, goal_verified: bool, failure_class: str = "task_failure") -> int:
@@ -443,16 +473,32 @@ class ModelGateway:
                            "offline_fallback": binding.offline_fallback}
         providers = {}
         for name, provider in self.config.providers.items():
+            credential = self.credentials.has(provider.secret) if provider.secret else True
+            health = self.health.status(name)
+            # CONFIGURED / UNCONFIGURED is about the owner's setup; health is
+            # about the provider's answers.  A missing key is not BROKEN.
+            if not provider.enabled:
+                state = "DISABLED"
+            elif not credential:
+                state = "UNCONFIGURED"
+            elif health.value == "authentication_error":
+                state = "KEY_REJECTED"
+            elif health.is_outage:
+                state = health.value.upper()
+            else:
+                state = "CONFIGURED"
             providers[name] = {"kind": provider.kind, "enabled": provider.enabled, "metered": provider.metered,
-                               "may_train_on_requests": provider.may_train_on_requests,
-                               "credential": self.credentials.has(provider.secret) if provider.secret else True,
-                               "health": self.health.status(name).value, "base_url": provider.base_url,
-                               "pricing": {m: p.to_dict() for m, p in provider.pricing.items()}}
+                               "may_train_on_requests": provider.may_train_on_requests, "credential": credential,
+                               "credential_env": list(provider.credential_env), "state": state,
+                               "health": health.value, "base_url": provider.base_url, "purpose": provider.purpose,
+                               "pricing": {m: p.to_eur_dict() for m, p in provider.pricing.items()}}
         return {
             "spend": spend, "roles": roles, "providers": providers, "credentials": self.credentials.status(),
             "modes": {m.value: {"allow_metered": p.allow_metered, "hint_de": p.owner_hint_de, "hint_en": p.owner_hint_en,
                                 "task_cap_eur": p.task_cap_eur} for m, p in MODE_POLICIES.items()},
             "budget": self.config.budget.to_dict(), "config_source": self.config.source,
+            "exchange_rates": {code: rate.to_dict() for code, rate in self.config.exchange_rates.items()},
+            "thinking_levels": list(THINKING_LEVELS),
             "paid_api_allowed": bool(self.cost_policy.allow_paid_api), "cost_policy_source": str(getattr(self.cost_policy, "source", "")),
             "transport": {"issued": self.transport.issued, "refused": len(self.transport.refused)},
             "recent": list(self.recent[-20:]),

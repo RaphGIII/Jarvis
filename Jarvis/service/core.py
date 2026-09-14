@@ -292,6 +292,19 @@ class JarvisCore:
         except Exception as exc:  # noqa: BLE001
             return {"available": False, "role": "", "provider": "", "reason": f"{type(exc).__name__}: {exc}"[:200], "suggestion": ""}
 
+    def _free_unavailable_message(self, reason: str) -> str:
+        """FREE mode: the free reasoning provider is not reachable; nothing paid and nothing local stands in."""
+
+        de = self.language.startswith("de")
+        why = reason[:120] if reason else ""
+        if de:
+            return ("Im FREE-Modus ist das kostenlose Denkmodell gerade nicht erreichbar"
+                    + (f" ({why})" if why else "") + ". Ich nehme dafür weder ein bezahltes Modell noch das lokale Modell. "
+                    "Wechsle in AUTO oder SMART, oder versuch es später noch einmal.")
+        return ("In FREE mode the free reasoning provider is not reachable right now"
+                + (f" ({why})" if why else "") + ". I use neither a paid model nor the local model in its place. "
+                "Switch to AUTO or SMART, or try again later.")
+
     def _semantic_unavailable_message(self, reason: str, suggestion: str = "") -> str:
         de = self.language.startswith("de")
         if de:
@@ -2067,7 +2080,7 @@ class JarvisCore:
             summary += f" plan={result.plan.capability_ids} ({result.plan_spec.source if result.plan_spec else ''})"
         self.emit(EventType.TOOL, {"summary": summary, "intelligence": result.to_dict(), "source": "intelligence"}, scope=scope)
         de = self.language.startswith("de")
-        if result.status == "INTELLIGENCE_UNAVAILABLE":
+        if result.status in {"INTELLIGENCE_UNAVAILABLE", "FREE_INTELLIGENCE_UNAVAILABLE"}:
             if not self._world_has_context(state):
                 # Without world context nothing here needed a semantic
                 # decision: the typed single-action paths (a file write, a
@@ -2075,9 +2088,10 @@ class JarvisCore:
                 # a context-borne reading -- a game just finished -- is
                 # refused out loud, because no other path may take it.
                 return False
-            self._deliver(self._semantic_unavailable_message(result.reason, result.question), scope=scope,
-                          backend="intelligence", final_state=JarvisState.WAITING,
-                          context_text="[intelligence unavailable; no goal derived]")
+            message = (self._free_unavailable_message(result.reason) if result.status == "FREE_INTELLIGENCE_UNAVAILABLE"
+                       else self._semantic_unavailable_message(result.reason, result.question))
+            self._deliver(message, scope=scope, backend="intelligence", final_state=JarvisState.WAITING,
+                          context_text=f"[{result.status.lower()}; no goal derived]")
             return True
         if result.status == "CLARIFY":
             self._deliver(result.question or ("Was genau meinst du?" if de else "What exactly do you mean?"), scope=scope,
@@ -3870,28 +3884,52 @@ class JarvisCore:
             self._start_capability_engineering(goal, original_text, scope)
 
     def _engineer_for_capability(self, goal: str, spec: Any = None) -> Any:
-        """The engineering router's decision for a capability build: made once, before anything runs."""
+        """The engineering router's decision for a capability build: made once, before anything runs.
 
-        from service.engineering import EngineeringNeed, choose_engineer, owner_authorized_local_build
+        The EngineeringSpec becomes a typed EngineeringTaskVector (deterministic
+        signals plus the Catalog's impact view); the vector picks the class and
+        says whether frontier quality is required.  The estimate the owner
+        sees is computed on the real context pack (the brief the engineer
+        would receive), before anything is reserved or sent.
+        """
+
+        from service.engineering import EngineeringNeed, choose_engineer, estimate_engineering, owner_authorized_local_build
+        from service.engineering_vector import task_vector_for, vector_from_spec
 
         task = None
         model_gateway = None
+        vector = None
+        prompt = goal
         try:
-            from gateway.task import TaskFacts, rule_based
-
-            missing = list(getattr(spec, "missing_effects", []) or [])
-            partial = list(getattr(spec, "closest_partial_plan", []) or [])
-            task_class = str(getattr(spec, "task_class", "") or "")
-            task = rule_based(TaskFacts(text=goal, is_engineering=True, capability_missing=True,
-                                        estimated_files_changed=2 + len(partial),
-                                        subsystems=max(1, len(partial)) if task_class != "engineering.small" else 1,
-                                        new_subsystem=task_class == "engineering.large"))
             model_gateway = self.model_gateway
+        except Exception:  # noqa: BLE001
+            model_gateway = None
+        try:
+            if spec is not None:
+                # A capability is built in its own workspace: the Catalog's
+                # dependents of core modules are not its impact.  Core
+                # engineering (SelfDev) passes the impacted modules instead.
+                vector = vector_from_spec(spec, catalog_dependents=0)
+                task = task_vector_for(vector, goal)
+                prompt = spec.to_brief() if hasattr(spec, "to_brief") else goal
+            else:
+                from gateway.task import TaskFacts, rule_based
+
+                task = rule_based(TaskFacts(text=goal, is_engineering=True, capability_missing=True, estimated_files_changed=2))
         except Exception:  # noqa: BLE001 - the classic Codex-first rule still decides
-            task, model_gateway = None, None
-        return choose_engineer(EngineeringNeed.CAPABILITY_MISSING, availability=self.codex_availability,
-                               owner_authorized_local=owner_authorized_local_build(goal), task=task, gateway=model_gateway,
-                               mode=self.chat_mode, prompt=goal)
+            task, vector = None, None
+        decision = choose_engineer(EngineeringNeed.CAPABILITY_MISSING, availability=self.codex_availability,
+                                   owner_authorized_local=owner_authorized_local_build(goal), task=task, gateway=model_gateway,
+                                   mode=self.chat_mode, prompt=prompt, vector=vector)
+        if vector is not None and not decision.vector:
+            decision.vector = vector.to_dict()
+        if decision.is_api and model_gateway is not None:
+            try:
+                decision.cost = estimate_engineering(model_gateway, decision.role, context_chars=len(prompt), mode=self.chat_mode,
+                                                     task_id=self._current_task_id())
+            except Exception:  # noqa: BLE001
+                decision.cost = {}
+        return decision
 
     def _start_capability_repair_for_request(self, resolution: Any, goal: str, original_text: str, scope: str) -> None:
         """A capability ZEUS has and cannot trust: Codex repairs it, then the request resumes.
@@ -8267,7 +8305,29 @@ class JarvisCore:
         except (KeyError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
         self.emit(EventType.TOOL, {"summary": f"provider credential stored: {name}", "source": "gateway", "provider": name})
-        return {"ok": True, "credentials": self.model_gateway.credentials.status()}
+        # Entering the key is the owner's whole job: the provider whose slot
+        # this is counts as configured from now on.
+        enabled = ""
+        provider = self.model_gateway.config.provider_for_secret(str(name))
+        if provider is not None and not provider.enabled:
+            error = self._persist_gateway_config(self.model_gateway.config.with_provider_enabled(provider.name, True))
+            if not error:
+                enabled = provider.name
+                self.emit(EventType.TOOL, {"summary": f"provider {provider.name} enabled by its credential", "source": "gateway",
+                                           "provider": provider.name, "enabled": True})
+        return {"ok": True, "credentials": self.model_gateway.credentials.status(), "enabled_provider": enabled,
+                "providers": self.model_gateway.status()["providers"]}
+
+    def _persist_gateway_config(self, config: Any) -> str:
+        """Write a changed gateway configuration to config/providers.json and apply it.  Returns an error text or ""."""
+
+        path = Path(self.kernel.config_root) / "providers.json" if hasattr(self.kernel, "config_root") else None
+        try:
+            config.save(path)
+        except OSError as exc:
+            return f"could not persist provider configuration: {exc}"
+        self.model_gateway.reconfigure(config)
+        return ""
 
     def provider_clear_credential(self, name: str, *, authorization: str = "") -> dict[str, Any]:
         denied = self.require_auth(authorization, "CREDENTIALS")
@@ -8287,12 +8347,9 @@ class JarvisCore:
             config = self.model_gateway.config.with_provider_enabled(str(name), bool(enabled))
         except KeyError as exc:
             return {"ok": False, "error": str(exc)}
-        path = Path(self.kernel.config_root) / "providers.json" if hasattr(self.kernel, "config_root") else None
-        try:
-            config.save(path)
-        except OSError as exc:
-            return {"ok": False, "error": f"could not persist provider configuration: {exc}"}
-        self.model_gateway.reconfigure(config)
+        error = self._persist_gateway_config(config)
+        if error:
+            return {"ok": False, "error": error}
         self.emit(EventType.TOOL, {"summary": f"provider {name} {'enabled' if enabled else 'disabled'}", "source": "gateway",
                                    "provider": name, "enabled": bool(enabled)})
         return {"ok": True, **self.providers_status()}

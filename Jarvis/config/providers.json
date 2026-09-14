@@ -14,9 +14,19 @@
     }
   },
   "currency": "EUR",
+  "exchange_rates": {
+    "USD": {
+      "as_of": "2026-09-14",
+      "confirmed": false,
+      "eur_per_unit": 0.86
+    }
+  },
   "providers": {
     "anthropic": {
       "base_url": "https://api.anthropic.com",
+      "credential_env": [
+        "ANTHROPIC_API_KEY"
+      ],
       "enabled": false,
       "kind": "anthropic",
       "may_train_on_requests": false,
@@ -25,24 +35,36 @@
       "name": "anthropic",
       "options": {},
       "pricing": {
-        "claude-fable-5-1": {
-          "cached_input_per_m": 2.8,
-          "confirmed": false,
-          "input_per_m": 28.0,
-          "output_per_m": 140.0
-        },
-        "claude-opus-5": {
-          "cached_input_per_m": 1.4,
-          "confirmed": false,
-          "input_per_m": 14.0,
-          "output_per_m": 70.0
-        }
+        "claude-fable-5-1": [
+          {
+            "cached_input_per_m": 3.0,
+            "confirmed": false,
+            "currency": "USD",
+            "effective_from": "2026-09-14",
+            "input_per_m": 30.0,
+            "output_per_m": 150.0,
+            "source": "placeholder; owner to confirm"
+          }
+        ],
+        "claude-opus-5": [
+          {
+            "cached_input_per_m": 1.5,
+            "confirmed": false,
+            "currency": "USD",
+            "effective_from": "2026-09-14",
+            "input_per_m": 15.0,
+            "output_per_m": 75.0,
+            "source": "placeholder; owner to confirm"
+          }
+        ]
       },
+      "purpose": "engineering",
       "secret": "anthropic",
       "timeout_seconds": 600.0
     },
     "codex": {
       "base_url": "",
+      "credential_env": [],
       "enabled": true,
       "kind": "subscription_cli",
       "may_train_on_requests": false,
@@ -51,11 +73,31 @@
       "name": "codex",
       "options": {},
       "pricing": {},
+      "purpose": "",
       "secret": "",
       "timeout_seconds": 120.0
     },
+    "frontier_alt": {
+      "base_url": "",
+      "credential_env": [],
+      "enabled": false,
+      "kind": "openai_compatible",
+      "may_train_on_requests": false,
+      "metered": true,
+      "monthly_cap_eur": null,
+      "name": "frontier_alt",
+      "options": {},
+      "pricing": {},
+      "purpose": "optional second frontier engineering provider (fill in kind, base_url, secret, model and a dated price)",
+      "secret": "",
+      "timeout_seconds": 600.0
+    },
     "gemini": {
       "base_url": "https://generativelanguage.googleapis.com",
+      "credential_env": [
+        "GOOGLE_GEMINI_API_KEY",
+        "GEMINI_API_KEY"
+      ],
       "enabled": false,
       "kind": "gemini",
       "may_train_on_requests": true,
@@ -64,18 +106,25 @@
       "name": "gemini",
       "options": {},
       "pricing": {
-        "gemini-2.5-flash": {
-          "cached_input_per_m": 0.0,
-          "confirmed": true,
-          "input_per_m": 0.0,
-          "output_per_m": 0.0
-        }
+        "gemini-3.8-flash": [
+          {
+            "cached_input_per_m": 0.0,
+            "confirmed": true,
+            "currency": "USD",
+            "effective_from": "2026-09-14",
+            "input_per_m": 0.0,
+            "output_per_m": 0.0,
+            "source": "free tier: token cost zero"
+          }
+        ]
       },
+      "purpose": "free-tier reasoning; quotas and rate limits are the resource constraint, not money",
       "secret": "gemini",
       "timeout_seconds": 120.0
     },
     "ollama": {
       "base_url": "http://127.0.0.1:11434",
+      "credential_env": [],
       "enabled": true,
       "kind": "ollama",
       "may_train_on_requests": false,
@@ -84,11 +133,15 @@
       "name": "ollama",
       "options": {},
       "pricing": {},
+      "purpose": "",
       "secret": "",
       "timeout_seconds": 120.0
     },
     "openai": {
       "base_url": "https://api.openai.com",
+      "credential_env": [
+        "OPENAI_API_KEY"
+      ],
       "enabled": false,
       "kind": "openai",
       "may_train_on_requests": false,
@@ -97,13 +150,19 @@
       "name": "openai",
       "options": {},
       "pricing": {
-        "gpt-5.6": {
-          "cached_input_per_m": 0.18,
-          "confirmed": false,
-          "input_per_m": 1.75,
-          "output_per_m": 14.0
-        }
+        "gpt-5.6-sol": [
+          {
+            "cached_input_per_m": 0.4,
+            "confirmed": true,
+            "currency": "USD",
+            "effective_from": "2026-09-14",
+            "input_per_m": 4.0,
+            "output_per_m": 20.0,
+            "source": "OpenAI standard pricing, owner-provided 2026-09-14"
+          }
+        ]
       },
+      "purpose": "deep reasoning",
       "secret": "openai",
       "timeout_seconds": 300.0
     }
@@ -116,6 +175,7 @@
       "model": "codex-cli",
       "offline_fallback": false,
       "provider": "codex",
+      "purpose": "",
       "reliability_prior": {
         "engineering.large": [
           2.0,
@@ -141,6 +201,7 @@
       "model": "claude-fable-5-1",
       "offline_fallback": false,
       "provider": "anthropic",
+      "purpose": "major new subsystems, core architecture, multi-module integrations, long autonomous engineering jobs",
       "reliability_prior": {
         "engineering.large": [
           7.0,
@@ -157,6 +218,36 @@
       },
       "role": "engineer.frontier",
       "temperature": 0.1,
+      "thinking": {
+        "DEEP": 32768,
+        "FAST": 4096,
+        "NORMAL": 16384
+      },
+      "tier": ""
+    },
+    "engineer.frontier_alt": {
+      "enabled": false,
+      "max_output_tokens": 16384,
+      "model": "",
+      "offline_fallback": false,
+      "provider": "frontier_alt",
+      "purpose": "optional alternative frontier engineering provider",
+      "reliability_prior": {
+        "engineering.large": [
+          7.0,
+          1.0
+        ],
+        "engineering.medium": [
+          9.0,
+          1.0
+        ],
+        "engineering.small": [
+          9.0,
+          1.0
+        ]
+      },
+      "role": "engineer.frontier_alt",
+      "temperature": 0.1,
       "thinking": {},
       "tier": ""
     },
@@ -166,6 +257,7 @@
       "model": "claude-opus-5",
       "offline_fallback": false,
       "provider": "anthropic",
+      "purpose": "serious normal software engineering: isolated capabilities and plugins, bugs needing code changes, medium integrations",
       "reliability_prior": {
         "engineering.large": [
           2.0,
@@ -182,7 +274,11 @@
       },
       "role": "engineer.standard",
       "temperature": 0.1,
-      "thinking": {},
+      "thinking": {
+        "DEEP": 16384,
+        "FAST": 2048,
+        "NORMAL": 8192
+      },
       "tier": ""
     },
     "local.build": {
@@ -191,6 +287,7 @@
       "model": "",
       "offline_fallback": true,
       "provider": "ollama",
+      "purpose": "",
       "reliability_prior": {
         "engineering.large": [
           1.0,
@@ -216,6 +313,7 @@
       "model": "",
       "offline_fallback": true,
       "provider": "ollama",
+      "purpose": "",
       "reliability_prior": {
         "composition": [
           1.0,
@@ -242,9 +340,10 @@
     "reasoning.deep": {
       "enabled": true,
       "max_output_tokens": 4096,
-      "model": "gpt-5.6",
+      "model": "gpt-5.6-sol",
       "offline_fallback": false,
       "provider": "openai",
+      "purpose": "difficult reasoning and contextual interpretation, long-horizon planning, complex composition, difficult EngineeringSpecs",
       "reliability_prior": {
         "composition": [
           7.0,
@@ -266,18 +365,20 @@
       "role": "reasoning.deep",
       "temperature": 0.2,
       "thinking": {
-        "FREE_HIGH": "high",
-        "FREE_LOW": "low",
-        "FREE_MEDIUM": "medium"
+        "DEEP": "high",
+        "FAST": "low",
+        "MAX": "xhigh",
+        "NORMAL": "medium"
       },
       "tier": ""
     },
     "reasoning.free": {
       "enabled": true,
       "max_output_tokens": 2048,
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.8-flash",
       "offline_fallback": false,
       "provider": "gemini",
+      "purpose": "public/non-sensitive knowledge, semantic interpretation, context understanding, capability selection and composition",
       "reliability_prior": {
         "composition": [
           2.0,
@@ -299,18 +400,19 @@
       "role": "reasoning.free",
       "temperature": 0.3,
       "thinking": {
-        "FREE_HIGH": 8192,
-        "FREE_LOW": 0,
-        "FREE_MEDIUM": 2048
+        "DEEP": "high",
+        "FAST": "low",
+        "NORMAL": "medium"
       },
       "tier": ""
     },
     "speech.stt": {
       "enabled": false,
       "max_output_tokens": 2048,
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.8-flash",
       "offline_fallback": false,
       "provider": "gemini",
+      "purpose": "",
       "reliability_prior": {},
       "role": "speech.stt",
       "temperature": 0.3,
@@ -323,6 +425,7 @@
       "model": "gemini-2.5-flash-preview-tts",
       "offline_fallback": false,
       "provider": "gemini",
+      "purpose": "",
       "reliability_prior": {},
       "role": "speech.tts",
       "temperature": 0.3,
@@ -330,5 +433,5 @@
       "tier": ""
     }
   },
-  "schema_version": 1
+  "schema_version": 2
 }

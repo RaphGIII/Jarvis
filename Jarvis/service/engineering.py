@@ -104,6 +104,10 @@ class EngineerDecision:
     estimate_range_eur: tuple[float, float] = (0.0, 0.0)
     mode: str = ""
     candidates: list[dict[str, Any]] = field(default_factory=list)
+    #: The EngineeringTaskVector the decision was made on (its dict form).
+    vector: dict[str, Any] = field(default_factory=dict)
+    #: The engineering cost estimate the owner sees before anything is spent.
+    cost: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EngineerDecision":
@@ -122,6 +126,7 @@ class EngineerDecision:
             estimated_eur=float(data.get("estimated_eur", 0.0) or 0.0),
             estimate_range_eur=(float(rng[0]), float(rng[1])) if len(rng) == 2 else (0.0, 0.0),
             mode=str(data.get("mode", "")), candidates=list(data.get("candidates") or []),
+            vector=dict(data.get("vector") or {}), cost=dict(data.get("cost") or {}),
         )
 
     @property
@@ -164,6 +169,8 @@ class EngineerDecision:
             "estimate_range_eur": [round(self.estimate_range_eur[0], 4), round(self.estimate_range_eur[1], 4)],
             "mode": self.mode,
             "candidates": list(self.candidates),
+            "vector": dict(self.vector),
+            "cost": dict(self.cost),
         }
 
     def owner_sentence(self, *, german: bool = True) -> str:
@@ -202,8 +209,16 @@ def choose_engineer(
     gateway: Any = None,
     mode: Any = None,
     prompt: str = "",
+    vector: Any = None,
 ) -> EngineerDecision:
     """The one decision. Codex first, always; BUILD_LOCAL only by authorization.
+
+    ``vector`` is the :class:`service.engineering_vector.EngineeringTaskVector`
+    of the work.  When it carries frontier indicators the decision is
+    ``engineer.frontier`` directly (or the configured alternative frontier
+    slot when the primary one is not configured) -- a cheaper engineer is
+    not tried first to see whether it fails.  If no frontier engineer may
+    run, the answer is NONE, said plainly, never "standard instead".
 
     With ``task`` (a :class:`gateway.task.TaskVector`) and ``gateway`` (the
     :class:`gateway.gateway.ModelGateway`) the choice is made the gateway's
@@ -237,10 +252,16 @@ def choose_engineer(
     else:
         state, detail = "NOT_CONFIGURED", "no Codex availability was wired in"
 
+    if vector is not None and getattr(vector, "frontier_required", False):
+        return _choose_frontier(need, task, gateway, vector, mode=mode, prompt=prompt, codex_state=state, codex_detail=detail,
+                                codex_checked=checked)
+
     if task is not None and gateway is not None:
         decided = _choose_with_gateway(need, task, gateway, mode=mode, prompt=prompt, codex_ready=ready,
                                        codex_state=state, codex_detail=detail, codex_checked=checked)
         if decided is not None:
+            if vector is not None:
+                decided.vector = vector.to_dict()
             return decided
 
     if ready:
@@ -264,6 +285,49 @@ def choose_engineer(
         reason=f"Codex is {state} and the local coder is not an automatic fallback",
         codex_state=state, codex_detail=detail, codex_checked=checked, queued=True,
     )
+
+
+FRONTIER_ROLES: tuple[str, ...] = ("engineer.frontier", "engineer.frontier_alt")
+
+
+def _choose_frontier(need: EngineeringNeed, task: Any, gateway: Any, vector: Any, *, mode: Any, prompt: str, codex_state: str,
+                     codex_detail: str, codex_checked: bool) -> EngineerDecision:
+    """Frontier quality is required: exactly one frontier role, decided now, or nobody."""
+
+    indicators = list(vector.frontier_indicators())
+    why = "frontier engineering required (" + "; ".join(indicators) + ")"
+    common = dict(need=need, codex_state=codex_state, codex_detail=codex_detail, codex_checked=codex_checked,
+                  task_class=vector.task_class, mode=str(getattr(mode, "value", mode) or ""), vector=vector.to_dict())
+    if gateway is None or task is None:
+        return EngineerDecision(engineer=Engineer.NONE, queued=True,
+                                reason=f"{why}; no model gateway is wired, and a cheaper engineer is not tried instead", **common)
+    from gateway.modes import ChatMode
+    from gateway.router import RouteKind
+
+    chat_mode = ChatMode.parse(mode) if mode is not None else ChatMode.AUTO
+    refusals: list[str] = []
+    for role in FRONTIER_ROLES:
+        binding = gateway.config.binding(role)
+        if binding is None or not binding.enabled:
+            continue
+        try:
+            decision = gateway.router.decide(task, chat_mode, None, prompt=prompt or task.facts.get("text", "") or "engineering",
+                                             expected_output_tokens=int(binding.max_output_tokens or 8192), only_role=role)
+        except Exception as exc:  # noqa: BLE001
+            refusals.append(f"{role}: {type(exc).__name__}")
+            continue
+        candidates = [c.to_dict() for c in decision.candidates]
+        if decision.kind is RouteKind.MODEL and decision.role == role:
+            estimate = decision.estimate
+            low, high = estimate.range_eur() if estimate else (0.0, 0.0)
+            return EngineerDecision(engineer=Engineer.API, queued=False, role=role, provider_name=role, q=decision.q,
+                                    tau=decision.tau, estimated_eur=estimate.estimated_eur if estimate else 0.0,
+                                    estimate_range_eur=(low, high), candidates=candidates,
+                                    reason=f"{why}; {role} chosen directly, estimated EUR {low:.2f}-{high:.2f}", **common)
+        refusals.append(f"{role}: {decision.reason[:160]}")
+    return EngineerDecision(engineer=Engineer.NONE, queued=True,
+                            reason=f"{why}; no frontier engineer may run ({'; '.join(refusals) or 'none configured'}); "
+                                   "a cheaper engineer is not tried instead", **common)
 
 
 def _choose_with_gateway(need: EngineeringNeed, task: Any, gateway: Any, *, mode: Any, prompt: str, codex_ready: bool,
@@ -338,3 +402,54 @@ def owner_authorized_local_build(text: str) -> bool:
 
     folded = _fold(str(text or ""))
     return any(marker in folded for marker in _LOCAL_AUTHORIZATION)
+
+
+def estimate_engineering(gateway: Any, role: str, *, context_chars: int, expected_output_tokens: int | None = None,
+                         cached_chars: int = 0, task_id: str = "", mode: Any = None) -> dict[str, Any]:
+    """What an engineering job would cost before the engineer is called.
+
+    Context tokens from the real context pack (spec + catalog + source), cached
+    tokens where a prefix is reused, generated tokens from the role's output
+    budget, money through the dated price and the governor's safety factor,
+    and the hard maximum this task may reach.  The reservation itself is made
+    by the gateway immediately before the provider call; this is the owner's
+    preview and the router's input.
+    """
+
+    from gateway.estimate import CHARS_PER_TOKEN
+    from gateway.modes import ChatMode, policy_for
+
+    binding = gateway.config.binding(role)
+    pricing = gateway.config.pricing_for(role)
+    out: dict[str, Any] = {"role": role, "context_tokens": int(context_chars / CHARS_PER_TOKEN) + 1 if context_chars else 0,
+                           "cached_context_tokens": int(cached_chars / CHARS_PER_TOKEN) if cached_chars else 0,
+                           "expected_output_tokens": int(expected_output_tokens or (binding.max_output_tokens if binding else 4096)),
+                           "estimated_eur": 0.0, "range_eur": [0.0, 0.0], "reserved_eur": 0.0, "hard_max_eur": 0.0,
+                           "pricing_confirmed": bool(pricing.confirmed) if pricing else False, "priced": pricing is not None}
+    if binding is None or pricing is None:
+        return out
+    fresh = max(0, out["context_tokens"] - out["cached_context_tokens"])
+    estimated = (fresh * pricing.input_per_m + out["cached_context_tokens"] * pricing.cached_input_per_m
+                 + out["expected_output_tokens"] * pricing.output_per_m) / 1_000_000
+    out["estimated_eur"] = round(estimated, 4)
+    out["range_eur"] = [round(estimated * 0.6, 4), round(estimated * 1.5, 4)]
+    out["reserved_eur"] = round(estimated * gateway.config.budget.safety_factor, 4)
+    chat_mode = ChatMode.parse(mode) if mode is not None else ChatMode.BUILD
+    caps = [gateway.config.budget.per_task_hard_cap, gateway.config.budget.engineering_hard_cap, gateway.config.budget.daily_hard_cap,
+            gateway.config.budget.monthly_hard_cap]
+    task_cap = policy_for(chat_mode).task_cap_eur
+    if task_cap is not None:
+        caps.append(task_cap)
+    summary = gateway.governor.summary()
+    remaining = [gateway.config.budget.monthly_hard_cap - summary.month, gateway.config.budget.daily_hard_cap - summary.day,
+                 gateway.config.budget.engineering_hard_cap - summary.engineering_month]
+    out["hard_max_eur"] = round(max(0.0, min(caps + remaining)), 2)
+    out["month_spent_eur"] = round(summary.month, 4)
+    out["month_cap_eur"] = gateway.config.budget.monthly_hard_cap
+    provider = gateway.config.provider_for(role)
+    ok, cap, reserved = gateway.governor.can_reserve(role=role, provider=provider.name if provider else "", estimated_eur=estimated,
+                                                     task_id=task_id, task_cap_eur=task_cap,
+                                                     provider_cap_eur=provider.monthly_cap_eur if provider else None)
+    out["reservable"] = bool(ok)
+    out["blocking_cap"] = cap if not ok else ""
+    return out

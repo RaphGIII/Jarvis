@@ -62,6 +62,15 @@ def classify_http(status_code: int, body: str, *, provider_kind: str = "") -> Pr
     if status_code == 404 or "model_not_found" in text or "not found for api version" in text or "unknown model" in text:
         return ProviderStatus.MODEL_UNAVAILABLE
     if status_code == 429:
+        if provider_kind == "gemini":
+            # Gemini answers both with RESOURCE_EXHAUSTED.  The quota metric
+            # says which: a per-minute limit passes in seconds, a per-day
+            # limit is exhausted until the day rolls over.
+            if any(marker in text for marker in ("perday", "per_day", "per day", "daily", "generaterequestsperday", "tokensperday")):
+                return ProviderStatus.QUOTA_EXHAUSTED
+            if any(marker in text for marker in ("perminute", "per_minute", "per minute", "generaterequestsperminute", "tokensperminute",
+                                                 "retrydelay", "retry in")):
+                return ProviderStatus.RATE_LIMIT
         if any(marker in text for marker in ("quota", "insufficient_quota", "billing", "exceeded your current quota",
                                              "resource_exhausted", "credit")):
             return ProviderStatus.QUOTA_EXHAUSTED

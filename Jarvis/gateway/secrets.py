@@ -172,6 +172,26 @@ class CredentialStore:
             self._save(slots)
             return existed
 
+    def import_environment(self, mapping: dict[str, "list[str] | tuple[str, ...]"], environ: dict[str, str] | None = None) -> list[str]:
+        """Empty slots take their value from the named environment variables.
+
+        The value moves into the encrypted store; the environment is not
+        consulted again for that slot.  Returns the slots that were filled.
+        """
+
+        env = os.environ if environ is None else environ
+        filled: list[str] = []
+        for slot, names in mapping.items():
+            if slot not in SECRET_SLOTS or self.has(slot):
+                continue
+            for name in names:
+                value = str(env.get(str(name), "") or "").strip()
+                if value:
+                    self.set(slot, value)
+                    filled.append(slot)
+                    break
+        return filled
+
     def get(self, name: str) -> str:
         """The secret itself.  Only the transport layer has business calling this."""
 

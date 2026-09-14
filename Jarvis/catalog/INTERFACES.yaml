@@ -390,6 +390,7 @@ modules:
       - def to_dict(self) -> dict[str, Any]
     - name: IntelligenceFlow
       methods:
+      - def unavailable_status(self) -> str
       - 'def vocabulary(cards: Iterable[Card]) -> list[str]'
       - 'def understand(self, text: str, context: RetrievedContext) -> tuple[GoalSpec | None, dict[str, Any], Any]'
       - 'def grounded(self, goal: str, text: str, context: RetrievedContext, spec: GoalSpec) -> tuple[bool, str]'
@@ -1280,6 +1281,7 @@ modules:
       doc: One configured engineer role, as the expert gateway sees it.
       methods:
       - def availability(self) -> ProviderAvailability
+      - 'def context_pack(self, job: ExpertJob, extra_files: list[str] | None=None) -> dict[str, Any]'
       - 'def execute(self, job: ExpertJob) -> ExpertResult'
     functions: []
   experts/claude_code.py:
@@ -1433,11 +1435,16 @@ modules:
   gateway/config.py:
     module: gateway.config
     classes:
+    - name: ExchangeRate
+      methods:
+      - def to_dict(self) -> dict[str, Any]
     - name: Pricing
-      doc: EUR per one million tokens.
+      doc: EUR per one million tokens, converted from the listed currency.
       methods:
       - def metered(self) -> bool
+      - 'def effective_on(self, day: str) -> bool'
       - def to_dict(self) -> dict[str, Any]
+      - def to_eur_dict(self) -> dict[str, Any]
     - name: ProviderConfig
       methods:
       - 'def price_for(self, model: str) -> Pricing | None'
@@ -1445,6 +1452,7 @@ modules:
     - name: RoleBinding
       methods:
       - def family(self) -> RoleFamily
+      - 'def thinking_for(self, level: str) -> Any'
       - def to_dict(self) -> dict[str, Any]
     - name: BudgetConfig
       doc: Hard caps in EUR.  Soft allocations are advisory and may move; these do not.
@@ -1465,6 +1473,7 @@ modules:
       - 'def with_provider_enabled(self, name: str, enabled: bool) -> ''GatewayConfig'''
       - 'def with_role_binding(self, role: str, *, provider: str | None=None, model: str | None=None, enabled: bool | None=None)
         -> ''GatewayConfig'''
+      - 'def provider_for_secret(self, slot: str) -> ProviderConfig | None'
     functions:
     - signature: def default_path() -> Path
   gateway/estimate.py:
@@ -1662,6 +1671,7 @@ modules:
       - 'def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
         -> ProviderReply'
     - name: OpenAIAdapter
+      doc: 'The Responses API: reasoning effort, structured output, cached-token usage.'
       methods:
       - 'def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
         -> ProviderReply'
@@ -1703,7 +1713,8 @@ modules:
         str='''', expected_output_tokens: int=512, task_id: str='''', only_role: str='''', apply_overrides: bool=True) ->
         RouteDecision'
     functions:
-    - signature: 'def thinking_level_for(task: TaskVector) -> str'
+    - signature: 'def thinking_level_for(task: TaskVector, mode: ChatMode | None=None) -> str'
+      doc: FAST / NORMAL / DEEP from the task; MAX only in DEEP mode for the hardest tasks.
     - signature: 'def hard_override(task: TaskVector, privacy: PrivacyDecision | None) -> tuple[RouteKind | None, str]'
       doc: The rules that outrank scoring.  Returns (kind, why) or (None, "").
   gateway/secrets.py:
@@ -1715,6 +1726,8 @@ modules:
       - def scheme(self) -> str
       - 'def set(self, name: str, value: str) -> None'
       - 'def clear(self, name: str) -> bool'
+      - 'def import_environment(self, mapping: dict[str, ''list[str] | tuple[str, ...]''], environ: dict[str, str] | None=None)
+        -> list[str]'
       - 'def get(self, name: str) -> str'
       - 'def has(self, name: str) -> bool'
       - def status(self) -> dict[str, dict[str, Any]]
@@ -4012,12 +4025,34 @@ modules:
       - 'def owner_sentence(self, *, german: bool=True) -> str'
     functions:
     - signature: 'def choose_engineer(need: EngineeringNeed, *, availability: Any=None, owner_authorized_local: bool=False,
-        task: Any=None, gateway: Any=None, mode: Any=None, prompt: str='''') -> EngineerDecision'
+        task: Any=None, gateway: Any=None, mode: Any=None, prompt: str='''', vector: Any=None) -> EngineerDecision'
       doc: The one decision. Codex first, always; BUILD_LOCAL only by authorization.
     - signature: 'def default_availability(gateway: Any=None) -> Any'
       doc: The availability source the whole system shares.
     - signature: 'def owner_authorized_local_build(text: str) -> bool'
       doc: Whether this owner sentence authorizes the local coder for this work.
+    - signature: 'def estimate_engineering(gateway: Any, role: str, *, context_chars: int, expected_output_tokens: int | None=None,
+        cached_chars: int=0, task_id: str='''', mode: Any=None) -> dict[str, Any]'
+      doc: What an engineering job would cost before the engineer is called.
+  service/engineering_vector.py:
+    module: service.engineering_vector
+    classes:
+    - name: EngineeringTaskVector
+      methods:
+      - def systems(self) -> list[str]
+      - def as_features(self) -> dict[str, float]
+      - def task_class(self) -> str
+      - def frontier_indicators(self) -> list[str]
+      - def frontier_required(self) -> bool
+      - def to_dict(self) -> dict[str, Any]
+      - 'def from_dict(cls, data: dict[str, Any]) -> ''EngineeringTaskVector'''
+    functions:
+    - signature: 'def systems_named(text: str) -> list[str]'
+    - signature: 'def vector_from_spec(spec: Any, *, catalog_dependents: int=0, impacted_core_modules: Iterable[str]=(), goal_ambiguity:
+        float | None=None) -> EngineeringTaskVector'
+      doc: Deterministic signals from an EngineeringSpec (or a dict of its fields) and the Catalog's impact view.
+    - signature: 'def task_vector_for(vector: EngineeringTaskVector, text: str) -> Any'
+      doc: 'The gateway''s TaskVector for this engineering task: the same class, the same difficulty signals.'
   service/events.py:
     module: service.events
     classes:

@@ -480,7 +480,7 @@ JSON:"""
 
 @dataclass
 class FlowResult:
-    status: str  # PLAN | MISSING_CAPABILITY | CLARIFY | INTELLIGENCE_UNAVAILABLE | NONE
+    status: str  # PLAN | MISSING_CAPABILITY | CLARIFY | INTELLIGENCE_UNAVAILABLE | FREE_INTELLIGENCE_UNAVAILABLE | NONE
     goal: GoalSpec | None = None
     plan_spec: PlanSpec | None = None
     validation: PlanValidation | None = None
@@ -520,6 +520,16 @@ class IntelligenceFlow:
         self.reliability = reliability
         self.metrics = FlowMetrics()
 
+    def unavailable_status(self) -> str:
+        """FREE mode has its own typed answer: the free provider is not reachable and nothing paid or local replaces it."""
+
+        from gateway.modes import ChatMode
+
+        try:
+            return "FREE_INTELLIGENCE_UNAVAILABLE" if ChatMode.parse(self.mode) is ChatMode.FREE else "INTELLIGENCE_UNAVAILABLE"
+        except Exception:  # noqa: BLE001
+            return "INTELLIGENCE_UNAVAILABLE"
+
     # -- vocabulary ------------------------------------------------------------
 
     @staticmethod
@@ -539,7 +549,8 @@ class IntelligenceFlow:
         self.metrics.total_model_context_tokens += estimate_tokens(prompt)
         self.metrics.provider_calls += 1
         request = GatewayRequest(prompt=prompt, mode=self.mode if self.mode is not None else "AUTO", facts=facts, schema=schema,
-                                 max_output_tokens=max_tokens, temperature=0.0, task_id=self.task_id, overrides=False)
+                                 max_output_tokens=max_tokens, temperature=0.0, task_id=self.task_id, overrides=False,
+                                 allow_offline_fallback=False)
         try:
             reply = self.gateway.complete(request)
         except GatewayRefused as exc:
@@ -729,7 +740,7 @@ class IntelligenceFlow:
         if reply is not None:
             result.provider, result.model = reply.provider, reply.model
         if spec is None:
-            result.status, result.reason, result.question = "INTELLIGENCE_UNAVAILABLE", unavailable.get("reason", ""), unavailable.get("question", "")
+            result.status, result.reason, result.question = self.unavailable_status(), unavailable.get("reason", ""), unavailable.get("question", "")
             return result
         result.goal = spec
         if not spec.primary_goal:
@@ -772,7 +783,7 @@ class IntelligenceFlow:
         # The provider proposes; the planner validates; one round of exact feedback.
         proposal, unavailable = self.propose(text, spec, context, goal_facts)
         if proposal is None:
-            result.status, result.reason, result.question = "INTELLIGENCE_UNAVAILABLE", unavailable.get("reason", ""), unavailable.get("question", "")
+            result.status, result.reason, result.question = self.unavailable_status(), unavailable.get("reason", ""), unavailable.get("question", "")
             return result
         validation = validate_plan(proposal, state, cards, goal_facts) if proposal.steps else None
         if proposal.steps and validation is not None and not validation.ok:

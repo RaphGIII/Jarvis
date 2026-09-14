@@ -359,8 +359,10 @@
   ],
   "gateway/estimate.py": [
    "capabilities/intelligence.py",
+   "experts/api_engineer.py",
    "gateway/gateway.py",
-   "gateway/router.py"
+   "gateway/router.py",
+   "service/engineering.py"
   ],
   "gateway/gateway.py": [
    "capabilities/intelligence.py",
@@ -380,6 +382,7 @@
    "gateway/router.py"
   ],
   "gateway/modes.py": [
+   "capabilities/intelligence.py",
    "experts/api_engineer.py",
    "gateway/__init__.py",
    "gateway/budget.py",
@@ -416,6 +419,7 @@
    "gateway/learning.py",
    "gateway/router.py",
    "service/core.py",
+   "service/engineering_vector.py",
    "service/selfdev.py"
   ],
   "gateway/transport.py": [
@@ -902,6 +906,9 @@
    "service/core.py",
    "service/selfdev.py"
   ],
+  "service/engineering_vector.py": [
+   "service/core.py"
+  ],
   "service/events.py": [
    "service/acquisition.py",
    "service/core.py",
@@ -1241,6 +1248,7 @@
    "capabilities/planner.py",
    "gateway/estimate.py",
    "gateway/gateway.py",
+   "gateway/modes.py",
    "gateway/task.py",
    "service/composer.py"
   ],
@@ -1406,6 +1414,7 @@
    "brain/json_utils.py",
    "experts/contracts.py",
    "experts/gateway.py",
+   "gateway/estimate.py",
    "gateway/gateway.py",
    "gateway/health.py",
    "gateway/modes.py",
@@ -1968,6 +1977,7 @@
    "service/defaults.py",
    "service/doctor.py",
    "service/engineering.py",
+   "service/engineering_vector.py",
    "service/events.py",
    "service/filesystem.py",
    "service/imagegen.py",
@@ -2016,8 +2026,12 @@
   "service/engineering.py": [
    "capabilities/codex.py",
    "capabilities/models.py",
+   "gateway/estimate.py",
    "gateway/modes.py",
    "gateway/router.py"
+  ],
+  "service/engineering_vector.py": [
+   "gateway/task.py"
   ],
   "service/events.py": [],
   "service/filesystem.py": [],
@@ -2519,6 +2533,7 @@
   "service/desktop.py",
   "service/doctor.py",
   "service/engineering.py",
+  "service/engineering_vector.py",
   "service/events.py",
   "service/filesystem.py",
   "service/http.py",

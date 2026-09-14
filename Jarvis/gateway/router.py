@@ -114,13 +114,17 @@ AMBIGUITY_CLARIFY_THRESHOLD = 0.8
 DETERMINISTIC_CONFIDENCE = 0.85
 
 
-def thinking_level_for(task: TaskVector) -> str:
+def thinking_level_for(task: TaskVector, mode: ChatMode | None = None) -> str:
+    """FAST / NORMAL / DEEP from the task; MAX only in DEEP mode for the hardest tasks."""
+
     depth = max(task.reasoning_depth, task.long_horizon, task.integration_breadth)
     if depth < 0.3:
-        return "FREE_LOW"
+        return "FAST"
     if depth < 0.65:
-        return "FREE_MEDIUM"
-    return "FREE_HIGH"
+        return "NORMAL"
+    if mode is ChatMode.DEEP and depth >= 0.85:
+        return "MAX"
+    return "DEEP"
 
 
 def hard_override(task: TaskVector, privacy: PrivacyDecision | None) -> tuple[RouteKind | None, str]:
@@ -287,7 +291,7 @@ class ModelRouter:
         decision.role, decision.provider, decision.model = chosen.role, chosen.provider, chosen.binding.model
         decision.cost_class, decision.estimate, decision.q = chosen.cost_class, chosen.estimate, chosen.q
         decision.offline_fallback = chosen.binding.offline_fallback
-        decision.thinking_level = thinking_level_for(task) if chosen.binding.thinking else ""
+        decision.thinking_level = thinking_level_for(task, mode) if chosen.binding.thinking else ""
         cheaper_rejected = [c for c in eligible if c.cost < chosen.cost]
         parts = [f"cheapest route with q={chosen.q:.2f} >= tau={tau:.2f}" if decision.meets_threshold
                  else f"no route meets tau={tau:.2f}; best available q={chosen.q:.2f}"]

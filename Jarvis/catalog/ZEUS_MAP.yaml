@@ -133,10 +133,12 @@ packages:
       - tests/test_capability_teaching_loop.py
       - tests/test_composition_planner.py
       - tests/test_engineering_router.py
+      - tests/test_engineering_vector.py
       - tests/test_environment.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_isolation.py
+      - tests/test_live_providers.py
       - tests/test_recovery_strategy.py
       - tests/test_replan_semantic_equivalence.py
       - tests/test_selfdev.py
@@ -179,6 +181,7 @@ packages:
       lines: 146
       public: 2
       tests:
+      - tests/test_engineering_vector.py
       - tests/test_intelligence_flow.py
     - path: capabilities/executor.py
       purpose: ''
@@ -193,10 +196,11 @@ packages:
       - tests/test_capability_teaching_loop.py
     - path: capabilities/intelligence.py
       purpose: 'The authoritative semantic flow: the reasoning provider understands and proposes,'
-      lines: 826
+      lines: 837
       public: 17
       tests:
       - tests/test_intelligence_flow.py
+      - tests/test_live_providers.py
       - tests/test_semantic_composition.py
     - path: capabilities/models.py
       purpose: ''
@@ -248,6 +252,7 @@ packages:
       - tests/test_capability_resolution.py
       - tests/test_capability_service.py
       - tests/test_capability_teaching_loop.py
+      - tests/test_live_providers.py
       - tests/test_semantic_acceptance.py
       - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
@@ -625,13 +630,17 @@ packages:
       - tests/test_escalation.py
       - tests/test_expert_gateway.py
       - tests/test_expert_memory.py
+      - tests/test_live_providers.py
+      - tests/test_provider_stack.py
       - tests/test_semantic_acceptance.py
     - path: experts/api_engineer.py
       purpose: An engineer behind a metered API, driven through the model gateway.
-      lines: 305
+      lines: 381
       public: 1
       tests:
       - tests/test_engineering_router_gateway.py
+      - tests/test_live_providers.py
+      - tests/test_provider_stack.py
     - path: experts/claude_code.py
       purpose: Expert provider backed by the Claude Code CLI on the user's subscription.
       lines: 309
@@ -655,6 +664,8 @@ packages:
       - tests/test_capability_teaching_loop.py
       - tests/test_engineering_router_gateway.py
       - tests/test_expert_gateway.py
+      - tests/test_live_providers.py
+      - tests/test_provider_stack.py
       - tests/test_semantic_acceptance.py
     - path: experts/escalation.py
       purpose: Deciding when the local model has had its chance.
@@ -669,6 +680,7 @@ packages:
       tests:
       - tests/test_engineering_router_gateway.py
       - tests/test_expert_gateway.py
+      - tests/test_live_providers.py
       - tests/test_semantic_acceptance.py
     - path: experts/memory.py
       purpose: Remembering how a hard problem was solved, so it is not bought twice.
@@ -685,9 +697,12 @@ packages:
       public: 0
       tests:
       - tests/test_engineering_router_gateway.py
+      - tests/test_engineering_vector.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
       - tests/test_semantic_composition.py
     - path: gateway/budget.py
       purpose: 'The cost governor: reserve before you spend, and never past the cap.'
@@ -695,15 +710,19 @@ packages:
       public: 4
       tests:
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
     - path: gateway/config.py
       purpose: Roles, providers, prices and caps -- read from configuration, never from code.
-      lines: 412
-      public: 6
+      lines: 591
+      public: 7
       tests:
       - tests/test_engineering_router_gateway.py
+      - tests/test_engineering_vector.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
       lines: 99
@@ -712,23 +731,26 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 614
+      lines: 660
       public: 10
       tests:
       - tests/test_gateway_integration.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
     - path: gateway/health.py
       purpose: Telling a provider problem from a task problem.
-      lines: 117
+      lines: 126
       public: 4
       tests:
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
       - tests/test_semantic_composition.py
     - path: gateway/learning.py
       purpose: What ZEUS has learned about which role is good enough for what.
-      lines: 209
+      lines: 212
       public: 4
       tests:
       - tests/test_model_gateway.py
@@ -738,8 +760,11 @@ packages:
       public: 5
       tests:
       - tests/test_engineering_router_gateway.py
+      - tests/test_engineering_vector.py
       - tests/test_gateway_integration.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
     - path: gateway/persona.py
       purpose: ZEUS stays ZEUS, whoever computed the answer.
       lines: 100
@@ -754,22 +779,26 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/providers.py
       purpose: 'Provider adapters: request shape in, text and usage out.'
-      lines: 238
+      lines: 281
       public: 8
-      tests: []
+      tests:
+      - tests/test_live_providers.py
     - path: gateway/router.py
       purpose: Choosing the route before anything runs.
-      lines: 314
+      lines: 318
       public: 6
       tests:
       - tests/test_model_gateway.py
     - path: gateway/secrets.py
       purpose: Provider credentials, stored encrypted and never repeated.
-      lines: 226
+      lines: 246
       public: 2
       tests:
       - tests/test_engineering_router_gateway.py
+      - tests/test_engineering_vector.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
     - path: gateway/task.py
       purpose: 'The typed task vector: what a request is, before anyone asks a model.'
       lines: 237
@@ -777,13 +806,16 @@ packages:
       tests:
       - tests/test_engineering_router_gateway.py
       - tests/test_gateway_integration.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
     - path: gateway/transport.py
       purpose: The only way a provider reaches the network -- and the FREE-mode wall.
-      lines: 147
+      lines: 153
       public: 5
       tests:
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
   imagegen:
     purpose: local image generation
     modules:
@@ -1445,11 +1477,13 @@ packages:
       - tests/test_expert_gateway.py
       - tests/test_expert_memory.py
       - tests/test_intelligence_flow.py
+      - tests/test_live_providers.py
       - tests/test_mission_engine.py
       - tests/test_missions.py
       - tests/test_model_gateway.py
       - tests/test_music.py
       - tests/test_provider_infra_v03.py
+      - tests/test_provider_stack.py
       - tests/test_repository_patch_engine_v3.py
       - tests/test_self_developer_v1.py
       - tests/test_semantic_acceptance.py
@@ -1508,7 +1542,9 @@ packages:
       - tests/test_engineering_router_gateway.py
       - tests/test_expert_gateway.py
       - tests/test_expert_memory.py
+      - tests/test_live_providers.py
       - tests/test_model_gateway.py
+      - tests/test_provider_stack.py
       - tests/test_semantic_acceptance.py
     - path: runtime/deadline.py
       purpose: Time budgets that are actually enforced, and calls that cannot outlive them.
@@ -1680,6 +1716,7 @@ packages:
       - tests/test_devices.py
       - tests/test_engineering_router.py
       - tests/test_engineering_router_gateway.py
+      - tests/test_engineering_vector.py
       - tests/test_filesystem.py
       - tests/test_fs_intelligence.py
       - tests/test_gateway_integration.py
@@ -1690,6 +1727,7 @@ packages:
       - tests/test_jobs.py
       - tests/test_knowledge_view.py
       - tests/test_language_and_persona.py
+      - tests/test_live_providers.py
       - tests/test_missions.py
       - tests/test_model_gateway.py
       - tests/test_music.py
@@ -1774,7 +1812,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8385
+      lines: 8442
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1824,12 +1862,19 @@ packages:
       - tests/test_semantic_acceptance.py
     - path: service/engineering.py
       purpose: Who does engineering work, decided once, for every path that needs it.
-      lines: 341
-      public: 6
+      lines: 456
+      public: 7
       tests:
       - tests/test_engineering_router.py
       - tests/test_engineering_router_gateway.py
+      - tests/test_engineering_vector.py
       - tests/test_intelligence_flow.py
+    - path: service/engineering_vector.py
+      purpose: 'The typed EngineeringTaskVector: what kind of engineering a missing capability is.'
+      lines: 212
+      public: 4
+      tests:
+      - tests/test_engineering_vector.py
     - path: service/events.py
       purpose: The event bus every Jarvis client watches.
       lines: 238
@@ -2018,6 +2063,7 @@ packages:
       public: 2
       tests:
       - tests/test_composition_planner.py
+      - tests/test_live_providers.py
       - tests/test_semantic_composition.py
   skills:
     purpose: skill packaging
@@ -2966,8 +3012,8 @@ ui_modules:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 327
+  modules: 328
   packages: 33
   api_routes: 171
   ui_modules: 31
-  tests: 116
+  tests: 119

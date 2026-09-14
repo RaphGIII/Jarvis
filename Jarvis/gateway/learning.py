@@ -52,6 +52,8 @@ class Observation:
     output_tokens: int = 0
     task_vector: dict[str, float] = field(default_factory=dict)
     mode: str = ""
+    #: The abstract reasoning effort the call used (FAST / NORMAL / DEEP / MAX), "" when none.
+    thinking_level: str = ""
     at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @property
@@ -66,7 +68,8 @@ class Observation:
             "goal_verified": self.goal_verified, "failure_class": self.failure_class,
             "estimated_eur": self.estimated_eur, "actual_eur": self.actual_eur, "latency_seconds": self.latency_seconds,
             "input_tokens": self.input_tokens, "cached_input_tokens": self.cached_input_tokens,
-            "output_tokens": self.output_tokens, "task_vector": dict(self.task_vector), "mode": self.mode, "at": self.at,
+            "output_tokens": self.output_tokens, "task_vector": dict(self.task_vector), "mode": self.mode,
+            "thinking_level": self.thinking_level, "at": self.at,
         }
 
 

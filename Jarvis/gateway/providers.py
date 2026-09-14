@@ -29,6 +29,8 @@ class ProviderRequest:
     thinking: Any = None
     #: JSON schema when structured output is wanted.
     schema: dict[str, Any] | None = None
+    #: The abstract level the setting came from (FAST / NORMAL / DEEP / MAX), for the record.
+    thinking_level: str = ""
 
 
 @dataclass
@@ -86,10 +88,19 @@ class GeminiAdapter:
             generation["responseMimeType"] = "application/json"
             generation["responseSchema"] = gemini_schema(request.schema)
         if request.thinking is not None:
-            try:
-                generation["thinkingConfig"] = {"thinkingBudget": int(request.thinking)}
-            except (TypeError, ValueError):
+            # Two generations of thinking control: a token budget (2.x) or a
+            # named level (3.x).  Configuration says which; an unusable value
+            # is dropped rather than sent.
+            if isinstance(request.thinking, bool):
                 pass
+            elif isinstance(request.thinking, (int, float)):
+                generation["thinkingConfig"] = {"thinkingBudget": int(request.thinking)}
+            elif isinstance(request.thinking, str) and request.thinking.strip():
+                value = request.thinking.strip().lower()
+                if value.lstrip("-").isdigit():
+                    generation["thinkingConfig"] = {"thinkingBudget": int(value)}
+                else:
+                    generation["thinkingConfig"] = {"thinkingLevel": value}
         body: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": request.prompt}]}],
             "generationConfig": generation,
@@ -115,41 +126,69 @@ class GeminiAdapter:
                              finish_reason=str(candidates[0].get("finishReason", "")), model=binding.model)
 
 
+OPENAI_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
+
+
 class OpenAIAdapter:
+    """The Responses API: reasoning effort, structured output, cached-token usage."""
+
     kind = "openai"
     auth = "bearer"
 
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
-        url = f"{provider.base_url.rstrip('/')}/v1/chat/completions"
-        messages = []
+        url = f"{provider.base_url.rstrip('/')}/v1/responses"
+        body: dict[str, Any] = {
+            "model": binding.model,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": request.prompt}]}],
+            "max_output_tokens": request.max_output_tokens,
+            "store": False,
+        }
         if request.system:
-            messages.append({"role": "system", "content": request.system})
-        messages.append({"role": "user", "content": request.prompt})
-        body: dict[str, Any] = {"model": binding.model, "messages": messages, "max_completion_tokens": request.max_output_tokens}
-        if request.thinking:
+            body["instructions"] = request.system
+        effort = str(request.thinking or "").strip().lower()
+        if effort in OPENAI_EFFORTS:
             # Reasoning models take an effort level and reject a temperature.
-            body["reasoning_effort"] = str(request.thinking)
+            body["reasoning"] = {"effort": effort}
         else:
             body["temperature"] = request.temperature
         if request.schema is not None:
-            body["response_format"] = {"type": "json_schema", "json_schema": {"name": "zeus_response", "schema": request.schema}}
+            body["text"] = {"format": {"type": "json_schema", "name": "zeus_response", "schema": request.schema, "strict": False}}
         reply = transport.post_json(ticket, provider, url, body, auth=self.auth)
         data = reply.data
-        try:
-            choice = data["choices"][0]
-            text = str(choice["message"]["content"] or "")
-        except (KeyError, IndexError, TypeError):
-            raise GatewayError(ProviderStatus.TASK_FAILURE, "malformed completion", role=ticket.role, provider=provider.name) from None
+        if data.get("error"):
+            raise GatewayError(ProviderStatus.TASK_FAILURE, str(data["error"])[:300], role=ticket.role, provider=provider.name)
+        text = str(data.get("output_text") or "")
+        if not text:
+            pieces: list[str] = []
+            for item in data.get("output") or []:
+                if not isinstance(item, dict) or item.get("type") != "message":
+                    continue
+                for part in item.get("content") or []:
+                    if isinstance(part, dict) and part.get("type") in {"output_text", "text"}:
+                        pieces.append(str(part.get("text", "")))
+                    elif isinstance(part, dict) and part.get("type") == "refusal":
+                        raise GatewayError(ProviderStatus.TASK_FAILURE, f"refusal: {str(part.get('refusal', ''))[:200]}",
+                                           role=ticket.role, provider=provider.name)
+            text = "".join(pieces)
+        status = str(data.get("status") or "")
+        if not text and status not in {"completed", ""}:
+            detail = (data.get("incomplete_details") or {}).get("reason", "") if isinstance(data.get("incomplete_details"), dict) else ""
+            raise GatewayError(ProviderStatus.TASK_FAILURE, f"response {status}{': ' + detail if detail else ''}", role=ticket.role,
+                               provider=provider.name)
         usage_raw = data.get("usage") or {}
-        details = usage_raw.get("prompt_tokens_details") or {}
+        in_details = usage_raw.get("input_tokens_details") or {}
+        out_details = usage_raw.get("output_tokens_details") or {}
         usage = {
-            "input_tokens": int(usage_raw.get("prompt_tokens", 0) or 0),
-            "cached_input_tokens": int(details.get("cached_tokens", 0) or 0),
-            "output_tokens": int(usage_raw.get("completion_tokens", 0) or 0),
+            "input_tokens": int(usage_raw.get("input_tokens", 0) or 0),
+            "cached_input_tokens": int(in_details.get("cached_tokens", 0) or 0),
+            "output_tokens": int(usage_raw.get("output_tokens", 0) or 0),
+            "reasoning_tokens": int(out_details.get("reasoning_tokens", 0) or 0),
         }
-        return ProviderReply(text=text, usage=usage, latency_seconds=reply.latency_seconds,
-                             finish_reason=str(choice.get("finish_reason", "")), model=str(data.get("model") or binding.model))
+        incomplete = data.get("incomplete_details") if isinstance(data.get("incomplete_details"), dict) else {}
+        finish = str((incomplete or {}).get("reason") or status or "")
+        return ProviderReply(text=text, usage=usage, latency_seconds=reply.latency_seconds, finish_reason=finish,
+                             model=str(data.get("model") or binding.model))
 
 
 class OpenAICompatibleAdapter(OpenAIAdapter):
@@ -199,11 +238,15 @@ class AnthropicAdapter:
                                 "messages": [{"role": "user", "content": prompt}]}
         if request.system:
             body["system"] = request.system
-        if request.thinking:
-            try:
-                body["thinking"] = {"type": "enabled", "budget_tokens": int(request.thinking)}
-            except (TypeError, ValueError):
-                body["temperature"] = request.temperature
+        budget = None
+        if isinstance(request.thinking, (int, float)) and not isinstance(request.thinking, bool):
+            budget = int(request.thinking)
+        elif isinstance(request.thinking, str) and request.thinking.strip().isdigit():
+            budget = int(request.thinking.strip())
+        if budget and budget >= 1024:
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            if body["max_tokens"] <= budget:
+                body["max_tokens"] = budget + request.max_output_tokens
         else:
             body["temperature"] = request.temperature
         headers = {"anthropic-version": "2023-06-01"}

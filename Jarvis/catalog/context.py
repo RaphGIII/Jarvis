@@ -31,10 +31,17 @@ class EngineeringContext:
     text: str
     chars: int
     sections: list[str] = field(default_factory=list)
+    #: catalog_tokens (map, dependents, dependencies, overview), interface_tokens
+    #: (contracts of the impacted modules), test_tokens (the tests to run).
+    tokens: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def dependents_count(self) -> int:
+        return sum(len(v) for v in self.dependents.values())
 
     def to_dict(self) -> dict[str, Any]:
         return {"files": self.files, "dependents": self.dependents, "tests": self.tests, "chars": self.chars,
-                "sections": self.sections}
+                "sections": self.sections, "tokens": dict(self.tokens)}
 
 
 def load_catalog(repo: Path | None = None, *, out_dir: Path | None = None, rebuild_if_missing: bool = True) -> dict[str, Any]:
@@ -160,6 +167,9 @@ def build_context(files: list[str], *, request: str = "", repo: Path | None = No
     kept: list[str] = []
     names: list[str] = []
     used = 0
+    tokens = {"catalog_tokens": 0, "interface_tokens": 0, "test_tokens": 0}
+    from gateway.estimate import estimate_tokens
+
     for name, text in sections:
         if used + len(text) + 2 > budget_chars:
             if name in {"impacted", "contracts"}:
@@ -169,7 +179,9 @@ def build_context(files: list[str], *, request: str = "", repo: Path | None = No
         kept.append(text)
         names.append(name)
         used += len(text) + 2
+        kind = "interface_tokens" if name in {"contracts", "dependencies"} else ("test_tokens" if name == "tests" else "catalog_tokens")
+        tokens[kind] += estimate_tokens(text)
     body = "\n\n".join(kept)
     if request:
         body = f"# Engineering context for: {request.strip()[:300]}\n\n{body}"
-    return EngineeringContext(files=files, dependents=dependents, tests=tests, text=body, chars=len(body), sections=names)
+    return EngineeringContext(files=files, dependents=dependents, tests=tests, text=body, chars=len(body), sections=names, tokens=tokens)

@@ -239,11 +239,12 @@ def test_with_only_the_offline_model_reachable_no_semantic_decision_is_taken(wor
                                                                          "reason": "local guess"})
     events = ask(core, "fuck, schon wieder verloren", wait=30)
     assert executed == [], "the legacy local model's goal was not acted on"
-    unavailable = tool_events(events, "intelligence: INTELLIGENCE_UNAVAILABLE")
+    unavailable = tool_events(events, "intelligence: FREE_INTELLIGENCE_UNAVAILABLE")
     assert unavailable and unavailable[0]["intelligence"]["goal"] is None
     assert "offline fallback" in unavailable[0]["intelligence"]["reason"]
     text = answer_text(events)
-    assert "nicht erreichbar" in text and "lokale Modell entscheidet" in text
+    assert "nicht erreichbar" in text and "weder ein bezahltes Modell noch das lokale Modell" in text
+    assert not any("Verständnisschicht" in c or "Planungsschicht" in c for c in local.calls), "the local model was never even asked"
     assert not any(e.type is EventType.PROGRESS for e in events), "no engineering was started"
 
 

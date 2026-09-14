@@ -20,6 +20,7 @@ They are never returned to the caller, and every error body passes through
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -130,6 +131,11 @@ class Transport:
                 retry_after = float(header) if header else None
             except (TypeError, ValueError):
                 retry_after = None
+            if retry_after is None:
+                # Gemini puts the delay in the body: "retryDelay": "23s".
+                match = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', text) or re.search(r"retry in (\d+(?:\.\d+)?)s", text, re.I)
+                if match:
+                    retry_after = float(match.group(1))
             raise GatewayError(status_kind, f"HTTP {exc.code}: {text[:500]}", role=ticket.role, provider=provider.name,
                                http_status=int(exc.code), retry_after_seconds=retry_after) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:

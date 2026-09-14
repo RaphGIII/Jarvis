@@ -35,7 +35,11 @@ def _prompt_of(host: str, body: dict) -> str:
     if host == "generativelanguage.googleapis.com":
         return "".join(part.get("text", "") for c in body.get("contents", []) for part in c.get("parts", []))
     if host == "api.openai.com":
-        return "\n".join(str(m.get("content", "")) for m in body.get("messages", []) if isinstance(m, dict))
+        parts = [str(body.get("instructions", ""))]
+        for item in body.get("input", []):
+            content = item.get("content", "") if isinstance(item, dict) else ""
+            parts.append(content if isinstance(content, str) else "".join(str(c.get("text", "")) for c in content if isinstance(c, dict)))
+        return "\n".join(parts)
     if host == "api.anthropic.com":
         parts = [str(body.get("system", ""))]
         for m in body.get("messages", []):
@@ -246,10 +250,16 @@ def test_no_provider_route_is_typed_intelligence_unavailable_not_a_local_guess(t
     local.generate_structured = lambda prompt, schema, **kw: json.dumps({"primary_goal": "understand_recent_loss", "confidence": 0.95,
                                                                          "reason": "local guess"})
     preview = core.compose_contract_preview("fuck, schon wieder verloren")
-    assert preview["status"] == "INTELLIGENCE_UNAVAILABLE" and preview["goal"] is None and preview["plan"] is None
+    assert preview["status"] == "FREE_INTELLIGENCE_UNAVAILABLE" and preview["goal"] is None and preview["plan"] is None
     assert "offline fallback" in preview["reason"]
+    assert not any("Verständnisschicht" in c for c in local.calls), "the local model was never asked for a GoalSpec"
     events = ask(core, "fuck, schon wieder verloren", wait=30)
-    assert executed == [] and "lokale Modell entscheidet" in answer_text(events)
+    assert executed == [] and "weder ein bezahltes Modell noch das lokale Modell" in answer_text(events)
+    core.set_chat_mode("AUTO")
+    kernel.gateway.health.note("openai", ProviderStatus.QUOTA_EXHAUSTED)  # the paid route is gone too
+    preview = core.compose_contract_preview("fuck, schon wieder verloren")
+    assert preview["status"] == "INTELLIGENCE_UNAVAILABLE", "outside FREE the same situation is the general typed status"
+    assert not any("Verständnisschicht" in c for c in local.calls), "still no GoalSpec from the local model"
 
 
 # ---------------------------------------------------------------------------
