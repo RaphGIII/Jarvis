@@ -291,30 +291,6 @@ modules:
       - 'def list(self, *, status: str=''queued'') -> list[CapabilityRequest]'
       - 'def resolve(self, request_id: str, *, detail: str='''', status: str=''served'') -> CapabilityRequest | None'
     functions: []
-  capabilities/composition.py:
-    module: capabilities.composition
-    classes:
-    - name: CompositionResult
-      methods:
-      - def plan(self) -> Plan | None
-      - def missing(self) -> MissingCapabilityEvidence | None
-      - def to_dict(self) -> dict[str, Any]
-    - name: CompositionEngine
-      methods:
-      - def nodes(self) -> list[CapabilityNode]
-      - def planner(self) -> CompositionPlanner
-      - def has_declared_contracts(self) -> bool
-      - 'def plan_for_goals(self, goals: Iterable[str], state: WorldState) -> PlanReport'
-      - 'def derive(self, text: str, state: WorldState, *, mode: Any=None, task_id: str='''') -> GoalDerivation'
-      - 'def derive_and_plan(self, text: str, state: WorldState, *, mode: Any=None, task_id: str='''') -> CompositionResult'
-    functions:
-    - signature: 'def nodes_from_registry(registry: Any, *, reliability: Callable[[str], float | None] | None=None) -> list[CapabilityNode]'
-    - signature: 'def cards_from_registry(registry: Any) -> list[CapabilityCard]'
-    - signature: 'def manifest_tokens_text(nodes: Iterable[CapabilityNode]) -> str'
-      doc: What the planner reasoned over, rendered so it can be measured.
-    - signature: 'def engineering_brief(request: str, evidence: MissingCapabilityEvidence, *, goals: Iterable[str]=()) ->
-        str'
-      doc: The missing capability, stated exactly, for the engineer and its EngineeringSpec.
   capabilities/contracts.py:
     module: capabilities.contracts
     classes:
@@ -338,6 +314,18 @@ modules:
         goal_types: Iterable[str]=(), preconditions: Iterable[str]=(), latency_class: str='''', entrypoint: str='''', tests:
         Iterable[str]=()) -> SemanticContract'
       doc: A minimal contract for a manifest written before contracts existed.
+  capabilities/engineering_spec.py:
+    module: capabilities.engineering_spec
+    classes:
+    - name: EngineeringSpec
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+      - def to_brief(self) -> str
+      - 'def save(self, directory: Path) -> Path'
+    functions:
+    - signature: 'def build_engineering_spec(owner_goal: str, goal_spec: dict[str, Any], evidence: MissingCapabilityEvidence,
+        cards: Iterable[Any], *, catalog_budget_chars: int=6000, repo: Path | None=None, flow_metrics: dict[str, Any] | None=None)
+        -> EngineeringSpec'
   capabilities/executor.py:
     module: capabilities.executor
     classes:
@@ -361,6 +349,69 @@ modules:
       doc: Replace the particulars of a request with what they are an example of.
     - signature: 'def generic_keywords(keywords: list[str], particulars: list[str]) -> list[str]'
       doc: Drop the vocabulary that came from the particulars.
+  capabilities/intelligence.py:
+    module: capabilities.intelligence
+    classes:
+    - name: Card
+      methods:
+      - def summary(self) -> str
+      - def detail(self) -> str
+      - def to_node(self) -> CapabilityNode
+    - name: ProjectSummary
+      methods:
+      - def token(self) -> str
+    - name: RetrievedContext
+      methods:
+      - def empty(self) -> bool
+      - def world_text(self) -> str
+      - def summaries_text(self) -> str
+      - def to_dict(self) -> dict[str, Any]
+    - name: GoalSpec
+      methods:
+      - def goals(self) -> list[str]
+      - def to_dict(self) -> dict[str, Any]
+    - name: PlanStepSpec
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: PlanSpec
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: ValidationProblem
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: PlanValidation
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: FlowMetrics
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: FlowResult
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: IntelligenceFlow
+      methods:
+      - 'def vocabulary(cards: Iterable[Card]) -> list[str]'
+      - 'def understand(self, text: str, context: RetrievedContext) -> tuple[GoalSpec | None, dict[str, Any], Any]'
+      - 'def grounded(self, goal: str, text: str, context: RetrievedContext, spec: GoalSpec) -> tuple[bool, str]'
+      - 'def propose(self, text: str, spec: GoalSpec, context: RetrievedContext, goal_facts: list[str], *, feedback: list[ValidationProblem]
+        | None=None) -> tuple[PlanSpec | None, dict[str, Any]]'
+      - 'def run(self, text: str, state: WorldState) -> FlowResult'
+      - 'def repropose(self, text: str, spec: GoalSpec, context: RetrievedContext, goal_facts: list[str], failed_capability:
+        str, failure: str, done: Iterable[str]) -> PlanSpec | None'
+    functions:
+    - signature: 'def words_of(text: str) -> set[str]'
+      doc: 'The content words of a sentence: retrieval keys, never meaning.'
+    - signature: 'def card_vocabulary(capability_id: str, contract: SemanticContract, description: str='''', examples: Iterable[str]=(),
+        name: str='''') -> frozenset[str]'
+      doc: 'Domain words of a capability: from id, name, goals, effects, events, projects, prose and examples.'
+    - signature: 'def builtin_cards(available_context: Iterable[str]=(''screen'', ''speaker'', ''microphone'')) -> list[Card]'
+    - signature: 'def capability_cards(registry: Any) -> list[Card]'
+    - signature: 'def retrieve(text: str, state: WorldState, cards: Iterable[Card], projects: Iterable[ProjectSummary]) ->
+        RetrievedContext'
+      doc: Cards, events and projects the request is plausibly about -- nothing else.
+    - signature: 'def validate_plan(spec: PlanSpec, state: WorldState, cards: dict[str, Card], goal_facts: Iterable[str])
+        -> PlanValidation'
+      doc: 'Simulate the PlanSpec over the contracts: every step applicable, every effect real, the goal reached.'
   capabilities/models.py:
     module: capabilities.models
     classes:
@@ -540,26 +591,6 @@ modules:
       methods:
       - 'def resolve(self, goal: str | GoalEnvelope) -> CapabilityResolution'
     functions: []
-  capabilities/semantic_goals.py:
-    module: capabilities.semantic_goals
-    classes:
-    - name: CapabilityCard
-      doc: 'What the deriver may know about a capability: id, contract, prose, examples.'
-      methods:
-      - def vocabulary(self) -> set[str]
-    - name: GoalDerivation
-      methods:
-      - def derived(self) -> bool
-      - def to_dict(self) -> dict[str, Any]
-    - name: SemanticGoalDeriver
-      methods:
-      - def vocabulary(self) -> dict[str, list[str]]
-      - 'def grounded(self, goal: str, text: str, state: WorldState) -> tuple[bool, str]'
-      - 'def derive(self, text: str, state: WorldState, *, mode: Any=None, task_id: str='''') -> GoalDerivation'
-    functions:
-    - signature: 'def words_of(text: str) -> set[str]'
-    - signature: 'def cards_from_nodes(nodes: Iterable[CapabilityNode], descriptions: dict[str, str] | None=None, examples:
-        dict[str, Iterable[str]] | None=None, names: dict[str, str] | None=None) -> list[CapabilityCard]'
   capabilities/service.py:
     module: capabilities.service
     classes:
@@ -3499,7 +3530,7 @@ modules:
       - def codex_availability(self) -> Any
       - 'def run(self, goal: str, *, capability_id: str='''', keywords: list[str] | None=None, extra_checks: list[Any] | None=None,
         max_steps: int=60, max_seconds: float=1800.0, expert_constraints: list[str] | None=None, expert_acceptance: list[tuple[str,
-        list[str]]] | None=None, repair: str='''', codex_first: bool=False) -> AcquisitionResult'
+        list[str]]] | None=None, repair: str='''', codex_first: bool=False, engineer: str='''') -> AcquisitionResult'
     functions:
     - signature: 'def repair_goal(specification: str, defect: str) -> str'
       doc: A brief for fixing working code, with the defect first.
@@ -3624,12 +3655,9 @@ modules:
       - def executable(self) -> bool
       - def to_dict(self) -> dict[str, Any]
     - name: Composer
-      doc: Menu → plan → execution, with a gap named when composition cannot cover the goal.
+      doc: 'Parses, executes and evaluates plans.  It does not plan: the reasoning'
       methods:
       - def menu(self) -> str
-      - 'def plan(self, goal: str, provider: Any, *, guidance: str='''', constraints: PlanConstraints | None=None, avoid:
-        Iterable[str]=()) -> Plan'
-      - 'def replan(self, plan: Plan, failed: Step, provider: Any, *, guidance: str='''') -> Plan | None'
       - 'def parse(self, goal: str, raw: str, *, constraints: PlanConstraints | None=None) -> Plan'
       - 'def execute(self, plan: Plan, run_step: Callable[[Step], Any], *, on_step: Callable[[Step, Any], None] | None=None,
         replan: Callable[[Plan, Step], Plan | None] | None=None) -> list[Any]'
@@ -3680,7 +3708,6 @@ modules:
       - def preferences(self) -> Any
       - def secrets(self) -> Any
       - def world(self) -> Any
-      - def composition(self) -> Any
       - def world_state(self) -> dict[str, Any]
       - 'def note_world_event(self, token: str, *, detail: dict[str, Any] | None=None, ttl: float | None=None, source: str=''api'')
         -> dict[str, Any]'

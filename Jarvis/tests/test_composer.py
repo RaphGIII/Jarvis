@@ -21,17 +21,17 @@ class Model:
 def test_a_study_session_is_composed_from_existing_primitives_not_developed():
     composer = Composer(capabilities=[{"capability_id": "system.screen.capture", "status": "active", "description": "Take a screenshot.",
                                        "input_schema": "{'properties': {'path': {'type': 'string'}}}"}])
-    model = Model({"mode": "doing", "steps": [
-        {"step": "file.open", "path": "Biologie.pdf"},
-        {"step": "timer.start", "minutes": 25, "label": "study"},
-        {"step": "music.play", "query": "lofi"},
-    ]})
-    plan = composer.plan("Beginne meine Lernsession: öffne Biologie.pdf, stell einen Timer auf 25 Minuten und spiel lofi.", model)
+    plan = composer.parse("Beginne meine Lernsession: öffne Biologie.pdf, stell einen Timer auf 25 Minuten und spiel lofi.",
+                          json.dumps({"mode": "doing", "steps": [
+                              {"step": "file.open", "path": "Biologie.pdf"},
+                              {"step": "timer.start", "minutes": 25, "label": "study"},
+                              {"step": "music.play", "query": "lofi"},
+                          ]}))
     assert plan.mode == "doing" and plan.executable and not plan.missing
     assert [s.step for s in plan.steps] == ["file.open", "timer.start", "music.play"]
     assert plan.steps[1].arguments == {"minutes": 25, "label": "study"}
-    assert "capability:system.screen.capture" in model.prompts[0], "registered capabilities are on the menu"
-    assert "shell" not in model.prompts[0].lower()
+    assert "capability:system.screen.capture" in composer.menu(), "registered capabilities are on the menu"
+    assert "shell" not in composer.menu().lower()
 
 
 def test_only_the_missing_primitive_is_named_as_a_gap():

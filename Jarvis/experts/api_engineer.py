@@ -166,12 +166,15 @@ class ApiEngineerExpert:
         workspace = Path(job.workspace)
         top_raw = _git(workspace, "rev-parse", "--show-toplevel")
         if top_raw.returncode != 0:
-            return False, f"workspace is not a git worktree: {top_raw.stderr.strip()[:200]}"
-        top = Path(top_raw.stdout.strip())
-        try:
-            relative = workspace.resolve().relative_to(top.resolve())
-        except ValueError:
-            relative = Path(".")
+            # A capability workspace is a plain directory: git apply works there
+            # too, as a patch tool, with paths relative to the workspace.
+            top, relative = workspace, Path(".")
+        else:
+            top = Path(top_raw.stdout.strip())
+            try:
+                relative = workspace.resolve().relative_to(top.resolve())
+            except ValueError:
+                relative = Path(".")
         if not diff.strip():
             return False, "the model returned an empty diff"
         with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False, encoding="utf-8", newline="\n") as handle:
@@ -194,13 +197,27 @@ class ApiEngineerExpert:
             except OSError:
                 pass
 
-    def _changed(self, job: ExpertJob) -> list[str]:
+    def _snapshot(self, job: ExpertJob) -> dict[str, str]:
+        import hashlib
+
+        workspace = Path(job.workspace)
+        out: dict[str, str] = {}
+        for path in workspace.rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts and ".git" not in path.parts:
+                try:
+                    out[path.relative_to(workspace).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+                except OSError:
+                    continue
+        return out
+
+    def _changed(self, job: ExpertJob, before: dict[str, str] | None = None) -> list[str]:
         workspace = Path(job.workspace)
         status = _git(workspace, "status", "--porcelain", "--untracked-files=all")
         top_raw = _git(workspace, "rev-parse", "--show-toplevel")
         out: list[str] = []
         if status.returncode != 0:
-            return out
+            after = self._snapshot(job)
+            return sorted(rel for rel, digest in after.items() if (before or {}).get(rel) != digest)
         top = Path(top_raw.stdout.strip()) if top_raw.returncode == 0 else workspace
         for line in status.stdout.splitlines():
             if len(line) < 4:
@@ -226,6 +243,7 @@ class ApiEngineerExpert:
                           new_subsystem=bool(job.metadata.get("new_subsystem", False)))
         commands: list[str] = []
         previous_error = ""
+        before = self._snapshot(job)
         total_cost = 0.0
         usage_total: dict[str, int] = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
         summary = ""
@@ -251,7 +269,7 @@ class ApiEngineerExpert:
             ok, detail = self._apply(job, diff)
             commands.append(f"git apply ({'ok' if ok else 'failed'})")
             if ok:
-                changed = self._changed(job)
+                changed = self._changed(job, before)
                 self.last = {"cost_eur": round(total_cost, 6), "usage": usage_total, "attempts": attempt + 1, "files": changed}
                 return ExpertResult(status=ExpertStatus.COMPLETED, provider=self.name, summary=summary, files_changed=changed,
                                     commands_run=commands, duration_seconds=time.perf_counter() - started,

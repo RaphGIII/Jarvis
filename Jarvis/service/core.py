@@ -219,24 +219,19 @@ class JarvisCore:
             self._world = WorldModel(path, projects=lambda: [str(p.get("title") or "") for p in self.owner_projects()])
         return self._world
 
-    @property
-    def composition(self) -> Any:
-        """The composition engine: contracts + world state + semantic goal -> plan or proof of a gap."""
+    def _learned_reliability(self, capability_id: str) -> float | None:
+        """What real runs say about a capability, once there are enough of them; else None (the health assumption)."""
 
-        if getattr(self, "_composition", None) is None:
-            from capabilities.composition import CompositionEngine
-
-            def learned_reliability(capability_id: str) -> float | None:
-                manifest = self.capabilities.registry.get(capability_id)
-                if manifest is None:
-                    return None
-                view = manifest.health_view()
-                calls = int(view.get("calls") or 0)
-                rate = view.get("success_rate")
-                return float(rate) if calls >= 3 and rate is not None else None
-
-            self._composition = CompositionEngine(self.capabilities.registry, self.model_gateway, reliability=learned_reliability)
-        return self._composition
+        try:
+            manifest = self.capabilities.registry.get(capability_id)
+        except Exception:  # noqa: BLE001
+            return None
+        if manifest is None:
+            return None
+        view = manifest.health_view()
+        calls = int(view.get("calls") or 0)
+        rate = view.get("success_rate")
+        return float(rate) if calls >= 3 and rate is not None else None
 
     def world_state(self) -> dict[str, Any]:
         return {"ok": True, **self.world.to_dict()}
@@ -254,12 +249,18 @@ class JarvisCore:
         return {"ok": True, "event": entry.to_dict(), "state": self.world.state().to_dict()}
 
     def compose_contract_preview(self, text: str) -> dict[str, Any]:
-        """Derive the semantic goal and plan over contracts -- without executing anything."""
+        """The authoritative flow up to the validated plan -- without executing anything."""
+
+        from capabilities.intelligence import IntelligenceFlow, ProjectSummary, builtin_cards, capability_cards
 
         text = str(text or "").strip()
         if not text:
             return {"ok": False, "error": "empty text"}
-        result = self.composition.derive_and_plan(text, self.world.state(), mode=self.chat_mode)
+        cards = capability_cards(self.capabilities.registry) + builtin_cards()
+        projects = [ProjectSummary(str(p.get("title") or ""), str(p.get("goal") or "")[:200]) for p in self.owner_projects()
+                    if str(p.get("title") or "").strip()]
+        flow = IntelligenceFlow(self.model_gateway, cards, projects, mode=self.chat_mode, reliability=self._learned_reliability)
+        result = flow.run(text, self.world.state())
         return {"ok": True, **result.to_dict()}
 
     def semantic_authority(self) -> dict[str, Any]:
@@ -862,8 +863,9 @@ class JarvisCore:
             return
         # A sentence that is conversation on its face -- "schon wieder
         # verloren" -- can be a goal when the world state carries the context
-        # (a game just finished, a project is active).  Contracts decide.
-        if self._answer_by_contract_composition(text, scope):
+        # (a game just finished, a project is active).  The provider decides,
+        # the planner validates.
+        if self._answer_by_intelligence(text, scope):
             return
         # The registry matched nothing lexically.  A request that names a
         # concrete object -- a path, a file, a folder -- and for which
@@ -1084,6 +1086,7 @@ class JarvisCore:
         # criterion of the intent has a verification behind it.
         satisfied = receipt.verified
         self._gateway_outcome(satisfied)
+        self._note_world_receipt(receipt)
         reasons = [v.check for v in receipt.failures] or (["every success criterion verified"] if satisfied else [receipt.detail])
         self.emit(EventType.TOOL, {"summary": f"goal: {'SATISFIED' if satisfied else 'NOT satisfied'} — {action.operation} {action.target or ''}".strip(),
                                    "goal": {"ACTION_EXECUTED": receipt.ok, "EXECUTION_VERIFIED": receipt.verified, "GOAL_SATISFIED": satisfied, "reasons": reasons},
@@ -1968,6 +1971,48 @@ class JarvisCore:
         self._execute_capability(manifest, text, text, scope, phrase=text)
         return True
 
+    def _note_world_receipt(self, receipt: Any) -> None:
+        """A verified receipt is a real event: the world model learns it, nothing is inferred.
+
+        Only ``receipt.verified`` counts -- a run that could not be checked
+        from outside leaves the world model untouched.
+        """
+
+        try:
+            if receipt is None or not getattr(receipt, "verified", False):
+                return
+            kind = str(getattr(receipt, "kind", "") or "")
+            evidence = getattr(receipt, "evidence", None) or {}
+            detail: dict[str, Any] = {}
+            if kind.startswith("capability."):
+                self._note_capability_facts(kind.split(".", 1)[1])
+                return
+            if kind.startswith("project."):
+                token = "project_" + kind.split(".", 1)[1] + ("d" if kind.endswith("e") else "ed")
+                title = str((evidence.get("project") or {}).get("title") or evidence.get("title") or getattr(receipt, "request", ""))[:80]
+                detail = {"title": title} if title else {}
+            elif kind.startswith("music.") or kind.startswith("media."):
+                action = kind.split(".", 1)[1]
+                token = "media_playing" if action in {"play", "resume"} else ("media_paused" if action in {"pause", "stop"} else f"media_{action}")
+                detail = {k: str(v)[:80] for k, v in evidence.items() if k in {"app", "title", "artist", "query"}}
+            elif kind.startswith("file."):
+                token = "file_" + ("written" if kind.endswith("write") else "read" if kind.endswith("read") else kind.split(".", 1)[1])
+                path = str(evidence.get("path") or "")
+                detail = {"path": path[-80:]} if path else {}
+            else:
+                token = "action." + kind.replace(".", "_") + ".verified"
+            source = f"receipt:{getattr(receipt, 'id', '')}"
+            self.world.note_event(token, source=source, detail=detail)
+            from capabilities.intelligence import BUILTIN_CONTRACTS
+
+            declared = BUILTIN_CONTRACTS.get(kind)
+            if declared:
+                facts = [*declared.get("produces", []), *declared.get("effects", [])]
+                if facts:
+                    self.world.note_facts(facts, source=source)
+        except Exception:  # noqa: BLE001 - the world model is context, never a failure of the action
+            pass
+
     def _note_capability_facts(self, capability_id: str) -> None:
         """A capability ran and verified: what its contract says it produces now holds."""
 
@@ -1981,82 +2026,123 @@ class JarvisCore:
         except Exception:  # noqa: BLE001 - the world model is context, never a failure of the run
             pass
 
-    def _answer_by_contract_composition(self, text: str, scope: str) -> bool:
-        """Contracts + world state + semantic goal: run a plan, name a gap, ask, or say the provider is missing.
+    def _answer_by_intelligence(self, text: str, scope: str) -> bool:
+        """The authoritative semantic flow: retrieval -> GoalSpec -> PlanSpec -> validation -> execution.
 
-        Runs only when at least one capability declares a real contract --
-        without contracts there is nothing to compose over and the older
-        paths keep the request.  Returns True when it handled the request.
+        The reasoning provider understands the owner and proposes the plan;
+        the deterministic planner grounds, validates and proves.  Returns True
+        when the request was handled here: a plan ran, a gap was proven and
+        specified, a question was asked, or no intelligence was reachable.
         """
 
-        from capabilities.composition import engineering_brief
+        from capabilities.engineering_spec import build_engineering_spec
+        from capabilities.intelligence import IntelligenceFlow, ProjectSummary, builtin_cards, capability_cards, retrieve
 
         try:
-            engine = self.composition
-            if not engine.has_declared_contracts():
-                return False
+            registry = self.capabilities.registry
         except Exception:  # noqa: BLE001 - no registry, nothing to compose
             return False
         state = self.world.state()
-        if not self._contract_composition_applies(text, state, engine):
+        try:
+            available = self.device_context().get("available", ["screen", "speaker", "microphone"])
+        except Exception:  # noqa: BLE001
+            available = ["screen", "speaker", "microphone"]
+        cards = capability_cards(registry) + builtin_cards(available)
+        projects = [ProjectSummary(str(p.get("title") or ""), str(p.get("goal") or p.get("summary") or "")[:200])
+                    for p in self.owner_projects() if str(p.get("title") or "").strip()]
+        context = retrieve(text, state, cards, projects)
+        if context.empty:
             return False
-        result = engine.derive_and_plan(text, state, mode=self.chat_mode, task_id=self._current_task_id())
-        derivation = result.derivation
-        self.emit(EventType.TOOL, {"summary": (f"composition: {result.status}"
-                                               + (f" goals={derivation.goals}" if derivation.goals else "")
-                                               + (f" plan={result.plan.capability_ids}" if result.plan and result.plan.steps else "")),
-                                   "composition": result.to_dict(), "source": "composition"}, scope=scope)
+        flow = IntelligenceFlow(self.model_gateway, cards, projects, mode=self.chat_mode, task_id=self._current_task_id(),
+                                reliability=self._learned_reliability)
+        result = flow.run(text, state)
+        try:
+            self._gateway_facts(subsystems=len({c.contract.domain for c in context.cards if c.contract.domain}))
+        except Exception:  # noqa: BLE001
+            pass
+        summary = f"intelligence: {result.status}"
+        if result.goal and result.goal.primary_goal:
+            summary += f" goal={result.goal.primary_goal}"
+        if result.plan is not None and result.plan.steps:
+            summary += f" plan={result.plan.capability_ids} ({result.plan_spec.source if result.plan_spec else ''})"
+        self.emit(EventType.TOOL, {"summary": summary, "intelligence": result.to_dict(), "source": "intelligence"}, scope=scope)
         de = self.language.startswith("de")
-        if result.status == "UNAVAILABLE":
-            if not self._world_has_context(state) and not self._names_concrete_object(text):
-                # Plain conversation without context: prose may still answer
-                # it; no semantic decision is being taken.
+        if result.status == "INTELLIGENCE_UNAVAILABLE":
+            if not self._world_has_context(state):
+                # Without world context nothing here needed a semantic
+                # decision: the typed single-action paths (a file write, a
+                # registered capability) and prose may still answer it.  Only
+                # a context-borne reading -- a game just finished -- is
+                # refused out loud, because no other path may take it.
                 return False
-            self._deliver(self._semantic_unavailable_message(derivation.reason, derivation.question), scope=scope,
-                          backend="composition", final_state=JarvisState.WAITING,
-                          context_text="[semantic provider unavailable; no goal derived]")
+            self._deliver(self._semantic_unavailable_message(result.reason, result.question), scope=scope,
+                          backend="intelligence", final_state=JarvisState.WAITING,
+                          context_text="[intelligence unavailable; no goal derived]")
             return True
         if result.status == "CLARIFY":
-            self._deliver(derivation.question or ("Was genau meinst du?" if de else "What exactly do you mean?"), scope=scope,
-                          backend="composition", final_state=JarvisState.WAITING,
-                          context_text=f"[composition clarification: {derivation.reason[:120]}]")
+            self._deliver(result.question or ("Was genau meinst du?" if de else "What exactly do you mean?"), scope=scope,
+                          backend="intelligence", final_state=JarvisState.WAITING,
+                          context_text=f"[intelligence clarification: {result.reason[:120]}]")
             return True
         if result.status == "MISSING_CAPABILITY" and result.missing is not None:
             evidence = result.missing
             if evidence.kind == "unmet_input":
-                # Every capability the goal needs exists; the world lacks an
-                # input (no game has finished, nothing was named).  That is
-                # not a reason to build anything.
                 inputs = ", ".join(evidence.unmet_inputs)
-                self.emit(EventType.TOOL, {"summary": f"composition: unmet input(s) {inputs}; nothing to build",
-                                           "missing_capability": evidence.to_dict(), "source": "composition"}, scope=scope)
-                self._deliver((f"Dafür fehlt mir gerade die Voraussetzung: {inputs}. Sobald sie vorliegt, kann ich "
-                               f"{' → '.join(evidence.closest_partial_plan.capability_ids) if evidence.closest_partial_plan else 'den Ablauf'} ausführen."
-                               if de else
-                               f"The precondition is missing right now: {inputs}. Once it holds I can run "
-                               f"{' → '.join(evidence.closest_partial_plan.capability_ids) if evidence.closest_partial_plan else 'the plan'}."),
-                              scope=scope, backend="composition",
-                              context_text=f"[composition: unmet input {inputs}; nothing built]")
+                chain = " -> ".join(evidence.closest_partial_plan.capability_ids) if evidence.closest_partial_plan else ""
+                self.emit(EventType.TOOL, {"summary": f"intelligence: unmet input(s) {inputs}; nothing to build",
+                                           "missing_capability": evidence.to_dict(), "source": "intelligence"}, scope=scope)
+                self._deliver((f"Dafür fehlt mir gerade die Voraussetzung: {inputs}." + (f" Sobald sie vorliegt, kann ich {chain} ausführen." if chain else "")
+                               if de else f"The precondition is missing right now: {inputs}." + (f" Once it holds I can run {chain}." if chain else "")),
+                              scope=scope, backend="intelligence", context_text=f"[intelligence: unmet input {inputs}; nothing built]")
                 return True
-            brief = engineering_brief(text, evidence, goals=derivation.goals)
+            spec = build_engineering_spec(text, result.goal.to_dict() if result.goal else {}, evidence, context.cards,
+                                          flow_metrics=result.metrics.to_dict())
+            try:
+                spec.save(Path(self.kernel.state_root) / "engineering_specs")
+            except Exception:  # noqa: BLE001
+                pass
             self.emit(EventType.TOOL, {"summary": "missing capability proven: " + evidence.describe()[:200],
-                                       "missing_capability": evidence.to_dict(), "goals": derivation.goals, "source": "composition"},
-                      scope=scope)
-            self._start_capability_teaching_for_request(text, text, scope, evidence=brief)
+                                       "missing_capability": evidence.to_dict(), "engineering_spec": spec.to_dict(),
+                                       "source": "intelligence"}, scope=scope)
+            self._start_capability_teaching_for_request(text, text, scope, evidence=spec.to_brief(), spec=spec)
             return True
         if result.status == "PLAN" and result.plan is not None:
             if not result.plan.steps:
-                self._deliver(("Das gilt schon: " + ", ".join(derivation.goals) if de else "That already holds: " + ", ".join(derivation.goals)),
-                              scope=scope, backend="composition")
+                goals = ", ".join(result.goal.goals) if result.goal else ""
+                self._deliver((f"Das gilt schon: {goals}" if de else f"That already holds: {goals}"), scope=scope, backend="intelligence")
                 return True
             from service.composer import Plan, Step, extract_constraints
 
-            steps = [Step(f"capability:{cid}", purpose=f"{cid}: {', '.join(step.provides)}", role="required")
-                     for cid, step in zip(result.plan.capability_ids, result.plan.steps)]
-            plan = Plan(goal=text, mode="doing", steps=steps, reason=f"contract plan for {', '.join(derivation.goals)}",
-                        constraints=extract_constraints(text))
+            constraints = extract_constraints(text)
+            steps = []
+            spec_steps = result.plan_spec.steps if result.plan_spec else []
+            for index, planned in enumerate(result.plan.steps):
+                spec_step = spec_steps[index] if index < len(spec_steps) and spec_steps[index].capability_id == planned.capability_id else None
+                cid = planned.capability_id
+                name = cid if cid in {c.capability_id for c in context.cards if c.builtin} else f"capability:{cid}"
+                arguments = dict(spec_step.arguments) if spec_step else {}
+                role = spec_step.role if spec_step else "required"
+                purpose = (spec_step.why if spec_step and spec_step.why else f"{cid}: {', '.join(planned.provides)}")[:120]
+                if constraints.forbids(name):
+                    steps.append(Step(name, arguments, purpose=purpose, status="forbidden", detail="forbidden by the owner's request", role=role))
+                else:
+                    steps.append(Step(name, arguments, purpose=purpose, role=role))
+            if steps and all(s.role == "optional" for s in steps if s.status == "planned"):
+                planned_steps = [s for s in steps if s.status == "planned"]
+                if planned_steps:
+                    planned_steps[-1].role = "required"
+            plan = Plan(goal=text, mode="doing", steps=steps, reason=result.plan_spec.reason if result.plan_spec else "",
+                        constraints=constraints)
+            plan.forbidden_names = [s.step for s in steps if s.status == "forbidden"]  # type: ignore[attr-defined]
+            plan.intelligence = {"flow": flow, "goal": result.goal, "context": context,  # type: ignore[attr-defined]
+                                 "goal_facts": sorted(result.report.goal) if result.report else []}
             return self._answer_by_composition(text, scope, allow_single=True, plan=plan)
         return False
+
+    def _answer_by_contract_composition(self, text: str, scope: str) -> bool:
+        """Kept name for the two call sites; the flow is :meth:`_answer_by_intelligence`."""
+
+        return self._answer_by_intelligence(text, scope)
 
     @staticmethod
     def _world_has_context(state: Any) -> bool:
@@ -2075,11 +2161,10 @@ class JarvisCore:
         if self._world_has_context(state) or self._names_concrete_object(text):
             return True
         try:
-            from capabilities.composition import cards_from_registry
-            from capabilities.semantic_goals import words_of
+            from capabilities.intelligence import capability_cards, words_of
 
             request_words = words_of(text)
-            return any(request_words & card.vocabulary() for card in cards_from_registry(self.capabilities.registry))
+            return any(request_words & card.words for card in capability_cards(self.capabilities.registry))
         except Exception:  # noqa: BLE001
             return False
 
@@ -2173,6 +2258,10 @@ class JarvisCore:
             self._answer_by_research(goal.target or text, scope)
             return True
         if op == "capability.missing":
+            # The reasoning provider decides what is missing, with the planner's
+            # proof; the single-tool planner's opinion is only a reason to ask.
+            if self._answer_by_intelligence(text, scope):
+                return True
             authority = self.semantic_authority()
             if not authority["available"]:
                 # "I have no tool for this" from the legacy local model is not
@@ -2968,6 +3057,7 @@ class JarvisCore:
 
         if outcome.receipt.verified and outcome.capability_id:
             self._defects.pop(outcome.capability_id, None)
+        self._note_world_receipt(outcome.receipt)
 
         self.state.set(JarvisState.VERIFYING, detail=outcome.receipt.kind, scope=scope)
         self.receipts.record(outcome.receipt)
@@ -2992,6 +3082,32 @@ class JarvisCore:
     # Composition: a plan over primitives ZEUS already has
     # ------------------------------------------------------------------
 
+    def _repropose_after_failure(self, current: Any, failed_step: Any, text: str) -> Any:
+        """A required step failed at run time: the reasoning provider proposes the remainder once, validated."""
+
+        if getattr(current, "replans", 0) >= 1:
+            return None
+        meta = getattr(current, "intelligence", None)
+        if not meta:
+            return None
+        from service.composer import Plan, Step
+
+        flow, goal_spec, context = meta["flow"], meta["goal"], meta["context"]
+        done = [s.step.split(":", 1)[-1] for s in current.steps if s.status == "done"]
+        failed_id = failed_step.step.split(":", 1)[-1]
+        proposal = flow.repropose(text, goal_spec, context, meta.get("goal_facts", []), failed_id, failed_step.detail, done)
+        if proposal is None:
+            return None
+        builtin = {c.capability_id for c in context.cards if c.builtin}
+        steps = [Step(cid if (cid := st.capability_id) in builtin else f"capability:{cid}", dict(st.arguments),
+                      purpose=st.why[:120], role=st.role) for st in proposal.steps]
+        if not steps:
+            return None
+        fresh = Plan(goal=current.goal, mode="doing", steps=steps, reason=proposal.reason, constraints=current.constraints,
+                     replans=getattr(current, "replans", 0) + 1)
+        fresh.intelligence = meta  # type: ignore[attr-defined]
+        return fresh
+
     def _composer(self) -> Any:
         from service.composer import Composer
 
@@ -3004,33 +3120,22 @@ class JarvisCore:
 
     def _answer_by_composition(self, text: str, scope: str, *, guidance: str = "", allow_single: bool = False,
                                plan: Any = None) -> bool:
-        """Plan typed steps over existing primitives and run them as a mission.
+        """Run a validated plan as a mission: typed steps, receipts, verification, GOAL_SATISFIED.
 
-        Returns True when the request was handled here (executed, or a gap
-        was named), False when composition found nothing to compose and the
-        ordinary single-action path should take over.
-
-        ``plan`` is a ready plan from the contract planner; without one the
-        model plans over the menu -- and only a configured semantic provider
-        may do that, never the legacy local model on its own.
+        The plan comes from :meth:`_answer_by_intelligence` (the reasoning
+        provider proposed it, the planner validated it).  There is no other
+        planner: without a plan there is nothing to run.
         """
 
-        from brain.tiers import ModelTier
         from runtime.evidence import from_receipt, owner_statement
         from service.composer import Step
 
         from service.composer import evaluate_goal, extract_constraints
 
-        composer = self._composer()
-        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
-        constraints = extract_constraints(text)
         if plan is None:
-            authority = self.semantic_authority()
-            if not authority["available"]:
-                self.emit(EventType.TOOL, {"summary": "composition skipped: no semantic provider (the local model does not plan compositions)",
-                                           "authority": authority, "source": "composer"}, scope=scope)
-                return False
-            plan = composer.plan(text, provider, guidance=guidance, constraints=constraints)
+            return False
+        composer = self._composer()
+        constraints = plan.constraints if getattr(plan, "constraints", None) is not None else extract_constraints(text)
         self.emit(EventType.TOOL, {"summary": f"composition: {plan.mode}, {len(plan.steps)} step(s)" + (f", missing {plan.missing}" if plan.missing else "")
                                    + (f", forbidden {plan.forbidden}" if plan.forbidden else ""),
                                    "plan": plan.to_dict(), "source": "composer"}, scope=scope)
@@ -3085,11 +3190,12 @@ class JarvisCore:
                                       result=step.detail, evidence_id=ev.evidence_id)
             self.receipts.record(receipt)
             self._session_receipts.append(receipt)
+            self._note_world_receipt(receipt)
             self.emit(EventType.TOOL, {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()}, scope=scope)
 
         def replan(current: Any, failed_step: Step) -> Any:
             self.missions.fail_approach(mission, f"step {failed_step.step}", failed_step.detail)
-            fresh = composer.replan(current, failed_step, provider, guidance=guidance)
+            fresh = self._repropose_after_failure(current, failed_step, text)
             if fresh is None:
                 self.emit(EventType.TOOL, {"summary": f"no replan for {failed_step.step}; the remainder stops", "source": "composer"}, scope=scope)
                 return None
@@ -3570,6 +3676,7 @@ class JarvisCore:
         )
         self.receipts.record(receipt)
         self._session_receipts.append(receipt)
+        self._note_world_receipt(receipt)
         self.emit(
             EventType.TOOL,
             {"summary": receipt.summary(), "receipt_id": receipt.id, "receipt": receipt.to_dict()},
@@ -3600,6 +3707,8 @@ class JarvisCore:
                 # capability that returns a value rather than writing a file
                 # has nothing for the outside check to look at.
                 self.capabilities.registry.learn_alias(capability_id, phrase)
+            if receipt.verified:
+                self._note_capability_facts(capability_id)
         except Exception:  # noqa: BLE001 - health bookkeeping must not break the answer
             pass
         # A failure is not one event. What KIND of failure it was decides what
@@ -3751,13 +3860,38 @@ class JarvisCore:
                 return True
         return False
 
-    def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str, *, evidence: str = "") -> None:
-        """A capability ZEUS does not have: Codex engineers one, then the request resumes."""
+    def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str, *, evidence: str = "",
+                                               spec: Any = None) -> None:
+        """A capability ZEUS does not have: an engineer chosen beforehand builds one, then the request resumes."""
 
         if evidence:
-            self._start_capability_engineering(goal, original_text, scope, evidence=evidence)
+            self._start_capability_engineering(goal, original_text, scope, evidence=evidence, spec=spec)
         else:
             self._start_capability_engineering(goal, original_text, scope)
+
+    def _engineer_for_capability(self, goal: str, spec: Any = None) -> Any:
+        """The engineering router's decision for a capability build: made once, before anything runs."""
+
+        from service.engineering import EngineeringNeed, choose_engineer, owner_authorized_local_build
+
+        task = None
+        model_gateway = None
+        try:
+            from gateway.task import TaskFacts, rule_based
+
+            missing = list(getattr(spec, "missing_effects", []) or [])
+            partial = list(getattr(spec, "closest_partial_plan", []) or [])
+            task_class = str(getattr(spec, "task_class", "") or "")
+            task = rule_based(TaskFacts(text=goal, is_engineering=True, capability_missing=True,
+                                        estimated_files_changed=2 + len(partial),
+                                        subsystems=max(1, len(partial)) if task_class != "engineering.small" else 1,
+                                        new_subsystem=task_class == "engineering.large"))
+            model_gateway = self.model_gateway
+        except Exception:  # noqa: BLE001 - the classic Codex-first rule still decides
+            task, model_gateway = None, None
+        return choose_engineer(EngineeringNeed.CAPABILITY_MISSING, availability=self.codex_availability,
+                               owner_authorized_local=owner_authorized_local_build(goal), task=task, gateway=model_gateway,
+                               mode=self.chat_mode, prompt=goal)
 
     def _start_capability_repair_for_request(self, resolution: Any, goal: str, original_text: str, scope: str) -> None:
         """A capability ZEUS has and cannot trust: Codex repairs it, then the request resumes.
@@ -3779,6 +3913,7 @@ class JarvisCore:
 
     def _start_capability_engineering(
         self, goal: str, original_text: str, scope: str, *, capability_id: str = "", repair: str = "", evidence: str = "",
+        spec: Any = None,
     ) -> None:
         """Codex builds or repairs one capability, then the original request resumes.
 
@@ -3792,6 +3927,21 @@ class JarvisCore:
         from service.acquisition import AcquisitionMission
 
         de = self.language.startswith("de")
+        decision = self._engineer_for_capability(goal, spec)
+        self.emit(EventType.TOOL, {"summary": f"engineering routing: {decision.engineer.value} — {decision.reason}",
+                                   "engineering": decision.to_dict(), "source": "engineering.router"}, scope=scope)
+        if not decision.proceeds:
+            # No engineer may run: the spec is kept, the owner is told, and
+            # nothing is built by the local coder in its place.
+            self._deliver((f"Dafür fehlt eine Fähigkeit, und ich habe sie sauber spezifiziert"
+                           + (f" (Spec {spec.spec_id})" if spec is not None else "") + f". Gebaut wird sie noch nicht: {decision.reason[:160]}."
+                           if de else
+                           f"A capability is missing and I have specified it"
+                           + (f" (spec {spec.spec_id})" if spec is not None else "") + f". It is not being built yet: {decision.reason[:160]}."),
+                          scope=scope, backend="engineering", final_state=JarvisState.WAITING,
+                          context_text=f"[engineering spec kept; no engineer available: {decision.reason[:120]}]")
+            return
+        engineer_name = decision.provider_name or "codex"
         if not self._acquiring.acquire(blocking=False):
             self._deliver(
                 ("Ich lerne gerade schon eine Fähigkeit. Diese Anfrage ist vorgemerkt." if de
@@ -3844,7 +3994,8 @@ class JarvisCore:
                     emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
                 )
                 brief = f"{shape.goal}\n\n{evidence}" if evidence else shape.goal
-                result = mission.run(brief, capability_id=cid, keywords=words[:12], repair=repair, codex_first=True)
+                result = mission.run(brief, capability_id=cid, keywords=words[:12], repair=repair, codex_first=True,
+                                     engineer=engineer_name)
                 self.emit(EventType.PROGRESS,
                           {"summary": f"capability {'repair' if repair else 'acquisition'} finished: {result.acquired}",
                            "acquisition": result.to_dict(),
@@ -4159,14 +4310,8 @@ class JarvisCore:
         # and a search over what existing capabilities produce.  A plan runs;
         # a proven gap goes to engineering with the evidence; an ungrounded
         # reading is a question; no semantic provider is said out loud.
-        if self._answer_by_contract_composition(text, scope):
+        if self._answer_by_intelligence(text, scope):
             return
-        if looks_compound(text) or hits:
-            try:
-                if self._answer_by_composition(text, scope, guidance="\n".join(guidance_lines(relevant)), allow_single=bool(hits)):
-                    return
-            except Exception as exc:  # noqa: BLE001 - composition is an attempt; the single-action path remains
-                self.emit(EventType.DIAGNOSTIC, {"composition": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
         # The semantic control plane: FAST_LOCAL reads the goal behind the
         # words and picks ONE tool from a closed set.  This replaces lexical
         # guessing as the primary intelligence — the legacy planner below
@@ -4227,10 +4372,13 @@ class JarvisCore:
                 # An action request never degrades into advisory prose: it is
                 # executed, becomes a mission, asks for what is missing, or
                 # says plainly why it cannot be done.  This is the last branch.
+                # The planner's own diagnostics ("did not return a usable
+                # action", "could not be reached") are not the owner's business.
+                why = plan.reason[:160] if plan.reason and not plan.reason.startswith("the planner") and "is not an action" not in plan.reason else ""
                 self._deliver(
-                    (f"Das kann ich so nicht ausführen: {plan.reason[:160] or 'keine passende Aktion'}. "
+                    (f"Das kann ich so nicht ausführen{': ' + why if why else ''}. "
                      f"Sag mir genauer, was entstehen soll (Projekt, Datei, Notiz, Knowledge-Eintrag, Musik …), dann mache ich es.") if de else
-                    (f"I cannot execute that as asked: {plan.reason[:160] or 'no matching action'}. "
+                    (f"I cannot execute that as asked{': ' + why if why else ''}. "
                      f"Tell me more precisely what should exist afterwards (project, file, note, Knowledge entry, music …) and I will do it."),
                     scope=scope, backend="planner", final_state=JarvisState.WAITING,
                     context_text="[action request: no executable action; asked for the missing detail]",
@@ -4281,6 +4429,7 @@ class JarvisCore:
             scope=scope,
         )
         self._gateway_outcome(bool(receipt.verified))
+        self._note_world_receipt(receipt)
         self._deliver(
             compose(receipt, language=self.language),
             scope=scope,

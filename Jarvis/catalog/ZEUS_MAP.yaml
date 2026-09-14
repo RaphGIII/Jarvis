@@ -135,6 +135,7 @@ packages:
       - tests/test_engineering_router.py
       - tests/test_environment.py
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_isolation.py
       - tests/test_recovery_strategy.py
       - tests/test_replan_semantic_equivalence.py
@@ -165,12 +166,6 @@ packages:
       - tests/test_selfdev.py
       - tests/test_selfdev_candidate_integrity.py
       - tests/test_selfdev_promotion_gate.py
-    - path: capabilities/composition.py
-      purpose: 'Composition engine: registry + world state + semantic goal -> a plan, or proof of a gap.'
-      lines: 146
-      public: 6
-      tests:
-      - tests/test_semantic_composition.py
     - path: capabilities/contracts.py
       purpose: 'Capability semantic contracts (manifest v2): what a capability does to the world.'
       lines: 188
@@ -178,6 +173,13 @@ packages:
       tests:
       - tests/test_capability_contracts.py
       - tests/test_composition_planner.py
+      - tests/test_intelligence_flow.py
+    - path: capabilities/engineering_spec.py
+      purpose: 'EngineeringSpec: exactly what is missing, for an engineer that has not been called yet.'
+      lines: 146
+      public: 2
+      tests:
+      - tests/test_intelligence_flow.py
     - path: capabilities/executor.py
       purpose: ''
       lines: 64
@@ -189,6 +191,13 @@ packages:
       public: 3
       tests:
       - tests/test_capability_teaching_loop.py
+    - path: capabilities/intelligence.py
+      purpose: 'The authoritative semantic flow: the reasoning provider understands and proposes,'
+      lines: 826
+      public: 17
+      tests:
+      - tests/test_intelligence_flow.py
+      - tests/test_semantic_composition.py
     - path: capabilities/models.py
       purpose: ''
       lines: 543
@@ -203,9 +212,9 @@ packages:
       - tests/test_capability_resolution.py
       - tests/test_capability_teaching_loop.py
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_replan_semantic_equivalence.py
       - tests/test_semantic_acceptance.py
-      - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
     - path: capabilities/permissions.py
       purpose: ''
@@ -219,6 +228,7 @@ packages:
       public: 10
       tests:
       - tests/test_composition_planner.py
+      - tests/test_intelligence_flow.py
     - path: capabilities/promotion.py
       purpose: ''
       lines: 89
@@ -257,11 +267,6 @@ packages:
       - tests/test_capability_acquisition_v04.py
       - tests/test_capability_first_architecture.py
       - tests/test_capability_teaching_loop.py
-    - path: capabilities/semantic_goals.py
-      purpose: From the owner's words and the world state to a semantic goal -- or an honest "cannot".
-      lines: 259
-      public: 5
-      tests: []
     - path: capabilities/service.py
       purpose: 'Capabilities: things Jarvis can actually do, acquired when it cannot.'
       lines: 1309
@@ -273,8 +278,8 @@ packages:
       - tests/test_capability_service.py
       - tests/test_capability_teaching_loop.py
       - tests/test_environment.py
+      - tests/test_intelligence_flow.py
       - tests/test_recovery_strategy.py
-      - tests/test_semantic_composition.py
       - tests/test_stall_recovery.py
       - tests/test_static_check.py
     - path: capabilities/specification.py
@@ -318,6 +323,7 @@ packages:
       - tests/test_devices.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
+      - tests/test_intelligence_flow.py
       - tests/test_language_and_persona.py
       - tests/test_selfdev_promotion_gate.py
       - tests/test_semantic_composition.py
@@ -335,9 +341,9 @@ packages:
       - tests/test_devices.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
+      - tests/test_intelligence_flow.py
       - tests/test_language_and_persona.py
       - tests/test_selfdev_promotion_gate.py
-      - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_wake_listener.py
     - path: core/kernel.py
@@ -353,6 +359,7 @@ packages:
       - tests/test_console.py
       - tests/test_desktop_tools.py
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_selfdev_promotion_gate.py
       - tests/test_semantic_composition.py
   deployment:
@@ -621,7 +628,7 @@ packages:
       - tests/test_semantic_acceptance.py
     - path: experts/api_engineer.py
       purpose: An engineer behind a metered API, driven through the model gateway.
-      lines: 287
+      lines: 305
       public: 1
       tests:
       - tests/test_engineering_router_gateway.py
@@ -679,6 +686,7 @@ packages:
       tests:
       - tests/test_engineering_router_gateway.py
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_model_gateway.py
       - tests/test_semantic_composition.py
     - path: gateway/budget.py
@@ -694,13 +702,14 @@ packages:
       tests:
       - tests/test_engineering_router_gateway.py
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_model_gateway.py
-      - tests/test_semantic_composition.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
       lines: 99
       public: 4
-      tests: []
+      tests:
+      - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
       lines: 614
@@ -714,6 +723,7 @@ packages:
       public: 4
       tests:
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_model_gateway.py
       - tests/test_semantic_composition.py
     - path: gateway/learning.py
@@ -1434,6 +1444,7 @@ packages:
       - tests/test_environment.py
       - tests/test_expert_gateway.py
       - tests/test_expert_memory.py
+      - tests/test_intelligence_flow.py
       - tests/test_mission_engine.py
       - tests/test_missions.py
       - tests/test_model_gateway.py
@@ -1592,6 +1603,7 @@ packages:
       public: 7
       tests:
       - tests/test_action_receipts.py
+      - tests/test_intelligence_flow.py
     - path: runtime/runtime_state.py
       purpose: ''
       lines: 32
@@ -1672,6 +1684,7 @@ packages:
       - tests/test_fs_intelligence.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
+      - tests/test_intelligence_flow.py
       - tests/test_intents.py
       - tests/test_isolation.py
       - tests/test_jobs.py
@@ -1701,7 +1714,7 @@ packages:
       - tests/test_wake_segmentation.py
     - path: service/acquisition.py
       purpose: When ZEUS is asked for something it cannot do yet.
-      lines: 980
+      lines: 997
       public: 4
       tests:
       - tests/test_acquisition.py
@@ -1747,10 +1760,11 @@ packages:
       tests: []
     - path: service/composer.py
       purpose: Capability composition and the general action planner.
-      lines: 745
+      lines: 683
       public: 13
       tests:
       - tests/test_composer.py
+      - tests/test_intelligence_flow.py
       - tests/test_replan_semantic_equivalence.py
       - tests/test_semantic_acceptance.py
     - path: service/conversations.py
@@ -1760,7 +1774,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8236
+      lines: 8385
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1771,12 +1785,12 @@ packages:
       - tests/test_devices.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
+      - tests/test_intelligence_flow.py
       - tests/test_knowledge_view.py
       - tests/test_language_and_persona.py
       - tests/test_personality.py
       - tests/test_selfdev_promotion_gate.py
       - tests/test_semantic_acceptance.py
-      - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_supervisor.py
       - tests/test_thoughts.py
@@ -1815,6 +1829,7 @@ packages:
       tests:
       - tests/test_engineering_router.py
       - tests/test_engineering_router_gateway.py
+      - tests/test_intelligence_flow.py
     - path: service/events.py
       purpose: The event bus every Jarvis client watches.
       lines: 238
@@ -1823,6 +1838,7 @@ packages:
       - tests/test_actionability.py
       - tests/test_activity.py
       - tests/test_gateway_integration.py
+      - tests/test_intelligence_flow.py
       - tests/test_pronunciation.py
       - tests/test_selfdev.py
       - tests/test_semantic_composition.py
@@ -2954,4 +2970,4 @@ totals:
   packages: 33
   api_routes: 171
   ui_modules: 31
-  tests: 115
+  tests: 116

@@ -2,8 +2,8 @@
 
 Each test states an owner goal and checks what the *product* did against it --
 what exists afterwards, what was refused, what the verdict says -- through the
-same core the interface uses.  The planner is a fake FAST_LOCAL provider that
-answers with a fixed plan, so the tests pin the semantics around the model
+same core the interface uses.  The reasoning provider is scripted (a GoalSpec
+and a PlanSpec per prompt), so the tests pin the semantics around the model
 (constraints, roles, replanning, goal evaluation, health, gating) and never
 the model's own judgement.
 """
@@ -19,10 +19,11 @@ from pathlib import Path
 import pytest
 
 from service.core import JarvisCore
+from test_intelligence_flow import ScriptedNetwork, make_world
 
 
 class PlanProvider:
-    """FAST_LOCAL stand-in: returns the plan JSON for the first call, a replan for the next."""
+    """Stand-in for the legacy tests below that only need a core (F, G, I, J)."""
 
     def __init__(self, *plans: dict):
         self.plans = list(plans)
@@ -54,13 +55,39 @@ def make_core(tmp_path, *plans):
     return core, provider
 
 
-def compose(core, text):
-    """Run the composition path synchronously and return the delivered text."""
+def knowledge_goal(primary: str = "store_knowledge", *secondary: str):
+    def goal(prompt: str) -> dict:
+        return {"primary_goal": primary, "secondary_goals": list(secondary), "referenced_entities": [], "relevant_project": "none",
+                "relevant_recent_events": [], "constraints": [], "privacy_class": "public", "ambiguity": 0.1, "confidence": 0.9,
+                "reason": "the owner wants this stored in the knowledge graph"}
+    return goal
 
+
+def step(capability_id: str, effect: str, role: str = "required", **arguments) -> dict:
+    return {"capability_id": capability_id, "intended_effect": effect, "why": f"{capability_id}", "role": role,
+            "arguments_json": json.dumps(arguments, ensure_ascii=False)}
+
+
+def plans(*proposals: list[dict]):
+    """A PlanSpec per call: the first proposal, then the next (a run-time reproposal), the last one repeating."""
+
+    queue = list(proposals)
+
+    def plan(prompt: str) -> dict:
+        steps = queue.pop(0) if len(queue) > 1 else queue[0]
+        return {"steps": steps, "expected_final_goal": [], "required_permissions": [], "reason": "scripted"}
+    return plan
+
+
+def compose(tmp_path, text, goal, plan):
+    """Run the authoritative flow synchronously and return (handled, delivered, core, net)."""
+
+    net = ScriptedNetwork(goal, plan)
+    core, kernel, local, executed = make_world(tmp_path, net)
     delivered = []
     core._deliver = lambda text, **kw: delivered.append((text, kw))  # type: ignore[assignment]
-    handled = core._answer_by_composition(text, "", allow_single=True)
-    return handled, delivered
+    handled = core._answer_by_intelligence(text, "")
+    return handled, delivered, core, net
 
 
 KNOWLEDGE_REQUEST = ("Zeus, speichere diesen technischen Befund im Knowledge und verknüpfe ihn mit ZEUS / Voice / Wakeword: "
@@ -73,14 +100,16 @@ KNOWLEDGE_REQUEST = ("Zeus, speichere diesen technischen Befund im Knowledge und
 # --------------------------------------------------------------------------
 
 def test_a_knowledge_goal_is_met_by_a_graph_node_with_relations(tmp_path):
-    core, provider = make_core(tmp_path, {"mode": "doing", "steps": [
-        {"step": "knowledge.search", "query": "Wakeword", "role": "optional"},
-        {"step": "knowledge.create", "title": "Voice-Studio PCM bug", "text": "PCM was divided by 32768", "type": "technical_finding", "links": "ZEUS, Voice, Wakeword"},
-    ]})
-    handled, delivered = compose(core, KNOWLEDGE_REQUEST)
+    handled, delivered, core, net = compose(tmp_path, KNOWLEDGE_REQUEST, knowledge_goal("store_knowledge"), plans([
+        step("knowledge.search", "knowledge_search_results", "optional", query="Wakeword"),
+        step("knowledge.create", "knowledge_node", title="Voice-Studio PCM bug", text="PCM was divided by 32768",
+             type="technical_finding", links="ZEUS, Voice, Wakeword"),
+    ]))
 
     assert handled and delivered
-    kinds = [r.kind for r in core.receipts.all()] if hasattr(core.receipts, "all") else [r.kind for r in core._session_receipts]
+    assert len(net.goal_prompts) == 1 and len(net.plan_prompts) == 1, "one GoalSpec, one PlanSpec"
+    assert "knowledge.create" in net.plan_prompts[0] and "project.create" in net.plan_prompts[0], "the provider saw the contracts it may use"
+    kinds = [r.kind for r in core._session_receipts]
     assert "project.create" not in kinds and "note.create" not in kinds and "file.write" not in kinds
     assert "knowledge.create" in kinds
     node = core.knowledge_read("Voice-Studio PCM bug")
@@ -89,25 +118,24 @@ def test_a_knowledge_goal_is_met_by_a_graph_node_with_relations(tmp_path):
     assert {("relates_to", "ZEUS"), ("relates_to", "Voice"), ("relates_to", "Wakeword")} <= outgoing
     assert core.knowledge_backlinks("Wakeword")["backlinks"][0]["title"] == "Voice-Studio PCM bug"
     # persisted: a fresh core on the same state root finds it by search
-    again = JarvisCore(kernel=Kernel(tmp_path, provider))
+    again = JarvisCore(kernel=core.kernel)
     hits = again.knowledge_graph(query="PCM bug")["nodes"]
     assert any(n["title"] == "Voice-Studio PCM bug" for n in hits)
     assert "Ziel erreicht" in delivered[-1][0]
     mission = core.list_missions()["missions"][0]
     assert mission["state"] == "completed"
+    assert "knowledge_node" in core.world.state().facts, "a verified run is a real event in the world model"
 
 
 # --------------------------------------------------------------------------
-# TEST B — NEGATIVE CONSTRAINT: the planner cannot choose file.write / note.create
+# TEST B — NEGATIVE CONSTRAINT: a forbidden fallback in the proposal never runs
 # --------------------------------------------------------------------------
 
 def test_b_a_forbidden_fallback_is_refused_before_it_runs(tmp_path):
-    core, _ = make_core(tmp_path, {"mode": "doing", "steps": [
-        {"step": "note.create", "title": "Ersatz", "text": "x"},
-        {"step": "file.write", "path": "notizen/x.md", "content": "x"},
-        {"step": "knowledge.create", "title": "Befund", "text": "x", "type": "technical_finding", "links": "ZEUS"},
-    ]})
-    handled, delivered = compose(core, KNOWLEDGE_REQUEST)
+    handled, delivered, core, net = compose(tmp_path, KNOWLEDGE_REQUEST, knowledge_goal(), plans([
+        step("note.create", "note_file", title="Ersatz", text="x"),
+        step("knowledge.create", "knowledge_node", title="Befund", text="x", type="technical_finding", links="ZEUS"),
+    ]))
 
     assert handled
     kinds = [r.kind for r in core._session_receipts]
@@ -118,12 +146,25 @@ def test_b_a_forbidden_fallback_is_refused_before_it_runs(tmp_path):
 
 
 def test_b_when_every_step_is_forbidden_nothing_is_created_and_the_owner_is_told(tmp_path):
-    core, _ = make_core(tmp_path, {"mode": "doing", "steps": [{"step": "note.create", "title": "Ersatz", "text": "x"}]})
-    handled, delivered = compose(core, "Store this in Knowledge; do not create a file or a note as fallback.")
+    # Even a provider that misreads the goal as "write a note" cannot make a
+    # note: the owner ruled it out in the sentence itself.
+    handled, delivered, core, net = compose(tmp_path, "Store this in Knowledge; do not create a file or a note as fallback.",
+                                            knowledge_goal("write_note"), plans([step("note.create", "note_file", title="Ersatz", text="x")]))
 
     assert handled
     assert core._session_receipts == []
     assert "ruled out" in delivered[-1][0] or "ausgeschlossen" in delivered[-1][0]
+
+
+def test_b_an_invalid_proposal_is_corrected_with_the_exact_problem_not_shown_to_the_owner(tmp_path):
+    handled, delivered, core, net = compose(tmp_path, "Speichere die Erkenntnis im Knowledge", knowledge_goal(), plans(
+        [step("knowledge.link", "knowledge_relation", source="a", target="b", relation="concerns")],   # does not reach store_knowledge
+        [step("knowledge.create", "knowledge_node", title="Erkenntnis", text="x", type="note", links="ZEUS")],
+    ))
+
+    assert handled and core.knowledge_read("Erkenntnis")["ok"]
+    assert len(net.plan_prompts) == 2 and "UNGÜLTIG" in net.plan_prompts[1] and "goal.store_knowledge" in net.plan_prompts[1]
+    assert not any("UNGÜLTIG" in text or "goal_not_reached" in text for text, _ in delivered), "the owner never sees the raw problem"
 
 
 # --------------------------------------------------------------------------
@@ -152,11 +193,10 @@ def test_c_a_word_counter_is_not_offered_for_a_knowledge_request(tmp_path):
 # --------------------------------------------------------------------------
 
 def test_d_an_optional_step_failing_does_not_abort_the_goal(tmp_path):
-    core, _ = make_core(tmp_path, {"mode": "doing", "steps": [
-        {"step": "knowledge.read", "title": "does-not-exist", "role": "optional"},
-        {"step": "knowledge.create", "title": "Erkenntnis", "text": "x", "type": "note", "links": "ZEUS"},
-    ]})
-    handled, delivered = compose(core, "Speichere die Erkenntnis im Knowledge")
+    handled, delivered, core, net = compose(tmp_path, "Speichere die Erkenntnis im Knowledge", knowledge_goal(), plans([
+        step("knowledge.read", "knowledge_node_content", "optional", title="does-not-exist"),
+        step("knowledge.create", "knowledge_node", title="Erkenntnis", text="x", type="note", links="ZEUS"),
+    ]))
 
     assert handled
     assert core.knowledge_read("Erkenntnis")["ok"]
@@ -164,24 +204,25 @@ def test_d_an_optional_step_failing_does_not_abort_the_goal(tmp_path):
 
 
 def test_d_a_required_step_failing_leads_to_one_replan_that_completes_the_goal(tmp_path):
-    core, provider = make_core(tmp_path,
-        {"mode": "doing", "steps": [{"step": "knowledge.link", "source": "nichts", "target": "niemand", "relation": "concerns"},
-                                   {"step": "say", "text": "done"}]},
-        {"mode": "doing", "steps": [{"step": "knowledge.create", "title": "Ersatzweg", "text": "x", "type": "note", "links": "ZEUS"}]})
-    handled, delivered = compose(core, "Speichere das im Knowledge")
+    handled, delivered, core, net = compose(tmp_path, "Speichere das im Knowledge", knowledge_goal(), plans(
+        [step("knowledge.link", "knowledge_relation", source="nichts", target="niemand", relation="concerns"),
+         step("knowledge.create", "knowledge_node", title="Nachher", text="x", type="note")],
+        [step("knowledge.create", "knowledge_node", title="Ersatzweg", text="x", type="note", links="ZEUS")],
+    ))
 
     assert handled
-    assert len(provider.prompts) == 2 and "just failed: knowledge.link" in provider.prompts[1]
+    assert len(net.plan_prompts) == 2 and "knowledge.link failed at run time" in net.plan_prompts[1]
     assert core.knowledge_read("Ersatzweg")["ok"]
+    assert not core.knowledge_read("Nachher")["ok"], "the remainder of the failed plan was not run blindly"
     assert "Ziel erreicht" in delivered[-1][0]
 
 
 def test_d_without_a_usable_replan_the_verdict_is_blocked_not_success(tmp_path):
-    core, _ = make_core(tmp_path,
-        {"mode": "doing", "steps": [{"step": "knowledge.link", "source": "nichts", "target": "niemand", "relation": "concerns"},
-                                   {"step": "knowledge.create", "title": "Nachher", "text": "x", "type": "note"}]},
-        {"mode": "answering"})
-    handled, delivered = compose(core, "Speichere das im Knowledge")
+    handled, delivered, core, net = compose(tmp_path, "Speichere das im Knowledge", knowledge_goal(), plans(
+        [step("knowledge.link", "knowledge_relation", source="nichts", target="niemand", relation="concerns"),
+         step("knowledge.create", "knowledge_node", title="Nachher", text="x", type="note")],
+        [],
+    ))
 
     assert handled
     assert not core.knowledge_read("Nachher")["ok"], "the remainder was not run blindly"

@@ -517,35 +517,12 @@ class Plan:
                 "replans": self.replans}
 
 
-PLANNER_PROMPT = """You turn the owner's goal into a short plan of typed steps. You do not perform them.
-
-Every step must be one of these primitives, with its inputs filled in from the goal:
-{menu}
-
-If the goal needs something none of the primitives can do, add a step
-  {{"step": "MISSING", "primitive": "<short name for the missing ability>", "purpose": "<what it must do>"}}
-instead of inventing one.
-
-If the goal is a question, an opinion or conversation, answer with {{"mode": "answering"}}.
-Otherwise answer with {{"mode": "doing", "steps": [ ...steps in order... ]}}.
-
-Rules:
-- Reply with one JSON object and nothing else.
-- Copy names, titles, file names and text exactly as the owner wrote them.
-- Never invent a file name or a track the owner did not name.
-- Prefer fewer steps. Never repeat a step.
-- Choose a step by what it DOES (its purpose, inputs and effects), never because a word in its name appears in the goal.
-- A step may carry "role": "optional" (nice to have; the goal survives its failure) or "role": "verification" (checks the result). Everything else is required.
-- "Store in Knowledge" means knowledge.create, never a file or a note.
-{constraints}
-Owner's goal:
-{goal}
-
-JSON:"""
-
-
 class Composer:
-    """Menu → plan → execution, with a gap named when composition cannot cover the goal."""
+    """Parses, executes and evaluates plans.  It does not plan: the reasoning
+    provider proposes a PlanSpec and the composition planner validates it
+    (see capabilities.intelligence); what arrives here is a validated plan.
+
+    Menu → plan → execution, with a gap named when composition cannot cover the goal."""
 
     def __init__(self, *, capabilities: Iterable[dict[str, Any]] = (), extra: Iterable[Primitive] = (),
                  context_requirements: Iterable[str] = ("screen", "speaker", "microphone")) -> None:
@@ -560,45 +537,6 @@ class Composer:
 
     def menu(self) -> str:
         return "\n".join(p.menu_line() for p in self.primitives.values())
-
-    def plan(self, goal: str, provider: Any, *, guidance: str = "", constraints: PlanConstraints | None = None,
-             avoid: Iterable[str] = ()) -> Plan:
-        constraints = constraints if constraints is not None else extract_constraints(goal)
-        section = constraints.prompt_section()
-        avoid = [a for a in avoid if a]
-        if avoid:
-            section += ("\n" if section else "") + "Do NOT use these steps; they just failed: " + ", ".join(avoid)
-        prompt = PLANNER_PROMPT.format(menu=self.menu(), goal=goal.strip(), constraints=(section + "\n") if section else "")
-        if guidance.strip():
-            prompt = prompt.replace("Owner's goal:", "The owner has corrected earlier readings; these outrank your guess:\n" + guidance.strip() + "\n\nOwner's goal:")
-        try:
-            try:
-                raw = provider.generate(prompt, max_tokens=600, temperature=0.0)
-            except TypeError:
-                raw = provider.generate(prompt)
-        except Exception as exc:  # noqa: BLE001
-            return Plan(goal, "answering", reason=f"the planner could not be reached: {exc}", constraints=constraints)
-        return self.parse(goal, str(raw), constraints=constraints)
-
-    def replan(self, plan: Plan, failed: Step, provider: Any, *, guidance: str = "") -> Plan | None:
-        """One bounded second attempt for the remainder after a required step failed.
-
-        The planner is told what already happened and what not to use again.
-        Returns the new plan for the rest, or None when nothing usable came
-        back -- the caller then reports BLOCKED with the real reason.
-        """
-
-        if plan.replans >= 1:
-            return None
-        done = [s for s in plan.steps if s.status == "done"]
-        remainder_goal = (f"{plan.goal}\n\nAlready done (do not repeat): " + "; ".join(f"{s.step} {json.dumps(s.arguments, ensure_ascii=False)[:60]}" for s in done)
-                          + f"\nThe step {failed.step} failed: {failed.detail[:160]}. Reach the goal another way, or say MISSING.")
-        fresh = self.plan(remainder_goal, provider, guidance=guidance, constraints=plan.constraints, avoid=[failed.step])
-        fresh.goal = plan.goal
-        fresh.replans = plan.replans + 1
-        if fresh.mode != "doing" or not any(s.status == "planned" for s in fresh.steps):
-            return None
-        return fresh
 
     def parse(self, goal: str, raw: str, *, constraints: PlanConstraints | None = None) -> Plan:
         constraints = constraints if constraints is not None else extract_constraints(goal)

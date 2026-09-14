@@ -6,8 +6,8 @@
   ],
   "brain/__init__.py": [],
   "brain/json_utils.py": [
+   "capabilities/intelligence.py",
    "capabilities/resolver.py",
-   "capabilities/semantic_goals.py",
    "capabilities/specification.py",
    "development/qa.py",
    "development/repository_engineer.py",
@@ -82,16 +82,15 @@
    "service/core.py",
    "service/engineering.py"
   ],
-  "capabilities/composition.py": [
-   "service/core.py"
-  ],
   "capabilities/contracts.py": [
-   "capabilities/composition.py",
+   "capabilities/intelligence.py",
    "capabilities/models.py",
    "capabilities/planner.py",
-   "capabilities/semantic_goals.py",
    "capabilities/service.py",
    "service/world.py"
+  ],
+  "capabilities/engineering_spec.py": [
+   "service/core.py"
   ],
   "capabilities/executor.py": [
    "runtime/capability_runtime.py"
@@ -99,6 +98,9 @@
   "capabilities/generalize.py": [
    "capabilities/registry.py",
    "service/composer.py",
+   "service/core.py"
+  ],
+  "capabilities/intelligence.py": [
    "service/core.py"
   ],
   "capabilities/models.py": [
@@ -124,8 +126,8 @@
    "runtime/capability_runtime.py"
   ],
   "capabilities/planner.py": [
-   "capabilities/composition.py",
-   "capabilities/semantic_goals.py",
+   "capabilities/engineering_spec.py",
+   "capabilities/intelligence.py",
    "service/world.py"
   ],
   "capabilities/promotion.py": [
@@ -148,10 +150,6 @@
   "capabilities/resolver.py": [
    "capabilities/service.py",
    "runtime/capability_runtime.py",
-   "service/core.py"
-  ],
-  "capabilities/semantic_goals.py": [
-   "capabilities/composition.py",
    "service/core.py"
   ],
   "capabilities/service.py": [
@@ -360,11 +358,12 @@
    "gateway/transport.py"
   ],
   "gateway/estimate.py": [
+   "capabilities/intelligence.py",
    "gateway/gateway.py",
    "gateway/router.py"
   ],
   "gateway/gateway.py": [
-   "capabilities/semantic_goals.py",
+   "capabilities/intelligence.py",
    "core/kernel.py",
    "experts/api_engineer.py",
    "service/core.py"
@@ -411,7 +410,7 @@
    "gateway/transport.py"
   ],
   "gateway/task.py": [
-   "capabilities/semantic_goals.py",
+   "capabilities/intelligence.py",
    "experts/api_engineer.py",
    "gateway/gateway.py",
    "gateway/learning.py",
@@ -875,6 +874,7 @@
    "service/core.py"
   ],
   "service/composer.py": [
+   "capabilities/intelligence.py",
    "service/core.py"
   ],
   "service/conversations.py": [
@@ -1226,17 +1226,24 @@
    "capabilities/service.py"
   ],
   "capabilities/codex.py": [],
-  "capabilities/composition.py": [
-   "capabilities/contracts.py",
-   "capabilities/planner.py",
-   "capabilities/semantic_goals.py"
-  ],
   "capabilities/contracts.py": [],
+  "capabilities/engineering_spec.py": [
+   "capabilities/planner.py"
+  ],
   "capabilities/executor.py": [
    "capabilities/models.py",
    "environments/coding/sandbox_backend.py"
   ],
   "capabilities/generalize.py": [],
+  "capabilities/intelligence.py": [
+   "brain/json_utils.py",
+   "capabilities/contracts.py",
+   "capabilities/planner.py",
+   "gateway/estimate.py",
+   "gateway/gateway.py",
+   "gateway/task.py",
+   "service/composer.py"
+  ],
   "capabilities/models.py": [
    "capabilities/contracts.py"
   ],
@@ -1260,13 +1267,6 @@
    "brain/json_utils.py",
    "capabilities/models.py",
    "capabilities/registry.py"
-  ],
-  "capabilities/semantic_goals.py": [
-   "brain/json_utils.py",
-   "capabilities/contracts.py",
-   "capabilities/planner.py",
-   "gateway/gateway.py",
-   "gateway/task.py"
   ],
   "capabilities/service.py": [
    "capabilities/contracts.py",
@@ -1910,12 +1910,12 @@
    "brain/resources.py",
    "brain/tiers.py",
    "capabilities/codex.py",
-   "capabilities/composition.py",
+   "capabilities/engineering_spec.py",
    "capabilities/generalize.py",
+   "capabilities/intelligence.py",
    "capabilities/models.py",
    "capabilities/registry.py",
    "capabilities/resolver.py",
-   "capabilities/semantic_goals.py",
    "capabilities/service.py",
    "config.py",
    "core/__init__.py",
@@ -2308,10 +2308,11 @@
   "capabilities/__init__.py",
   "capabilities/artifacts.py",
   "capabilities/codex.py",
-  "capabilities/composition.py",
   "capabilities/contracts.py",
+  "capabilities/engineering_spec.py",
   "capabilities/executor.py",
   "capabilities/generalize.py",
+  "capabilities/intelligence.py",
   "capabilities/models.py",
   "capabilities/permissions.py",
   "capabilities/planner.py",
@@ -2319,7 +2320,6 @@
   "capabilities/registry.py",
   "capabilities/research.py",
   "capabilities/resolver.py",
-  "capabilities/semantic_goals.py",
   "capabilities/service.py",
   "capabilities/specification.py",
   "capabilities/static_check.py",

@@ -259,6 +259,7 @@ class AcquisitionMission:
         expert_acceptance: list[tuple[str, list[str]]] | None = None,
         repair: str = "",
         codex_first: bool = False,
+        engineer: str = "",
     ) -> AcquisitionResult:
         """Attempt locally, count the evidence, escalate only if it says to.
 
@@ -305,6 +306,7 @@ class AcquisitionMission:
             return self._run_codex_first(
                 goal,
                 result,
+                engineer=engineer,
                 capability_id=capability_id,
                 keywords=keywords,
                 extra_checks=extra_checks,
@@ -454,23 +456,35 @@ class AcquisitionMission:
         max_steps: int,
         max_seconds: float,
         started: float,
+        engineer: str = "",
     ) -> AcquisitionResult:
-        """Use Codex as the capability engineer before local generation.
+        """Use the chosen engineer -- Codex, or a metered API role -- before local generation.
+
+        ``engineer`` is the expert-gateway provider the engineering router
+        chose before this ran.  Codex needs its availability probe; an API
+        role was already checked by the router and is submitted by name.
 
         This is the owner-facing policy for missing or broken capabilities. It
         still uses the same isolated workspace, verification and registration
         gates; only the first engineering tier changes.
         """
 
-        try:
-            status = self.codex_availability.status()
-        except Exception as exc:  # noqa: BLE001
+        api_engineer = bool(engineer) and engineer != "codex"
+        if api_engineer:
             from capabilities.codex import CodexAvailability, CodexAvailabilityState
 
-            status = CodexAvailability(CodexAvailabilityState.ERROR, f"{type(exc).__name__}: {exc}")
-        result.codex_checked = True
-        result.codex_state = status.state.value
-        self._step(result, "codex_availability", f"{status.state.value}: {status.detail[:180]}", ok=status.ready)
+            status = CodexAvailability(CodexAvailabilityState.READY, f"engineer {engineer} chosen by the router")
+            self._step(result, "engineer", f"{engineer} chosen by the engineering router before execution")
+        else:
+            try:
+                status = self.codex_availability.status()
+            except Exception as exc:  # noqa: BLE001
+                from capabilities.codex import CodexAvailability, CodexAvailabilityState
+
+                status = CodexAvailability(CodexAvailabilityState.ERROR, f"{type(exc).__name__}: {exc}")
+            result.codex_checked = True
+            result.codex_state = status.state.value
+            self._step(result, "codex_availability", f"{status.state.value}: {status.detail[:180]}", ok=status.ready)
         if not status.ready:
             self._queue_capability_request(goal, result, status)
             result.reason = f"Codex is {status.state.value}: {status.detail}"
@@ -528,6 +542,7 @@ class AcquisitionMission:
             repair_mode=repair_mode,
             subject=subject,
             workspace=workspace,
+            provider_name=engineer if api_engineer else "",
         )
         escalated.seconds = time.perf_counter() - started
         if not escalated.acquired and escalated.codex_state == "QUOTA_EXHAUSTED":
@@ -610,6 +625,7 @@ class AcquisitionMission:
         repair_mode: bool = False,
         subject: str = "",
         workspace: Path | None = None,
+        provider_name: str = "",
     ) -> AcquisitionResult:
         """Ask an expert, then verify its work here before believing any of it.
 
@@ -663,11 +679,12 @@ class AcquisitionMission:
             expected_artifacts=["main.py"],
             allowed_paths=["main.py", "test_capability.py"],
             max_seconds=1500.0,
+            metadata={"files": ["main.py", "test_capability.py", "contract.json"], "task_id": capability_id},
         )
 
         started = time.perf_counter()
         try:
-            expert = self.gateway.submit(job)
+            expert = self.gateway.submit(job, provider_name=provider_name) if provider_name else self.gateway.submit(job)
         except Exception as exc:
             result.reason = f"the expert gateway failed: {type(exc).__name__}: {exc}"
             self._step(result, "escalation", result.reason, ok=False)
