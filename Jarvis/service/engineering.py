@@ -425,7 +425,7 @@ def estimate_engineering(gateway: Any, role: str, *, context_chars: int, expecte
                            "cached_context_tokens": int(cached_chars / CHARS_PER_TOKEN) if cached_chars else 0,
                            "expected_output_tokens": int(expected_output_tokens or (binding.max_output_tokens if binding else 4096)),
                            "estimated_eur": 0.0, "range_eur": [0.0, 0.0], "reserved_eur": 0.0, "hard_max_eur": 0.0,
-                           "pricing_confirmed": bool(pricing.confirmed) if pricing else False, "priced": pricing is not None}
+                           "pricing_confirmed": bool(pricing.estimate_confirmed) if pricing else False, "priced": pricing is not None}
     if binding is None or pricing is None:
         return out
     fresh = max(0, out["context_tokens"] - out["cached_context_tokens"])

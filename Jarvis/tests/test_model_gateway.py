@@ -667,7 +667,10 @@ def test_openai_usage_and_cached_tokens_drive_the_actual_cost(tmp_path, cfg, cre
     price = cfg.providers["openai"].pricing[cfg.roles["reasoning.deep"].model]
     expected = 0.5 * price.input_per_m + 0.5 * price.cached_input_per_m
     assert reply.actual_eur == pytest.approx(expected, rel=1e-6)
-    assert price.currency == "USD" and price.rate_to_eur < 1.0, "listed in USD, settled in EUR through the configured rate"
+    assert price.currency == "USD" and price.rate_to_eur is None and price.rate_source == "unavailable"
+    settle = gateway.governor.history()[-1]
+    assert settle["actual_native"] == pytest.approx(2.2, rel=1e-6) and settle["currency"] == "USD"
+    assert settle["rate_source"] == "unavailable"
     body = net.requests[-1]["body"]
     assert net.requests[-1]["url"].endswith("/v1/responses"), "the Responses API"
     assert body["reasoning"]["effort"] in {"low", "medium", "high", "xhigh"} and "temperature" not in body

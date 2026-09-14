@@ -61,7 +61,13 @@ class CostEstimate:
             "input_tokens": self.input_tokens, "cached_input_tokens": self.cached_input_tokens,
             "output_tokens": self.output_tokens, "tool_cost_eur": self.tool_cost_eur,
             "estimated_eur": self.estimated_eur, "range_eur": [low, high],
-            "pricing_confirmed": self.pricing.confirmed, "currency": self.currency,
+            "pricing_confirmed": self.pricing.estimate_confirmed, "native_currency": self.pricing.currency,
+            "native_estimated": self.pricing.native_cost({"input_tokens": self.input_tokens,
+                                                          "cached_input_tokens": self.cached_input_tokens,
+                                                          "output_tokens": self.output_tokens}),
+            "currency": self.currency, "rate_source": self.pricing.rate_source,
+            "eur_conversion_available": self.pricing.eur_conversion_available,
+            "eur_conversion_confirmed": self.pricing.eur_conversion_confirmed,
         }
 
 

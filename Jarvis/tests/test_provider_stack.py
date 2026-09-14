@@ -76,29 +76,75 @@ def test_dated_prices_pick_the_entry_effective_today_and_convert_to_eur(monkeypa
     assert none.providers["openai"].pricing_history["gpt-5.6-sol"][2]["effective_from"] == "2027-01-01", "history is kept"
 
 
-def test_the_shipped_openai_price_is_the_owners_and_says_the_rate_is_unconfirmed():
+def test_the_shipped_prices_are_owner_verified_native_figures_with_unavailable_eur_conversion():
     config = GatewayConfig.defaults()
-    price = config.pricing_for("reasoning.deep")
-    assert price.listed == (4.0, 0.40, 20.0) and price.currency == "USD" and price.effective_from == "2026-09-14"
-    assert price.input_per_m == pytest.approx(4.0 * config.exchange_rates["USD"].eur_per_unit)
-    assert price.confirmed is False, "the USD figure is confirmed, the EUR conversion rate is not: the estimate says so"
+    assert config.exchange_rates == {}, "no market rate is guessed"
+    deep = config.pricing_for("reasoning.deep")
+    assert deep.listed == (4.0, 0.40, 20.0) and deep.currency == "USD" and deep.effective_from == "2026-09-14" and deep.confirmed
+    assert (deep.input_per_m, deep.cached_input_per_m, deep.output_per_m) == (4.0, 0.40, 20.0), "budget guard stays engaged"
+    assert deep.rate_to_eur is None and deep.rate_source == "unavailable"
+    assert deep.eur_conversion_available is False and deep.eur_conversion_confirmed is False and deep.estimate_confirmed is False
+    assert deep.to_eur_dict()["input_per_m_eur"] is None and deep.to_eur_dict()["budget_input_per_m_eur"] == 4.0
+    standard = config.pricing_for("engineer.standard")
+    assert standard.listed == (5.0, 5.0, 25.0) and standard.confirmed and not standard.estimate_confirmed
+    assert "cached input assumed = input" in standard.source
+    frontier = config.pricing_for("engineer.frontier")
+    assert frontier.listed == (10.0, 10.0, 50.0) and frontier.confirmed and not frontier.estimate_confirmed
     from gateway.modes import CostClass
 
-    assert config.pricing_for("reasoning.free").metered is False and config.cost_class("reasoning.free") is CostClass.ZERO
+    free = config.providers["gemini"].price_for(config.roles["reasoning.free"].model)
+    assert free.metered is False and free.rate_source == "not-needed" and free.estimate_confirmed
+    assert config.cost_class("reasoning.free") is CostClass.ZERO
+    assert deep.native_cost({"input_tokens": 1_000_000, "cached_input_tokens": 0, "output_tokens": 0}) == 4.0
 
 
-def test_a_price_in_a_currency_without_a_rate_is_a_configuration_error():
+def test_an_owner_configured_rate_provides_the_only_confirmed_eur_conversion():
     document = json.loads(json.dumps(GatewayConfig.defaults().to_dict()))
+    document["exchange_rates"]["USD"] = {"eur_per_unit": 0.9, "as_of": "2026-09-14", "confirmed": True}
+    config = _parse(document, source="test")
+    price = config.pricing_for("reasoning.deep")
+    assert price.rate_source == "configured" and price.rate_to_eur == pytest.approx(0.9)
+    assert price.eur_conversion_available and price.eur_conversion_confirmed and price.estimate_confirmed
+    assert price.input_per_m == pytest.approx(3.6) and price.output_per_m == pytest.approx(18.0)
+    assert price.listed == (4.0, 0.40, 20.0), "the listed figure is untouched; only the EUR view moved"
     document["providers"]["openai"]["pricing"]["gpt-5.6-sol"][0]["currency"] = "CHF"
-    with pytest.raises(ValueError, match="no exchange rate"):
-        _parse(document, source="test")
+    chf = _parse(document, source="test").pricing_for("reasoning.deep")
+    assert chf.rate_source == "unavailable" and chf.rate_to_eur is None
+    assert not chf.eur_conversion_available and not chf.estimate_confirmed
+    assert chf.input_per_m == 4.0, "an unknown currency keeps the budget guard, but no EUR conversion is claimed"
+
+
+def test_the_paid_gemini_tier_is_a_separate_metered_provider_that_free_mode_can_never_reach(tmp_path, creds):
+    config = GatewayConfig.defaults()
+    paid = config.providers["gemini_paid"]
+    assert paid.metered and not paid.enabled and paid.secret == "gemini" and paid.kind == "gemini"
+    assert paid.price_for("gemini-3.8-flash").metered and paid.price_for("gemini-3.8-flash").confirmed is False
+    assert not any(b.provider == "gemini_paid" for b in config.roles.values()), "no role is bound to the paid tier by default"
+    # Even when the owner binds the free role to the paid tier, FREE mode refuses before any request.
+    bound = config.with_provider_enabled("gemini_paid", True).with_role_binding("reasoning.free", provider="gemini_paid")
+    net = FakeNetwork()
+    net.responses["generativelanguage.googleapis.com"] = gemini_reply("paid answer")
+    gateway = make_gateway(tmp_path, bound, creds, net)
+    from gateway.modes import CostClass
+
+    assert gateway.config.cost_class("reasoning.free") is CostClass.METERED
+    with pytest.raises(GatewayRefused) as info:
+        gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
+    assert net.requests == [] and "metered" in info.value.decision.reason
+    # Free tier exhausted with the paid tier enabled but unbound: nothing routes there.
+    free_only = config.with_provider_enabled("gemini", True).with_provider_enabled("gemini_paid", True)
+    gateway = make_gateway(tmp_path, free_only, creds, FakeNetwork())
+    gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
+    with pytest.raises(GatewayRefused):
+        gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
+    assert gateway.transport.issued == 0
 
 
 def test_the_configuration_round_trips_with_dated_prices_and_rates(tmp_path):
     config = GatewayConfig.defaults()
     path = config.save(tmp_path / "providers.json")
     document = json.loads(path.read_text(encoding="utf-8"))
-    assert document["schema_version"] == 2 and document["exchange_rates"]["USD"]["eur_per_unit"] > 0
+    assert document["schema_version"] == 2 and document["exchange_rates"] == {}
     entry = document["providers"]["openai"]["pricing"]["gpt-5.6-sol"][0]
     assert entry["input_per_m"] == 4.0 and entry["currency"] == "USD", "saved as listed, not as converted"
     again = GatewayConfig.load(path)

@@ -1428,7 +1428,8 @@ modules:
         None=None, provider_cap_eur: float | None=None) -> tuple[bool, str, float]'
       - 'def reserve(self, *, role: str, provider: str, model: str, estimated_eur: float, task_id: str='''', mode: str='''',
         task_cap_eur: float | None=None, provider_cap_eur: float | None=None) -> Reservation'
-      - 'def settle(self, reservation: Reservation, actual_eur: float, *, usage: dict[str, Any] | None=None) -> None'
+      - 'def settle(self, reservation: Reservation, actual_eur: float, *, usage: dict[str, Any] | None=None, native: float
+        | None=None, currency: str=''EUR'', rate_source: str='''') -> None'
       - 'def release(self, reservation: Reservation, reason: str='''') -> None'
       - 'def history(self, *, limit: int=50) -> list[dict[str, Any]]'
     functions: []
@@ -1436,14 +1437,17 @@ modules:
     module: gateway.config
     classes:
     - name: ExchangeRate
+      doc: EUR per unit of a listed currency, set by the owner.
       methods:
       - def to_dict(self) -> dict[str, Any]
     - name: Pricing
-      doc: EUR per one million tokens, converted from the listed currency.
+      doc: Provider price plus the EUR budget view.
       methods:
       - def metered(self) -> bool
+      - def estimate_confirmed(self) -> bool
       - 'def effective_on(self, day: str) -> bool'
       - def to_dict(self) -> dict[str, Any]
+      - 'def native_cost(self, usage: dict[str, Any]) -> float'
       - def to_eur_dict(self) -> dict[str, Any]
     - name: ProviderConfig
       methods:

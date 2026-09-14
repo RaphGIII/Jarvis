@@ -18,10 +18,15 @@ Swapping a provider or a model is an edit to that file.  No module outside
 
 Prices are configuration too, dated: each model carries one or more price
 entries with ``effective_from`` / ``effective_until`` and the currency they
-were listed in; the entry effective today is converted to EUR through the
-``exchange_rates`` table.  A metered role without an effective price cannot be
-estimated, cannot be reserved and therefore cannot be called -- the gateway
-refuses rather than guesses.
+were listed in; the entry effective today is what estimation and settlement
+use.  Accounting keeps the provider-native listed currency alongside the EUR
+budget figure.  The EUR conversion comes only from the owner-configured
+``exchange_rates`` table; when no rate is configured, ``rate_to_eur`` is
+unavailable and estimates are marked unconfirmed.  The internal budget guard
+still reserves against the EUR hard caps so metered calls cannot bypass them,
+but it is not reported as an exchange rate.  A metered role without an
+effective price cannot be estimated, cannot be reserved and therefore cannot
+be called -- the gateway refuses rather than guesses.
 
 Reasoning effort is abstract: FAST, NORMAL, DEEP (and MAX where a provider
 offers it).  Each role's ``thinking`` map says what its provider calls that
@@ -75,6 +80,8 @@ def _today() -> str:
 
 @dataclass(frozen=True)
 class ExchangeRate:
+    """EUR per unit of a listed currency, set by the owner."""
+
     currency: str
     eur_per_unit: float
     as_of: str = ""
@@ -84,14 +91,22 @@ class ExchangeRate:
         return {"eur_per_unit": self.eur_per_unit, "as_of": self.as_of, "confirmed": self.confirmed}
 
 
+#: What the EUR view of a price rests on.
+RATE_EUR = "eur"                       # listed in EUR: no conversion
+RATE_CONFIGURED = "configured"         # the owner's exchange_rates entry
+RATE_NOT_NEEDED = "not-needed"         # zero native price: no conversion is needed
+RATE_UNAVAILABLE = "unavailable"       # no owner-configured conversion rate
+
+
 @dataclass(frozen=True)
 class Pricing:
-    """EUR per one million tokens, converted from the listed currency.
+    """Provider price plus the EUR budget view.
 
     ``input_per_m`` / ``cached_input_per_m`` / ``output_per_m`` are EUR and are
-    what estimation and settlement use.  ``listed`` keeps the figures as the
-    provider lists them, in ``currency``, so the configuration round-trips
-    and the UI can show both.
+    what estimation, reservation and settlement use.  If no exchange rate is
+    configured for a non-EUR price, those fields are an unconfirmed budget
+    guard; ``rate_to_eur`` is then ``None`` and ``listed`` remains the
+    provider-native source of truth.
     """
 
     input_per_m: float = 0.0
@@ -102,14 +117,22 @@ class Pricing:
     confirmed: bool = False
     currency: str = "EUR"
     listed: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    rate_to_eur: float = 1.0
+    rate_to_eur: float | None = 1.0
+    budget_rate_to_eur: float = 1.0
+    rate_source: str = RATE_EUR
+    eur_conversion_available: bool = True
+    eur_conversion_confirmed: bool = True
     effective_from: str = ""
     effective_until: str = ""
     source: str = ""
 
     @property
     def metered(self) -> bool:
-        return any(value > 0 for value in (self.input_per_m, self.cached_input_per_m, self.output_per_m))
+        return any(value > 0 for value in self.listed)
+
+    @property
+    def estimate_confirmed(self) -> bool:
+        return self.confirmed and self.eur_conversion_confirmed
 
     def effective_on(self, day: str) -> bool:
         if self.effective_from and day < self.effective_from:
@@ -131,13 +154,28 @@ class Pricing:
             out["source"] = self.source
         return out
 
+    def native_cost(self, usage: dict[str, Any]) -> float:
+        """What the provider bills, in the currency it lists."""
+
+        fresh = max(0, int(usage.get("input_tokens", 0) or 0) - int(usage.get("cached_input_tokens", 0) or 0))
+        return round((fresh * self.listed[0] + int(usage.get("cached_input_tokens", 0) or 0) * self.listed[1]
+                      + int(usage.get("output_tokens", 0) or 0) * self.listed[2]) / 1_000_000, 6)
+
     def to_eur_dict(self) -> dict[str, Any]:
         """The UI form: EUR per million, with the conversion that produced it."""
 
-        return {"input_per_m_eur": round(self.input_per_m, 6), "cached_input_per_m_eur": round(self.cached_input_per_m, 6),
-                "output_per_m_eur": round(self.output_per_m, 6), "currency": self.currency, "rate_to_eur": self.rate_to_eur,
-                "listed": list(self.listed), "confirmed": self.confirmed, "effective_from": self.effective_from,
-                "effective_until": self.effective_until, "source": self.source}
+        has_eur = self.eur_conversion_available
+        return {"input_per_m_eur": round(self.input_per_m, 6) if has_eur else None,
+                "cached_input_per_m_eur": round(self.cached_input_per_m, 6) if has_eur else None,
+                "output_per_m_eur": round(self.output_per_m, 6) if has_eur else None,
+                "budget_input_per_m_eur": round(self.input_per_m, 6),
+                "budget_cached_input_per_m_eur": round(self.cached_input_per_m, 6),
+                "budget_output_per_m_eur": round(self.output_per_m, 6),
+                "currency": self.currency, "rate_to_eur": self.rate_to_eur, "budget_rate_to_eur": self.budget_rate_to_eur,
+                "rate_source": self.rate_source, "listed": list(self.listed), "confirmed": self.confirmed,
+                "pricing_confirmed": self.estimate_confirmed, "eur_conversion_available": self.eur_conversion_available,
+                "eur_conversion_confirmed": self.eur_conversion_confirmed,
+                "effective_from": self.effective_from, "effective_until": self.effective_until, "source": self.source}
 
 
 @dataclass(frozen=True)
@@ -385,11 +423,10 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
     "schema_version": 2,
     "currency": "EUR",
     "risk_aversion": 1.0,
-    "exchange_rates": {
-        # EUR per unit of the listed currency.  Unconfirmed until the owner
-        # sets it; estimates say so.
-        "USD": {"eur_per_unit": 0.86, "as_of": "2026-09-14", "confirmed": False},
-    },
+    # EUR per unit of a listed currency, e.g. "USD": {"eur_per_unit": 0.9,
+    # "as_of": "2026-09-14", "confirmed": true}.  Empty: no EUR conversion is
+    # reported for foreign-currency prices.
+    "exchange_rates": {},
     "roles": {
         "reasoning.free": {
             "provider": "gemini", "model": "gemini-3.8-flash", "enabled": True,
@@ -446,7 +483,22 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "purpose": "free-tier reasoning; quotas and rate limits are the resource constraint, not money",
             "pricing": {
                 "gemini-3.8-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
-                                      "effective_from": "2026-09-14", "confirmed": True, "source": "free tier: token cost zero"}],
+                                      "effective_from": "2026-09-14", "confirmed": True, "source": "Gemini API free tier: model token price zero"}],
+            },
+        },
+        "gemini_paid": {
+            # The paid tier of the same API and the same key: a metered
+            # provider in its own right.  No role is bound to it until the
+            # owner binds one; FREE mode can never reach it (metered), and
+            # nothing routes here because the free tier ran out.
+            "kind": "gemini", "base_url": "https://generativelanguage.googleapis.com", "enabled": False,
+            "secret": "gemini", "credential_env": ["GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY"],
+            "may_train_on_requests": False, "metered": True, "timeout_seconds": 120,
+            "purpose": "paid-tier Gemini, only when the owner binds a role to it; never a silent continuation of the free tier",
+            "pricing": {
+                "gemini-3.8-flash": [{"input_per_m": 0.30, "cached_input_per_m": 0.03, "output_per_m": 2.50, "currency": "USD",
+                                      "effective_from": "2026-09-14", "confirmed": False,
+                                      "source": "paid-tier list price of the previous Flash generation; owner to verify for 3.8 Flash before binding a role"}],
             },
         },
         "openai": {
@@ -456,7 +508,7 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "purpose": "deep reasoning",
             "pricing": {
                 "gpt-5.6-sol": [{"input_per_m": 4.0, "cached_input_per_m": 0.40, "output_per_m": 20.0, "currency": "USD",
-                                 "effective_from": "2026-09-14", "confirmed": True, "source": "OpenAI standard pricing, owner-provided 2026-09-14"}],
+                                 "effective_from": "2026-09-14", "confirmed": True, "source": "OpenAI standard pricing, owner-verified 2026-09-14"}],
             },
         },
         "anthropic": {
@@ -465,10 +517,15 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "may_train_on_requests": False, "metered": True, "timeout_seconds": 600,
             "purpose": "engineering",
             "pricing": {
-                "claude-opus-5": [{"input_per_m": 15.0, "cached_input_per_m": 1.5, "output_per_m": 75.0, "currency": "USD",
-                                   "effective_from": "2026-09-14", "confirmed": False, "source": "placeholder; owner to confirm"}],
-                "claude-fable-5-1": [{"input_per_m": 30.0, "cached_input_per_m": 3.0, "output_per_m": 150.0, "currency": "USD",
-                                      "effective_from": "2026-09-14", "confirmed": False, "source": "placeholder; owner to confirm"}],
+                # Cache-read prices were not provided: cached input is charged
+                # at the full input price until the owner enters the lower one
+                # (conservative; the estimate can only be high).
+                "claude-opus-5": [{"input_per_m": 5.0, "cached_input_per_m": 5.0, "output_per_m": 25.0, "currency": "USD",
+                                   "effective_from": "2026-09-14", "confirmed": True,
+                                   "source": "owner-verified 2026-09-14 (input/output); cached input assumed = input"}],
+                "claude-fable-5-1": [{"input_per_m": 10.0, "cached_input_per_m": 10.0, "output_per_m": 50.0, "currency": "USD",
+                                      "effective_from": "2026-09-14", "confirmed": True,
+                                      "source": "owner-verified 2026-09-14 (input/output); cached input assumed = input"}],
             },
         },
         "frontier_alt": {
@@ -499,19 +556,28 @@ def _parse_pricing(model: str, raw: Any, rates: dict[str, ExchangeRate], *, prov
             continue
         history.append(dict(entry))
         currency = str(entry.get("currency", "EUR") or "EUR").upper()
+        listed = (float(entry.get("input_per_m", 0.0)), float(entry.get("cached_input_per_m", 0.0)), float(entry.get("output_per_m", 0.0)))
+        zero_price = not any(listed)
         if currency == "EUR":
-            rate = 1.0
+            rate_to_eur, budget_rate, rate_source, eur_available, eur_confirmed = 1.0, 1.0, RATE_EUR, True, True
+        elif zero_price:
+            rate_to_eur, budget_rate, rate_source, eur_available, eur_confirmed = None, 1.0, RATE_NOT_NEEDED, True, True
         else:
             fx = rates.get(currency)
-            if fx is None:
-                raise ValueError(f"provider {provider!r}, model {model!r}: price listed in {currency} but no exchange rate is configured")
-            rate = float(fx.eur_per_unit)
-        listed = (float(entry.get("input_per_m", 0.0)), float(entry.get("cached_input_per_m", 0.0)), float(entry.get("output_per_m", 0.0)))
+            if fx is not None and fx.eur_per_unit > 0:
+                rate_to_eur = float(fx.eur_per_unit)
+                budget_rate, rate_source, eur_available, eur_confirmed = rate_to_eur, RATE_CONFIGURED, True, bool(fx.confirmed)
+            else:
+                # No market rate is guessed.  The budget guard keeps the hard
+                # cap engaged, while the EUR conversion remains unavailable.
+                rate_to_eur, budget_rate, rate_source, eur_available, eur_confirmed = None, 1.0, RATE_UNAVAILABLE, False, False
         parsed.append(Pricing(
-            input_per_m=round(listed[0] * rate, 6), cached_input_per_m=round(listed[1] * rate, 6), output_per_m=round(listed[2] * rate, 6),
-            confirmed=bool(entry.get("confirmed", False)) and (currency == "EUR" or bool(rates[currency].confirmed) or not any(listed)),
-            currency=currency, listed=listed, rate_to_eur=rate, effective_from=str(entry.get("effective_from", "") or ""),
-            effective_until=str(entry.get("effective_until", "") or ""), source=str(entry.get("source", "") or ""),
+            input_per_m=round(listed[0] * budget_rate, 6), cached_input_per_m=round(listed[1] * budget_rate, 6),
+            output_per_m=round(listed[2] * budget_rate, 6), confirmed=bool(entry.get("confirmed", False)),
+            currency=currency, listed=listed, rate_to_eur=rate_to_eur, budget_rate_to_eur=budget_rate, rate_source=rate_source,
+            eur_conversion_available=eur_available, eur_conversion_confirmed=eur_confirmed,
+            effective_from=str(entry.get("effective_from", "") or ""), effective_until=str(entry.get("effective_until", "") or ""),
+            source=str(entry.get("source", "") or ""),
         ))
     today = _today()
     effective = [p for p in parsed if p.effective_on(today)]

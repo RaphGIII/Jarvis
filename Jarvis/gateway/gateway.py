@@ -351,7 +351,8 @@ class ModelGateway:
 
         actual = actual_cost(reply.usage, pricing) if pricing else 0.0
         if reservation is not None:
-            self.governor.settle(reservation, actual, usage=reply.usage)
+            self.governor.settle(reservation, actual, usage=reply.usage, native=pricing.native_cost(reply.usage) if pricing else None,
+                                 currency=pricing.currency if pricing else "EUR", rate_source=pricing.rate_source if pricing else "")
         self.health.note(provider.name, ProviderStatus.OK)
         text, rewrites = guard_identity(reply.text)
         result = GatewayReply(text=text, decision=decision, role=decision.role, provider=provider.name, model=reply.model or binding.model,
@@ -498,6 +499,8 @@ class ModelGateway:
                                 "task_cap_eur": p.task_cap_eur} for m, p in MODE_POLICIES.items()},
             "budget": self.config.budget.to_dict(), "config_source": self.config.source,
             "exchange_rates": {code: rate.to_dict() for code, rate in self.config.exchange_rates.items()},
+            "exchange_rate_note": ("owner-configured rates in use" if self.config.exchange_rates else
+                                   "no exchange rate configured: foreign-currency EUR conversion is unavailable; metered estimates use an unconfirmed budget guard"),
             "thinking_levels": list(THINKING_LEVELS),
             "paid_api_allowed": bool(self.cost_policy.allow_paid_api), "cost_policy_source": str(getattr(self.cost_policy, "source", "")),
             "transport": {"issued": self.transport.issued, "refused": len(self.transport.refused)},

@@ -169,6 +169,6 @@ def test_the_engineering_estimate_covers_context_output_and_the_tightest_cap(tmp
     assert estimate["reserved_eur"] == pytest.approx(estimate["estimated_eur"] * cfg.budget.safety_factor, rel=1e-3)
     assert estimate["hard_max_eur"] <= cfg.budget.per_task_hard_cap
     assert estimate["month_cap_eur"] == 40.0 and estimate["reservable"] is True
-    assert estimate["pricing_confirmed"] is False, "an unconfirmed price says so"
+    assert estimate["pricing_confirmed"] is False, "the owner verified the USD price, but no EUR conversion is configured"
     too_big = estimate_engineering(gateway, "engineer.frontier", context_chars=len(brief), expected_output_tokens=400_000, mode=ChatMode.BUILD)
     assert too_big["reservable"] is False and too_big["blocking_cap"], "over the cap: no reservation, so no call"

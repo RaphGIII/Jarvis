@@ -259,7 +259,8 @@ class BudgetGovernor:
                 self._append({"kind": "reserve", **reservation.to_dict()})
             return reservation
 
-    def settle(self, reservation: Reservation, actual_eur: float, *, usage: dict[str, Any] | None = None) -> None:
+    def settle(self, reservation: Reservation, actual_eur: float, *, usage: dict[str, Any] | None = None,
+               native: float | None = None, currency: str = "EUR", rate_source: str = "") -> None:
         with self._lock:
             reservation.settled = True
             reservation.actual_eur = round(max(0.0, float(actual_eur)), 6)
@@ -272,7 +273,9 @@ class BudgetGovernor:
             self._append({"kind": "settle", "reservation_id": reservation.reservation_id, "role": reservation.role,
                           "provider": reservation.provider, "model": reservation.model, "task_id": reservation.task_id,
                           "estimated_eur": reservation.estimated_eur, "reserved_eur": reservation.reserved_eur,
-                          "actual_eur": reservation.actual_eur, "usage": dict(usage or {}), "at": when})
+                          "actual_eur": reservation.actual_eur, "usage": dict(usage or {}), "at": when,
+                          "actual_native": round(float(native), 6) if native is not None else reservation.actual_eur,
+                          "currency": currency, "rate_source": rate_source})
 
     def release(self, reservation: Reservation, reason: str = "") -> None:
         """The call never happened (or failed before billing): give the money back."""

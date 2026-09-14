@@ -14,13 +14,7 @@
     }
   },
   "currency": "EUR",
-  "exchange_rates": {
-    "USD": {
-      "as_of": "2026-09-14",
-      "confirmed": false,
-      "eur_per_unit": 0.86
-    }
-  },
+  "exchange_rates": {},
   "providers": {
     "anthropic": {
       "base_url": "https://api.anthropic.com",
@@ -37,24 +31,24 @@
       "pricing": {
         "claude-fable-5-1": [
           {
-            "cached_input_per_m": 3.0,
-            "confirmed": false,
+            "cached_input_per_m": 10.0,
+            "confirmed": true,
             "currency": "USD",
             "effective_from": "2026-09-14",
-            "input_per_m": 30.0,
-            "output_per_m": 150.0,
-            "source": "placeholder; owner to confirm"
+            "input_per_m": 10.0,
+            "output_per_m": 50.0,
+            "source": "owner-verified 2026-09-14 (input/output); cached input assumed = input"
           }
         ],
         "claude-opus-5": [
           {
-            "cached_input_per_m": 1.5,
-            "confirmed": false,
+            "cached_input_per_m": 5.0,
+            "confirmed": true,
             "currency": "USD",
             "effective_from": "2026-09-14",
-            "input_per_m": 15.0,
-            "output_per_m": 75.0,
-            "source": "placeholder; owner to confirm"
+            "input_per_m": 5.0,
+            "output_per_m": 25.0,
+            "source": "owner-verified 2026-09-14 (input/output); cached input assumed = input"
           }
         ]
       },
@@ -114,11 +108,41 @@
             "effective_from": "2026-09-14",
             "input_per_m": 0.0,
             "output_per_m": 0.0,
-            "source": "free tier: token cost zero"
+            "source": "Gemini API free tier: model token price zero"
           }
         ]
       },
       "purpose": "free-tier reasoning; quotas and rate limits are the resource constraint, not money",
+      "secret": "gemini",
+      "timeout_seconds": 120.0
+    },
+    "gemini_paid": {
+      "base_url": "https://generativelanguage.googleapis.com",
+      "credential_env": [
+        "GOOGLE_GEMINI_API_KEY",
+        "GEMINI_API_KEY"
+      ],
+      "enabled": false,
+      "kind": "gemini",
+      "may_train_on_requests": false,
+      "metered": true,
+      "monthly_cap_eur": null,
+      "name": "gemini_paid",
+      "options": {},
+      "pricing": {
+        "gemini-3.8-flash": [
+          {
+            "cached_input_per_m": 0.03,
+            "confirmed": false,
+            "currency": "USD",
+            "effective_from": "2026-09-14",
+            "input_per_m": 0.3,
+            "output_per_m": 2.5,
+            "source": "paid-tier list price of the previous Flash generation; owner to verify for 3.8 Flash before binding a role"
+          }
+        ]
+      },
+      "purpose": "paid-tier Gemini, only when the owner binds a role to it; never a silent continuation of the free tier",
       "secret": "gemini",
       "timeout_seconds": 120.0
     },
@@ -158,7 +182,7 @@
             "effective_from": "2026-09-14",
             "input_per_m": 4.0,
             "output_per_m": 20.0,
-            "source": "OpenAI standard pricing, owner-provided 2026-09-14"
+            "source": "OpenAI standard pricing, owner-verified 2026-09-14"
           }
         ]
       },

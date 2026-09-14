@@ -706,14 +706,14 @@ packages:
       - tests/test_semantic_composition.py
     - path: gateway/budget.py
       purpose: 'The cost governor: reserve before you spend, and never past the cap.'
-      lines: 296
+      lines: 299
       public: 4
       tests:
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
     - path: gateway/config.py
       purpose: Roles, providers, prices and caps -- read from configuration, never from code.
-      lines: 591
+      lines: 657
       public: 7
       tests:
       - tests/test_engineering_router_gateway.py
@@ -725,13 +725,13 @@ packages:
       - tests/test_provider_stack.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
-      lines: 99
+      lines: 105
       public: 4
       tests:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 660
+      lines: 663
       public: 10
       tests:
       - tests/test_gateway_integration.py
