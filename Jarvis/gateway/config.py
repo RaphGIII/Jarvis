@@ -224,6 +224,9 @@ class RoleBinding:
     role: str
     provider: str
     model: str
+    #: Ordered concrete model pool for this role. ``model`` is the first entry
+    #: kept for compatibility with older configuration and diagnostics.
+    models: tuple[str, ...] = ()
     enabled: bool = True
     #: Reasoning effort configuration: abstract level name -> provider-specific value.
     thinking: dict[str, Any] = field(default_factory=dict)
@@ -252,11 +255,21 @@ class RoleBinding:
                 return self.thinking[candidate]
         return None
 
+    @property
+    def model_pool(self) -> tuple[str, ...]:
+        models = tuple(model for model in self.models if str(model).strip())
+        if models:
+            return models
+        return (self.model,) if self.model else ()
+
     def to_dict(self) -> dict[str, Any]:
-        return {"role": self.role, "provider": self.provider, "model": self.model, "enabled": self.enabled,
+        data = {"role": self.role, "provider": self.provider, "model": self.model, "enabled": self.enabled,
                 "thinking": dict(self.thinking), "reliability_prior": {k: list(v) for k, v in self.reliability_prior.items()},
                 "max_output_tokens": self.max_output_tokens, "temperature": self.temperature, "tier": self.tier,
                 "offline_fallback": self.offline_fallback, "purpose": self.purpose}
+        if len(self.model_pool) > 1:
+            data["models"] = list(self.model_pool)
+        return data
 
 
 @dataclass(frozen=True)
@@ -317,9 +330,16 @@ class GatewayConfig:
         binding = self.roles.get(role)
         if provider is None or binding is None:
             return None
+        return self.pricing_for_model(role, binding.model)
+
+    def pricing_for_model(self, role: str, model: str) -> Pricing | None:
+        provider = self.provider_for(role)
+        binding = self.roles.get(role)
+        if provider is None or binding is None:
+            return None
         if not provider.metered:
-            return Pricing(0.0, 0.0, 0.0, confirmed=True)
-        return provider.price_for(binding.model)
+            return provider.price_for(model) or Pricing(0.0, 0.0, 0.0, confirmed=True)
+        return provider.price_for(model)
 
     def is_model_role(self, role: str) -> bool:
         provider = self.provider_for(role)
@@ -392,6 +412,7 @@ class GatewayConfig:
             changes["provider"] = provider
         if model is not None:
             changes["model"] = str(model)
+            changes["models"] = (str(model),) if str(model) else ()
         if enabled is not None:
             changes["enabled"] = bool(enabled)
         roles = dict(self.roles)
@@ -429,7 +450,8 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
     "exchange_rates": {},
     "roles": {
         "reasoning.free": {
-            "provider": "gemini", "model": "gemini-3.8-flash", "enabled": True,
+            "provider": "gemini", "model": "gemini-3.8-flash", "models": ["gemini-3.8-flash", "gemini-3.7-flash"],
+            "enabled": True,
             "thinking": {"FAST": "low", "NORMAL": "medium", "DEEP": "high"},
             "reliability_prior": {"knowledge": [8, 1], "semantic": [6, 2], "planning": [3, 3], "composition": [2, 3]},
             "max_output_tokens": 2048, "temperature": 0.3,
@@ -483,6 +505,8 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "purpose": "free-tier reasoning; quotas and rate limits are the resource constraint, not money",
             "pricing": {
                 "gemini-3.8-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
+                                      "effective_from": "2026-09-14", "confirmed": True, "source": "Gemini API free tier: model token price zero"}],
+                "gemini-3.7-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
                                       "effective_from": "2026-09-14", "confirmed": True, "source": "Gemini API free tier: model token price zero"}],
             },
         },
@@ -633,8 +657,15 @@ def _parse(document: dict[str, Any], *, source: str) -> GatewayConfig:
         prior = {str(k): [float(v[0]), float(v[1])] for k, v in (raw.get("reliability_prior") or {}).items()
                  if isinstance(v, (list, tuple)) and len(v) == 2}
         thinking = {_LEGACY_THINKING.get(str(k), str(k)): v for k, v in (raw.get("thinking") or {}).items()}
+        raw_models = raw.get("models")
+        models = tuple(str(v).strip() for v in raw_models if str(v).strip()) if isinstance(raw_models, list) else ()
+        model = str(raw.get("model", "") or (models[0] if models else ""))
+        if model and not models:
+            models = (model,)
+        elif model and model not in models:
+            models = (model, *models)
         roles[role] = RoleBinding(
-            role=role, provider=provider, model=str(raw.get("model", "")), enabled=bool(raw.get("enabled", True)),
+            role=role, provider=provider, model=model, models=models, enabled=bool(raw.get("enabled", True)),
             thinking=thinking, reliability_prior=prior,
             max_output_tokens=int(raw.get("max_output_tokens", 2048)), temperature=float(raw.get("temperature", 0.3)),
             tier=str(raw.get("tier", "")), offline_fallback=bool(raw.get("offline_fallback", False)),

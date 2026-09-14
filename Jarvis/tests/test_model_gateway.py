@@ -18,7 +18,7 @@ from gateway.budget import BudgetGovernor, BudgetRefused
 from gateway.config import GatewayConfig, Pricing
 from gateway.gateway import (GatewayBrainProvider, GatewayRefused, GatewayRequest, ModelGateway, RequestContext,
                              reset_context, set_context)
-from gateway.health import GatewayError, ProviderStatus, classify_http
+from gateway.health import FreeIntelligenceUnavailable, GatewayError, ProviderStatus, classify_http
 from gateway.learning import Observation
 from gateway.modes import ChatMode, CostClass
 from gateway.persona import guard_identity, system_prompt_for_role
@@ -64,6 +64,26 @@ class FakeNetwork:
             raise answer
         if answer is None:
             raise urllib.error.URLError("no route to host")
+        return FakeResponse(answer)
+
+
+class GeminiPoolNetwork(FakeNetwork):
+    """Answers Gemini requests by concrete model, in sequence."""
+
+    def __init__(self, by_model: dict[str, list[object]]) -> None:
+        super().__init__()
+        self.by_model = {model: list(replies) for model, replies in by_model.items()}
+
+    def __call__(self, request, timeout=None):
+        body = json.loads(request.data.decode("utf-8")) if request.data else {}
+        self.requests.append({"url": request.full_url, "headers": dict(request.header_items()), "body": body, "timeout": timeout})
+        model = request.full_url.split("/models/", 1)[1].split(":generateContent", 1)[0]
+        replies = self.by_model.get(model, [])
+        answer = replies.pop(0) if replies else None
+        if answer is None:
+            raise urllib.error.URLError(f"no scripted answer for {model}")
+        if isinstance(answer, Exception):
+            raise answer
         return FakeResponse(answer)
 
 
@@ -138,7 +158,7 @@ def net() -> FakeNetwork:
 
 
 def make_gateway(tmp_path: Path, cfg: GatewayConfig, creds: CredentialStore, net: FakeNetwork, *, local: LocalStub | None = None,
-                 paid_api: bool = True) -> ModelGateway:
+                 paid_api: bool = True, retry_sleep=None, retry_jitter=None) -> ModelGateway:
     from runtime.cost_policy import CostPolicy
 
     # The owner has enabled metered billing (an owner transaction in the
@@ -147,7 +167,9 @@ def make_gateway(tmp_path: Path, cfg: GatewayConfig, creds: CredentialStore, net
     return ModelGateway(state_root=tmp_path / "state", config=cfg, credentials=creds, opener=net,
                         local_provider=(lambda role: local) if local else None,
                         local_available=(lambda role: local is not None),
-                        cost_policy=CostPolicy(allow_paid_api=paid_api, source="test"))
+                        cost_policy=CostPolicy(allow_paid_api=paid_api, source="test"),
+                        retry_sleep=retry_sleep or (lambda _delay: None), retry_jitter=retry_jitter or (lambda _spread: 0.0),
+                        import_environment_credentials=False)
 
 
 def knowledge(text: str = "Was ist Beta-Oxidation?") -> GatewayRequest:
@@ -206,6 +228,123 @@ def test_free_lane_answers_a_public_knowledge_question_at_zero_cost(tmp_path, cf
     assert "generativelanguage.googleapis.com" in sent["url"]
     assert sent["headers"].get("X-goog-api-key", "").startswith("AIza")
     assert "Beta-Oxidation" in reply.text
+
+
+def test_reasoning_free_38_success_never_calls_37(tmp_path, cfg, creds):
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [gemini_reply("OK from 3.8")],
+                             "gemini-3.7-flash": [gemini_reply("should not be used")]})
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    reply = gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True),
+                                            mode=ChatMode.FREE))
+    assert reply.model == "gemini-3.8-flash" and reply.actual_eur == 0.0
+    assert len(net.requests) == 1 and "gemini-3.7-flash" not in net.requests[0]["url"]
+    assert len(reply.route_attempts) == 1
+    attempt = reply.route_attempts[0]
+    assert {k: attempt[k] for k in ("model", "attempt", "failure_class", "http_status", "retry_delay_seconds")} == {
+        "model": "gemini-3.8-flash", "attempt": 1, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0}
+
+
+def test_reasoning_free_38_503_twice_falls_back_to_37(tmp_path, cfg, creds):
+    error = http_error("https://generativelanguage.googleapis.com/v1beta/x", 503,
+                       {"error": {"status": "UNAVAILABLE", "message": "high demand"}})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [error, error], "gemini-3.7-flash": [gemini_reply("OK from 3.7")]})
+    delays: list[float] = []
+    gateway = make_gateway(tmp_path, cfg, creds, net, retry_sleep=delays.append)
+    reply = gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                            mode=ChatMode.FREE))
+    assert reply.model == "gemini-3.7-flash" and reply.text == "OK from 3.7" and reply.actual_eur == 0.0
+    assert [r["url"].split("/models/", 1)[1].split(":", 1)[0] for r in net.requests] == [
+        "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.7-flash"]
+    assert delays == [1.0]
+    assert [a["failure_class"] for a in reply.route_attempts] == ["provider_unavailable", "provider_unavailable", "ok"]
+
+
+def test_reasoning_free_38_429_retries_then_falls_back(tmp_path, cfg, creds):
+    rate_limited = http_error("https://generativelanguage.googleapis.com/v1beta/x", 429,
+                              {"error": {"status": "RESOURCE_EXHAUSTED", "message": "per minute",
+                                         "details": [{"retryDelay": "30s"}]}})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [rate_limited, rate_limited],
+                             "gemini-3.7-flash": [gemini_reply("OK from 3.7")]})
+    delays: list[float] = []
+    gateway = make_gateway(tmp_path, cfg, creds, net, retry_sleep=delays.append)
+    reply = gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                            mode=ChatMode.FREE))
+    assert reply.model == "gemini-3.7-flash" and delays == [1.0]
+    assert [a["http_status"] for a in reply.route_attempts] == [429, 429, None]
+    assert sum(a["retry_delay_seconds"] for a in reply.route_attempts) <= 2.0
+
+
+def test_both_reasoning_free_models_unavailable_is_typed_zero_cost_failure(tmp_path, cfg, creds):
+    unavailable = http_error("https://generativelanguage.googleapis.com/v1beta/x", 503,
+                             {"error": {"status": "UNAVAILABLE", "message": "high demand"}})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [unavailable, unavailable],
+                             "gemini-3.7-flash": [unavailable, unavailable]})
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    with pytest.raises(FreeIntelligenceUnavailable) as info:
+        gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                        mode=ChatMode.FREE))
+    assert info.value.typed_status == "FREE_INTELLIGENCE_UNAVAILABLE"
+    assert len(info.value.attempts) == 4 and gateway.governor.summary().month == 0.0
+    assert all("api.openai.com" not in r["url"] and "api.anthropic.com" not in r["url"] for r in net.requests)
+
+
+@pytest.mark.parametrize(("status", "expected"), [
+    (400, ProviderStatus.TASK_FAILURE),
+    (401, ProviderStatus.AUTHENTICATION_ERROR),
+    (403, ProviderStatus.AUTHENTICATION_ERROR),
+])
+def test_reasoning_free_non_transient_http_errors_do_not_model_hop(tmp_path, cfg, creds, status, expected):
+    err = http_error("https://generativelanguage.googleapis.com/v1beta/x", status, {"error": {"message": "bad request"}})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [err], "gemini-3.7-flash": [gemini_reply("should not be used")]})
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    with pytest.raises(GatewayError) as info:
+        gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                        mode=ChatMode.FREE))
+    assert info.value.status is expected
+    assert len(net.requests) == 1 and "gemini-3.7-flash" not in net.requests[0]["url"]
+
+
+def test_reasoning_free_pool_never_invokes_paid_providers(tmp_path, cfg, creds):
+    unavailable = http_error("https://generativelanguage.googleapis.com/v1beta/x", 503, {"error": "down"})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [unavailable, unavailable],
+                             "gemini-3.7-flash": [unavailable, unavailable]})
+    net.responses["api.openai.com"] = openai_reply("paid")
+    net.responses["api.anthropic.com"] = anthropic_reply("paid")
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    with pytest.raises(FreeIntelligenceUnavailable):
+        gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                        mode=ChatMode.FREE))
+    hosts = {r["url"].split("/")[2] for r in net.requests}
+    assert hosts == {"generativelanguage.googleapis.com"}
+
+
+def test_reasoning_free_pool_never_invokes_legacy_4b_fallback(tmp_path, cfg, creds):
+    unavailable = http_error("https://generativelanguage.googleapis.com/v1beta/x", 503, {"error": "down"})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [unavailable, unavailable],
+                             "gemini-3.7-flash": [unavailable, unavailable]})
+    local = LocalStub()
+    gateway = make_gateway(tmp_path, cfg, creds, net, local=local)
+    provider = GatewayBrainProvider(gateway, fallback=local)
+    token = set_context(RequestContext(mode=ChatMode.FREE, facts=TaskFacts(text="Was ist NAT?", is_question=True)))
+    try:
+        with pytest.raises(FreeIntelligenceUnavailable):
+            provider.generate("Was ist NAT?")
+    finally:
+        reset_context(token)
+    assert local.calls == []
+
+
+def test_reasoning_free_total_retry_delay_is_bounded(tmp_path, cfg, creds):
+    unavailable = http_error("https://generativelanguage.googleapis.com/v1beta/x", 503, {"error": "down"})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [unavailable, unavailable],
+                             "gemini-3.7-flash": [unavailable, unavailable]})
+    delays: list[float] = []
+    gateway = make_gateway(tmp_path, cfg, creds, net, retry_sleep=delays.append)
+    with pytest.raises(FreeIntelligenceUnavailable):
+        gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                        mode=ChatMode.FREE))
+    assert len(delays) == 2
+    assert sum(delays) <= 4.0 and max(delays) <= 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -300,17 +439,17 @@ def test_failed_provider_call_releases_the_reservation(tmp_path, cfg, creds, net
 
 def test_a_provider_outage_is_not_evidence_the_task_needs_a_stronger_model(tmp_path, cfg, creds, net):
     net.responses["generativelanguage.googleapis.com"] = http_error(
-        "https://generativelanguage.googleapis.com/x", 429, {"error": {"status": "RESOURCE_EXHAUSTED", "message": "quota exceeded"}})
+        "https://generativelanguage.googleapis.com/x", 503, {"error": {"status": "UNAVAILABLE", "message": "high demand"}})
     gateway = make_gateway(tmp_path, cfg, creds, net)
     before = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
-    with pytest.raises(GatewayError) as info:
+    with pytest.raises(FreeIntelligenceUnavailable) as info:
         gateway.complete(knowledge())
-    assert info.value.status is ProviderStatus.QUOTA_EXHAUSTED
+    assert info.value.typed_status == "FREE_INTELLIGENCE_UNAVAILABLE"
     after = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
     assert (after.alpha, after.beta) == (before.alpha, before.beta), "an outage must not move the reliability estimate"
-    # Exactly one request went out: no second, more expensive attempt.
-    assert len(net.requests) == 1
-    assert gateway.health.status("gemini") is ProviderStatus.QUOTA_EXHAUSTED
+    assert len(net.requests) == 4, "bounded retries stay inside the free pool"
+    assert all("api.openai.com" not in r["url"] for r in net.requests)
+    assert gateway.health.status("gemini") is ProviderStatus.PROVIDER_UNAVAILABLE
 
 
 def test_after_quota_exhaustion_auto_mode_routes_around_the_free_lane_within_budget(tmp_path, cfg, creds, net):

@@ -26,16 +26,17 @@ from __future__ import annotations
 
 import contextvars
 import json
+import random
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from gateway.budget import BudgetGovernor, BudgetRefused, Reservation
 from gateway.config import GatewayConfig, RoleBinding, THINKING_LEVELS
 from gateway.estimate import actual_cost, estimate_cost
-from gateway.health import GatewayError, ProviderHealth, ProviderStatus
+from gateway.health import FreeIntelligenceUnavailable, GatewayError, ProviderHealth, ProviderStatus
 from gateway.learning import Observation, PerformanceLedger, ReliabilityModel
 from gateway.modes import MODE_POLICIES, ChatMode, CostClass, policy_for
 from gateway.persona import guard_identity, system_prompt_for_role
@@ -45,6 +46,12 @@ from gateway.router import ModelRouter, RouteDecision, RouteKind
 from gateway.secrets import CredentialStore
 from gateway.task import TaskFacts, TaskVector, rule_based
 from gateway.transport import ReservationRequired, Ticket, Transport, ZeroCostViolation
+
+
+TRANSIENT_FREE_POOL_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+FREE_POOL_MAX_ATTEMPTS_PER_MODEL = 2
+FREE_POOL_BASE_DELAY_SECONDS = 1.0
+FREE_POOL_MAX_DELAY_SECONDS = 2.0
 
 
 class GatewayRefused(RuntimeError):
@@ -134,6 +141,7 @@ class GatewayReply:
     identity_rewrites: int = 0
     privacy: PrivacyDecision | None = None
     reservation_id: str = ""
+    route_attempts: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +149,7 @@ class GatewayReply:
             "estimated_eur": self.estimated_eur, "actual_eur": self.actual_eur, "latency_seconds": round(self.latency_seconds, 3),
             "identity_rewrites": self.identity_rewrites, "decision": self.decision.to_dict(),
             "privacy": self.privacy.to_dict() if self.privacy else None, "reservation_id": self.reservation_id,
+            "route_attempts": list(self.route_attempts), "final_selected_model": self.model,
         }
 
 
@@ -157,6 +166,9 @@ class ModelGateway:
         emit: Callable[[str, dict[str, Any]], None] | None = None,
         cost_policy: Any = None,
         subscription_available: Callable[[str], bool] | None = None,
+        retry_sleep: Callable[[float], None] | None = None,
+        retry_jitter: Callable[[float], float] | None = None,
+        import_environment_credentials: bool = True,
     ) -> None:
         self.state_root = Path(state_root)
         #: The owner's spending policy (runtime.cost_policy).  A CostPolicy, or
@@ -172,7 +184,7 @@ class ModelGateway:
             # names) has entered the credential: it moves into the encrypted
             # store once and the provider counts as configured.
             imported = self.credentials.import_environment({p.secret: p.credential_env for p in self.config.providers.values()
-                                                            if p.secret and p.credential_env})
+                                                            if p.secret and p.credential_env}) if import_environment_credentials else []
         except Exception:  # noqa: BLE001 - a store that cannot be written is reported by status(), not here
             imported = []
         if imported:
@@ -191,6 +203,8 @@ class ModelGateway:
         self._local_available = local_available or (lambda role: local_provider is not None)
         self.router = self._make_router(self.config)
         self._emit = emit or (lambda kind, payload: None)
+        self._retry_sleep = retry_sleep or time.sleep
+        self._retry_jitter = retry_jitter or (lambda spread: random.uniform(0.0, spread))
         self._lock = threading.RLock()
         self.recent: list[dict[str, Any]] = []
         #: task_id -> replies made for that task and not yet judged.  The
@@ -338,14 +352,17 @@ class ModelGateway:
         adapter = adapter_for(provider.kind)
         started = time.perf_counter()
         try:
-            reply = adapter.call(self.transport, ticket, provider, binding, provider_request)
+            reply, route_attempts = self._call_model_pool(adapter, ticket, provider, binding, provider_request, decision=decision,
+                                                          mode=mode, started=started)
         except GatewayError as exc:
             if reservation is not None:
                 self.governor.release(reservation, reason=exc.status.value)
             if exc.status.is_outage:
                 self.health.note(provider.name, exc.status, detail=str(exc), retry_after_seconds=exc.retry_after_seconds)
+            route_attempts = list(getattr(exc, "attempts", []) or [])
             self._observe(decision, binding, provider.name, goal_verified=False, failure_class=exc.status.value, mode=mode,
-                          latency=time.perf_counter() - started)
+                          latency=time.perf_counter() - started, route_attempts=route_attempts,
+                          model=(route_attempts[-1].get("model") if route_attempts else None))
             self._emit("gateway.error", exc.to_dict())
             raise
 
@@ -357,11 +374,70 @@ class ModelGateway:
         text, rewrites = guard_identity(reply.text)
         result = GatewayReply(text=text, decision=decision, role=decision.role, provider=provider.name, model=reply.model or binding.model,
                               usage=reply.usage, estimated_eur=estimate.estimated_eur if estimate else 0.0, actual_eur=actual,
-                              latency_seconds=reply.latency_seconds, identity_rewrites=rewrites, privacy=privacy,
-                              reservation_id=reservation.reservation_id if reservation else "")
+                              latency_seconds=time.perf_counter() - started, identity_rewrites=rewrites, privacy=privacy,
+                              reservation_id=reservation.reservation_id if reservation else "", route_attempts=route_attempts)
         self._remember(result)
         self._track(request.task_id, result)
         return result
+
+    def _call_model_pool(self, adapter: Any, ticket: Ticket, provider: Any, binding: RoleBinding,
+                         provider_request: ProviderRequest, *, decision: RouteDecision, mode: ChatMode,
+                         started: float) -> tuple[Any, list[dict[str, Any]]]:
+        models = binding.model_pool
+        if decision.cost_class is not CostClass.ZERO or len(models) <= 1:
+            reply_started = time.perf_counter()
+            reply = adapter.call(self.transport, ticket, provider, binding, provider_request)
+            return reply, [{"model": reply.model or binding.model, "attempt": 1, "failure_class": "ok",
+                            "http_status": None, "retry_delay_seconds": 0.0,
+                            "latency_seconds": round(time.perf_counter() - reply_started, 3)}]
+
+        attempts: list[dict[str, Any]] = []
+        last_error: GatewayError | None = None
+        for model in models:
+            model_price = self.config.pricing_for_model(decision.role, model)
+            if provider.metered or (model_price is not None and model_price.metered):
+                raise ZeroCostViolation(f"{decision.role} model {model} is not zero-cost")
+            attempt_binding = replace(binding, model=model, models=(model,))
+            for attempt in range(1, FREE_POOL_MAX_ATTEMPTS_PER_MODEL + 1):
+                attempt_started = time.perf_counter()
+                try:
+                    reply = adapter.call(self.transport, ticket, provider, attempt_binding, provider_request)
+                    attempts.append({"model": model, "attempt": attempt, "failure_class": "ok", "http_status": None,
+                                     "retry_delay_seconds": 0.0,
+                                     "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+                    self._emit_free_pool(decision, provider.name, attempts, final_model=model, started=started,
+                                         monetary_cost_eur=0.0, goal_verified=None)
+                    return reply, attempts
+                except GatewayError as exc:
+                    last_error = exc
+                    transient = self._is_transient_free_pool_error(exc)
+                    retry_delay = self._free_pool_retry_delay(attempt) if transient and attempt < FREE_POOL_MAX_ATTEMPTS_PER_MODEL else 0.0
+                    attempts.append({"model": model, "attempt": attempt, "failure_class": exc.status.value,
+                                     "http_status": exc.http_status, "retry_delay_seconds": round(retry_delay, 3),
+                                     "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+                    if not transient:
+                        raise
+                    if retry_delay > 0:
+                        self._retry_sleep(retry_delay)
+        self._emit_free_pool(decision, provider.name, attempts, final_model="", started=started, monetary_cost_eur=0.0,
+                             goal_verified=False)
+        raise FreeIntelligenceUnavailable(role=decision.role, provider=provider.name, attempts=attempts) from last_error
+
+    def _is_transient_free_pool_error(self, exc: GatewayError) -> bool:
+        return exc.http_status in TRANSIENT_FREE_POOL_HTTP_STATUSES
+
+    def _free_pool_retry_delay(self, attempt: int) -> float:
+        base = min(FREE_POOL_MAX_DELAY_SECONDS, FREE_POOL_BASE_DELAY_SECONDS * (2 ** max(0, attempt - 1)))
+        jitter = max(0.0, min(0.2, base * 0.15))
+        return min(FREE_POOL_MAX_DELAY_SECONDS, base + float(self._retry_jitter(jitter)))
+
+    def _emit_free_pool(self, decision: RouteDecision, provider: str, attempts: list[dict[str, Any]], *,
+                        final_model: str, started: float, monetary_cost_eur: float,
+                        goal_verified: bool | None) -> None:
+        payload = {"role": decision.role, "provider": provider, "attempts": list(attempts),
+                   "final_selected_model": final_model, "total_latency_seconds": round(time.perf_counter() - started, 3),
+                   "monetary_cost_eur": monetary_cost_eur, "goal_verified": goal_verified}
+        self._emit("gateway.free_pool", payload)
 
     def _complete_local(self, request: GatewayRequest, decision: RouteDecision, binding: RoleBinding,
                         privacy: PrivacyDecision, prompt_text: str) -> GatewayReply:
@@ -404,18 +480,25 @@ class ModelGateway:
             return
         self._observe(reply.decision, binding, reply.provider, goal_verified=goal_verified,
                       failure_class=failure_class if not goal_verified else "", mode=reply.decision.mode,
-                      latency=reply.latency_seconds, usage=reply.usage, estimated=reply.estimated_eur, actual=reply.actual_eur)
+                      latency=reply.latency_seconds, usage=reply.usage, estimated=reply.estimated_eur, actual=reply.actual_eur,
+                      model=reply.model, route_attempts=reply.route_attempts)
+        if reply.route_attempts and reply.decision.cost_class is CostClass.ZERO and len(binding.model_pool) > 1:
+            self._emit_free_pool(reply.decision, reply.provider, reply.route_attempts, final_model=reply.model,
+                                 started=time.perf_counter() - reply.latency_seconds, monetary_cost_eur=reply.actual_eur,
+                                 goal_verified=goal_verified)
 
     def _observe(self, decision: RouteDecision, binding: RoleBinding, provider: str, *, goal_verified: bool, failure_class: str,
                  mode: ChatMode, latency: float = 0.0, usage: dict[str, int] | None = None, estimated: float = 0.0,
-                 actual: float = 0.0) -> None:
+                 actual: float = 0.0, model: str | None = None, route_attempts: list[dict[str, Any]] | None = None) -> None:
         usage = usage or {}
         self.reliability.observe(Observation(
-            task_class=decision.task.task_class.value, role=decision.role or binding.role, provider=provider, model=binding.model,
+            task_class=decision.task.task_class.value, role=decision.role or binding.role, provider=provider,
+            model=model or binding.model,
             goal_verified=goal_verified, failure_class=failure_class, estimated_eur=estimated, actual_eur=actual,
             latency_seconds=round(latency, 3), input_tokens=int(usage.get("input_tokens", 0)),
             cached_input_tokens=int(usage.get("cached_input_tokens", 0)), output_tokens=int(usage.get("output_tokens", 0)),
             task_vector=decision.task.as_features(), mode=mode.value, thinking_level=decision.thinking_level,
+            route_attempts=list(route_attempts or []), final_selected_model=model or binding.model,
         ))
 
     def report_task_outcome(self, task_id: str, *, goal_verified: bool, failure_class: str = "task_failure") -> int:
@@ -453,9 +536,12 @@ class ModelGateway:
         with self._lock:
             self.recent.append({"at": time.time(), "role": reply.role, "provider": reply.provider, "model": reply.model,
                                 "estimated_eur": reply.estimated_eur, "actual_eur": reply.actual_eur,
+                                "monetary_cost_eur": reply.actual_eur,
                                 "latency_seconds": round(reply.latency_seconds, 3), "usage": dict(reply.usage),
                                 "task_class": reply.decision.task.task_class.value, "mode": reply.decision.mode.value,
-                                "offline_fallback": reply.decision.offline_fallback})
+                                "offline_fallback": reply.decision.offline_fallback,
+                                "route_attempts": list(reply.route_attempts), "final_selected_model": reply.model,
+                                "goal_verified": None})
             del self.recent[:-100]
         self._emit("gateway.call", self.recent[-1])
 
@@ -468,7 +554,8 @@ class ModelGateway:
             provider = self.config.providers.get(binding.provider)
             configured = bool(binding.enabled and provider is not None and provider.enabled
                               and (not provider.secret or self.credentials.has(provider.secret)))
-            roles[role] = {"provider": binding.provider, "model": binding.model, "enabled": binding.enabled,
+            roles[role] = {"provider": binding.provider, "model": binding.model, "models": list(binding.model_pool),
+                           "enabled": binding.enabled,
                            "configured": configured, "cost_class": self.config.cost_class(role).value,
                            "health": self.health.status(binding.provider).value if provider else "unknown",
                            "offline_fallback": binding.offline_fallback}
@@ -569,6 +656,8 @@ class GatewayBrainProvider:
                                   why=exc.decision.reason)
         except GatewayError as exc:
             self.last_decision = {"kind": "provider_error", **exc.to_dict()}
+            if getattr(exc, "typed_status", "") == "FREE_INTELLIGENCE_UNAVAILABLE":
+                raise
             if self.fallback is None or not self._fallback_allowed() or not exc.status.is_outage:
                 raise
             return self._fallback(prompt, schema=schema, max_tokens=max_tokens, temperature=temperature, system=system,

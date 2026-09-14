@@ -49,6 +49,23 @@ class GatewayError(RuntimeError):
                 "http_status": self.http_status, "retry_after_seconds": self.retry_after_seconds, "message": str(self)}
 
 
+class FreeIntelligenceUnavailable(GatewayError):
+    """The configured zero-cost reasoning pool could not produce an answer."""
+
+    typed_status = "FREE_INTELLIGENCE_UNAVAILABLE"
+
+    def __init__(self, message: str = "free intelligence is temporarily unavailable", *, role: str = "reasoning.free",
+                 provider: str = "", attempts: list[dict[str, Any]] | None = None) -> None:
+        self.attempts = list(attempts or [])
+        super().__init__(ProviderStatus.PROVIDER_UNAVAILABLE, message, role=role, provider=provider)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        data["typed_status"] = self.typed_status
+        data["attempts"] = list(self.attempts)
+        return data
+
+
 def classify_http(status_code: int, body: str, *, provider_kind: str = "") -> ProviderStatus:
     """Map an HTTP failure onto the six states.  Provider quirks live here."""
 

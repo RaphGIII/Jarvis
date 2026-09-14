@@ -100,6 +100,17 @@
       "name": "gemini",
       "options": {},
       "pricing": {
+        "gemini-3.7-flash": [
+          {
+            "cached_input_per_m": 0.0,
+            "confirmed": true,
+            "currency": "USD",
+            "effective_from": "2026-09-14",
+            "input_per_m": 0.0,
+            "output_per_m": 0.0,
+            "source": "Gemini API free tier: model token price zero"
+          }
+        ],
         "gemini-3.8-flash": [
           {
             "cached_input_per_m": 0.0,
@@ -400,6 +411,10 @@
       "enabled": true,
       "max_output_tokens": 2048,
       "model": "gemini-3.8-flash",
+      "models": [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash"
+      ],
       "offline_fallback": false,
       "provider": "gemini",
       "purpose": "public/non-sensitive knowledge, semantic interpretation, context understanding, capability selection and composition",

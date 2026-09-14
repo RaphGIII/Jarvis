@@ -556,6 +556,8 @@ class IntelligenceFlow:
         except GatewayRefused as exc:
             return None, None, {"reason": f"no reasoning route: {exc.decision.reason[:200]}", "question": exc.decision.suggestion}
         except GatewayError as exc:
+            if getattr(exc, "typed_status", "") == "FREE_INTELLIGENCE_UNAVAILABLE":
+                return None, None, {"reason": "free intelligence is temporarily unavailable", "question": ""}
             return None, None, {"reason": f"reasoning provider {exc.status.value}: {exc}"[:300], "question": ""}
         if reply.decision.offline_fallback:
             return None, reply, {"reason": "only the offline fallback model is reachable; it does not produce a " + kind,

@@ -54,6 +54,9 @@ class Observation:
     mode: str = ""
     #: The abstract reasoning effort the call used (FAST / NORMAL / DEEP / MAX), "" when none.
     thinking_level: str = ""
+    #: Provider/model attempts for zero-cost pools. Prompt text and answers are never stored.
+    route_attempts: list[dict[str, Any]] = field(default_factory=list)
+    final_selected_model: str = ""
     at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @property
@@ -69,7 +72,8 @@ class Observation:
             "estimated_eur": self.estimated_eur, "actual_eur": self.actual_eur, "latency_seconds": self.latency_seconds,
             "input_tokens": self.input_tokens, "cached_input_tokens": self.cached_input_tokens,
             "output_tokens": self.output_tokens, "task_vector": dict(self.task_vector), "mode": self.mode,
-            "thinking_level": self.thinking_level, "at": self.at,
+            "thinking_level": self.thinking_level, "route_attempts": list(self.route_attempts),
+            "final_selected_model": self.final_selected_model or self.model, "at": self.at,
         }
 
 
@@ -132,7 +136,10 @@ class PerformanceLedger:
                     estimated_eur=float(data.get("estimated_eur", 0.0)), actual_eur=float(data.get("actual_eur", 0.0)),
                     latency_seconds=float(data.get("latency_seconds", 0.0)), input_tokens=int(data.get("input_tokens", 0)),
                     cached_input_tokens=int(data.get("cached_input_tokens", 0)), output_tokens=int(data.get("output_tokens", 0)),
-                    task_vector=dict(data.get("task_vector") or {}), mode=str(data.get("mode", "")), at=str(data.get("at", "")),
+                    task_vector=dict(data.get("task_vector") or {}), mode=str(data.get("mode", "")),
+                    thinking_level=str(data.get("thinking_level", "")),
+                    route_attempts=list(data.get("route_attempts") or []),
+                    final_selected_model=str(data.get("final_selected_model", "")), at=str(data.get("at", "")),
                 ))
             except (TypeError, ValueError):
                 continue

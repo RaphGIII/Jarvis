@@ -266,8 +266,8 @@ def test_gemini_per_minute_limits_are_rate_limits_and_per_day_limits_are_quota()
     assert classify_http(503, "", provider_kind="gemini") is ProviderStatus.PROVIDER_UNAVAILABLE
 
 
-def test_a_gemini_rate_limit_carries_its_retry_delay_and_free_mode_does_not_spend_around_it(tmp_path, cfg, creds):
-    from gateway.health import GatewayError
+def test_a_gemini_rate_limit_retries_the_free_pool_and_free_mode_does_not_spend_around_it(tmp_path, cfg, creds):
+    from gateway.health import FreeIntelligenceUnavailable
 
     net = FakeNetwork()
     body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "quota",
@@ -275,13 +275,15 @@ def test_a_gemini_rate_limit_carries_its_retry_delay_and_free_mode_does_not_spen
     net.responses["generativelanguage.googleapis.com"] = http_error("https://generativelanguage.googleapis.com/v1beta/x", 429, body)
     net.responses["api.openai.com"] = openai_reply("paid answer")
     gateway = make_gateway(tmp_path, cfg, creds, net)
-    with pytest.raises(GatewayError) as info:
+    with pytest.raises(FreeIntelligenceUnavailable) as info:
         gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
-    assert info.value.status is ProviderStatus.RATE_LIMIT and info.value.retry_after_seconds == 17.0
-    assert gateway.health.status("gemini") is ProviderStatus.RATE_LIMIT
+    assert info.value.typed_status == "FREE_INTELLIGENCE_UNAVAILABLE"
+    assert info.value.attempts[0]["failure_class"] == ProviderStatus.RATE_LIMIT.value
+    assert info.value.attempts[0]["retry_delay_seconds"] <= 2.0
+    assert gateway.health.status("gemini") is ProviderStatus.PROVIDER_UNAVAILABLE
     with pytest.raises(GatewayRefused) as refused:
         gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
-    assert "rate_limit" in refused.value.decision.reason
+    assert "provider_unavailable" in refused.value.decision.reason
     assert all("openai" not in r["url"] for r in net.requests), "FREE never spent to route around the free lane"
     assert gateway.transport.refused == [] or all(r["mode"] == "FREE" for r in gateway.transport.refused)
 
