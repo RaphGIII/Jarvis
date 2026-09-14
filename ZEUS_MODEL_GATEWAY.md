@@ -1,4 +1,4 @@
-# ZEUS Model Gateway — Stand nach Sprint 1 (2026-09-09)
+# ZEUS Model Gateway — Stand nach Sprint 3 (2026-09-10)
 
 Dieses Dokument beschreibt, was vom P0-Brief „ZEUS Intelligence Platform /
 Model Gateway“ gebaut ist, wie es verdrahtet ist, wie man es prüft, und was
@@ -66,12 +66,13 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 - **Build-Freigabe** (§15): ein bezahlter Engineer parkt die Mission bei AWAITING_BUILD mit Schätzbereich und hartem Maximum; ausgegeben wird erst nach „Build starten“ unter Missions.
 - **Weiche Features** (§7): der semantische Planer schätzt im selben Aufruf reasoning_depth, context_dependency, long_horizon, novelty; sie heben nur an (`max(rule, semantic)`) und steuern Denkstufe und Modellwahl der folgenden Aufrufe.
 - **Intent-Fix**: „Was ist NAT? Antworte in einem Satz.“ ist keine Ordnersuche mehr.
+- **Fähigkeit nach Bedeutung** (§10, Teil): der semantische Planer sieht die installierten, gesunden Fähigkeiten (id, Zweck, zwei Beispiele) und darf `capability.run <id>` aus dieser geschlossenen Liste wählen. Eine Anfrage mit konkretem Objekt (Pfad, Datei, Ordner), die der lexikalische Resolver nicht kennt, bekommt diese Lesung vor der Prosa-Antwort; reiner Chat zahlt den Aufruf nicht. Kommt die Wahl vom Offline-Modell oder mit niedriger Konfidenz, fragt ZEUS („Meinst du: …?“) statt zu handeln — das 4B-Modell hat schon einmal Entropie mit Prüfsumme verwechselt.
 
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:
 
-- **§9 Semantic World Model, §10 Capability Semantic Contract, §11 Capability Graph/Komposition** — nicht begonnen. Der Router hat einen `COMPOSE`-Override, aber keine Effekt/Vorbedingungs-Suche über existierende Fähigkeiten.
+- **§9 Semantic World Model, §11 Capability Graph/Komposition** — nicht begonnen (Ereignisquellen wie „Partie beendet“ existieren noch nicht; der `COMPOSE`-Override im Router hat keine Effekt/Vorbedingungs-Suche). **§10** teilweise: Auffinden nach Bedeutung über den Planer ist da; die Manifest-Felder `events`, `produces`, `related` fehlen noch.
 - **§12/§13 Engineering Router** — umgestellt (Sprint 2). Offen: eine strukturierte `EngineeringSpec` und ein „Start build“-Dialog mit Schätzung *vor* dem Spending; heute begrenzen BUILD-Modus, Owner-Spending-Freigabe und die Caps das Ausgeben. Der API-Engineer arbeitet als Diff-Generator mit einer Reparaturrunde, nicht als mehrstufiger Agent mit Werkzeugen.
 - **§7 weiche Features** — verdrahtet (Sprint 3) über den semantischen Planer; Ambiguität bleibt dessen `clarify`-Entscheidung.
 - **§20 Goal Verification als Lernsignal** — verdrahtet (Sprint 2) für Projektoperationen, Kompositionen, Fähigkeiten, Aktionen und Owner-Feedback. Konversationsantworten ohne Feedback bleiben unbeurteilt.
