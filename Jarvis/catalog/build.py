@@ -268,14 +268,48 @@ def capabilities(repo: Path) -> list[dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict):
             continue
+        health = row.get("health_state") or row.get("health", "")
+        if isinstance(health, dict):
+            health = health.get("health") or health.get("state") or ""
+        # Manifest v2: the semantic contract, as declared or as inferred from
+        # the older fields.  Built from the manifest so the catalog and the
+        # planner agree on one contract.
+        try:
+            from capabilities.models import CapabilityManifest
+
+            contract = CapabilityManifest.from_dict(row).semantic_contract().to_dict()
+        except Exception:  # noqa: BLE001 - a record the model cannot read still lists its id
+            contract = dict(row.get("effective_contract") or row.get("contract") or {})
         out.append({
-            "id": str(row.get("capability_id", "")), "family": str(row.get("family", "")),
-            "health": str(row.get("health_state") or row.get("health", "")),
+            "id": str(row.get("capability_id", "")), "version": str(row.get("version", "")), "family": str(row.get("family", "")),
+            "health": str(health), "description": str(row.get("description", "")).split("\n")[0][:160],
             "permissions": list(row.get("permissions_required") or []),
-            "goal_types": list(row.get("goal_types") or [])[:6],
             "implementation": str(row.get("implementation_path", "")),
+            "tests": str(row.get("tests_location", "")),
+            "contract": contract,
         })
     return sorted(out, key=lambda r: r["id"])
+
+
+def effect_index(caps: list[dict[str, Any]]) -> dict[str, Any]:
+    """token -> who produces it, who needs it, who serves it as a goal."""
+
+    producers: dict[str, list[str]] = {}
+    consumers: dict[str, list[str]] = {}
+    goals: dict[str, list[str]] = {}
+    events: dict[str, list[str]] = {}
+    for cap in caps:
+        contract = cap.get("contract") or {}
+        for token in [*contract.get("produces", []), *contract.get("effects", [])]:
+            producers.setdefault(token, []).append(cap["id"])
+        for token in [*contract.get("consumes", []), *contract.get("preconditions", [])]:
+            consumers.setdefault(token, []).append(cap["id"])
+        for token in contract.get("goals", []):
+            goals.setdefault(token, []).append(cap["id"])
+        for token in contract.get("events", []):
+            events.setdefault(token, []).append(cap["id"])
+    return {"produced_by": dict(sorted(producers.items())), "consumed_by": dict(sorted(consumers.items())),
+            "goals_served_by": dict(sorted(goals.items())), "events_relevant_to": dict(sorted(events.items()))}
 
 
 # ---------------------------------------------------------------------------
@@ -365,8 +399,8 @@ def build_catalog(repo: Path | None = None) -> dict[str, Any]:
     }
     graph_doc = {"schema_version": 1, "nodes": sorted(modules), "imports": edges, "dependents": dependents}
     return {"map": map_doc, "interfaces": {"schema_version": 1, "modules": interfaces}, "graph": graph_doc,
-            "capabilities": {"schema_version": 1, "note": "runtime facts from the capability registry; not part of the staleness check",
-                             "capabilities": caps}}
+            "capabilities": {"schema_version": 2, "note": "runtime facts from the capability registry; not part of the staleness check",
+                             "capabilities": caps, "effects": effect_index(caps)}}
 
 
 def render_architecture(catalog: dict[str, Any]) -> str:

@@ -206,6 +206,102 @@ class JarvisCore:
         return self._secrets
 
     @property
+    def world(self) -> Any:
+        """The world model: recent events, produced facts, the owner's projects -- the planner's S0."""
+
+        if getattr(self, "_world", None) is None:
+            from service.world import WorldModel
+
+            try:
+                path = Path(self.kernel.state_root) / "world.json"
+            except Exception:  # noqa: BLE001 - a stub kernel without a state root
+                path = None
+            self._world = WorldModel(path, projects=lambda: [str(p.get("title") or "") for p in self.owner_projects()])
+        return self._world
+
+    @property
+    def composition(self) -> Any:
+        """The composition engine: contracts + world state + semantic goal -> plan or proof of a gap."""
+
+        if getattr(self, "_composition", None) is None:
+            from capabilities.composition import CompositionEngine
+
+            def learned_reliability(capability_id: str) -> float | None:
+                manifest = self.capabilities.registry.get(capability_id)
+                if manifest is None:
+                    return None
+                view = manifest.health_view()
+                calls = int(view.get("calls") or 0)
+                rate = view.get("success_rate")
+                return float(rate) if calls >= 3 and rate is not None else None
+
+            self._composition = CompositionEngine(self.capabilities.registry, self.model_gateway, reliability=learned_reliability)
+        return self._composition
+
+    def world_state(self) -> dict[str, Any]:
+        return {"ok": True, **self.world.to_dict()}
+
+    def note_world_event(self, token: str, *, detail: dict[str, Any] | None = None, ttl: float | None = None,
+                         source: str = "api") -> dict[str, Any]:
+        """A capability, a device or the owner's tooling reports that something happened."""
+
+        token = str(token or "").strip()
+        if not token:
+            return {"ok": False, "error": "empty event token"}
+        entry = self.world.note_event(token, source=source, detail=dict(detail or {}), **({"ttl": float(ttl)} if ttl else {}))
+        self.emit(EventType.TOOL, {"summary": f"world event: {entry.token}" + (f" {entry.detail}" if entry.detail else ""),
+                                   "source": "world", "event": entry.to_dict()})
+        return {"ok": True, "event": entry.to_dict(), "state": self.world.state().to_dict()}
+
+    def compose_contract_preview(self, text: str) -> dict[str, Any]:
+        """Derive the semantic goal and plan over contracts -- without executing anything."""
+
+        text = str(text or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty text"}
+        result = self.composition.derive_and_plan(text, self.world.state(), mode=self.chat_mode)
+        return {"ok": True, **result.to_dict()}
+
+    def semantic_authority(self) -> dict[str, Any]:
+        """Is a configured semantic provider reachable, or only the legacy local model?
+
+        Decisions about goals, capability relevance, composition and
+        engineering need are the semantic provider's.  The legacy local model
+        may answer prose; it may not make those decisions at low confidence and
+        have them acted on.
+        """
+
+        try:
+            gateway = self.kernel.gateway
+        except AttributeError:
+            # No gateway wired at all (a kernel built for a drill or a test
+            # with its own provider): the provider in hand is the configured
+            # one, and there is no legacy fallback to guard against.
+            return {"available": True, "role": "", "provider": "kernel", "reason": "", "suggestion": ""}
+        try:
+            from gateway.gateway import GatewayRequest
+            from gateway.task import TaskFacts
+
+            decision, _ = gateway.plan(GatewayRequest(prompt="semantic decision", mode=self.chat_mode,
+                                                      facts=TaskFacts(text="semantic decision", refers_to_context=True),
+                                                      overrides=False))
+            available = decision.kind.value == "model" and not decision.offline_fallback
+            return {"available": available, "role": decision.role, "provider": decision.provider,
+                    "reason": decision.reason if not available else "", "suggestion": decision.suggestion}
+        except Exception as exc:  # noqa: BLE001
+            return {"available": False, "role": "", "provider": "", "reason": f"{type(exc).__name__}: {exc}"[:200], "suggestion": ""}
+
+    def _semantic_unavailable_message(self, reason: str, suggestion: str = "") -> str:
+        de = self.language.startswith("de")
+        if de:
+            return ("Dafür brauche ich das konfigurierte Denkmodell, und das ist gerade nicht erreichbar"
+                    + (f" ({reason[:120]})" if reason else "") + ". Das lokale Modell entscheidet so etwas nicht. "
+                    + (suggestion or "Prüfe Provider, Modus oder Budget, oder sag mir direkt, welche Fähigkeit ich ausführen soll."))
+        return ("That needs the configured reasoning provider, which is not reachable right now"
+                + (f" ({reason[:120]})" if reason else "") + ". The local model does not make that decision. "
+                + (suggestion or "Check the provider, the mode or the budget, or tell me directly which capability to run."))
+
+    @property
     def capabilities(self) -> Any:
         """The capability service: what ZEUS can do, and how it learns more."""
 
@@ -763,6 +859,11 @@ class JarvisCore:
         # answering it from a model's memory something it could have simply
         # gone and computed. The registry is asked before that happens.
         if self._dispatch_known_capability(text, scope):
+            return
+        # A sentence that is conversation on its face -- "schon wieder
+        # verloren" -- can be a goal when the world state carries the context
+        # (a game just finished, a project is active).  Contracts decide.
+        if self._answer_by_contract_composition(text, scope):
             return
         # The registry matched nothing lexically.  A request that names a
         # concrete object -- a path, a file, a folder -- and for which
@@ -1867,6 +1968,130 @@ class JarvisCore:
         self._execute_capability(manifest, text, text, scope, phrase=text)
         return True
 
+    def _note_capability_facts(self, capability_id: str) -> None:
+        """A capability ran and verified: what its contract says it produces now holds."""
+
+        try:
+            manifest = self.capabilities.registry.get(capability_id)
+            if manifest is None:
+                return
+            provides = manifest.semantic_contract().provides
+            if provides:
+                self.world.note_facts(sorted(provides), source=capability_id)
+        except Exception:  # noqa: BLE001 - the world model is context, never a failure of the run
+            pass
+
+    def _answer_by_contract_composition(self, text: str, scope: str) -> bool:
+        """Contracts + world state + semantic goal: run a plan, name a gap, ask, or say the provider is missing.
+
+        Runs only when at least one capability declares a real contract --
+        without contracts there is nothing to compose over and the older
+        paths keep the request.  Returns True when it handled the request.
+        """
+
+        from capabilities.composition import engineering_brief
+
+        try:
+            engine = self.composition
+            if not engine.has_declared_contracts():
+                return False
+        except Exception:  # noqa: BLE001 - no registry, nothing to compose
+            return False
+        state = self.world.state()
+        if not self._contract_composition_applies(text, state, engine):
+            return False
+        result = engine.derive_and_plan(text, state, mode=self.chat_mode, task_id=self._current_task_id())
+        derivation = result.derivation
+        self.emit(EventType.TOOL, {"summary": (f"composition: {result.status}"
+                                               + (f" goals={derivation.goals}" if derivation.goals else "")
+                                               + (f" plan={result.plan.capability_ids}" if result.plan and result.plan.steps else "")),
+                                   "composition": result.to_dict(), "source": "composition"}, scope=scope)
+        de = self.language.startswith("de")
+        if result.status == "UNAVAILABLE":
+            if not self._world_has_context(state) and not self._names_concrete_object(text):
+                # Plain conversation without context: prose may still answer
+                # it; no semantic decision is being taken.
+                return False
+            self._deliver(self._semantic_unavailable_message(derivation.reason, derivation.question), scope=scope,
+                          backend="composition", final_state=JarvisState.WAITING,
+                          context_text="[semantic provider unavailable; no goal derived]")
+            return True
+        if result.status == "CLARIFY":
+            self._deliver(derivation.question or ("Was genau meinst du?" if de else "What exactly do you mean?"), scope=scope,
+                          backend="composition", final_state=JarvisState.WAITING,
+                          context_text=f"[composition clarification: {derivation.reason[:120]}]")
+            return True
+        if result.status == "MISSING_CAPABILITY" and result.missing is not None:
+            evidence = result.missing
+            if evidence.kind == "unmet_input":
+                # Every capability the goal needs exists; the world lacks an
+                # input (no game has finished, nothing was named).  That is
+                # not a reason to build anything.
+                inputs = ", ".join(evidence.unmet_inputs)
+                self.emit(EventType.TOOL, {"summary": f"composition: unmet input(s) {inputs}; nothing to build",
+                                           "missing_capability": evidence.to_dict(), "source": "composition"}, scope=scope)
+                self._deliver((f"Dafür fehlt mir gerade die Voraussetzung: {inputs}. Sobald sie vorliegt, kann ich "
+                               f"{' → '.join(evidence.closest_partial_plan.capability_ids) if evidence.closest_partial_plan else 'den Ablauf'} ausführen."
+                               if de else
+                               f"The precondition is missing right now: {inputs}. Once it holds I can run "
+                               f"{' → '.join(evidence.closest_partial_plan.capability_ids) if evidence.closest_partial_plan else 'the plan'}."),
+                              scope=scope, backend="composition",
+                              context_text=f"[composition: unmet input {inputs}; nothing built]")
+                return True
+            brief = engineering_brief(text, evidence, goals=derivation.goals)
+            self.emit(EventType.TOOL, {"summary": "missing capability proven: " + evidence.describe()[:200],
+                                       "missing_capability": evidence.to_dict(), "goals": derivation.goals, "source": "composition"},
+                      scope=scope)
+            self._start_capability_teaching_for_request(text, text, scope, evidence=brief)
+            return True
+        if result.status == "PLAN" and result.plan is not None:
+            if not result.plan.steps:
+                self._deliver(("Das gilt schon: " + ", ".join(derivation.goals) if de else "That already holds: " + ", ".join(derivation.goals)),
+                              scope=scope, backend="composition")
+                return True
+            from service.composer import Plan, Step, extract_constraints
+
+            steps = [Step(f"capability:{cid}", purpose=f"{cid}: {', '.join(step.provides)}", role="required")
+                     for cid, step in zip(result.plan.capability_ids, result.plan.steps)]
+            plan = Plan(goal=text, mode="doing", steps=steps, reason=f"contract plan for {', '.join(derivation.goals)}",
+                        constraints=extract_constraints(text))
+            return self._answer_by_composition(text, scope, allow_single=True, plan=plan)
+        return False
+
+    @staticmethod
+    def _world_has_context(state: Any) -> bool:
+        """Events and produced facts are context; the owner's project list alone is not."""
+
+        return any(source != "project" for source in state.sources.values())
+
+    def _contract_composition_applies(self, text: str, state: Any, engine: Any) -> bool:
+        """Whether this sentence is worth a semantic reading over the contracts.
+
+        Pure chat never pays for the call: the derivation runs when the world
+        carries recent context, when the request names a concrete object, or
+        when its words touch a capability's own vocabulary.
+        """
+
+        if self._world_has_context(state) or self._names_concrete_object(text):
+            return True
+        try:
+            from capabilities.composition import cards_from_registry
+            from capabilities.semantic_goals import words_of
+
+            request_words = words_of(text)
+            return any(request_words & card.vocabulary() for card in cards_from_registry(self.capabilities.registry))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _current_task_id(self) -> str:
+        try:
+            from gateway.gateway import active_context
+
+            context = active_context()
+            return context.task_id if context is not None else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _dispatch_semantic_goal(self, goal: Any, text: str, scope: str, classification: Any) -> bool:
         """Route one semantic goal to the typed dispatcher that owns it."""
 
@@ -1948,6 +2173,16 @@ class JarvisCore:
             self._answer_by_research(goal.target or text, scope)
             return True
         if op == "capability.missing":
+            authority = self.semantic_authority()
+            if not authority["available"]:
+                # "I have no tool for this" from the legacy local model is not
+                # a finding about the registry and does not start engineering.
+                if self._dispatch_known_capability(text, scope):
+                    return True
+                self._deliver(self._semantic_unavailable_message(authority["reason"], authority["suggestion"]),
+                              scope=scope, backend="semantic", final_state=JarvisState.WAITING,
+                              context_text="[semantic provider unavailable; no engineering decision taken]")
+                return True
             if goal.confidence >= 0.5:
                 # "capability.missing" is FAST_LOCAL's opinion about the world,
                 # not a fact about the registry: the model has never seen the
@@ -2767,12 +3002,17 @@ class JarvisCore:
         context = self.device_context().get("available", ["screen", "speaker", "microphone"])
         return Composer(capabilities=manifests, context_requirements=context)
 
-    def _answer_by_composition(self, text: str, scope: str, *, guidance: str = "", allow_single: bool = False) -> bool:
+    def _answer_by_composition(self, text: str, scope: str, *, guidance: str = "", allow_single: bool = False,
+                               plan: Any = None) -> bool:
         """Plan typed steps over existing primitives and run them as a mission.
 
         Returns True when the request was handled here (executed, or a gap
         was named), False when composition found nothing to compose and the
         ordinary single-action path should take over.
+
+        ``plan`` is a ready plan from the contract planner; without one the
+        model plans over the menu -- and only a configured semantic provider
+        may do that, never the legacy local model on its own.
         """
 
         from brain.tiers import ModelTier
@@ -2784,7 +3024,13 @@ class JarvisCore:
         composer = self._composer()
         provider = self.kernel.provider(ModelTier.FAST_LOCAL)
         constraints = extract_constraints(text)
-        plan = composer.plan(text, provider, guidance=guidance, constraints=constraints)
+        if plan is None:
+            authority = self.semantic_authority()
+            if not authority["available"]:
+                self.emit(EventType.TOOL, {"summary": "composition skipped: no semantic provider (the local model does not plan compositions)",
+                                           "authority": authority, "source": "composer"}, scope=scope)
+                return False
+            plan = composer.plan(text, provider, guidance=guidance, constraints=constraints)
         self.emit(EventType.TOOL, {"summary": f"composition: {plan.mode}, {len(plan.steps)} step(s)" + (f", missing {plan.missing}" if plan.missing else "")
                                    + (f", forbidden {plan.forbidden}" if plan.forbidden else ""),
                                    "plan": plan.to_dict(), "source": "composer"}, scope=scope)
@@ -2945,6 +3191,8 @@ class JarvisCore:
             evidence = {"capability_id": cid, "arguments": args, "output": output if isinstance(output, dict) else {}}
             if classification is not None:
                 evidence["failure"] = classification.to_dict()
+            if ok:
+                self._note_capability_facts(cid)
             return Receipt(kind=f"capability.{cid}", executor=cid, ok=ok,
                            detail=(summary if ok else f"[{classification.kind}] {error or 'the capability reported a failure'}"[:300]),
                            verifications=[Verification(check="capability reported ok", passed=ok, observed=summary or error[:200]),
@@ -3503,10 +3751,13 @@ class JarvisCore:
                 return True
         return False
 
-    def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str) -> None:
+    def _start_capability_teaching_for_request(self, goal: str, original_text: str, scope: str, *, evidence: str = "") -> None:
         """A capability ZEUS does not have: Codex engineers one, then the request resumes."""
 
-        self._start_capability_engineering(goal, original_text, scope)
+        if evidence:
+            self._start_capability_engineering(goal, original_text, scope, evidence=evidence)
+        else:
+            self._start_capability_engineering(goal, original_text, scope)
 
     def _start_capability_repair_for_request(self, resolution: Any, goal: str, original_text: str, scope: str) -> None:
         """A capability ZEUS has and cannot trust: Codex repairs it, then the request resumes.
@@ -3527,7 +3778,7 @@ class JarvisCore:
         )
 
     def _start_capability_engineering(
-        self, goal: str, original_text: str, scope: str, *, capability_id: str = "", repair: str = "",
+        self, goal: str, original_text: str, scope: str, *, capability_id: str = "", repair: str = "", evidence: str = "",
     ) -> None:
         """Codex builds or repairs one capability, then the original request resumes.
 
@@ -3592,7 +3843,8 @@ class JarvisCore:
                     kernel=self.kernel,
                     emit=lambda kind, payload: self.emit(kind, payload, scope=scope),
                 )
-                result = mission.run(shape.goal, capability_id=cid, keywords=words[:12], repair=repair, codex_first=True)
+                brief = f"{shape.goal}\n\n{evidence}" if evidence else shape.goal
+                result = mission.run(brief, capability_id=cid, keywords=words[:12], repair=repair, codex_first=True)
                 self.emit(EventType.PROGRESS,
                           {"summary": f"capability {'repair' if repair else 'acquisition'} finished: {result.acquired}",
                            "acquisition": result.to_dict(),
@@ -3902,6 +4154,12 @@ class JarvisCore:
         # reach the planner. It is also 40-85 seconds faster, because the
         # planner call does not happen at all.
         if not looks_compound(text) and self._dispatch_known_capability(text, scope):
+            return
+        # Contracts first: the semantic goal behind the words, the world state,
+        # and a search over what existing capabilities produce.  A plan runs;
+        # a proven gap goes to engineering with the evidence; an ungrounded
+        # reading is a question; no semantic provider is said out loud.
+        if self._answer_by_contract_composition(text, scope):
             return
         if looks_compound(text) or hits:
             try:

@@ -152,8 +152,32 @@ class CapabilityManifest:
     supersedes: list[str] = field(default_factory=list)
     semantic_signature: str = ""
     lifecycle: str = ""
+    #: Manifest v2: the semantic contract -- goals, events, consumes, produces,
+    #: preconditions, effects, permissions, risk/latency/cost classes -- as a
+    #: compact dict (see :mod:`capabilities.contracts`).  Empty for a manifest
+    #: written before contracts existed; :meth:`semantic_contract` then infers
+    #: a minimal one and says so.
+    contract: dict[str, Any] = field(default_factory=dict)
+
+    def semantic_contract(self) -> "SemanticContract":
+        """The contract the planner reasons over: declared, or inferred and marked."""
+
+        from capabilities.contracts import SemanticContract, infer_contract
+
+        if self.contract:
+            declared = SemanticContract.from_dict(self.contract)
+            if declared.declared:
+                return declared
+        return infer_contract(
+            self.capability_id, description=self.description, family=self.family or self.capability_id.split(".", 1)[0],
+            permissions=self.permissions_required, goal_types=self.goal_types, preconditions=self.preconditions,
+            latency_class=self.latency_class, entrypoint=self.entrypoint,
+            tests=[self.tests_location] if self.tests_location else [],
+        )
 
     def to_dict(self) -> dict[str, Any]:
+        from capabilities.contracts import SemanticContract
+
         data = asdict(self)
         data["lifecycle"] = self.lifecycle_state().value
         data["health"] = self.health_view()
@@ -164,6 +188,11 @@ class CapabilityManifest:
         data["codex_required"] = bool(self.codex_required)
         data["runtime_brain"] = self.runtime_brain or RuntimeBrain.NONE.value
         data["semantic_signature"] = self.semantic_signature or self.compute_semantic_signature()
+        contract = self.semantic_contract()
+        # The declared contract is stored normalised and compact, so the file
+        # and the planner agree token for token.
+        data["contract"] = SemanticContract.from_dict(self.contract).to_dict() if self.contract else {}
+        data["effective_contract"] = contract.to_dict()
         return data
 
     def health_view(self) -> dict[str, Any]:
@@ -297,6 +326,7 @@ class CapabilityManifest:
             supersedes=[str(item) for item in data.get("supersedes", [])],
             semantic_signature=str(data.get("semantic_signature", "")),
             lifecycle=str(data.get("lifecycle", "")),
+            contract=dict(data.get("contract") or {}),
         )
 
     def validate(self) -> list[str]:
@@ -319,6 +349,13 @@ class CapabilityManifest:
             errors.append("codex_required capabilities must declare runtime_brain='codex'")
         if self.security_level < 0 or self.security_level > 3:
             errors.append("security_level must be between 0 and 3")
+        if self.contract:
+            from capabilities.contracts import SemanticContract
+
+            if not isinstance(self.contract, dict):
+                errors.append("contract must be an object")
+            else:
+                errors.extend(f"contract: {problem}" for problem in SemanticContract.from_dict(self.contract).validate())
         return errors
 
 
@@ -406,6 +443,7 @@ class SkillSpecification:
             codex_required=bool(self.metadata.get("codex_required", False)),
             created_by=str(self.metadata.get("created_by", "codex")),
             lifecycle=CapabilityLifecycle.VERIFIED.value,
+            contract=dict(self.metadata.get("contract") or {}),
             creation_metadata={
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "source": "capability_acquisition_v04",

@@ -379,6 +379,33 @@ def capability_checks(python: str | None = None) -> list[CapabilityCheck]:
     ]
 
 
+def _declared_contract(workspace: Path) -> dict[str, Any]:
+    """The semantic contract an engineer wrote next to the code (``contract.json``).
+
+    Read from the verified workspace so the manifest carries what the author
+    declared: goals, events, consumes, produces, preconditions, effects,
+    permissions, classes.  Malformed tokens are dropped rather than fatal --
+    the capability still installs, with the catalog marking the contract as
+    inferred where nothing valid was declared.
+    """
+
+    from capabilities.contracts import SemanticContract
+
+    path = Path(workspace) / "contract.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    contract = SemanticContract.from_dict(data)
+    if contract.validate():
+        return {}
+    return contract.to_dict()
+
+
 class CapabilityService:
     """Resolves, acquires, registers and executes capabilities."""
 
@@ -900,11 +927,13 @@ class CapabilityService:
         )
 
         terms = sorted(set((keywords or []) + _keywords_from(goal)))
+        contract = _declared_contract(workspace)
         manifest = CapabilityManifest(
             capability_id=capability_id,
             description=goal,
             version=version,
             entrypoint="main.py",
+            contract=contract,
             source_location=str(target.resolve()),
             implementation_path=str(target.resolve()),
             tests_location=str((target / "test_capability.py").resolve()),

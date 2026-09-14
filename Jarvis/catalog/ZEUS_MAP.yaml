@@ -123,6 +123,7 @@ packages:
       - tests/test_acceptance.py
       - tests/test_autonomous_engineering_v04.py
       - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_contracts.py
       - tests/test_capability_failure_policy.py
       - tests/test_capability_first_architecture.py
       - tests/test_capability_learning_end_to_end.py
@@ -130,6 +131,7 @@ packages:
       - tests/test_capability_resolution.py
       - tests/test_capability_service.py
       - tests/test_capability_teaching_loop.py
+      - tests/test_composition_planner.py
       - tests/test_engineering_router.py
       - tests/test_environment.py
       - tests/test_gateway_integration.py
@@ -140,6 +142,7 @@ packages:
       - tests/test_selfdev_candidate_integrity.py
       - tests/test_selfdev_promotion_gate.py
       - tests/test_semantic_acceptance.py
+      - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
       - tests/test_skill_specification_generator.py
       - tests/test_stall_recovery.py
@@ -162,6 +165,19 @@ packages:
       - tests/test_selfdev.py
       - tests/test_selfdev_candidate_integrity.py
       - tests/test_selfdev_promotion_gate.py
+    - path: capabilities/composition.py
+      purpose: 'Composition engine: registry + world state + semantic goal -> a plan, or proof of a gap.'
+      lines: 146
+      public: 6
+      tests:
+      - tests/test_semantic_composition.py
+    - path: capabilities/contracts.py
+      purpose: 'Capability semantic contracts (manifest v2): what a capability does to the world.'
+      lines: 188
+      public: 4
+      tests:
+      - tests/test_capability_contracts.py
+      - tests/test_composition_planner.py
     - path: capabilities/executor.py
       purpose: ''
       lines: 64
@@ -175,11 +191,12 @@ packages:
       - tests/test_capability_teaching_loop.py
     - path: capabilities/models.py
       purpose: ''
-      lines: 505
+      lines: 543
       public: 10
       tests:
       - tests/test_autonomous_engineering_v04.py
       - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_contracts.py
       - tests/test_capability_failure_policy.py
       - tests/test_capability_first_architecture.py
       - tests/test_capability_learning_end_to_end.py
@@ -188,6 +205,7 @@ packages:
       - tests/test_gateway_integration.py
       - tests/test_replan_semantic_equivalence.py
       - tests/test_semantic_acceptance.py
+      - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
     - path: capabilities/permissions.py
       purpose: ''
@@ -195,6 +213,12 @@ packages:
       public: 2
       tests:
       - tests/test_capability_acquisition_v04.py
+    - path: capabilities/planner.py
+      purpose: 'The capability composition planner: reach a goal with what already exists.'
+      lines: 516
+      public: 10
+      tests:
+      - tests/test_composition_planner.py
     - path: capabilities/promotion.py
       purpose: ''
       lines: 89
@@ -208,12 +232,14 @@ packages:
       tests:
       - tests/test_acceptance.py
       - tests/test_capability_acquisition_v04.py
+      - tests/test_capability_contracts.py
       - tests/test_capability_first_architecture.py
       - tests/test_capability_learning_end_to_end.py
       - tests/test_capability_resolution.py
       - tests/test_capability_service.py
       - tests/test_capability_teaching_loop.py
       - tests/test_semantic_acceptance.py
+      - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
       - tests/test_stall_recovery.py
     - path: capabilities/research.py
@@ -231,17 +257,24 @@ packages:
       - tests/test_capability_acquisition_v04.py
       - tests/test_capability_first_architecture.py
       - tests/test_capability_teaching_loop.py
+    - path: capabilities/semantic_goals.py
+      purpose: From the owner's words and the world state to a semantic goal -- or an honest "cannot".
+      lines: 259
+      public: 5
+      tests: []
     - path: capabilities/service.py
       purpose: 'Capabilities: things Jarvis can actually do, acquired when it cannot.'
-      lines: 1280
+      lines: 1309
       public: 6
       tests:
       - tests/test_acceptance.py
+      - tests/test_capability_contracts.py
       - tests/test_capability_resolution.py
       - tests/test_capability_service.py
       - tests/test_capability_teaching_loop.py
       - tests/test_environment.py
       - tests/test_recovery_strategy.py
+      - tests/test_semantic_composition.py
       - tests/test_stall_recovery.py
       - tests/test_static_check.py
     - path: capabilities/specification.py
@@ -287,6 +320,7 @@ packages:
       - tests/test_identity.py
       - tests/test_language_and_persona.py
       - tests/test_selfdev_promotion_gate.py
+      - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_wake_listener.py
     - path: core/identity.py
@@ -303,6 +337,7 @@ packages:
       - tests/test_identity.py
       - tests/test_language_and_persona.py
       - tests/test_selfdev_promotion_gate.py
+      - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_wake_listener.py
     - path: core/kernel.py
@@ -319,6 +354,7 @@ packages:
       - tests/test_desktop_tools.py
       - tests/test_gateway_integration.py
       - tests/test_selfdev_promotion_gate.py
+      - tests/test_semantic_composition.py
   deployment:
     purpose: promotion of a verified candidate into the live tree, and rollback
     modules:
@@ -644,6 +680,7 @@ packages:
       - tests/test_engineering_router_gateway.py
       - tests/test_gateway_integration.py
       - tests/test_model_gateway.py
+      - tests/test_semantic_composition.py
     - path: gateway/budget.py
       purpose: 'The cost governor: reserve before you spend, and never past the cap.'
       lines: 296
@@ -658,6 +695,7 @@ packages:
       - tests/test_engineering_router_gateway.py
       - tests/test_gateway_integration.py
       - tests/test_model_gateway.py
+      - tests/test_semantic_composition.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
       lines: 99
@@ -677,6 +715,7 @@ packages:
       tests:
       - tests/test_gateway_integration.py
       - tests/test_model_gateway.py
+      - tests/test_semantic_composition.py
     - path: gateway/learning.py
       purpose: What ZEUS has learned about which role is good enough for what.
       lines: 209
@@ -1623,6 +1662,7 @@ packages:
       - tests/test_capability_learning_end_to_end.py
       - tests/test_capability_teaching_loop.py
       - tests/test_composer.py
+      - tests/test_composition_planner.py
       - tests/test_corrections.py
       - tests/test_desktop_lifecycle.py
       - tests/test_devices.py
@@ -1649,6 +1689,7 @@ packages:
       - tests/test_selfdev_candidate_integrity.py
       - tests/test_selfdev_promotion_gate.py
       - tests/test_semantic_acceptance.py
+      - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
       - tests/test_service.py
       - tests/test_supervisor.py
@@ -1719,7 +1760,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 7978
+      lines: 8236
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1735,6 +1776,7 @@ packages:
       - tests/test_personality.py
       - tests/test_selfdev_promotion_gate.py
       - tests/test_semantic_acceptance.py
+      - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_supervisor.py
       - tests/test_thoughts.py
@@ -1783,6 +1825,7 @@ packages:
       - tests/test_gateway_integration.py
       - tests/test_pronunciation.py
       - tests/test_selfdev.py
+      - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_utterance_gate.py
       - tests/test_voice_service.py
@@ -1797,7 +1840,7 @@ packages:
       - tests/test_filesystem.py
     - path: service/http.py
       purpose: The local HTTP + Server-Sent Events interface to Jarvis Core.
-      lines: 814
+      lines: 820
       public: 1
       tests:
       - tests/test_action_receipts.py
@@ -1953,6 +1996,13 @@ packages:
       tests:
       - tests/test_basics_sprint.py
       - tests/test_semantic_plane.py
+    - path: service/world.py
+      purpose: 'The world model: what ZEUS currently knows to be true, as planner facts.'
+      lines: 164
+      public: 2
+      tests:
+      - tests/test_composition_planner.py
+      - tests/test_semantic_composition.py
   skills:
     purpose: skill packaging
     modules:
@@ -2505,6 +2555,7 @@ api_routes:
 - /api/capabilities/report
 - /api/capabilities/requests
 - /api/compose
+- /api/compose/plan
 - /api/conversation
 - /api/conversation/delete
 - /api/conversation/restore
@@ -2649,6 +2700,8 @@ api_routes:
 - /api/window
 - /api/window/hide
 - /api/window/show
+- /api/world
+- /api/world/event
 ui_modules:
 - path: ui/app.js
   purpose: '* The client entry point. Subscribes to the event stream, keeps the shared'
@@ -2897,8 +2950,8 @@ ui_modules:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 322
+  modules: 327
   packages: 33
-  api_routes: 168
+  api_routes: 171
   ui_modules: 31
-  tests: 112
+  tests: 115

@@ -496,6 +496,12 @@ class JarvisHTTPServer:
                 self.core, **{k: v for k, v in body.items() if k in ("room", "name", "device_type", "speaker", "microphone", "inputs", "outputs")}).to_dict(),
             "/api/device/context": lambda _: self.core.device_context(),
             "/api/compose": lambda body: self.core.compose_preview(str(body.get("goal", ""))),
+            # Contracts: the world model and the composition planner, without executing.
+            "/api/world": lambda _: self.core.world_state(),
+            "/api/world/event": lambda body: self.core.note_world_event(
+                str(body.get("token", "")), detail=dict(body.get("detail") or {}),
+                ttl=float(body.get("ttl")) if body.get("ttl") else None, source=str(body.get("source") or "api")),
+            "/api/compose/plan": lambda body: self.core.compose_contract_preview(str(body.get("text", ""))),
             "/api/mission": lambda body: self.core.mission_detail(str(body.get("id", body.get("mission_id", "")))),
             "/api/mission/cancel": lambda body: self.core.mission_control(str(body.get("mission_id", "")), "cancel"),
             "/api/mission/pause": lambda body: self.core.mission_control(str(body.get("mission_id", "")), "pause"),

@@ -1,4 +1,4 @@
-# ZEUS Model Gateway — Stand nach Sprint 3 (2026-09-10)
+# ZEUS Model Gateway — Stand nach Sprint 4 (2026-09-14)
 
 Dieses Dokument beschreibt, was vom P0-Brief „ZEUS Intelligence Platform /
 Model Gateway“ gebaut ist, wie es verdrahtet ist, wie man es prüft, und was
@@ -68,11 +68,29 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 - **Intent-Fix**: „Was ist NAT? Antworte in einem Satz.“ ist keine Ordnersuche mehr.
 - **Fähigkeit nach Bedeutung** (§10, Teil): der semantische Planer sieht die installierten, gesunden Fähigkeiten (id, Zweck, zwei Beispiele) und darf `capability.run <id>` aus dieser geschlossenen Liste wählen. Eine Anfrage mit konkretem Objekt (Pfad, Datei, Ordner), die der lexikalische Resolver nicht kennt, bekommt diese Lesung vor der Prosa-Antwort; reiner Chat zahlt den Aufruf nicht. Kommt die Wahl vom Offline-Modell oder mit niedriger Konfidenz, fragt ZEUS („Meinst du: …?“) statt zu handeln — das 4B-Modell hat schon einmal Entropie mit Prüfsumme verwechselt.
 
+## Sprint 4 (2026-09-14): Capability Semantic Contracts und Kompositionsplaner
+
+**Manifest V2** (`capabilities/contracts.py`, `capabilities/models.py`): jedes Manifest trägt ein kompaktes `contract`-Objekt mit `goals`, `events`, `consumes`, `produces`, `preconditions`, `effects`, `permissions`, `dependencies`, `tests`, `implementation_entrypoint` und optional `related_projects`, `domain`, `risk_class` (harmless/reversible/irreversible), `latency_class` (fast/medium/slow), `cost_class` (free/cheap/metered). Tokens sind `snake_case`, leere Felder werden nicht gespeichert, die Registry validiert. Alt-Manifeste bekommen einen abgeleiteten Vertrag (`<id>.result` als Effekt, `inferred: true`) und bleiben planbar als Endpunkt. Ein Engineer deklariert den Vertrag als `contract.json` neben `main.py`; die Installation übernimmt ihn. `SkillSpecification.metadata["contract"]` fließt ebenfalls ein. Der Katalog (`CAPABILITIES.yaml`) listet jeden Vertrag plus einen Effekt-Index (produced_by / consumed_by / goals_served_by / events_relevant_to).
+
+**Weltmodell** (`service/world.py`): Fakten mit Herkunft und Ablauf. Ereignisse (`note_event`, `POST /api/world/event`), produzierte Fakten aus verifizierten Ausführungen (Vertrag → `provides`), Owner-Projekte als `project.<slug>`. Ereignisdetails werden zu Fakten (`chess_game_finished.result_loss`).
+
+**Planer** (`capabilities/planner.py`): Zustandsraumsuche von S0 über anwendbare Fähigkeiten (`requires ⊆ S`, `S' = S ∪ provides`) bis das Ziel gilt, Tiefe ≤ 6, mit Relevanzfilter (nur Fähigkeiten, deren Effekte das Ziel transitiv braucht) und Branch-and-Bound. Ranking: `PlanCost = execution_cost + latency_penalty + risk_penalty + uncertainty_penalty + steps_penalty` (free/cheap/metered = 0/1/3; fast/medium/slow = 0/1/2; harmless/reversible/irreversible = 0/1/4; Unsicherheit = 5 × (1 − Zuverlässigkeit); 0,5 je Schritt). Zuverlässigkeit: gelernte `success_rate` ab 3 Aufrufen, sonst aus Health (HEALTHY 0,95, AT_RISK 0,6, abzüglich Fehlversuche); BROKEN wird nie verwendet. Der kürzeste Plan verliert gegen einen zuverlässigeren. Zieltokens, die ein `goals`-Eintrag sind, werden auf die Effekte der dienenden Fähigkeiten abgebildet.
+
+**Fehlende Fähigkeit** nur nach Beweis: Abschluss aller erreichbaren Fakten; `missing_effects` = Zielfakten, die nichts produziert; `closest_partial_plan` = die längste laufbare Kette im Themengebiet; `unmet_inputs` = Fakten, die die Welt liefern muss (als `events` deklariert). `kind = unmet_input` (nichts bauen, Voraussetzung nennen) vs. `missing_capability` (Engineering mit `engineering_brief`: Ziel, Zustand, erreichte Kette, fehlender Effekt, geforderter `contract.json`).
+
+**Semantische Zielableitung** (`capabilities/semantic_goals.py`): geschlossenes Vokabular aus allen `goals`/`produces`/`effects`, als JSON-Enum an den konfigurierten Provider (Gateway). Erfundene Tokens werden verworfen. Grounding: ein Ziel gilt nur, wenn ein `events`-Token im Weltzustand steht, ein `related_projects`-Projekt aktiv ist oder die Anfrage Wörter aus dem Vokabular der Fähigkeit enthält; sonst CLARIFY. Antwortet nur der Offline-Fallback (4B), ist das Ergebnis `UNAVAILABLE` — typisiert, nie eine Entscheidung. Reiner Chat ohne Kontext, konkretes Objekt oder Vokabelüberschneidung zahlt keinen Aufruf.
+
+**§7-Isolation**: `JarvisCore.semantic_authority()` prüft ohne Netz, ob die Route ein Cloud-Denkmodell wäre. Modellbasierte Komposition (`_answer_by_composition` ohne fertigen Plan) und der `capability.missing`-Zweig laufen nur mit Autorität; sonst typisierte Meldung. Der Vertragsplaner übergibt fertige Pläne an die bestehende Ausführungsmaschine (Receipts, GOAL_SATISFIED, Outcome-Lernen).
+
+**Metriken** (`catalog/metrics.py`): `manifest_tokens`, `catalog_context_tokens`, `source_tokens`, `other_tokens`, `total_tokens` je Kompositions-Ergebnis (`/api/compose/plan`) und je Engineering-Kontext. Gemessen im Held-out-Szenario: drei Verträge plus Satz < 2000 Tokens.
+
+**Held-out-Test** (`tests/test_semantic_composition.py`): Projekt „Schach Training“, Ereignis `chess_game_finished result=loss`, vier Paraphrasen, die in keinem Manifest stehen → Plan capture → analyze → classify ausgeführt, GOAL_SATISFIED, Weltmodell aktualisiert. Negativkontrollen: ohne Kontext keine semantische Anfrage; fremdes Ereignis → Rückfrage; abgelaufenes Ereignis → keine Aktion; Fachwort ohne Ereignis → „Voraussetzung fehlt“, nichts gebaut; fehlender Effekt → Engineering mit Beweis; nur Offline-Modell → typisiert nicht verfügbar, nichts ausgeführt. Ehrlich: der Fake-Provider ist absichtlich „trigger-happy“; die Negativkontrollen beweisen die Systemgrenzen, nicht das Sprachverständnis des Modells. Ein Live-Test (`ZEUS_LIVE_SEMANTIC=1`) prüft den echten Provider.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:
 
-- **§9 Semantic World Model, §11 Capability Graph/Komposition** — nicht begonnen (Ereignisquellen wie „Partie beendet“ existieren noch nicht; der `COMPOSE`-Override im Router hat keine Effekt/Vorbedingungs-Suche). **§10** teilweise: Auffinden nach Bedeutung über den Planer ist da; die Manifest-Felder `events`, `produces`, `related` fehlen noch.
+- **§9/§10/§11** — gebaut (Sprint 4). Offen: Ereignisquellen im Produkt (bisher nur `/api/world/event` und verifizierte Ausführungen; kein Bildschirm-/Sitzungsbeobachter), und der `COMPOSE`-Override des Gateway-Routers nutzt den Planer noch nicht direkt.
 - **§12/§13 Engineering Router** — umgestellt (Sprint 2). Offen: eine strukturierte `EngineeringSpec` und ein „Start build“-Dialog mit Schätzung *vor* dem Spending; heute begrenzen BUILD-Modus, Owner-Spending-Freigabe und die Caps das Ausgeben. Der API-Engineer arbeitet als Diff-Generator mit einer Reparaturrunde, nicht als mehrstufiger Agent mit Werkzeugen.
 - **§7 weiche Features** — verdrahtet (Sprint 3) über den semantischen Planer; Ambiguität bleibt dessen `clarify`-Entscheidung.
 - **§20 Goal Verification als Lernsignal** — verdrahtet (Sprint 2) für Projektoperationen, Kompositionen, Fähigkeiten, Aktionen und Owner-Feedback. Konversationsantworten ohne Feedback bleiben unbeurteilt.

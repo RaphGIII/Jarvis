@@ -1,39 +1,117 @@
-schema_version: 1
+schema_version: 2
 note: runtime facts from the capability registry; not part of the staleness check
 capabilities:
 - id: archive.zip.create
+  version: 1.0.0
   family: archive
   health: UNKNOWN
+  description: Package a folder into a single .zip archive.
   permissions: []
-  goal_types: []
   implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\archive_zip_create\1.0.0
+  tests: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\archive_zip_create\1.0.0\test_capability.py
+  contract:
+    produces:
+    - archive.zip.create.result
+    tests:
+    - D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\archive_zip_create\1.0.0\test_capability.py
+    implementation_entrypoint: main.py
+    domain: archive
+    inferred: true
 - id: learned.ausgabe_dateipfad_zeilen
+  version: 1.0.0
   family: learned
   health: HEALTHY
+  description: 'Zeus, lerne, wie man die Wörter in einer Textdatei zählt: Eingabe ist ein Dateipfad, Ausgabe die Anzahl der
+    Wörter, Zeilen und Zeichen.'
   permissions: []
-  goal_types: []
   implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_ausgabe_dateipfad_zeilen\1.0.0
+  tests: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_ausgabe_dateipfad_zeilen\1.0.0\test_capability.py
+  contract:
+    produces:
+    - learned.ausgabe_dateipfad_zeilen.result
+    tests:
+    - D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_ausgabe_dateipfad_zeilen\1.0.0\test_capability.py
+    implementation_entrypoint: main.py
+    domain: learned
+    inferred: true
 - id: learned.lösche_galaxy_galaxien
+  version: 1.0.0
   family: learned
   health: HEALTHY
+  description: 'lösche die galaxy : galaxien chess analysis und schach mache eine ....'
   permissions: []
-  goal_types: []
   implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_lösche_galaxy_galaxien\1.0.0
+  tests: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_lösche_galaxy_galaxien\1.0.0\test_capability.py
+  contract:
+    produces:
+    - learned.lsche_galaxy_galaxien.result
+    tests:
+    - D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\learned_lösche_galaxy_galaxien\1.0.0\test_capability.py
+    implementation_entrypoint: main.py
+    domain: learned
+    inferred: true
 - id: local.berechne.sha.256_pruefsumme
+  version: 1.0.1
   family: local
   health: HEALTHY
+  description: REPAIR an existing, working implementation. This is NOT a rebuild.
   permissions: []
-  goal_types: []
   implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\local_berechne_sha_256_pruefsumme\1.0.1
+  tests: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\local_berechne_sha_256_pruefsumme\1.0.1\test_capability.py
+  contract:
+    produces:
+    - local.berechne.sha.256_pruefsumme.result
+    tests:
+    - D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\local_berechne_sha_256_pruefsumme\1.0.1\test_capability.py
+    implementation_entrypoint: main.py
+    domain: local
+    inferred: true
 - id: music.provider.spotify
+  version: 1.0.5
   family: music
   health: HEALTHY
+  description: A previous task of this kind (vision) was solved as follows.
   permissions: []
-  goal_types: []
   implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\music_provider_spotify\1.0.5
+  tests: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\music_provider_spotify\1.0.5\test_capability.py
+  contract:
+    produces:
+    - music.provider.spotify.result
+    tests:
+    - D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\music_provider_spotify\1.0.5\test_capability.py
+    implementation_entrypoint: main.py
+    domain: music
+    inferred: true
 - id: system.screen.capture
+  version: 1.0.0
   family: system
   health: UNKNOWN
+  description: Capture what is currently displayed on this computer's screen and save it as a PNG file.
   permissions: []
-  goal_types: []
   implementation: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\system_screen_capture\1.0.0
+  tests: D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\system_screen_capture\1.0.0\test_capability.py
+  contract:
+    produces:
+    - system.screen.capture.result
+    tests:
+    - D:\Jarvis_recovery_20260823\repo\Jarvis\data\jarvis\capabilities\installed\system_screen_capture\1.0.0\test_capability.py
+    implementation_entrypoint: main.py
+    domain: system
+    inferred: true
+effects:
+  produced_by:
+    archive.zip.create.result:
+    - archive.zip.create
+    learned.ausgabe_dateipfad_zeilen.result:
+    - learned.ausgabe_dateipfad_zeilen
+    learned.lsche_galaxy_galaxien.result:
+    - learned.lösche_galaxy_galaxien
+    local.berechne.sha.256_pruefsumme.result:
+    - local.berechne.sha.256_pruefsumme
+    music.provider.spotify.result:
+    - music.provider.spotify
+    system.screen.capture.result:
+    - system.screen.capture
+  consumed_by: {}
+  goals_served_by: {}
+  events_relevant_to: {}

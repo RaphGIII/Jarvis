@@ -291,6 +291,53 @@ modules:
       - 'def list(self, *, status: str=''queued'') -> list[CapabilityRequest]'
       - 'def resolve(self, request_id: str, *, detail: str='''', status: str=''served'') -> CapabilityRequest | None'
     functions: []
+  capabilities/composition.py:
+    module: capabilities.composition
+    classes:
+    - name: CompositionResult
+      methods:
+      - def plan(self) -> Plan | None
+      - def missing(self) -> MissingCapabilityEvidence | None
+      - def to_dict(self) -> dict[str, Any]
+    - name: CompositionEngine
+      methods:
+      - def nodes(self) -> list[CapabilityNode]
+      - def planner(self) -> CompositionPlanner
+      - def has_declared_contracts(self) -> bool
+      - 'def plan_for_goals(self, goals: Iterable[str], state: WorldState) -> PlanReport'
+      - 'def derive(self, text: str, state: WorldState, *, mode: Any=None, task_id: str='''') -> GoalDerivation'
+      - 'def derive_and_plan(self, text: str, state: WorldState, *, mode: Any=None, task_id: str='''') -> CompositionResult'
+    functions:
+    - signature: 'def nodes_from_registry(registry: Any, *, reliability: Callable[[str], float | None] | None=None) -> list[CapabilityNode]'
+    - signature: 'def cards_from_registry(registry: Any) -> list[CapabilityCard]'
+    - signature: 'def manifest_tokens_text(nodes: Iterable[CapabilityNode]) -> str'
+      doc: What the planner reasoned over, rendered so it can be measured.
+    - signature: 'def engineering_brief(request: str, evidence: MissingCapabilityEvidence, *, goals: Iterable[str]=()) ->
+        str'
+      doc: The missing capability, stated exactly, for the engineer and its EngineeringSpec.
+  capabilities/contracts.py:
+    module: capabilities.contracts
+    classes:
+    - name: ContractError
+      bases:
+      - ValueError
+      doc: 'A contract that cannot be planned over: malformed tokens or classes.'
+      methods: []
+    - name: SemanticContract
+      methods:
+      - def requires(self) -> frozenset[str]
+      - def provides(self) -> frozenset[str]
+      - def declared(self) -> bool
+      - def validate(self) -> list[str]
+      - def to_dict(self) -> dict[str, Any]
+      - 'def from_dict(cls, data: dict[str, Any] | None, *, strict: bool=False) -> ''SemanticContract'''
+    functions:
+    - signature: 'def normalise_token(value: Any) -> str'
+      doc: '``Chess Game Record`` -> ``chess_game_record``; dotted ids kept.'
+    - signature: 'def infer_contract(capability_id: str, *, description: str='''', family: str='''', permissions: Iterable[str]=(),
+        goal_types: Iterable[str]=(), preconditions: Iterable[str]=(), latency_class: str='''', entrypoint: str='''', tests:
+        Iterable[str]=()) -> SemanticContract'
+      doc: A minimal contract for a manifest written before contracts existed.
   capabilities/executor.py:
     module: capabilities.executor
     classes:
@@ -349,6 +396,7 @@ modules:
       - 'def from_text(cls, text: str) -> ''GoalEnvelope'''
     - name: CapabilityManifest
       methods:
+      - def semantic_contract(self) -> 'SemanticContract'
       - def to_dict(self) -> dict[str, Any]
       - def health_view(self) -> dict[str, Any]
       - def lifecycle_state(self) -> CapabilityLifecycle
@@ -385,6 +433,60 @@ modules:
       methods:
       - 'def evaluate(self, spec: SkillSpecification) -> PermissionDecision'
     functions: []
+  capabilities/planner.py:
+    module: capabilities.planner
+    classes:
+    - name: WorldState
+      doc: 'What holds right now: facts as tokens, plus where they came from.'
+      methods:
+      - 'def build(cls, *, facts: Iterable[str]=(), events: Iterable[str]=(), projects: Iterable[str]=(), extra: dict[str,
+        str] | None=None) -> ''WorldState'''
+      - 'def with_facts(self, facts: Iterable[str], source: str=''derived'') -> ''WorldState'''
+      - 'def holds(self, facts: Iterable[str]) -> bool'
+      - def to_dict(self) -> dict[str, Any]
+    - name: CapabilityNode
+      doc: 'A capability as the planner sees it: id, contract, health, reliability.'
+      methods:
+      - def usable(self) -> bool
+      - def assumed_reliability(self) -> float
+    - name: PlanCost
+      methods:
+      - def total(self) -> float
+      - def to_dict(self) -> dict[str, Any]
+    - name: PlanStep
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: Plan
+      methods:
+      - def capability_ids(self) -> list[str]
+      - def irreversible_steps(self) -> int
+      - def reliability(self) -> float
+      - def satisfies(self) -> bool
+      - def to_dict(self) -> dict[str, Any]
+    - name: MissingCapabilityEvidence
+      doc: Proof that no existing composition reaches the goal, and what would.
+      methods:
+      - def kind(self) -> str
+      - def to_dict(self) -> dict[str, Any]
+      - def describe(self) -> str
+    - name: PlanReport
+      methods:
+      - def best(self) -> Plan | None
+      - def status(self) -> str
+      - def to_dict(self) -> dict[str, Any]
+    - name: CompositionPlanner
+      methods:
+      - def available_effects(self) -> list[str]
+      - def known_goals(self) -> list[str]
+      - def event_tokens(self) -> frozenset[str]
+      - 'def producers_of(self, fact: str) -> list[str]'
+      - 'def relevant_facts(self, goal: frozenset[str]) -> frozenset[str]'
+      - 'def reachable(self, state: WorldState) -> frozenset[str]'
+      - 'def plan(self, state: WorldState, goal: Iterable[str]) -> PlanReport'
+    functions:
+    - signature: 'def step_cost(node: CapabilityNode) -> PlanCost'
+    - signature: 'def plans_for_goals(planner: CompositionPlanner, state: WorldState, goals: Iterable[str]) -> PlanReport'
+      doc: Goal tokens may name a capability's ``goals`` entry rather than an effect.
   capabilities/promotion.py:
     module: capabilities.promotion
     classes:
@@ -438,6 +540,26 @@ modules:
       methods:
       - 'def resolve(self, goal: str | GoalEnvelope) -> CapabilityResolution'
     functions: []
+  capabilities/semantic_goals.py:
+    module: capabilities.semantic_goals
+    classes:
+    - name: CapabilityCard
+      doc: 'What the deriver may know about a capability: id, contract, prose, examples.'
+      methods:
+      - def vocabulary(self) -> set[str]
+    - name: GoalDerivation
+      methods:
+      - def derived(self) -> bool
+      - def to_dict(self) -> dict[str, Any]
+    - name: SemanticGoalDeriver
+      methods:
+      - def vocabulary(self) -> dict[str, list[str]]
+      - 'def grounded(self, goal: str, text: str, state: WorldState) -> tuple[bool, str]'
+      - 'def derive(self, text: str, state: WorldState, *, mode: Any=None, task_id: str='''') -> GoalDerivation'
+    functions:
+    - signature: 'def words_of(text: str) -> set[str]'
+    - signature: 'def cards_from_nodes(nodes: Iterable[CapabilityNode], descriptions: dict[str, str] | None=None, examples:
+        dict[str, Iterable[str]] | None=None, names: dict[str, str] | None=None) -> list[CapabilityCard]'
   capabilities/service.py:
     module: capabilities.service
     classes:
@@ -3557,6 +3679,13 @@ modules:
       - def gateway(self) -> Any
       - def preferences(self) -> Any
       - def secrets(self) -> Any
+      - def world(self) -> Any
+      - def composition(self) -> Any
+      - def world_state(self) -> dict[str, Any]
+      - 'def note_world_event(self, token: str, *, detail: dict[str, Any] | None=None, ttl: float | None=None, source: str=''api'')
+        -> dict[str, Any]'
+      - 'def compose_contract_preview(self, text: str) -> dict[str, Any]'
+      - def semantic_authority(self) -> dict[str, Any]
       - def capabilities(self) -> Any
       - def music(self) -> Any
       - def activity(self) -> Any
@@ -4374,6 +4503,24 @@ modules:
     - signature: 'def resolve_site(name: str) -> tuple[str, str]'
       doc: (url, how) for a spoken website name.
     - signature: 'def known_site(name: str) -> bool'
+  service/world.py:
+    module: service.world
+    classes:
+    - name: WorldEntry
+      methods:
+      - def expired(self) -> bool
+      - def to_dict(self) -> dict[str, Any]
+    - name: WorldModel
+      methods:
+      - 'def note_event(self, token: str, *, source: str=''event'', ttl: float=DEFAULT_EVENT_TTL, detail: dict[str, Any] |
+        None=None) -> WorldEntry'
+      - 'def note_facts(self, facts: Iterable[str], *, source: str, ttl: float=DEFAULT_FACT_TTL) -> list[str]'
+      - 'def forget(self, token: str) -> bool'
+      - def clear(self) -> None
+      - def entries(self) -> list[WorldEntry]
+      - 'def state(self, *, extra_facts: Iterable[str]=()) -> WorldState'
+      - def to_dict(self) -> dict[str, Any]
+    functions: []
   skills/_staging/data.csv_column_mode/c94775b161/main.py:
     module: skills._staging.data.csv_column_mode.c94775b161.main
     classes: []
