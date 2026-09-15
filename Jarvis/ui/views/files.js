@@ -51,7 +51,7 @@ let hiddenPaths = new Set(store("zeus.files.hidden", []));
 
 export const view = {
   id: "files",
-  title: "Files",
+  title: "Dateien",
   async mount(pane, params) {
     active = true;
     suspended = false;

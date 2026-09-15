@@ -50,10 +50,18 @@ class ProviderReply:
     latency_seconds: float = 0.0
     finish_reason: str = ""
     model: str = ""
+    #: How the text reached ZEUS: "provider_stream" (token by token from the
+    #: provider) or "complete_response" (one finished body).  Telemetry only,
+    #: and truthful: a body revealed progressively by the interface is not a
+    #: provider stream and is labelled local_progressive_render there.
+    delivery_mode: str = "complete_response"
+    #: The provider that answered (set by the pool when a route other than the decided provider served the request).
+    provider: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {"usage": dict(self.usage), "latency_seconds": round(self.latency_seconds, 3),
-                "finish_reason": self.finish_reason, "model": self.model, "chars": len(self.text)}
+                "finish_reason": self.finish_reason, "model": self.model, "chars": len(self.text), "delivery_mode": self.delivery_mode,
+                "provider": self.provider}
 
 
 _SCHEMA_KEEP = {"type", "properties", "required", "items", "enum", "description", "nullable", "format", "minimum", "maximum",
@@ -159,7 +167,8 @@ class GeminiAdapter:
                                    provider=provider.name)
             if chunk.get("usageMetadata"):
                 usage_raw = chunk["usageMetadata"]
-        yield {"reply": ProviderReply(text="", usage=self._usage(usage_raw), finish_reason=finish, model=binding.model)}
+        yield {"reply": ProviderReply(text="", usage=self._usage(usage_raw), finish_reason=finish, model=binding.model,
+                                      delivery_mode="provider_stream")}
 
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
@@ -259,7 +268,7 @@ class OpenAIAdapter:
         incomplete = final.get("incomplete_details") if isinstance(final.get("incomplete_details"), dict) else {}
         finish = str((incomplete or {}).get("reason") or final.get("status") or "completed")
         yield {"reply": ProviderReply(text="", usage=self._usage(final.get("usage") or {}), finish_reason=finish,
-                                      model=str(final.get("model") or binding.model))}
+                                      model=str(final.get("model") or binding.model), delivery_mode="provider_stream")}
 
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
@@ -294,10 +303,16 @@ class OpenAIAdapter:
 
 
 class OpenAICompatibleAdapter(OpenAIAdapter):
+    """Chat Completions, as Groq, Cerebras, OpenRouter and self-hosted servers speak it.
+
+    Streams as ``data: {"choices":[{"delta":{"content": ...}}]}`` events
+    ending in ``data: [DONE]``; usage arrives in the last chunk when the
+    server honours ``stream_options.include_usage``.
+    """
+
     kind = "openai_compatible"
 
-    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
-             request: ProviderRequest) -> ProviderReply:
+    def _chat_payload(self, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest) -> tuple[str, dict[str, Any]]:
         # Self-hosted servers usually predate max_completion_tokens; keep the
         # classic field and let temperature through.
         url = f"{provider.base_url.rstrip('/')}/v1/chat/completions"
@@ -309,6 +324,49 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
                                 "temperature": request.temperature}
         if request.schema is not None:
             body["response_format"] = {"type": "json_schema", "json_schema": {"name": "zeus_response", "schema": request.schema}}
+        return url, body
+
+    def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+               request: ProviderRequest) -> Iterator[StreamEvent]:
+        url, body = self._chat_payload(provider, binding, request)
+        body["stream"] = True
+        body["stream_options"] = {"include_usage": True}
+        usage_raw: dict[str, Any] = {}
+        finish = ""
+        model = binding.model
+        for _event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds,
+                                               timeouts=request.timeouts):
+            if data.strip() == "[DONE]":
+                break
+            try:
+                payload = json.loads(data)
+            except ValueError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("error"):
+                raise GatewayError(ProviderStatus.TASK_FAILURE, str(payload["error"])[:300], role=ticket.role, provider=provider.name)
+            model = str(payload.get("model") or model)
+            if isinstance(payload.get("usage"), dict):
+                usage_raw = payload["usage"]
+            for choice in payload.get("choices") or []:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta") or {}
+                text = str(delta.get("content") or "") if isinstance(delta, dict) else ""
+                if not text and isinstance(choice.get("message"), dict):
+                    text = str(choice["message"].get("content") or "")  # a complete reply in one event
+                if text:
+                    yield {"text": text}
+                if choice.get("finish_reason"):
+                    finish = str(choice["finish_reason"])
+        usage = {"input_tokens": int(usage_raw.get("prompt_tokens", 0) or 0), "cached_input_tokens": 0,
+                 "output_tokens": int(usage_raw.get("completion_tokens", 0) or 0)}
+        yield {"reply": ProviderReply(text="", usage=usage, finish_reason=finish, model=model, delivery_mode="provider_stream")}
+
+    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+             request: ProviderRequest) -> ProviderReply:
+        url, body = self._chat_payload(provider, binding, request)
         reply = transport.post_json(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds)
         data = reply.data
         try:

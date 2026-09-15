@@ -60,7 +60,7 @@ def test_a_deleted_element_id_is_caught(ui_copy):
 
 
 def test_a_missing_script_is_caught(ui_copy):
-    (ui_copy / "eye.js").unlink()
+    (ui_copy / "orb.js").unlink()
 
     assert not verify(ui_copy, serve=False).ok
 
@@ -88,12 +88,12 @@ def test_an_unbalanced_brace_is_caught(ui_copy):
 
 
 def test_a_renamed_entry_point_is_caught(ui_copy):
-    """window.startJarvis = startJarvis still MENTIONS the name after the
+    """window.startJarvis = startZeus still MENTIONS the name after the
     definition is gone, so a substring check misses this."""
 
     target = ui_copy / "app.js"
     target.write_text(
-        target.read_text(encoding="utf-8").replace("function startJarvis", "function boot"),
+        target.read_text(encoding="utf-8").replace("function startZeus", "function boot"),
         encoding="utf-8",
     )
 

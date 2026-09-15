@@ -235,14 +235,14 @@ class PhasedNetwork(FakeNetwork):
         self.served: dict[str, list[PhasedStream]] = {}
 
     def __call__(self, request, timeout=None):
-        body = json.loads(request.data.decode("utf-8")) if request.data else {}
-        self.requests.append({"url": request.full_url, "headers": dict(request.header_items()), "body": body, "timeout": timeout})
         if GEMINI in request.full_url and "alt=sse" in request.full_url:
+            body = json.loads(request.data.decode("utf-8")) if request.data else {}
+            self.requests.append({"url": request.full_url, "headers": dict(request.header_items()), "body": body, "timeout": timeout})
             model = request.full_url.split("/models/", 1)[1].split(":", 1)[0]
             stream = PhasedStream(list(self.scripts.get(model, [])))
             self.served.setdefault(model, []).append(stream)
             return stream
-        return super().__call__(request, timeout)
+        return super().__call__(request, timeout)  # records the request itself
 
 
 def timed(pieces: list[str], delays: list[float], **kw) -> list[tuple[float, str]]:
@@ -260,11 +260,18 @@ def test_a_first_token_stall_is_bounded_and_the_pool_moves_to_the_next_model(tmp
     message = next(e.payload for e in events if e.type is EventType.MESSAGE)
     assert message["text"] == "Die kompetitive Hemmung." and message["backend"] == "gemini/gemini-3.7-flash"
     assert message["meta"]["completion"]["complete"] is True
-    assert all(r["timeout"] == INTERACTIVE_STREAM_TIMEOUTS.connect for r in net.requests), "the connect bound reaches urlopen"
+    streamed = [r for r in net.requests if "alt=sse" in r["url"]]
+    assert streamed and all(r["timeout"] == INTERACTIVE_STREAM_TIMEOUTS.connect for r in streamed), "the connect bound reaches urlopen"
     stalled = net.served["gemini-3.8-flash"][0]
     assert stalled.sock.timeouts == [INTERACTIVE_STREAM_TIMEOUTS.first_token], "3.8 was armed for the first token and cut there"
     attempts = message["meta"]["provenance"]["route_attempts"]
-    assert [(a["model"], a["failure_class"]) for a in attempts] == [("gemini-3.8-flash", "timeout"), ("gemini-3.7-flash", "ok")]
+    # The stream stalled before any text: the same model is asked once as a completion (a stream failure is not an
+    # intelligence failure); that completion is unavailable in this world, so the pool moves to the next model.
+    assert [(a["model"], a["failure_class"], a.get("delivery_mode")) for a in attempts] == [
+        ("gemini-3.8-flash", "timeout", "provider_stream"), ("gemini-3.8-flash", "provider_unavailable", "complete_response"),
+        ("gemini-3.7-flash", "ok", "provider_stream")]
+    completion = [r for r in net.requests if "alt=sse" not in r["url"]]
+    assert len(completion) == 1 and completion[0]["timeout"] == INTERACTIVE_STREAM_TIMEOUTS.first_token
     assert local.calls == [] and time.perf_counter() - started < 10.0
 
 

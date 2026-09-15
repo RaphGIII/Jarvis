@@ -121,17 +121,27 @@ def test_free_mode_set_through_the_message_never_pays(world):
     assert kernel.gateway.governor.summary().month == 0.0
 
 
-def test_auto_mode_routes_around_an_exhausted_free_lane_and_accounts_for_it(world):
+def test_auto_mode_with_the_free_lane_exhausted_makes_one_guarded_emergency_call_and_accounts_for_it(world, tmp_path):
     core, kernel, net, local = world
     from gateway.health import ProviderStatus
 
     kernel.gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
     core.set_chat_mode("AUTO")
     events = ask(core, "Was ist NAT?")
+    assert core.FREE_UNAVAILABLE_DE not in answer_text(events) and "nicht erreichbar" in answer_text(events), "the emergency is off: no paid call"
+    assert not any("api.openai.com" in r["url"] for r in net.requests)
+    # The owner switches the guarded emergency on (an owner transaction on the spending document).
+    spending = kernel.config_root / "owner" / "spending.json"
+    spending.write_text(json.dumps({"paid_api": True, "auto_emergency_paid_fallback": True, "emergency_max_cost_per_request_eur": 0.03}),
+                        encoding="utf-8")
+    events = ask(core, "Was ist NAT?")
     assert "Eine tiefe Antwort" in answer_text(events)
-    assert any("api.openai.com" in r["url"] for r in net.requests)
+    paid = [r for r in net.requests if "api.openai.com" in r["url"]]
+    assert len(paid) == 1, "exactly one emergency generation"
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    assert message["meta"]["provenance"]["emergency"] is True and message["meta"]["provenance"]["intelligence_class"] == "ZERO_COST"
     spend = kernel.gateway.governor.summary()
-    assert spend.month > 0.0 and spend.open_reservations == 0
+    assert 0.0 < spend.month <= 0.03 and spend.open_reservations == 0
     status = core.gateway_status()
     assert status["spend"]["month"] == pytest.approx(spend.month, abs=1e-4)
     assert status["mode"] == "AUTO"

@@ -58,6 +58,37 @@
       "secret": "anthropic",
       "timeout_seconds": 600.0
     },
+    "cerebras": {
+      "base_url": "https://api.cerebras.ai",
+      "credential_env": [
+        "CEREBRAS_API_KEY"
+      ],
+      "enabled": false,
+      "kind": "openai_compatible",
+      "may_train_on_requests": false,
+      "metered": false,
+      "monthly_cap_eur": null,
+      "name": "cerebras",
+      "options": {
+        "output_hard_limit": 32768,
+        "vendor": "cerebras",
+        "zero_cost_routes": [
+          {
+            "model": "",
+            "note": "enter the strong zero-cost model the account exposes; verify zero cost first",
+            "supports_stream": true,
+            "supports_structured_output": true,
+            "verified_at": "",
+            "verified_by": "",
+            "verified_zero_cost": false
+          }
+        ]
+      },
+      "pricing": {},
+      "purpose": "independent zero-cost reasoning route (model chosen in configuration when verified at zero cost)",
+      "secret": "cerebras",
+      "timeout_seconds": 60.0
+    },
     "codex": {
       "base_url": "",
       "credential_env": [],
@@ -101,9 +132,53 @@
       "monthly_cap_eur": null,
       "name": "gemini",
       "options": {
-        "output_hard_limit": 65536
+        "output_hard_limit": 65536,
+        "vendor": "google",
+        "zero_cost_routes": [
+          {
+            "context_limit": 1048576,
+            "model": "gemini-3.8-flash",
+            "output_limit": 65536,
+            "supports_stream": true,
+            "supports_structured_output": true,
+            "verified_at": "2026-09-14",
+            "verified_by": "owner: Gemini API free tier, token price zero",
+            "verified_zero_cost": true
+          },
+          {
+            "context_limit": 1048576,
+            "model": "gemini-3.7-flash",
+            "output_limit": 65536,
+            "supports_stream": true,
+            "supports_structured_output": true,
+            "verified_at": "2026-09-14",
+            "verified_by": "owner: Gemini API free tier, token price zero",
+            "verified_zero_cost": true
+          },
+          {
+            "context_limit": 1048576,
+            "model": "gemini-3.6-flash",
+            "output_limit": 65536,
+            "supports_stream": true,
+            "supports_structured_output": true,
+            "verified_at": "2026-09-15",
+            "verified_by": "owner: Gemini API free tier, token price zero (model availability unverified)",
+            "verified_zero_cost": true
+          }
+        ]
       },
       "pricing": {
+        "gemini-3.6-flash": [
+          {
+            "cached_input_per_m": 0.0,
+            "confirmed": true,
+            "currency": "USD",
+            "effective_from": "2026-09-15",
+            "input_per_m": 0.0,
+            "output_per_m": 0.0,
+            "source": "Gemini API free tier: model token price zero"
+          }
+        ],
         "gemini-3.7-flash": [
           {
             "cached_input_per_m": 0.0,
@@ -163,6 +238,39 @@
       "secret": "gemini",
       "timeout_seconds": 120.0
     },
+    "groq": {
+      "base_url": "https://api.groq.com/openai",
+      "credential_env": [
+        "GROQ_API_KEY"
+      ],
+      "enabled": false,
+      "kind": "openai_compatible",
+      "may_train_on_requests": false,
+      "metered": false,
+      "monthly_cap_eur": null,
+      "name": "groq",
+      "options": {
+        "output_hard_limit": 32768,
+        "vendor": "groq",
+        "zero_cost_routes": [
+          {
+            "context_limit": 131072,
+            "model": "openai/gpt-oss-120b",
+            "note": "preferred candidate; verify zero cost for this account first",
+            "output_limit": 32768,
+            "supports_stream": true,
+            "supports_structured_output": true,
+            "verified_at": "",
+            "verified_by": "",
+            "verified_zero_cost": false
+          }
+        ]
+      },
+      "pricing": {},
+      "purpose": "independent zero-cost reasoning route (when verified at zero cost for the owner's account)",
+      "secret": "groq",
+      "timeout_seconds": 60.0
+    },
     "ollama": {
       "base_url": "http://127.0.0.1:11434",
       "credential_env": [],
@@ -219,6 +327,39 @@
       "purpose": "smart and deep reasoning",
       "secret": "openai",
       "timeout_seconds": 300.0
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api",
+      "credential_env": [
+        "OPENROUTER_API_KEY"
+      ],
+      "enabled": false,
+      "kind": "openai_compatible",
+      "may_train_on_requests": true,
+      "metered": false,
+      "monthly_cap_eur": null,
+      "name": "openrouter",
+      "options": {
+        "output_hard_limit": 16384,
+        "vendor": "openrouter",
+        "zero_cost_routes": [
+          {
+            "context_limit": 32768,
+            "model": "openrouter/free",
+            "note": "dynamic free-model router; verify zero cost first",
+            "output_limit": 16384,
+            "supports_stream": true,
+            "supports_structured_output": false,
+            "verified_at": "",
+            "verified_by": "",
+            "verified_zero_cost": false
+          }
+        ]
+      },
+      "pricing": {},
+      "purpose": "dynamic free-model pool of last resort (when verified at zero cost for the owner's account)",
+      "secret": "openrouter",
+      "timeout_seconds": 60.0
     }
   },
   "risk_aversion": 1.0,
@@ -432,7 +573,8 @@
       "model": "gemini-3.8-flash",
       "models": [
         "gemini-3.8-flash",
-        "gemini-3.7-flash"
+        "gemini-3.7-flash",
+        "gemini-3.6-flash"
       ],
       "offline_fallback": false,
       "provider": "gemini",

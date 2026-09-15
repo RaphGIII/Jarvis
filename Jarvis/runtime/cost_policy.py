@@ -133,6 +133,12 @@ class CostPolicy:
     allow_usage_credits: bool = False
     allow_runpod: bool = False
     allow_browser_automation_for_ai_chat: bool = False
+    #: AUTO only: when every zero-cost route is genuinely unavailable, ONE
+    #: guarded paid generation on the smart reasoner may answer.  Off until
+    #: the owner turns it on.  Never an escalation ladder: one call, one
+    #: route, projected cost under the ceiling, or nothing.
+    auto_emergency_paid_fallback: bool = False
+    emergency_max_cost_per_request_eur: float = 0.03
 
     #: Where the settings came from, for the diagnostics view.
     source: str = "defaults"
@@ -214,6 +220,8 @@ class CostPolicy:
             "allow_usage_credits": self.allow_usage_credits,
             "allow_runpod": self.allow_runpod,
             "allow_browser_automation_for_ai_chat": self.allow_browser_automation_for_ai_chat,
+            "auto_emergency_paid_fallback": self.auto_emergency_paid_fallback,
+            "emergency_max_cost_per_request_eur": self.emergency_max_cost_per_request_eur,
             "source": self.source,
             "is_free": self.is_free,
         }
@@ -268,11 +276,16 @@ class CostPolicy:
             except (OSError, ValueError):
                 owner_data = {}
             if isinstance(owner_data, dict):
-                owner_fields = {
+                owner_fields: dict[str, Any] = {
                     field_name: bool(owner_data[key])
                     for key, field_name in _OWNER_SPENDING_KEYS.items()
                     if key in owner_data and isinstance(owner_data[key], (bool, int))
                 }
+                if isinstance(owner_data.get("auto_emergency_paid_fallback"), (bool, int)):
+                    owner_fields["auto_emergency_paid_fallback"] = bool(owner_data["auto_emergency_paid_fallback"])
+                ceiling = owner_data.get("emergency_max_cost_per_request_eur")
+                if isinstance(ceiling, (int, float)) and not isinstance(ceiling, bool) and float(ceiling) >= 0.0:
+                    owner_fields["emergency_max_cost_per_request_eur"] = float(ceiling)
                 if owner_fields:
                     policy = replace(policy, **owner_fields)
                     source = f"{source}+owner" if source != "defaults" else "owner"
@@ -307,6 +320,7 @@ _BOOLEAN_FIELDS = (
     "allow_usage_credits",
     "allow_runpod",
     "allow_browser_automation_for_ai_chat",
+    "auto_emergency_paid_fallback",
 )
 
 

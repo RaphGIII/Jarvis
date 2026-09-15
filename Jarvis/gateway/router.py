@@ -27,6 +27,7 @@ from gateway.budget import BudgetGovernor
 from gateway.config import GatewayConfig, RoleBinding
 from gateway.estimate import CostEstimate, estimate_cost
 from gateway.health import ProviderHealth
+from gateway.intelligence_class import ClassDecision, IntelligenceClass
 from gateway.learning import ReliabilityModel
 from gateway.modes import ChatMode, CostClass, RoleFamily, policy_for
 from gateway.privacy import PrivacyDecision, Sensitivity
@@ -94,6 +95,13 @@ class RouteDecision:
     candidates: list[Candidate] = field(default_factory=list)
     #: What the owner could change to unlock a refused route.
     suggestion: str = ""
+    #: The intelligence class decided BEFORE provider routing (§1-3): the
+    #: request's requirement, recorded before any generation.
+    intelligence_class: str = ""
+    class_decision: dict[str, Any] = field(default_factory=dict)
+    #: AUTO only: the one guarded paid generation after the zero-cost pool
+    #: was genuinely exhausted.  Never a ladder.
+    emergency: bool = False
 
     @property
     def runs_model(self) -> bool:
@@ -107,6 +115,7 @@ class RouteDecision:
             "meets_threshold": self.meets_threshold, "offline_fallback": self.offline_fallback,
             "hard_override": self.hard_override, "reason": self.reason, "suggestion": self.suggestion,
             "candidates": [c.to_dict() for c in self.candidates], "task": self.task.to_dict(),
+            "intelligence_class": self.intelligence_class, "class_decision": dict(self.class_decision), "emergency": self.emergency,
         }
 
 
@@ -250,15 +259,26 @@ class ModelRouter:
 
     def decide(self, task: TaskVector, mode: ChatMode | str, privacy: PrivacyDecision | None = None, *, prompt: str,
                system: str = "", expected_output_tokens: int = 512, task_id: str = "", only_role: str = "",
-               apply_overrides: bool = True) -> RouteDecision:
+               apply_overrides: bool = True, intelligence_class: ClassDecision | None = None) -> RouteDecision:
         """Route.  With ``apply_overrides=False`` the hard rules only annotate the
         decision: the caller has already decided that a model is to be consulted
-        (interpretation, summary) and only asks which one."""
+        (interpretation, summary) and only asks which one.
+
+        ``intelligence_class`` is the requirement decided before this call
+        (:mod:`gateway.intelligence_class`).  Candidates outside the class
+        are ineligible: a SMART request never tries the zero-cost pool
+        first, a DEEP request never runs SMART to see whether it copes.  In
+        AUTO a paid class whose roles are not configured at all falls back
+        to the zero-cost class (nothing is spent); a class whose routes
+        merely failed does not climb."""
         mode = ChatMode.parse(mode)
         tau = task.required_reliability
         if mode is ChatMode.DEEP:
             tau = min(0.97, tau + 0.15)
         decision = RouteDecision(kind=RouteKind.MODEL, mode=mode, task=task, tau=tau)
+        if intelligence_class is not None:
+            decision.intelligence_class = intelligence_class.intelligence_class.value
+            decision.class_decision = intelligence_class.to_dict()
 
         kind, why = hard_override(task, privacy)
         if kind is not None and not only_role:
@@ -266,10 +286,14 @@ class ModelRouter:
             if apply_overrides:
                 decision.kind, decision.reason = kind, why
                 if kind is not RouteKind.MODEL:
+                    if kind is RouteKind.DETERMINISTIC:
+                        decision.intelligence_class = IntelligenceClass.DETERMINISTIC.value
                     return decision
 
         candidates = self.candidates(task, mode, privacy, prompt=prompt, system=system,
                                      expected_output_tokens=expected_output_tokens, task_id=task_id, only_role=only_role)
+        if intelligence_class is not None and not only_role:
+            candidates = self._restrict_to_class(candidates, intelligence_class, mode, decision)
         decision.candidates = candidates
         eligible = [c for c in candidates if c.eligible]
         if not eligible:
@@ -313,6 +337,33 @@ class ModelRouter:
             parts.append("offline fallback: no cloud role is configured and permitted")
         decision.reason = "; ".join(parts)
         return decision
+
+    def _restrict_to_class(self, candidates: list[Candidate], cls: ClassDecision, mode: ChatMode, decision: RouteDecision) -> list[Candidate]:
+        """Only the class's roles stay eligible; in AUTO an unconfigured paid class degrades to zero cost, never the reverse."""
+
+        wanted = set(cls.intelligence_class.roles)
+        if not wanted:
+            return candidates
+
+        def inside(role: str) -> bool:
+            return role in wanted or (cls.intelligence_class.is_engineering and role.startswith("engineer."))
+
+        class_candidates = [c for c in candidates if inside(c.role)]
+        if mode is ChatMode.AUTO and cls.intelligence_class in {IntelligenceClass.SMART, IntelligenceClass.DEEP} and not any(
+                c.eligible for c in class_candidates):
+            unconfigured = all(any(marker in c.reason for marker in ("no credential", "disabled", "not permit", "billing is disabled"))
+                               for c in class_candidates) if class_candidates else True
+            if unconfigured:
+                lower = IntelligenceClass.ZERO_COST
+                decision.class_decision["downgrade"] = (f"{cls.intelligence_class.value} has no configured route; "
+                                                        f"{lower.value} answers instead (nothing spent)")
+                decision.intelligence_class = lower.value
+                wanted = set(lower.roles)
+        for candidate in candidates:
+            if candidate.eligible and candidate.role not in wanted and not (
+                    cls.intelligence_class.is_engineering and candidate.role.startswith("engineer.")):
+                candidate.eligible, candidate.reason = False, f"outside the selected intelligence class {decision.intelligence_class}"
+        return candidates
 
     def _suggestion(self, mode: ChatMode, candidates: list[Candidate]) -> str:
         reasons = " ".join(c.reason for c in candidates)

@@ -32,10 +32,11 @@ function phraseCommand(q) {
 function commands() {
   const current = views.currentView();
   const list = [
-    { type: "view", label: "Mission Control", sub: "active missions, SelfDev center", run: () => views.open("missions"), keys: "Ctrl+M" },
+    { type: "view", label: "Laufende Arbeit", sub: "was ZEUS gerade tut", run: () => views.open("missions"), keys: "Ctrl+M" },
+    { type: "view", label: "Einstellungen", sub: "Persönlichkeit, Erscheinungsbild, Leistung", run: () => views.open("settings"), keys: "Ctrl+," },
     { type: "view", label: "Projects", sub: "constellation and deep views", run: () => views.open("projects"), keys: "Ctrl+Shift+P" },
     { type: "view", label: "Files", sub: "the real D: universe, live", run: () => views.open("files") },
-    { type: "view", label: "Persönlichkeit", sub: "behaviour, rules, learning", run: () => views.open("personality") },
+    { type: "view", label: "Persönlichkeit", sub: "wie ZEUS spricht und sich verhält", run: () => views.open("settings", { tab: "personality" }) },
     { type: "view", label: "Wissen", sub: "Galaxy, Bibliothek, Bearbeiten", run: () => views.open("knowledge") },
     { type: "view", label: "Wissen: Ebenen-Liste", sub: "Strata-Ansicht", run: () => views.open("knowledge", { mode: "list" }) },
     { type: "view", label: "Knowledge graph (starfield overlay)", sub: "Overlay", run: () => knowledge.openGraph("") },
@@ -44,9 +45,9 @@ function commands() {
     { type: "view", label: "Capabilities", sub: "acquired capabilities", run: () => views.open("capabilities") },
     { type: "view", label: "Diagnostics", sub: "is ZEUS healthy?", run: () => views.open("diagnostics") },
     { type: "view", label: "Versions", sub: "known-good, releases, rollback", run: () => views.open("release") },
-    { type: "view", label: "Owner settings", sub: "identity, personality, policy", run: () => views.open("owner"), keys: "Ctrl+," },
+    { type: "view", label: "Erweitert", sub: "Systembesitz, technische Diagnose", run: () => views.open("settings", { tab: "advanced" }) },
     { type: "view", label: "Voice Studio", sub: "wake word, microphone, voice", run: () => views.open("voice") },
-    { type: "action", label: "New conversation", sub: "clear the transcript", run: () => $("btnNew").click() },
+    { type: "action", label: "Neuer Chat", sub: "ein frisches Gespräch", run: () => window.zeus?.sidebar?.newChat?.() },
     { type: "action", label: "Hide window", sub: "ZEUS keeps running; ZEUS.exe brings it back", run: () => api("/api/window/hide", { reason: "palette" }) },
     { type: "action", label: "Restart ZEUS", sub: "planned restart under the supervisor", run: async () => { if (confirm("Restart ZEUS now?")) api("/api/restart", { reason: "owner (palette)" }); } },
     { type: "action", label: "ZEUS vollständig beenden", sub: "window, voice, core, supervisor", run: async () => { if (confirm("ZEUS vollständig beenden?")) api("/api/quit", { reason: "owner (palette)" }); } },

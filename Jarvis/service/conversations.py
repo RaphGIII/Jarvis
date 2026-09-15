@@ -105,7 +105,61 @@ class ConversationArchive:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            out.append({k: record.get(k) for k in ("id", "at", "title", "summary", "turn_count", "summarized", "open_tasks")})
+            out.append({k: record.get(k) for k in ("id", "at", "title", "summary", "turn_count", "summarized", "open_tasks", "pinned",
+                                                   "project_id", "updated_at")})
+        return out
+
+    def _update(self, conv_id: str, **fields: Any) -> bool:
+        with self._lock:
+            path = self._path(conv_id)
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return False
+            record.update(fields)
+            record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+
+    def rename(self, conv_id: str, title: str) -> bool:
+        title = str(title or "").strip()[:120]
+        return bool(title) and self._update(conv_id, title=title, title_source="owner")
+
+    def set_pinned(self, conv_id: str, pinned: bool) -> bool:
+        return self._update(conv_id, pinned=bool(pinned))
+
+    def assign_project(self, conv_id: str, project_id: str) -> bool:
+        return self._update(conv_id, project_id=str(project_id or ""))
+
+    def search(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Title, summary and turn text, case-insensitive; newest first."""
+
+        needle = str(query or "").strip().lower()
+        if not needle:
+            return []
+        out = []
+        try:
+            paths = sorted(self.root.glob("conv_*.json"), reverse=True)
+        except OSError:
+            return []
+        for path in paths:
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            haystack = " ".join([str(record.get("title", "")), str(record.get("summary", ""))] +
+                                [str(t.get("text", "")) for t in record.get("turns", []) if isinstance(t, dict)]).lower()
+            if needle in haystack:
+                snippet = ""
+                for turn in record.get("turns", []):
+                    text = str(turn.get("text", "")) if isinstance(turn, dict) else ""
+                    index = text.lower().find(needle)
+                    if index >= 0:
+                        snippet = text[max(0, index - 40): index + 80].strip()
+                        break
+                out.append({**{k: record.get(k) for k in ("id", "at", "title", "summary", "pinned", "project_id")}, "snippet": snippet})
+            if len(out) >= limit:
+                break
         return out
 
     def get(self, conv_id: str) -> dict[str, Any] | None:

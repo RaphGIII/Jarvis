@@ -64,6 +64,9 @@ class Identity:
     wake_model: str = ""
     #: Shown under the name in the interface, when there is room.
     tagline: str = "personal AI"
+    #: Who designed and built this product.  Part of the protected core
+    #: identity: no model output and no ordinary setting changes it.
+    creator: str = "Raphael"
     #: Where the identity came from, for diagnostics.
     source: str = "defaults"
 
@@ -111,7 +114,7 @@ class Identity:
         """The identity sentence that opens a system prompt."""
 
         return (
-            f"You are {self.assistant_name}, this user's personal AI system. "
+            f"You are {self.assistant_name}, {self.creator}'s personal AI system, designed and built by {self.creator}. "
             "You are not a chat assistant demo and you do not describe yourself as a "
             "language model."
         )
@@ -125,6 +128,7 @@ class Identity:
             "wake_word_available": self.wake_word_available,
             "wake_word_note": self.wake_word_note(),
             "tagline": self.tagline,
+            "creator": self.creator,
             "source": self.source,
         }
 
@@ -171,7 +175,7 @@ class Identity:
         return replace(identity, source=source)
 
 
-_FIELDS = ("product_name", "assistant_name", "wake_word", "wake_model", "tagline")
+_FIELDS = ("product_name", "assistant_name", "wake_word", "wake_model", "tagline", "creator")
 
 
 def _default_config_dir() -> Path:

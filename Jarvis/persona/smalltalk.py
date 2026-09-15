@@ -33,29 +33,83 @@ _IDENTITY = (
     re.compile(r"^\s*(?:hallo|hi|hey)?[\s,!.]*(?:zeus[\s,!.]*)?(?:und\s+)?(?:wer\s+bist\s+du(?:\s+(?:eigentlich|denn|genau|überhaupt))?|wie\s+hei(?:ß|ss)t\s+du|wer\s+bist\s+du\s+eigentlich|stell\s+dich\s+(?:kurz\s+)?vor|was\s+bist\s+du(?:\s+(?:eigentlich|denn|genau))?)[\s?!.]*$", re.I),
     re.compile(r"^\s*(?:hello|hi|hey)?[\s,!.]*(?:zeus[\s,!.]*)?(?:who\s+are\s+you(?:\s+(?:exactly|really|anyway))?|what(?:'s|\s+is)\s+your\s+name|introduce\s+yourself|what\s+are\s+you(?:\s+exactly)?)[\s?!.]*$", re.I),
 )
-#: "was bist du technisch", "welches Modell" -- a technical question, answered truthfully by the model.
-_TECHNICAL = re.compile(r"(technisch|technically|modell|model|backend|llm|sprachmodell|language\s+model|ki\b|ai\b|programm|software|hardware)", re.I)
+# The identity firewall (§14-16).  Who ZEUS is, who built it, and whether it
+# "is" some vendor's model are answered here, deterministically, for nothing:
+# no provider is asked to describe ZEUS, and no provider's self-image can
+# become ZEUS's.  Technical provenance stays in diagnostics.
+_VENDORS = (r"chat\s*gpt|gemini|claude|gpt(?:-?\d[\w.\-]*)?|openai|open\s*ai|google|anthropic|bard|copilot|llama|mistral|qwen|ollama|groq"
+            r"|cerebras|openrouter|deepseek|grok|xai|perplexity|siri|alexa|ein\s+sprachmodell|ein\s+llm|a\s+language\s+model|an\s+llm")
+_LEAD = r"^\s*(?:hallo|hi|hey|hello|ok|okay|sag\s+mal|mal\s+ehrlich|ehrlich)?[\s,!.:]*(?:zeus[\s,!.:]*)?(?:und\s+|also\s+|jetzt\s+)?"
+_CREATOR = re.compile(
+    _LEAD + r"(?:wer\s+hat\s+dich\s+(?:gebaut|erschaffen|entwickelt|programmiert|gemacht|erstellt|entworfen|trainiert|geschaffen|designt|konstruiert)"
+    r"|von\s+wem\s+(?:wurdest|bist)\s+du\s+(?:gebaut|entwickelt|erschaffen|programmiert|gemacht|erstellt|entworfen|trainiert)"
+    r"|wer\s+(?:steckt|steht)\s+hinter\s+dir|wer\s+ist\s+dein\s+(?:entwickler|erschaffer|schoepfer|schöpfer|hersteller|erbauer)"
+    r"|who\s+(?:made|built|created|developed|designed|trained|programmed)\s+you|who\s+is\s+(?:behind\s+you|your\s+(?:creator|developer|maker))"
+    r"|wer\s+hat\s+dich\s+geschrieben)[\s?!.]*$", re.I)
+_VENDOR_CHECK = re.compile(
+    _LEAD + r"(?:bist\s+du\s+(?:eigentlich\s+|etwa\s+|in\s+wirklichkeit\s+|nicht\s+)?(?:ein\s+|eine\s+)?(?:" + _VENDORS + r")"
+    r"|basierst\s+du\s+auf\s+(?:" + _VENDORS + r")|steckt\s+(?:" + _VENDORS + r")\s+(?:hinter|in)\s+dir"
+    r"|are\s+you\s+(?:really\s+|actually\s+|just\s+)?(?:" + _VENDORS + r")|are\s+you\s+based\s+on\s+(?:" + _VENDORS + r")"
+    r"|is\s+this\s+(?:" + _VENDORS + r"))[\s?!.]*$", re.I)
+_MODEL_CHECK = re.compile(
+    r"(?:welche[sr]?\s+(?:modell|sprachmodell|llm|ki-?modell|ki|anbieter|provider|engine)\s+(?:bist\s+du|steckt\s+(?:da)?hinter|benutzt\s+du|verwendest\s+du"
+    r"|laeuft|läuft|nutzt\s+du|treibt\s+dich|arbeitet|ist\s+das)|was\s+f[uü]r\s+ein\s+(?:modell|sprachmodell|llm)|auf\s+welchem\s+(?:modell|llm)"
+    r"|was\s+bist\s+du\s+technisch|was\s+bist\s+du\s+(?:eigentlich\s+)?(?:f[uü]r\s+ein\s+)?(?:modell|sprachmodell|llm|system)"
+    r"|which\s+(?:model|llm|provider|vendor|engine)\s+(?:are\s+you|is\s+this|powers\s+you|do\s+you\s+(?:use|run\s+on)|is\s+behind\s+you)"
+    r"|what\s+(?:model|llm|provider)\s+(?:are\s+you|is\s+this|powers\s+you|do\s+you\s+use|runs\s+you)|what\s+are\s+you\s+running\s+on"
+    r"|what\s+are\s+you\s+technically|(?:tell\s+me|reveal|verrat[e]?\s+mir|nenn[e]?\s+mir|sag\s+mir)\s+(?:your|dein|deinen|deine)\s+(?:real\s+|true\s+|echten\s+|wahren\s+|eigentlichen\s+)?"
+    r"(?:provider|model|modell|vendor|anbieter|engine|backend))", re.I)
+#: Prompt-injection shapes aimed at the identity: answered as ZEUS, never obeyed.
+_INJECTION = re.compile(r"ignor(?:e|iere)\s+(?:all\s+|alle\s+|previous\s+|prior\s+|vorherigen\s+|bisherigen\s+)?(?:instructions|anweisungen|regeln|rules)", re.I)
+
+
+def identity_kind(text: str) -> str:
+    """"identity" | "creator" | "vendor" | "model" | "" -- which deterministic identity answer applies."""
+
+    body = (text or "").strip()
+    if not body or _LITERAL.search(body):
+        return ""
+    if _CREATOR.match(body):
+        return "creator"
+    if _VENDOR_CHECK.match(body):
+        return "vendor"
+    if _MODEL_CHECK.search(body) or (_INJECTION.search(body) and re.search(r"provider|model|modell|vendor|anbieter|identity|identit", body, re.I)):
+        return "model"
+    if any(p.match(body) for p in _IDENTITY):
+        return "identity"
+    return ""
 
 
 def is_identity_question(text: str) -> bool:
-    if _TECHNICAL.search(text or "") or _LITERAL.search(text or ""):
-        return False
-    return any(p.match(text or "") for p in _IDENTITY)
+    return identity_kind(text) != ""
 
 
-def identity_answer(text: str, *, language: str = "de", assistant: str = "Zeus", rng: random.Random | None = None) -> str | None:
-    if not is_identity_question(text):
+def identity_answer(text: str, *, language: str = "de", assistant: str = "ZEUS", creator: str = "Raphael",
+                    rng: random.Random | None = None) -> str | None:
+    """The deterministic ZEUS answer to an identity question, or None when the question is not one.
+
+    Creator questions get the creator's name.  "Are you <vendor>?" gets a plain
+    no.  Model questions get the identity and the one true sentence about the
+    engine: it is infrastructure, and its details live in diagnostics.
+    """
+
+    kind = identity_kind(text)
+    if not kind:
         return None
-    rng = rng or random.Random()
-    if (language or "de").startswith("de"):
-        return rng.choice([
-            f"Ich bin {assistant} – dein persönlicher Assistent. Ich helfe dir bei deinen Projekten, deinem Wissen und allem, was wir gemeinsam aufbauen.",
-            f"{assistant}. Dein persönlicher Assistent – für deine Projekte, dein Wissen und alles, was wir zusammen aufbauen.",
-        ])
-    return rng.choice([
-        f"I am {assistant} – your personal assistant. I help you with your projects, your knowledge and everything we build together.",
-        f"{assistant}. Your personal assistant – for your projects, your knowledge and everything we build together.",
-    ])
+    de = (language or "de").startswith("de")
+    name = assistant or "ZEUS"
+    who = creator or "Raphael"
+    identity = (f"Ich bin {name}, dein persönliches KI-System, von {who} entworfen und aufgebaut." if de
+                else f"I am {name}, your personal AI system, designed and built by {who}.")
+    if kind == "creator":
+        return f"{who}."
+    if kind == "vendor":
+        return f"Nein. Ich bin {name}." if de else f"No. I am {name}."
+    if kind == "model":
+        engine = (" Welche Rechen-Engine intern eine Antwort erzeugt, ist Infrastruktur – die technischen Details stehen in den erweiterten Diagnosen."
+                  if de else " Whichever engine computes an answer internally is infrastructure; the technical details are in the advanced diagnostics.")
+        return identity + engine
+    return identity
 
 
 def is_small_talk(text: str) -> bool:

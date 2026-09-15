@@ -19,7 +19,7 @@ import { state } from "../core/state.js";
 import * as views from "../core/views.js";
 import * as corrections from "./corrections.js";
 import * as playback from "../voice/playback.js";
-import * as gateway from "../core/gateway.js";
+import * as performance from "../core/performance.js";
 import { render as renderMarkdown, renderPartial } from "../core/markdown.js";
 
 let streaming = null;
@@ -31,7 +31,7 @@ let historyDivider = false;
 export function init(deps) {
   eye = deps.eye;
   wireComposer();
-  gateway.init();
+  performance.init();
   bus.on("user_message", (p) => {
     document.querySelector(".turn.interim")?.remove();
     const meta = p.meta || {};
@@ -39,7 +39,7 @@ export function init(deps) {
       addTurn("insight" + (p._replay ? " history" : ""), "Thought", p.text, p);
       return;
     }
-    const who = meta.source === "microphone" || meta.source === "ui_mic" ? "You · 🎙" : meta.source === "correction_rerun" ? "You · corrected" : "You";
+    const who = meta.source === "microphone" || meta.source === "ui_mic" ? "Du · 🎙" : meta.source === "correction_rerun" ? "Du · korrigiert" : "Du";
     const what = addTurn("user" + (p._replay ? " history" : ""), who, p.text, p);
     if (what && meta.wake_word) what.append(el("span", { class: "wake-tag", text: ` ${meta.wake_word} · ${Number(meta.wake_score).toFixed(2)}` }));
     if (what && meta.speech_level) {
@@ -59,13 +59,9 @@ export function init(deps) {
     // §UX: raw ProviderError(...) lines belong in Activity/Diagnostics, not
     // in the conversation.  The chat gets one honest human sentence.
     console.warn("[zeus error]", p.error);
-    const raw = String(p.error || "");
-    const friendly = /timed?\s*out|timeout/i.test(raw)
-      ? "Die lokale KI hat nicht rechtzeitig geantwortet. Ich versuche es gleich erneut – Details stehen in Activity."
-      : /provider|unreachable|refused|connect/i.test(raw)
-        ? "Die lokale KI ist gerade nicht erreichbar – ich stelle die Verbindung wieder her. Details stehen in Activity."
-        : "Da ist etwas schiefgelaufen – Details stehen in Activity.";
-    addTurn("error", "!", friendly);
+    // The chat shows one ZEUS sentence; the technical cause lives under Fortschritt / Erweitert.
+    if (p.silent) return;
+    addTurn("error", "!", "Das hat gerade nicht geklappt. Details findest du unter Fortschritt.");
   });
   bus.on("notification", (p) => {
     if (p._replay || !p.text) return;
@@ -96,11 +92,11 @@ export function addTurn(kind, who, text, payload) {
   const replay = Boolean(payload && payload._replay);
   if (replay && !historyDivider) {
     historyDivider = true;
-    $("log").append(el("div", { class: "turn divider" }, el("div", { class: "who", text: "" }), el("div", { class: "what", text: "— earlier —" })));
+    $("log").append(el("div", { class: "turn divider" }, el("div", { class: "who", text: "" }), el("div", { class: "what", text: "— zuvor —" })));
   }
   if (!replay && historyDivider) {
     historyDivider = false;
-    $("log").append(el("div", { class: "turn divider" }, el("div", { class: "who", text: "" }), el("div", { class: "what", text: "— now —" })));
+    $("log").append(el("div", { class: "turn divider" }, el("div", { class: "who", text: "" }), el("div", { class: "what", text: "— jetzt —" })));
   }
   const what = el("div", { class: "what", text });
   const turn = el("div", { class: `turn ${kind}${replay ? " history" : ""}` }, el("div", { class: "who", text: who }), what);
@@ -158,8 +154,8 @@ function finishStreaming(finalText, payload) {
    Continuing is a normal request: the cost policy decides, nothing is spent by itself. */
 function attachContinue(what, completion) {
   const why = completion.truncated
-    ? `Antwort am Ausgabelimit abgeschnitten (${completion.output_tokens || "?"} von ${completion.configured_output_budget || "?"} Tokens). `
-    : `Die Antwort ist möglicherweise unvollständig – der Anbieter hat den Stream ohne Abschluss beendet (${completion.output_tokens || "?"} Tokens). `;
+    ? "Die Antwort wurde am Längenlimit abgeschnitten. "
+    : "Die Antwort ist möglicherweise unvollständig. ";
   const note = el("div", { class: "truncated" },
     el("span", { text: why }),
     el("a", { href: "#", class: "fb-btn", text: "Weiter", onClick: (ev) => {
@@ -271,7 +267,7 @@ export function send(text, source = "text") {
   document.querySelector(".turn.interim")?.remove();
   if (views.isWorkspace()) views.close();
   // One id per press: a retried POST cannot become a second request.
-  return api("/api/message", { text: clean, source, request_id: requestId(), mode: gateway.currentMode() });
+  return api("/api/message", { text: clean, source, request_id: requestId(), mode: performance.currentMode() });
 }
 
 function wireComposer() {

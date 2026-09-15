@@ -153,11 +153,15 @@ class Transport:
             return True
         return "timed out" in str(exc).lower()
 
-    def _transport_error(self, exc: BaseException, ticket: Ticket, provider: ProviderConfig, limit: float, *, prefix: str = "") -> GatewayError:
+    def _transport_error(self, exc: BaseException, ticket: Ticket, provider: ProviderConfig, limit: float, *, prefix: str = "",
+                         phase: str = "") -> GatewayError:
         if self._timed_out(exc):
-            return GatewayError(ProviderStatus.TIMEOUT, f"{prefix}no answer within {limit:.0f}s", role=ticket.role, provider=provider.name)
-        return GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, prefix + redact(str(exc), self.credentials)[:300], role=ticket.role,
-                            provider=provider.name)
+            error = GatewayError(ProviderStatus.TIMEOUT, f"{prefix}no answer within {limit:.0f}s", role=ticket.role, provider=provider.name)
+        else:
+            error = GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, prefix + redact(str(exc), self.credentials)[:300], role=ticket.role,
+                                 provider=provider.name)
+        error.stream_phase = phase  # "connect" | "first token" | "idle" | "" (not a stream)
+        return error
 
     @staticmethod
     def _socket_of(response: Any) -> Any:
@@ -214,7 +218,7 @@ class Transport:
         except urllib.error.HTTPError as exc:
             raise self._http_error(exc, ticket, provider) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise self._transport_error(exc, ticket, provider, bound, prefix=f"{phase}: ") from None
+            raise self._transport_error(exc, ticket, provider, bound, prefix=f"{phase}: ", phase=phase) from None
         sock = self._socket_of(response)
 
         def arm(seconds: float) -> None:
@@ -260,7 +264,7 @@ class Transport:
             if data_lines:
                 yield event, "\n".join(data_lines)
         except (TimeoutError, OSError) as exc:
-            raise self._transport_error(exc, ticket, provider, bound, prefix=f"stream interrupted ({phase}): ") from None
+            raise self._transport_error(exc, ticket, provider, bound, prefix=f"stream interrupted ({phase}): ", phase=phase) from None
         finally:
             try:
                 response.close()

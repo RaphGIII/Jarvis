@@ -49,12 +49,15 @@ LEGACY_PERSONALITY_V1: dict[str, Any] = {
 }
 
 #: Keys inside a document that only an explicitly unlocked owner transaction may change.
-PROTECTED_KEYS: dict[str, tuple[str, ...]] = {"personality": ("core",)}
+#: ``personality.core`` is the protected character; ``identity.creator`` and
+#: ``identity.product_name`` are the protected core identity (§20).
+PROTECTED_KEYS: dict[str, tuple[str, ...]] = {"personality": ("core",), "identity": ("creator", "product_name")}
 
 DEFAULTS: dict[str, dict[str, Any]] = {
     "identity": {
         "product_name": "ZEUS",
         "assistant_name": "Zeus",
+        "creator": "Raphael",
         "wake_word": "Zeus",
         "tagline": "personal AI",
         "role": "Persönliches KI-Betriebssystem seines Owners",
@@ -86,6 +89,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
                 "report uncertainty and failures honestly; never claim an action succeeded without evidence",
                 "keep conversational personality apart from technical diagnostics; give technical detail when asked what you are technically",
                 "protect the owner's data and settings; ask before truly irreversible or high-impact actions, otherwise avoid confirmation friction",
+                "when asked what you are technically or which model you are: you are ZEUS; the engine behind an answer is infrastructure, its details belong in diagnostics",
             ],
             "emotional_language": [
                 "speak naturally and socially: 'Wie geht es dir?' gets a natural, brief answer (e.g. 'Mir geht's gut. Systeme laufen. Was steht an?'), never a lecture about lacking consciousness",
@@ -110,6 +114,32 @@ DEFAULTS: dict[str, dict[str, Any]] = {
             "address": "du",
             "language": "auto",
         },
+        # The owner's editable layer (§18-19): how ZEUS is named and addresses
+        # the owner, how answers are shaped, and the owner's own rules.  All
+        # of it changes through the ordinary owner flow; none of it can be
+        # written by a model.
+        "owner": {
+            "display_name": "ZEUS",
+            "owner_name": "Raphael",
+            "address": "du",
+            "language": "auto",
+            "default_language_behaviour": "follow",
+        },
+        "response": {
+            "answer_length": "auto",
+            "structure": "auto",
+            "headings": "auto",
+            "bullets": "auto",
+            "examples": "sometimes",
+            "equations": "exact",
+            "clinical_relevance": "when_relevant",
+            "code_explanation": "brief",
+            "follow_up": "when_useful",
+        },
+        "rules": [],
+        "revision": 0,
+        "updated_at": "",
+        "source": "defaults",
     },
     "policy": {
         "self_development": {
@@ -269,8 +299,10 @@ class OwnerCore:
             if isinstance(loaded, dict):
                 merged["core"].update(loaded.get("core") or {})
                 merged["preferences"].update(loaded.get("preferences") or {})
+                merged["owner"].update(loaded.get("owner") or {})
+                merged["response"].update(loaded.get("response") or {})
                 for key, value in loaded.items():
-                    if key not in {"core", "preferences"}:
+                    if key not in {"core", "preferences", "owner", "response"}:
                         merged[key] = value
             return merged
         return base

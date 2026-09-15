@@ -19,6 +19,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import json
+import uuid
 from datetime import datetime, timezone
 import re
 import os
@@ -1521,13 +1522,13 @@ class JarvisCore:
                 provider = self.kernel.provider(ModelTier.FAST_LOCAL)
             except Exception as exc:  # noqa: BLE001
                 self.jobs.fail(job.job_id, f"kein Modell: {exc}")
-                self._deliver("Die lokale KI ist gerade nicht erreichbar — gleich nochmal versuchen.", scope=scope,
+                self._deliver("Die Intelligenz ist gerade nicht erreichbar — bitte gleich noch einmal versuchen.", scope=scope,
                               backend="web", final_state=JarvisState.ERROR)
                 return
             summary = summarize_with_retry(provider, title=article.get("title", ""), text=article.get("text", ""))
             if not summary.get("ok"):
                 self.jobs.fail(job.job_id, summary.get("error", "Zusammenfassung fehlgeschlagen"))
-                self._deliver(("Die Zusammenfassung ist auch nach mehreren Anläufen fehlgeschlagen — die lokale KI antwortet nicht. Details in Activity." if de
+                self._deliver(("Die Zusammenfassung ist auch nach mehreren Anläufen fehlgeschlagen. Details unter Fortschritt." if de
                                else "Summarization failed after several attempts. Details in Activity."),
                               scope=scope, backend="web", final_state=JarvisState.ERROR)
                 return
@@ -4684,7 +4685,8 @@ class JarvisCore:
 
         from persona.smalltalk import identity_answer, small_talk_answer
 
-        who = identity_answer(text, language=self.language or "de", assistant=self.identity.assistant_name)
+        who = identity_answer(text, language=self.language or "de", assistant=self.identity.product_name,
+                              creator=getattr(self.identity, "creator", "Raphael"))
         if who:
             return who
         try:
@@ -4892,6 +4894,20 @@ class JarvisCore:
             return
 
         answer = "".join(collected).strip()
+        # The identity firewall's last line (§17): a self-identification as a
+        # vendor's model that slipped through the chunk-level guard (split
+        # across chunks) is rewritten once on the whole answer.  Only the
+        # assistant's own identity claim; educational mentions stay.
+        identity_rewrites = 0
+        try:
+            from gateway.persona import guard_identity
+
+            answer, identity_rewrites = guard_identity(answer, assistant=self.identity.product_name)
+        except Exception:  # noqa: BLE001
+            identity_rewrites = 0
+        if identity_rewrites:
+            self.emit(EventType.TOOL, {"summary": f"identity guard: {identity_rewrites} self-identification(s) as a vendor model rewritten",
+                                       "source": "identity", "rewrites": identity_rewrites}, scope=scope)
         context_text = ""
         if fabricated:
             answer = self._block_fabrication(fabricated[0], text, scope)
@@ -4914,6 +4930,8 @@ class JarvisCore:
                 reply_meta["request_id"] = last_user["request_id"]
         except Exception:  # noqa: BLE001
             pass
+        if identity_rewrites:
+            reply_meta["identity_rewrites"] = identity_rewrites
         if provenance:
             reply_meta["provenance"] = provenance
             if "finish_reason" in provenance:
@@ -4921,7 +4939,8 @@ class JarvisCore:
                 # said to be one, and the interface offers to continue it.
                 reply_meta["completion"] = {k: provenance.get(k) for k in ("finish_reason", "truncated", "complete", "output_tokens",
                                                                              "configured_output_budget", "output_budget",
-                                                                             "provider_hard_limit", "aborted")}
+                                                                             "provider_hard_limit", "aborted", "delivery_mode",
+                                                                             "intelligence_class", "emergency")}
                 if provenance.get("truncated"):
                     self.emit(EventType.TOOL, {"summary": f"answer truncated at the output ceiling ({provenance.get('output_tokens')} tokens of "
                                                           f"{provenance.get('configured_output_budget')} budgeted); continuation offered",
@@ -7142,6 +7161,133 @@ class JarvisCore:
         history = [h for h in self.owner.history() if "personality" in (h.get("documents") or [])]
         return {"ok": True, **effective, "defaults": DEFAULTS["personality"], "history": history[-20:],
                 "prompt": "\n\n".join(text for _n, text in effective["blocks"])}
+
+    # -- the owner's personality (§18-22, §45) --------------------------------------
+
+    PERSONALITY_OWNER_KEYS = ("preferences", "owner", "response", "rules")
+
+    def personality_view(self) -> dict[str, Any]:
+        """Everything the personality editor shows: the editable layer, the protected core, the compiled contract, versions."""
+
+        from persona.contract import current_contract
+
+        try:
+            doc = self.owner.read("personality")
+            contract = current_contract(scope="chat")
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+        from owner.core import DEFAULTS
+
+        versions = [{"audit_id": h.get("audit_id"), "at": h.get("at"), "kind": h.get("kind"), "reason": h.get("reason"),
+                     "origin": h.get("origin"), "diff": [d for d in (h.get("diff") or []) if d.get("document") == "personality"][:12]}
+                    for h in self.owner.history(limit=200)
+                    if any(d.get("document") == "personality" for d in (h.get("diff") or [])) or "personality" in (h.get("restored") or [])]
+        return {"ok": True, "owner": doc.get("owner", {}), "response": doc.get("response", {}), "preferences": doc.get("preferences", {}),
+                "rules": doc.get("rules", []), "core": doc.get("core", {}), "revision": int(doc.get("revision", 0) or 0),
+                "updated_at": doc.get("updated_at", ""), "source": doc.get("source", ""), "hash": contract.hash,
+                "protected": {"core_identity": {"assistant_name": self.identity.assistant_name, "product_name": self.identity.product_name,
+                                                "creator": getattr(self.identity, "creator", "Raphael")},
+                              "keys": ["core"]},
+                "contract": contract.to_dict(), "defaults": {k: DEFAULTS["personality"][k] for k in self.PERSONALITY_OWNER_KEYS},
+                "versions": versions[-20:]}
+
+    def personality_preview(self, changes: dict[str, Any]) -> dict[str, Any]:
+        """The contract as it would read after ``changes`` -- nothing is written."""
+
+        from persona.contract import compile_contract
+
+        doc = self.owner.read("personality")
+        for key, value in (changes or {}).items():
+            if key not in self.PERSONALITY_OWNER_KEYS:
+                continue
+            if isinstance(value, dict) and isinstance(doc.get(key), dict):
+                doc[key] = {**doc[key], **value}
+            else:
+                doc[key] = value
+        contract = compile_contract(assistant=self.identity.assistant_name, product=self.identity.product_name,
+                                    creator=getattr(self.identity, "creator", ""), personality=doc, scope="chat")
+        return {"ok": True, "contract": contract.to_dict()}
+
+    def personality_save(self, changes: dict[str, Any], *, reason: str = "personality edited", authorization: str = "") -> dict[str, Any]:
+        """Write the owner's editable layer: one owner transaction, versioned, source OWNER_UI.
+
+        The protected core and the core identity are not reachable here; a
+        change that names them is refused.  Rules are normalised (id, text,
+        enabled, order) so the editor can add, edit, disable, reorder and
+        delete them.
+        """
+
+        from persona.contract import _CACHE
+
+        if not isinstance(changes, dict) or not changes:
+            return {"ok": False, "error": "nothing to change"}
+        refused = [k for k in changes if k not in self.PERSONALITY_OWNER_KEYS]
+        if refused:
+            return {"ok": False, "error": f"protected or unknown keys: {', '.join(refused)}", "protected": True}
+        clean: dict[str, Any] = {}
+        for key, value in changes.items():
+            if key == "rules":
+                rules = []
+                for index, raw in enumerate(value if isinstance(value, list) else []):
+                    text = str((raw.get("text") if isinstance(raw, dict) else raw) or "").strip()[:400]
+                    if not text:
+                        continue
+                    rid = str(raw.get("id") if isinstance(raw, dict) and raw.get("id") else f"rule_{uuid.uuid4().hex[:8]}")
+                    enabled = bool(raw.get("enabled", True)) if isinstance(raw, dict) else True
+                    rules.append({"id": rid, "text": text, "enabled": enabled, "order": index})
+                clean["rules"] = rules
+            elif key == "preferences":
+                prefs = {}
+                for name, raw in (value or {}).items():
+                    if name in {"spoken_answer_length", "address", "language"}:
+                        prefs[name] = str(raw)[:40]
+                    else:
+                        try:
+                            prefs[name] = max(0, min(100, int(raw)))
+                        except (TypeError, ValueError):
+                            continue
+                clean["preferences"] = prefs
+            else:
+                clean[key] = {str(k): (str(v)[:120] if not isinstance(v, bool) else v) for k, v in (value or {}).items()} if isinstance(value, dict) else {}
+        current = self.owner.read("personality")
+        clean["revision"] = int(current.get("revision", 0) or 0) + 1
+        clean["updated_at"] = _now()
+        clean["source"] = "OWNER_UI"
+        try:
+            transaction = self.owner.propose({"personality": clean}, reason=reason, origin="ui")
+            record = self.owner.approve(transaction.transaction_id, approved_by="owner")
+        except PermissionError as exc:
+            return {"ok": False, "error": str(exc), "protected": True}
+        _CACHE.clear()
+        self.emit(EventType.TOOL, {"summary": f"personality saved (revision {clean['revision']})", "source": "personality",
+                                   "audit_id": record.get("audit_id")}, scope="")
+        return {"ok": True, "audit_id": record.get("audit_id"), **self.personality_view()}
+
+    def personality_restore(self, audit_id: str) -> dict[str, Any]:
+        """Restore the personality documents as they were before the change ``audit_id``."""
+
+        from persona.contract import _CACHE
+
+        try:
+            record = self.owner.rollback(str(audit_id), approved_by="owner")
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        _CACHE.clear()
+        return {"ok": True, "restored": record, **self.personality_view()}
+
+    # -- chats (§29) ----------------------------------------------------------------
+
+    def conversation_rename(self, conv_id: str, title: str) -> dict[str, Any]:
+        return {"ok": self.conversations.rename(str(conv_id), str(title))}
+
+    def conversation_pin(self, conv_id: str, pinned: bool) -> dict[str, Any]:
+        return {"ok": self.conversations.set_pinned(str(conv_id), bool(pinned))}
+
+    def conversation_assign(self, conv_id: str, project_id: str) -> dict[str, Any]:
+        return {"ok": self.conversations.assign_project(str(conv_id), str(project_id or ""))}
+
+    def conversation_search(self, query: str, *, limit: int = 20) -> dict[str, Any]:
+        return {"ok": True, "results": self.conversations.search(str(query), limit=max(1, min(int(limit or 20), 50)))}
 
     def owner_propose(self, changes: dict[str, Any], *, reason: str = "", origin: str = "ui", unlock_core: bool = False,
                       authorization: str = "") -> dict[str, Any]:

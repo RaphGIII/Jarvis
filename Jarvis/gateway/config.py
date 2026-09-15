@@ -636,7 +636,7 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
     "exchange_rates": {},
     "roles": {
         "reasoning.free": {
-            "provider": "gemini", "model": "gemini-3.8-flash", "models": ["gemini-3.8-flash", "gemini-3.7-flash"],
+            "provider": "gemini", "model": "gemini-3.8-flash", "models": ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
             "enabled": True,
             "thinking": {"FAST": "low", "NORMAL": "medium", "DEEP": "high"},
             "reliability_prior": {"knowledge": [8, 1], "semantic": [6, 2], "planning": [3, 3], "composition": [2, 3]},
@@ -698,14 +698,70 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "kind": "gemini", "base_url": "https://generativelanguage.googleapis.com", "enabled": False,
             "secret": "gemini", "credential_env": ["GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY"],
             "may_train_on_requests": True, "metered": False, "timeout_seconds": 120,
-            "options": {"output_hard_limit": 65536},
+            "options": {
+                "output_hard_limit": 65536, "vendor": "google",
+                # The zero-cost pool's evidence: a route is used only with
+                # verified_zero_cost and a dated source.  The owner verified
+                # the Gemini API free tier (token price zero) on 2026-09-14.
+                "zero_cost_routes": [
+                    {"model": "gemini-3.8-flash", "verified_zero_cost": True, "verified_at": "2026-09-14",
+                     "verified_by": "owner: Gemini API free tier, token price zero", "supports_stream": True,
+                     "supports_structured_output": True, "context_limit": 1048576, "output_limit": 65536},
+                    {"model": "gemini-3.7-flash", "verified_zero_cost": True, "verified_at": "2026-09-14",
+                     "verified_by": "owner: Gemini API free tier, token price zero", "supports_stream": True,
+                     "supports_structured_output": True, "context_limit": 1048576, "output_limit": 65536},
+                    {"model": "gemini-3.6-flash", "verified_zero_cost": True, "verified_at": "2026-09-15",
+                     "verified_by": "owner: Gemini API free tier, token price zero (model availability unverified)", "supports_stream": True,
+                     "supports_structured_output": True, "context_limit": 1048576, "output_limit": 65536},
+                ],
+            },
             "purpose": "free-tier reasoning; quotas and rate limits are the resource constraint, not money",
             "pricing": {
                 "gemini-3.8-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
                                       "effective_from": "2026-09-14", "confirmed": True, "source": "Gemini API free tier: model token price zero"}],
                 "gemini-3.7-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
                                       "effective_from": "2026-09-14", "confirmed": True, "source": "Gemini API free tier: model token price zero"}],
+                "gemini-3.6-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
+                                      "effective_from": "2026-09-15", "confirmed": True, "source": "Gemini API free tier: model token price zero"}],
             },
+        },
+        # Independent zero-cost slots.  Disabled until the owner enters a key
+        # (in the encrypted store, never here), and their routes stay
+        # "unverified" -- listed, never used -- until the owner records that
+        # the effective monetary cost for their account is zero.  Model
+        # names belong here, in configuration, never in business logic.
+        "groq": {
+            "kind": "openai_compatible", "base_url": "https://api.groq.com/openai", "enabled": False,
+            "secret": "groq", "credential_env": ["GROQ_API_KEY"],
+            "may_train_on_requests": False, "metered": False, "timeout_seconds": 60,
+            "options": {"output_hard_limit": 32768, "vendor": "groq",
+                        "zero_cost_routes": [{"model": "openai/gpt-oss-120b", "verified_zero_cost": False, "verified_at": "", "verified_by": "",
+                                              "supports_stream": True, "supports_structured_output": True, "context_limit": 131072,
+                                              "output_limit": 32768, "note": "preferred candidate; verify zero cost for this account first"}]},
+            "purpose": "independent zero-cost reasoning route (when verified at zero cost for the owner's account)",
+            "pricing": {},
+        },
+        "cerebras": {
+            "kind": "openai_compatible", "base_url": "https://api.cerebras.ai", "enabled": False,
+            "secret": "cerebras", "credential_env": ["CEREBRAS_API_KEY"],
+            "may_train_on_requests": False, "metered": False, "timeout_seconds": 60,
+            "options": {"output_hard_limit": 32768, "vendor": "cerebras",
+                        "zero_cost_routes": [{"model": "", "verified_zero_cost": False, "verified_at": "", "verified_by": "",
+                                              "supports_stream": True, "supports_structured_output": True,
+                                              "note": "enter the strong zero-cost model the account exposes; verify zero cost first"}]},
+            "purpose": "independent zero-cost reasoning route (model chosen in configuration when verified at zero cost)",
+            "pricing": {},
+        },
+        "openrouter": {
+            "kind": "openai_compatible", "base_url": "https://openrouter.ai/api", "enabled": False,
+            "secret": "openrouter", "credential_env": ["OPENROUTER_API_KEY"],
+            "may_train_on_requests": True, "metered": False, "timeout_seconds": 60,
+            "options": {"output_hard_limit": 16384, "vendor": "openrouter",
+                        "zero_cost_routes": [{"model": "openrouter/free", "verified_zero_cost": False, "verified_at": "", "verified_by": "",
+                                              "supports_stream": True, "supports_structured_output": False, "context_limit": 32768,
+                                              "output_limit": 16384, "note": "dynamic free-model router; verify zero cost first"}]},
+            "purpose": "dynamic free-model pool of last resort (when verified at zero cost for the owner's account)",
+            "pricing": {},
         },
         "gemini_paid": {
             # The paid tier of the same API and the same key: a metered

@@ -1530,6 +1530,7 @@ modules:
       - 'def task_for(self, request: GatewayRequest) -> TaskVector'
       - 'def privacy_for(self, request: GatewayRequest, *, provider_may_train: bool) -> PrivacyDecision'
       - 'def plan(self, request: GatewayRequest) -> tuple[RouteDecision, PrivacyDecision]'
+      - 'def classify_request(self, request: GatewayRequest) -> ClassDecision'
       - 'def complete(self, request: GatewayRequest) -> GatewayReply'
       - 'def stream(self, request: GatewayRequest) -> GatewayStream'
       - 'def report_outcome(self, reply: GatewayReply, *, goal_verified: bool, failure_class: str='''') -> None'
@@ -1583,16 +1584,41 @@ modules:
       methods:
       - def to_dict(self) -> dict[str, Any]
     - name: ProviderHealth
-      doc: The last thing each provider told us, with a cool-down for outages.
+      doc: The last thing each provider -- and each model -- told us, with a cool-down for outages.
       methods:
-      - 'def note(self, provider: str, status: ProviderStatus, *, detail: str='''', retry_after_seconds: float | None=None)
-        -> None'
-      - 'def status(self, provider: str) -> ProviderStatus'
-      - 'def usable(self, provider: str) -> bool'
+      - 'def note(self, provider: str, status: ProviderStatus, *, detail: str='''', retry_after_seconds: float | None=None,
+        model: str='''') -> None'
+      - 'def cooldown_remaining(self, provider: str, *, model: str='''') -> float'
+      - 'def status(self, provider: str, *, model: str='''') -> ProviderStatus'
+      - 'def usable(self, provider: str, *, model: str='''') -> bool'
       - def to_dict(self) -> dict[str, Any]
     functions:
     - signature: 'def classify_http(status_code: int, body: str, *, provider_kind: str='''') -> ProviderStatus'
       doc: Map an HTTP failure onto the six states.  Provider quirks live here.
+    - signature: 'def seconds_until_daily_reset(now: float | None=None, zone: str=''America/Los_Angeles'') -> float'
+      doc: Seconds until the next midnight in the provider's accounting zone (Google's free tier resets at Pacific midnight).
+  gateway/intelligence_class.py:
+    module: gateway.intelligence_class
+    classes:
+    - name: IntelligenceClass
+      bases:
+      - str
+      - Enum
+      methods:
+      - def roles(self) -> tuple[str, ...]
+      - def is_engineering(self) -> bool
+      - def is_paid(self) -> bool
+    - name: ClassDecision
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    functions:
+    - signature: 'def signals_for(task: TaskVector, text: str) -> dict[str, float]'
+      doc: Every factor the class depends on, each 0..1, from the vector and the words.
+    - signature: 'def classify(task: TaskVector, mode: ChatMode | str, *, text: str='''', engineering_frontier: bool | None=None,
+        deterministic: bool=False) -> ClassDecision'
+      doc: The class this request needs, before any provider is considered.
+    - signature: 'def class_for_role(role: str) -> IntelligenceClass | None'
+      doc: The class a pinned role belongs to, for requests the caller already routed (an engineer).
   gateway/learning.py:
     module: gateway.learning
     classes:
@@ -1667,8 +1693,9 @@ modules:
     classes: []
     functions:
     - signature: 'def identity_clause(assistant: str=''ZEUS'', *, owner: str='''') -> str'
+      doc: 'One compact sentence: who designed and orchestrates ZEUS, and what the engine is not.'
     - signature: 'def system_prompt_for_role(role: str, *, assistant: str | None=None, extra: str='''') -> str'
-      doc: The owner's persona prompt plus the identity clause, for a cloud role.
+      doc: The compact PersonalityContract plus the identity clause, for a cloud role.
     - signature: 'def guard_identity(text: str, *, assistant: str=''ZEUS'') -> tuple[str, int]'
       doc: Rewrite self-identification as a vendor model.  Returns (text, replacements).
     - signature: 'def diagnostics_identity(role: str, provider: str, model: str) -> dict[str, Any]'
@@ -1723,7 +1750,10 @@ modules:
     - name: OpenAICompatibleAdapter
       bases:
       - OpenAIAdapter
+      doc: Chat Completions, as Groq, Cerebras, OpenRouter and self-hosted servers speak it.
       methods:
+      - 'def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
+        -> Iterator[StreamEvent]'
       - 'def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
         -> ProviderReply'
     - name: AnthropicAdapter
@@ -1757,8 +1787,8 @@ modules:
       - 'def candidates(self, task: TaskVector, mode: ChatMode, privacy: PrivacyDecision | None, *, prompt: str, system: str='''',
         expected_output_tokens: int=512, task_id: str='''', only_role: str='''') -> list[Candidate]'
       - 'def decide(self, task: TaskVector, mode: ChatMode | str, privacy: PrivacyDecision | None=None, *, prompt: str, system:
-        str='''', expected_output_tokens: int=512, task_id: str='''', only_role: str='''', apply_overrides: bool=True) ->
-        RouteDecision'
+        str='''', expected_output_tokens: int=512, task_id: str='''', only_role: str='''', apply_overrides: bool=True, intelligence_class:
+        ClassDecision | None=None) -> RouteDecision'
     functions:
     - signature: 'def thinking_level_for(task: TaskVector, mode: ChatMode | None=None) -> str'
       doc: FAST / NORMAL / DEEP from the task; MAX only in DEEP mode for the hardest tasks.
@@ -1834,6 +1864,25 @@ modules:
         str] | None=None, auth: str=''bearer'', timeout: float | None=None, timeouts: StreamTimeouts | None=None)'
       - 'def post_json(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *, headers: dict[str,
         str] | None=None, auth: str=''bearer'', timeout: float | None=None) -> HttpReply'
+    functions: []
+  gateway/zero_cost.py:
+    module: gateway.zero_cost
+    classes:
+    - name: ZeroCostRoute
+      methods:
+      - def key(self) -> str
+      - def to_dict(self) -> dict[str, Any]
+    - name: RouteVerdict
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: ZeroCostRegistry
+      doc: Every configured zero-cost route, with the evidence behind it.
+      methods:
+      - 'def verdicts(self, *, health: ProviderHealth, credential_present: Callable[[str], bool], need_structured: bool=False,
+        need_stream: bool=False) -> list[RouteVerdict]'
+      - 'def eligible(self, **kw: Any) -> list[ZeroCostRoute]'
+      - 'def describe(self, *, health: ProviderHealth, credential_present: Callable[[str], bool]) -> list[dict[str, Any]]'
+      - def vendors(self) -> list[str]
     functions: []
   imagegen/generate.py:
     module: imagegen.generate
@@ -2742,6 +2791,20 @@ modules:
       - 'def lock(self, scope: str='''') -> int'
       - def status(self) -> dict[str, Any]
     functions: []
+  persona/contract.py:
+    module: persona.contract
+    classes:
+    - name: PersonalityContract
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    functions:
+    - signature: 'def personality_hash(document: dict[str, Any]) -> str'
+    - signature: 'def compile_contract(*, assistant: str, product: str, creator: str, personality: dict[str, Any], scope:
+        str=''chat'', language: str='''', scoped_rules: list[str] | None=None) -> PersonalityContract'
+      doc: The contract for one scope, cached by the hash of everything that feeds it.
+    - signature: 'def current_contract(*, scope: str=''chat'', language: str='''', scoped_rules: list[str] | None=None, identity=None)
+        -> PersonalityContract'
+      doc: The contract for the current identity (or the one handed in) and the owner documents.
   persona/language.py:
     module: persona.language
     classes:
@@ -2785,9 +2848,12 @@ modules:
     module: persona.smalltalk
     classes: []
     functions:
+    - signature: 'def identity_kind(text: str) -> str'
+      doc: '"identity" | "creator" | "vendor" | "model" | "" -- which deterministic identity answer applies.'
     - signature: 'def is_identity_question(text: str) -> bool'
-    - signature: 'def identity_answer(text: str, *, language: str=''de'', assistant: str=''Zeus'', rng: random.Random | None=None)
-        -> str | None'
+    - signature: 'def identity_answer(text: str, *, language: str=''de'', assistant: str=''ZEUS'', creator: str=''Raphael'',
+        rng: random.Random | None=None) -> str | None'
+      doc: The deterministic ZEUS answer to an identity question, or None when the question is not one.
     - signature: 'def is_small_talk(text: str) -> bool'
     - signature: 'def small_talk_answer(text: str, *, language: str=''de'', active_missions: int=0, uptime_seconds: float=0.0,
         humour: int=40, warmth: int=50, rng: random.Random | None=None) -> str | None'
@@ -3754,6 +3820,10 @@ modules:
       - 'def set_summary(self, conv_id: str, *, title: str='''', summary: str='''', open_tasks: list[str] | None=None, facts:
         list[str] | None=None) -> bool'
       - 'def list(self, limit: int=30) -> list[dict[str, Any]]'
+      - 'def rename(self, conv_id: str, title: str) -> bool'
+      - 'def set_pinned(self, conv_id: str, pinned: bool) -> bool'
+      - 'def assign_project(self, conv_id: str, project_id: str) -> bool'
+      - 'def search(self, query: str, *, limit: int=20) -> list[dict[str, Any]]'
       - 'def get(self, conv_id: str) -> dict[str, Any] | None'
       - 'def delete(self, conv_id: str) -> bool'
       - 'def attach_result(self, conv_id: str, result: dict[str, Any]) -> bool'
@@ -3897,6 +3967,15 @@ modules:
       - 'def list_thoughts(self, status: str='''') -> dict[str, Any]'
       - 'def thought_action(self, thought_id: str, action: str) -> dict[str, Any]'
       - def owner_personality(self) -> dict[str, Any]
+      - def personality_view(self) -> dict[str, Any]
+      - 'def personality_preview(self, changes: dict[str, Any]) -> dict[str, Any]'
+      - 'def personality_save(self, changes: dict[str, Any], *, reason: str=''personality edited'', authorization: str='''')
+        -> dict[str, Any]'
+      - 'def personality_restore(self, audit_id: str) -> dict[str, Any]'
+      - 'def conversation_rename(self, conv_id: str, title: str) -> dict[str, Any]'
+      - 'def conversation_pin(self, conv_id: str, pinned: bool) -> dict[str, Any]'
+      - 'def conversation_assign(self, conv_id: str, project_id: str) -> dict[str, Any]'
+      - 'def conversation_search(self, query: str, *, limit: int=20) -> dict[str, Any]'
       - 'def owner_propose(self, changes: dict[str, Any], *, reason: str='''', origin: str=''ui'', unlock_core: bool=False,
         authorization: str='''') -> dict[str, Any]'
       - 'def owner_approve(self, transaction_id: str, *, confirm: bool, authorization: str='''') -> dict[str, Any]'

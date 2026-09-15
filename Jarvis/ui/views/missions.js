@@ -22,7 +22,7 @@ const isFinished = (m) => m.finished || ["completed", "failed", "cancelled"].inc
 
 export const view = {
   id: "missions",
-  title: "Mission Control",
+  title: "Laufende Arbeit",
   async mount(pane, params) {
     const tabs = el("div", { class: "toolbar" });
     const list = el("div");
@@ -178,11 +178,11 @@ function inspectSelfdev(m, row) {
     el("span", { class: "k", text: "exists" }), el("span", { class: "v", text: String(line).slice(0, 200) })));
   views.inspect(row.title || `Mission ${m.mission_id}`,
     section("Requested modification (the owner's words)", el("div", { class: "kv" }, el("span", { class: "v", text: m.request }))),
-    section("Mission Control",
+    section("Auftrag",
       kv("goal", c.GOAL || m.request),
       kv("route", c.ROUTE),
       kv("engineer", c.ENGINEER || "not chosen yet"),
-      kv("BUILD_LOCAL invocations", String(c.BUILD_LOCAL_INVOCATIONS ?? m.local_attempts ?? 0)),
+      kv("lokale Bauversuche", String(c.BUILD_LOCAL_INVOCATIONS ?? m.local_attempts ?? 0)),
       kv("current phase", c.PHASE || m.phase),
       kv("files changed", (c.FILES_CHANGED || []).join(", ") || "none"),
       kv("tests", (c.TESTS || []).join(", ") || "none"),
@@ -195,7 +195,7 @@ function inspectSelfdev(m, row) {
       kv("attempts of this request", row.attempts), kv("started", m.started_at), kv("updated", m.updated_at),
       kv("baseline → candidate", m.expected_revision ? `→ ${m.expected_revision.slice(0, 12)}` : ""), kv("area", m.area)),
     m.routing ? section("Routing", kv("top level", `${m.routing.top_level} · ${m.routing.confidence}`), kv("reason", m.routing.reason)) : null,
-    section("Executors", kv("BUILD_LOCAL attempts", m.local_attempts), kv("model calls", m.model_calls), kv("expert", m.escalated ? `${m.expert?.provider || "expert"} · ${m.expert?.status || ""} · ${m.expert?.seconds || ""}s` : "not used"),
+    section("Ausführung", kv("lokale Bauversuche", m.local_attempts), kv("Modellaufrufe", m.model_calls), kv("Verstärkung", m.escalated ? `${m.expert?.status || "eingesetzt"} · ${m.expert?.seconds || ""}s` : "nicht eingesetzt"),
       kv("timings", Object.entries(m.timings || {}).map(([k, v]) => `${k} ${v}s`).join(" · "))),
     section("Files changed", kv("files", (m.changed_files || []).join("\n") || "none")),
     acceptance.length ? section("Acceptance", ...acceptance) : null,

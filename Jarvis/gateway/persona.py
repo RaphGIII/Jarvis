@@ -15,7 +15,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_PROVIDER_NAMES = r"(?:Gemini|Google(?:\s+DeepMind)?|ChatGPT|GPT(?:-?\d[\w.\-]*)?|OpenAI|Claude|Anthropic|Bard|Copilot|Llama|Meta\s+AI|Mistral)"
+_PROVIDER_NAMES = (r"(?:Gemini|Google(?:\s+DeepMind)?|ChatGPT|GPT(?:-?\d[\w.\-]*)?|OpenAI|Claude|Anthropic|Bard|Copilot|Llama|Meta\s+AI|Mistral"
+                   r"|Qwen|Ollama|Groq|Cerebras|OpenRouter|DeepSeek|Grok|xAI|Perplexity|Cohere|Alibaba(?:\s+Cloud)?)")
 _SELF = r"(?:I am|I'm|Ich bin|ich bin|I was|Ich wurde|ich wurde|Ich heiße|I, )"
 
 # Sentences where the assistant introduces itself as a vendor's model.
@@ -31,6 +32,17 @@ _BY_VENDOR = re.compile(
     rf"(?:\s+(?:DeepMind|AI|Inc\.?|LLC))?)",
     re.IGNORECASE,
 )
+# Sentence leads where the assistant speaks AS a vendor: "As Gemini, ...",
+# "Als Claude kann ich ...", "As an OpenAI model, ...", "I am Google's AI".
+_APPOSITIVE = (rf"(?:\s*,\s*(?:ein|eine|a|an|the)\s+[^,.!?\n]{{0,40}}?(?:Sprachmodell|language\s+model|Modell|model|KI|AI|assistant|Assistent)"
+               rf"(?:\s+(?:von|by|from|of)\s+{_PROVIDER_NAMES}(?:\s+(?:DeepMind|AI|Cloud|Inc\.?))?)?)?")
+_AS_VENDOR_LEAD = re.compile(
+    rf"(?P<lead>(?:^|(?<=[.!?\n]\s)|(?<=^\s))(?:As|Als))\s+(?:(?:an?|ein|eine)\s+)?(?:(?:{_PROVIDER_NAMES})(?:'s|s)?\s+)?"
+    rf"(?:(?:AI|KI|language\s+)?(?:model|Modell|assistant|Assistent)\s+)?(?:{_PROVIDER_NAMES})\b(?:'s\s+(?:AI|model))?{_APPOSITIVE}\s*,?",
+    re.IGNORECASE,
+)
+_OWNED_AI = re.compile(rf"(?P<lead>\b(?:I am|I'm|Ich bin|This is|Hier spricht|Hier ist))\s+(?:{_PROVIDER_NAMES})(?:'s|s)?\s+(?:AI|KI|assistant|Assistent|model|Modell)\b",
+                       re.IGNORECASE)
 # "as an AI model from Google" / "als KI-Modell von OpenAI"
 _AS_VENDOR_MODEL = re.compile(
     rf"(?P<lead>\b(?:als|as))\s+(?:ein|eine|a|an)?\s*(?:KI|AI|Sprach|language)?[\w\- ]{{0,20}}?(?:Modell|model|Assistent|assistant)\s+"
@@ -40,34 +52,47 @@ _AS_VENDOR_MODEL = re.compile(
 
 
 def identity_clause(assistant: str = "ZEUS", *, owner: str = "") -> str:
+    """One compact sentence: who designed and orchestrates ZEUS, and what the engine is not."""
+
     who = owner or "the owner"
-    return (
-        f"\nIdentity: You are {assistant}, {who}'s personal AI system, designed and orchestrated by {who}. "
-        f"You are one component of {assistant}; the underlying model vendor is an implementation detail. "
-        f"Never introduce yourself as, or claim to be, a vendor's model or assistant (Gemini, GPT, ChatGPT, Claude or similar), "
-        f"and never name the vendor of the model that produced this answer unless the user explicitly asks a technical question "
-        f"about which model is running. Never claim that {who} trained a foundation model; {who} designed and orchestrates {assistant}.\n"
-    )
+    return (f"\nIdentity: You are {assistant}, designed and orchestrated by {who}; {who} never trained a foundation model. "
+            f"Never introduce yourself as a vendor's model or assistant; the engine behind an answer is infrastructure.\n")
 
 
 def system_prompt_for_role(role: str, *, assistant: str | None = None, extra: str = "") -> str:
-    """The owner's persona prompt plus the identity clause, for a cloud role."""
+    """The compact PersonalityContract plus the identity clause, for a cloud role.
 
-    try:
-        from config import system_prompt
+    The same contract every provider receives: identity, character, the
+    invariants, the owner's preferences and rules -- a few hundred tokens,
+    never the owner's documents read aloud.
+    """
 
-        base = system_prompt()
-    except Exception:  # noqa: BLE001 - a persona that cannot load must not block the answer
-        base = f"You are {assistant or 'ZEUS'}, this user's personal AI system."
     name = assistant
+    creator = ""
     if not name:
         try:
             from core.identity import current
 
-            name = current().assistant_name
+            identity = current()
+            name, creator = identity.assistant_name, getattr(identity, "creator", "")
         except Exception:  # noqa: BLE001
             name = "ZEUS"
-    text = base.rstrip() + identity_clause(name)
+    else:
+        try:
+            from core.identity import current
+
+            creator = getattr(current(), "creator", "")
+        except Exception:  # noqa: BLE001
+            creator = ""
+    try:
+        from persona.contract import current_contract
+
+        base = current_contract(scope="role").text
+        if name and not base.startswith(f"You are {name}"):
+            base = f"You are {name}. " + base
+    except Exception:  # noqa: BLE001 - a persona that cannot load must not block the answer
+        base = f"You are {name}, this user's personal AI system."
+    text = base.rstrip() + identity_clause(name, owner=creator)
     if extra:
         text += "\n" + extra.strip() + "\n"
     return text
@@ -89,7 +114,9 @@ def guard_identity(text: str, *, assistant: str = "ZEUS") -> tuple[str, int]:
     out, n = _SELF_ID.subn(_self, text)
     out, n2 = _BY_VENDOR.subn("", out)
     out, n3 = _AS_VENDOR_MODEL.subn(lambda m: f"{m.group('lead')} {assistant}", out)
-    count += n2 + n3
+    out, n4 = _AS_VENDOR_LEAD.subn(lambda m: f"{m.group('lead')} {assistant},", out)
+    out, n5 = _OWNED_AI.subn(lambda m: f"{m.group('lead')} {assistant}", out)
+    count += n2 + n3 + n4 + n5
     return out, count
 
 

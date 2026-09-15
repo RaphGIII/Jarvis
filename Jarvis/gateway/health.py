@@ -9,10 +9,13 @@ expensive bill, so every provider error is classified here first, and only
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 class ProviderStatus(str, Enum):
@@ -119,29 +122,84 @@ def classify_http(status_code: int, body: str, *, provider_kind: str = "") -> Pr
     return ProviderStatus.TASK_FAILURE
 
 
+#: Quota wording that means "resets with the provider's day", not "in a minute".
+_DAILY_QUOTA = re.compile(r"per\s+day|per_day|perday|daily|requests_per_day|tokens_per_day|taeglich|täglich", re.I)
+
+
+def seconds_until_daily_reset(now: float | None = None, zone: str = "America/Los_Angeles") -> float:
+    """Seconds until the next midnight in the provider's accounting zone (Google's free tier resets at Pacific midnight)."""
+
+    try:
+        tz = ZoneInfo(zone)
+    except Exception:  # noqa: BLE001 - no tz database: fall back to a plain day
+        return 24 * 3600.0
+    current = datetime.fromtimestamp(now if now is not None else time.time(), tz)
+    tomorrow = (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(60.0, (tomorrow - current).total_seconds())
+
+
 @dataclass
 class ProviderHealth:
-    """The last thing each provider told us, with a cool-down for outages."""
+    """The last thing each provider -- and each model -- told us, with a cool-down for outages.
+
+    Keyed by provider, and additionally by ``provider/model`` when the caller
+    names the model: one Gemini model's spent daily quota does not condemn
+    its siblings, and a model that does not exist is not retried every turn.
+    A route in cool-down is skipped without a network call; that is what
+    keeps an exhausted route from being hammered.
+    """
 
     state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def note(self, provider: str, status: ProviderStatus, *, detail: str = "", retry_after_seconds: float | None = None) -> None:
-        cooldown = 0.0
+    @staticmethod
+    def _cooldown(status: ProviderStatus, detail: str, retry_after_seconds: float | None) -> float:
         if status is ProviderStatus.RATE_LIMIT:
-            cooldown = retry_after_seconds or 30.0
-        elif status is ProviderStatus.QUOTA_EXHAUSTED:
-            cooldown = retry_after_seconds or 3600.0
-        elif status is ProviderStatus.PROVIDER_UNAVAILABLE:
-            cooldown = retry_after_seconds or 60.0
-        elif status is ProviderStatus.TIMEOUT:
-            cooldown = retry_after_seconds or 30.0  # a hang under load; short, so a recovered provider is used again soon
-        elif status is ProviderStatus.AUTHENTICATION_ERROR:
-            cooldown = 0.0  # a key does not fix itself; report, do not hide
-        self.state[provider] = {"status": status.value, "detail": detail[:300], "at": time.time(),
-                                "until": time.time() + cooldown if cooldown else 0.0}
+            return retry_after_seconds or 30.0
+        if status is ProviderStatus.QUOTA_EXHAUSTED:
+            if retry_after_seconds:
+                return float(retry_after_seconds)
+            return seconds_until_daily_reset() if _DAILY_QUOTA.search(detail or "") else 3600.0
+        if status is ProviderStatus.PROVIDER_UNAVAILABLE:
+            return retry_after_seconds or 60.0
+        if status is ProviderStatus.TIMEOUT:
+            return retry_after_seconds or 30.0  # a hang under load; short, so a recovered provider is used again soon
+        if status is ProviderStatus.MODEL_UNAVAILABLE:
+            return retry_after_seconds or 6 * 3600.0  # a model that is not there stays not there for a while
+        if status is ProviderStatus.AUTHENTICATION_ERROR:
+            return 0.0  # a key does not fix itself; report, do not hide
+        return 0.0
 
-    def status(self, provider: str) -> ProviderStatus:
-        entry = self.state.get(provider)
+    def note(self, provider: str, status: ProviderStatus, *, detail: str = "", retry_after_seconds: float | None = None,
+             model: str = "") -> None:
+        cooldown = self._cooldown(status, detail, retry_after_seconds)
+        entry = {"status": status.value, "detail": detail[:300], "at": time.time(), "until": time.time() + cooldown if cooldown else 0.0}
+        if model:
+            self.state[f"{provider}/{model}"] = entry
+            # A spent daily quota and a missing model are that model's
+            # condition; everything else (a hang, a 5xx, a per-minute limit,
+            # a rejected key, an answer) is the provider's.
+            if status not in {ProviderStatus.QUOTA_EXHAUSTED, ProviderStatus.MODEL_UNAVAILABLE}:
+                self.state[provider] = dict(entry)
+        else:
+            self.state[provider] = entry
+
+    def cooldown_remaining(self, provider: str, *, model: str = "") -> float:
+        remaining = 0.0
+        for key in ([provider] + ([f"{provider}/{model}"] if model else [])):
+            entry = self.state.get(key)
+            if entry and entry.get("until"):
+                remaining = max(remaining, float(entry["until"]) - time.time())
+        return max(0.0, remaining)
+
+    def status(self, provider: str, *, model: str = "") -> ProviderStatus:
+        if model:
+            own = self._status_of(f"{provider}/{model}")
+            if own.is_outage:
+                return own
+        return self._status_of(provider)
+
+    def _status_of(self, key: str) -> ProviderStatus:
+        entry = self.state.get(key)
         if not entry:
             return ProviderStatus.OK
         until = float(entry.get("until") or 0.0)
@@ -152,8 +210,8 @@ class ProviderHealth:
             return status
         return ProviderStatus.OK
 
-    def usable(self, provider: str) -> bool:
-        return not self.status(provider).is_outage
+    def usable(self, provider: str, *, model: str = "") -> bool:
+        return not self.status(provider, model=model).is_outage
 
     def to_dict(self) -> dict[str, Any]:
         out = {}

@@ -22,7 +22,7 @@ const HEALTH_TONE = { HEALTHY: "ok", AT_RISK: "warn", BROKEN: "bad", UNKNOWN: "d
 
 export const view = {
   id: "capabilities",
-  title: "Capabilities",
+  title: "Fähigkeiten",
   async mount(pane, params) {
     const [data, queue] = await Promise.all([api("/api/capabilities"), api("/api/capabilities/requests").catch(() => ({ requests: [] }))]);
     const caps = data.capabilities || [];
@@ -109,7 +109,7 @@ function inspect(c) {
       kv("preconditions", list(c.preconditions) || ((c.permissions_required || []).length ? `permissions: ${c.permissions_required.join(", ")}` : "none declared")),
       kv("effects / side effects", list(c.side_effects) || meta.effects || meta.side_effects || "not declared"),
       kv("dependencies", (c.runtime_dependencies || c.dependencies || []).join(", ") || "none"),
-      kv("provider", c.provider || meta.provider || meta.author || "local build"),
+      kv("Quelle", c.provider || meta.provider || meta.author || "lokal gebaut"),
       kv("verification strategy", checks.length ? checks.map((x) => x.name || x.check).filter(Boolean).join(", ") : "none recorded"),
       kv("entrypoint", c.entrypoint), kv("implementation", c.implementation_path || c.source_location, "mono")),
     section("Resolution", kv("goal types", list(c.goal_types) || "—"), kv("target types", list(c.target_types) || "—"),

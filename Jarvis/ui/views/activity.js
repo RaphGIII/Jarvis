@@ -39,7 +39,7 @@ let live = null;
 
 export const view = {
   id: "activity",
-  title: "Activity",
+  title: "Fortschritt",
   async mount(pane, params) {
     const toolbar = el("div", { class: "toolbar" });
     const search = el("input", { placeholder: "Filter…", value: params.q || "" });

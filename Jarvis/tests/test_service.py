@@ -243,7 +243,7 @@ def test_an_exception_inside_the_context_manager_lands_in_error():
 def test_every_state_the_ui_knows_about_exists():
     """The UI's animation table and the server's vocabulary must agree.
 
-    Read out of ``ui/eye.js`` rather than copied into this file.  The copy was
+    Read out of ``ui/orb.js`` rather than copied into this file.  The copy was
     the bug: it made adding a state to *both* the enum and the animation table
     -- doing the thing correctly -- fail, while the mismatch it was meant to
     catch (a state in the enum that the eye cannot render) would sail through
@@ -254,7 +254,7 @@ def test_every_state_the_ui_knows_about_exists():
     import re
     from pathlib import Path
 
-    eye = (Path(__file__).resolve().parent.parent / "ui" / "eye.js").read_text(encoding="utf-8")
+    eye = (Path(__file__).resolve().parent.parent / "ui" / "orb.js").read_text(encoding="utf-8")
     table = eye.split("const STATES = {", 1)[1].split("\n};", 1)[0]
     rendered = set(re.findall(r"^\s*(\w+):\s*\{", table, re.M))
 

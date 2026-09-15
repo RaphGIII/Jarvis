@@ -1,171 +1,115 @@
 <!doctype html>
-<!-- lang + translate=no: the owner's conversation is German inside an English
-     chrome, which made Edge offer to translate the product's own interface. -->
-<html lang="de" translate="no">
+<html lang="de">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="google" content="notranslate" />
-<!--
-  ZEUS — the personal AI operating environment.
-
-  Three modes, one page: Presence (the eye and the conversation), Workspace
-  (a named view with a rail and an inspector) and Mission Control (a view
-  like any other, plus a persistent HUD). No build step: plain ES modules
-  loaded by app.js. The page renders state events and nothing else; every
-  colour on the eye and every badge is a copy of something the server said.
--->
 <title>__PRODUCT_NAME__</title>
-<link rel="icon" href="zeus.ico" />
+<!-- The shell (theme tokens, sidebar, orb, chat, composer, settings) and the
+     view styles are two sheets on purpose: the shell can change its whole
+     look without touching how a galaxy or a calendar is drawn. -->
 <link rel="stylesheet" href="zeus.css" />
+<link rel="stylesheet" href="views.css" />
 <style>
-  /* TV / kiosk: the same page, scaled for a room -- kept in the document so
-     ?tv=1 never depends on a second stylesheet arriving. */
-
-body.tv { font-size: 22px; }
-body.tv #app { max-width: 1600px; padding: 0 5vw; }
-body.tv header.top { padding: 2vh 0; font-size: 16px; }
-body.tv .brand { font-size: 18px; letter-spacing: .4em; }
-body.tv nav.views, body.tv .composer, body.tv .modebar, body.tv .hint, body.tv #hud { display: none; }
-body.tv #eye { width: 34vh; height: 34vh; }
-body.tv #app.conversing #eye { width: 18vh; height: 18vh; }
-body.tv #stateLabel { font-size: 15px; letter-spacing: .45em; }
-body.tv #detail { font-size: 18px; }
-body.tv .turn .who { flex-basis: 90px; font-size: 13px; }
-body.tv, body.tv * { cursor: none; }
+  body.tv { cursor: none; }
+  body.tv #eye { width: 44vh !important; height: 44vh !important; }
+  body.tv footer.compose { display: none; }
+  body.tv #stateLabel { font-size: 14px; letter-spacing: .5em; }
 </style>
 </head>
 <body>
 
-<!-- The cosmos behind everything: painted ONCE by app.js (static stars over
-     CSS nebulae), never animated — depth without spending a single frame. -->
-<canvas id="cosmos" aria-hidden="true"></canvas>
-
-<!-- The boot veil: the main interface stays COVERED until the product is
-     genuinely interactive (core answering + conversation model warm).  The
-     owner must never watch the shell reconnect to its own backend.  It is
-     present in the markup from the first byte, so there is no flash of a
-     half-dead UI before scripts run; app.js dissolves it on INTERACTIVE_READY
-     and keeps a honest chip while voice finishes warming. -->
+<!-- The boot veil covers the shell until ZEUS is genuinely ready to answer.
+     Present in the markup from the first byte, dissolved by app.js on
+     INTERACTIVE_READY. -->
 <div id="bootVeil">
-  <div class="bv-rig">
-    <div class="bv-ring r3"><i></i></div>
-    <div class="bv-ring r2"><i></i></div>
-    <div class="bv-ring r1"><i></i></div>
-    <div class="bv-orb"></div>
-  </div>
-  <div class="bv-brand">ZEUS</div>
-  <div class="bv-phase" id="bvPhase">SYSTEME WERDEN GEWECKT</div>
+  <div class="bv-orb"></div>
+  <div class="bv-brand">__PRODUCT_NAME__</div>
+  <div class="bv-phase" id="bvPhase">ZEUS WIRD VERBUNDEN</div>
   <ul class="bv-systems">
     <li data-k="core">Kern</li>
-    <li data-k="ai">Lokale Intelligenz</li>
+    <li data-k="ai">Intelligenz</li>
     <li data-k="voice">Stimme</li>
-    <li data-k="universe">Universum</li>
   </ul>
 </div>
 
 <div id="app">
-  <header class="top">
-    <span id="brand" title="Home" class="brand">__PRODUCT_NAME__</span>
-    <span class="uptime" id="uptime" title="How long this instance has been running"></span>
-    <span class="pill" id="connPill">connecting</span>
-    <span class="spacer"></span>
-    <nav class="views" id="nav">
-      <button data-view-button="missions" title="Mission Control (Ctrl+M)">Missions</button>
-      <button data-view-button="projects" title="Projects (Ctrl+Shift+P)">Projects</button>
-      <button data-view-button="files" title="Files – dein D:-Universum">Files</button>
-      <button data-view-button="knowledge" title="Wissen">Wissen</button>
-      <button data-view-button="calendar" title="Kalender">Kalender</button>
-      <button data-view-button="activity" title="Activity">Activity</button>
-      <button data-view-button="diagnostics" title="Diagnostics">Diagnostics</button>
-      <button id="btnPalette" title="Everything (Ctrl+K)">⌘<span class="kbd">Ctrl K</span></button>
-    </nav>
-    <button class="ghost" id="btnNew" title="Clear the conversation">New</button>
-    <span class="winctl">
-      <button id="btnWinMin" title="Minimieren">&#9472;</button>
-      <button id="btnWinHide" title="Ausblenden &#8211; Zeus l&#228;uft und h&#246;rt weiter">&#10005;</button>
-    </span>
-  </header>
+  <!-- The persistent sidebar: built by core/sidebar.js -->
+  <aside id="sidebar" aria-label="Navigation"></aside>
 
-  <main class="presence">
-    <div id="stage">
-      <div id="eyeWrap">
-        <canvas id="eye" width="520" height="520"></canvas>
-        <div id="gpuMeter" hidden>
-          <div id="gpuBar"><div id="gpuFill"></div></div>
-          <div id="gpuValue">--</div>
+  <div id="main">
+    <header id="topbar">
+      <button id="btnSidebar" title="Seitenleiste ein-/ausblenden">☰</button>
+      <div id="topTitle">__PRODUCT_NAME__</div>
+      <span class="spacer"></span>
+      <button id="workPill" title="Was ZEUS gerade tut"><span class="dot"></span><span class="txt">Bereit</span><span class="n"></span></button>
+      <span class="pill" id="connPill">verbinden</span>
+      <button id="btnWorkspaceClose" hidden title="Zurück zum Chat (Esc)">Zurück zum Chat</button>
+    </header>
+
+    <main class="presence">
+      <div id="stage">
+        <div id="orbWrap"><canvas id="eye" width="380" height="380"></canvas></div>
+        <div id="stateLabel" data-cat="blue">offline</div>
+        <div id="heroLine">Was möchtest du wissen oder erledigen?</div>
+        <div id="detail"></div>
+        <div id="readiness"><span data-stage="UI_READY"></span><span data-stage="CORE_READY"></span><span data-stage="AI_READY" class="ai"></span><span data-stage="VOICE_READY"></span></div>
+      </div>
+      <div id="log"></div>
+    </main>
+
+    <main class="workspace">
+      <section class="pane">
+        <div class="pane-head">
+          <h2 id="workspaceTitle">Workspace</h2>
+          <div id="breadcrumb"></div>
+        </div>
+        <div id="workspacePane"></div>
+      </section>
+      <aside class="inspector" id="inspector">
+        <header><strong id="inspectorTitle">Details</strong><button id="btnInspectorClose" title="Schließen">×</button></header>
+        <div id="inspectorBody"></div>
+      </aside>
+    </main>
+
+    <footer class="compose">
+      <div class="composer glass edge-light">
+        <textarea id="input" rows="1" placeholder="Frag __ASSISTANT_NAME__ etwas oder gib eine Aufgabe …" autofocus></textarea>
+        <div class="compose-tools">
+          <div id="perf" class="perf"></div>
+          <span class="spacer"></span>
+          <button class="icon-btn" id="btnMic" title="Spracheingabe">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0" /><path d="M12 18v4" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnSend" title="Senden">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          </button>
         </div>
       </div>
-      <div id="stateLabel" data-cat="blue">offline</div>
-<div id="missionCount"></div>
-      <div id="readiness">
-        <span data-stage="UI_READY">ui</span>
-        <span data-stage="CORE_READY">core</span>
-        <span data-stage="AI_READY" class="ai">ai</span>
-        <span data-stage="VOICE_READY">voice</span>
-      </div>
-      <div id="heroLine">Ask __ASSISTANT_NAME__ anything, or give it something to do.</div>
-      <div id="detail"></div>
-    </div>
-    <div id="log"></div>
-  </main>
-
-  <main class="workspace">
-    <aside class="rail" id="rail"></aside>
-    <section class="pane">
-      <div class="pane-head">
-        <h2 id="workspaceTitle">Workspace</h2>
-        <div id="breadcrumb"></div>
-        <span class="spacer" style="flex:1"></span>
-        <button class="ghost" id="btnWorkspaceClose" title="Back to ZEUS (Esc)">Zurück</button>
-      </div>
-      <div id="workspacePane"></div>
-    </section>
-    <aside class="inspector" id="inspector">
-      <header><strong id="inspectorTitle">Inspector</strong><button class="ghost" id="btnInspectorClose">×</button></header>
-      <div id="inspectorBody"></div>
-    </aside>
-  </main>
-
-  <footer class="compose">
-    <div class="modebar" id="modebar" aria-label="Chat-Modus und Kosten"></div>
-    <div class="composer">
-      <textarea id="input" rows="1" placeholder="Talk to __ASSISTANT_NAME__…" autofocus></textarea>
-      <button class="icon-btn" id="btnMic" title="Voice input">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0" /><path d="M12 18v4" />
-        </svg>
-      </button>
-      <button class="icon-btn" id="btnSend" title="Send">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 12h15M13 6l6 6-6 6" />
-        </svg>
-      </button>
-    </div>
-    <div class="hint">Enter to send · Shift+Enter new line · Esc interrupts · Ctrl+K everything</div>
-  </footer>
+      <div class="hint">Enter sendet · Shift+Enter neue Zeile · Esc unterbricht · Ctrl+K Befehle</div>
+    </footer>
+  </div>
 </div>
 
-<div id="hud" hidden>
-  <div class="hud-kind" id="hudKind">selfdev</div>
-  <div class="hud-goal" id="hudGoal"></div>
-  <div class="bar"><i id="hudBar"></i></div>
-  <div class="hud-meta"><span id="hudPhase"></span><span id="hudTime"></span></div>
-</div>
+<div id="workPanel" class="glass-strong" hidden></div>
 
 <div id="palette">
   <div class="box">
-    <input id="paletteInput" placeholder="Ask, open, search, run…" autocomplete="off" spellcheck="false" />
+    <input id="paletteInput" placeholder="Fragen, öffnen, suchen, ausführen …" autocomplete="off" spellcheck="false" />
     <div id="paletteList"></div>
-    <div id="paletteFoot"><span>↑↓ choose</span><span>↵ run</span><span>Esc close</span><span>type: project / mission / capability / correction / activity</span></div>
+    <div id="paletteFoot"><span>↑↓ wählen</span><span>↵ ausführen</span><span>Esc schließen</span></div>
   </div>
 </div>
 
 <div id="graphView">
   <div class="graph-bar">
-    <input id="graphSearch" placeholder="Search the knowledge graph…" autocomplete="off" />
+    <input id="graphSearch" placeholder="Wissensgraph durchsuchen …" autocomplete="off" />
     <span class="graph-count" id="graphCount"></span>
-    <button class="ghost" id="btnGraphClose">Back</button>
+    <button class="ghost" id="btnGraphClose">Zurück</button>
   </div>
   <canvas id="graphCanvas"></canvas>
   <div id="nodeCard" hidden>
@@ -174,21 +118,21 @@ body.tv, body.tv * { cursor: none; }
     <p id="nodeBody"></p>
     <div class="node-links" id="nodeLinks"></div>
     <div class="node-actions">
-      <button class="ghost" id="btnAskAbout">Ask __ASSISTANT_NAME__</button>
-      <button class="ghost" id="btnReadAloud">Read aloud</button>
-      <button class="ghost" id="btnExpand">Expand</button>
+      <button class="ghost" id="btnAskAbout">__ASSISTANT_NAME__ fragen</button>
+      <button class="ghost" id="btnReadAloud">Vorlesen</button>
+      <button class="ghost" id="btnExpand">Erweitern</button>
     </div>
   </div>
 </div>
 
 <div id="panel">
-  <header><strong id="panelTitle" style="flex:1">Korrigieren</strong><button class="ghost" id="btnClose">Close</button></header>
+  <header><strong id="panelTitle" style="flex:1">Korrigieren</strong><button class="ghost" id="btnClose">Schließen</button></header>
   <div id="panelBody"></div>
 </div>
 
 <div id="toasts"></div>
 
-<script src="eye.js"></script>
+<script src="orb.js"></script>
 <script src="graph.js"></script>
 <script>
   window.JARVIS_TOKEN = "__JARVIS_TOKEN__";

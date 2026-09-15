@@ -56,7 +56,7 @@ export function digestOf(obj) {
 
 export const view = {
   id: "projects",
-  title: "Projects",
+  title: "Projekte",
   async mount(pane, params) {
     lastParams = params;
     isDeep = Boolean(params.id);

@@ -68,6 +68,18 @@ def test_a_recent_loss_in_context_becomes_a_validated_plan_that_runs(world, sent
     assert len(net.goal_prompts) == 1 and len(net.plan_prompts) == 1
 
 
+
+def _structured_schema(body: dict) -> dict:
+    """The closed vocabulary in whichever wire format the router's provider speaks (the vendor is configuration)."""
+
+    if "generationConfig" in body:
+        return body["generationConfig"]["responseSchema"]
+    if "text" in body and isinstance(body["text"], dict):
+        return body["text"]["format"]["schema"]
+    if "response_format" in body:
+        return body["response_format"]["json_schema"]["schema"]
+    raise AssertionError(f"no structured-output schema in the request: {sorted(body)}")
+
 def test_the_provider_sees_only_the_relevant_world_and_the_closed_vocabulary(world):
     core, kernel, net, local, executed = world
     core.world.note_event("chess_game_finished", detail={"result": "loss"}, ttl=600)
@@ -80,7 +92,7 @@ def test_the_provider_sees_only_the_relevant_world_and_the_closed_vocabulary(wor
     assert "printer_jam" not in prompt and "Physikum" not in prompt, "unrelated events and projects are not sent"
     assert "understand_recent_loss" in prompt and "improve_chess" in prompt
     goal_request = next(r["body"] for r in net.requests if "Verständnisschicht" in json.dumps(r["body"], ensure_ascii=False))
-    schema = goal_request["generationConfig"]["responseSchema"]
+    schema = _structured_schema(goal_request)
     assert set(schema["properties"]["primary_goal"]["enum"]) >= {"understand_recent_loss", "improve_chess", "chess_game_record", "none"}
     assert schema["properties"]["relevant_project"]["enum"] == ["Schach Training", "none"]
     assert "stockfish.analyze" in net.plan_prompts[0] and '"contract"' in net.plan_prompts[0], "stage 2: full contracts, only for the retrieved cards"

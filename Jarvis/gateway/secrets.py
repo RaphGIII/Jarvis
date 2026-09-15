@@ -36,6 +36,9 @@ SECRET_SLOTS: dict[str, str] = {
     "gemini": "Google / Gemini API key",
     "openai": "OpenAI API key",
     "anthropic": "Anthropic API key",
+    "groq": "Groq API key (zero-cost route slot)",
+    "cerebras": "Cerebras API key (zero-cost route slot)",
+    "openrouter": "OpenRouter API key (zero-cost route slot)",
 }
 
 _ENTROPY = b"ZEUS.gateway.secrets.v1"

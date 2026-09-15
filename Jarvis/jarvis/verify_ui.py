@@ -40,30 +40,30 @@ from typing import Any
 REQUIRED_IDS = (
     "app", "eye", "stateLabel", "detail", "log", "input",
     "btnSend", "btnMic", "connPill", "panel", "panelBody",
-    # the operating environment: workspace, inspector, palette, HUD
-    "workspacePane", "workspaceTitle", "inspector", "inspectorBody", "palette", "paletteInput", "hud", "readiness", "rail",
-    # the model gateway: the owner's chat mode and spend, always visible at the composer
-    "modebar",
+    # the operating environment: sidebar, workspace, inspector, palette, the work surface
+    "sidebar", "topbar", "workPill", "workPanel", "workspacePane", "workspaceTitle", "inspector", "inspectorBody", "palette", "paletteInput", "readiness",
+    # the ZEUS performance control in the composer (no provider, no model, no mode chips)
+    "perf",
 )
 
 #: Files the page cannot render without.  app.js is an ES module and imports
 #: the rest; a missing module is a blank page with one console line, which
 #: is exactly the failure a verifier exists to catch before promotion.
 REQUIRED_ASSETS = (
-    "index.html", "eye.js", "graph.js", "app.js", "zeus.css",
-    "core/dom.js", "core/api.js", "core/bus.js", "core/state.js", "core/views.js", "core/gateway.js",
-    "views/chat.js", "views/activity.js", "views/projects.js", "views/missions.js", "views/knowledge.js",
+    "index.html", "orb.js", "graph.js", "app.js", "zeus.css", "views.css",
+    "core/dom.js", "core/api.js", "core/bus.js", "core/state.js", "core/views.js", "core/performance.js", "core/sidebar.js", "core/worksurface.js",
+    "views/chat.js", "views/activity.js", "views/projects.js", "views/missions.js", "views/knowledge.js", "views/settings.js",
     "views/corrections.js", "views/diagnostics.js", "views/owner.js", "views/release.js", "views/capabilities.js",
     "views/voice.js", "views/palette.js", "voice/mic.js", "voice/playback.js",
 )
 
 #: Names the page depends on existing in its scripts.
 #: The last statement of an entry script; without it the page boots nothing.
-REQUIRED_TAIL = {"app.js": "startJarvis();"}
+REQUIRED_TAIL = {"app.js": "startZeus();"}
 
 REQUIRED_SYMBOLS = {
-    "eye.js": ("JarvisEye",),
-    "app.js": ("startJarvis",),
+    "orb.js": ("ZeusOrb",),
+    "app.js": ("startZeus",),
 }
 
 
@@ -112,7 +112,7 @@ def check_page(ui_root: Path, report: UIReport) -> None:
         f"missing element id(s): {', '.join(missing)}" if missing else f"{len(REQUIRED_IDS)} ids present",
     )
 
-    for script in ("eye.js", "app.js"):
+    for script in ("orb.js", "app.js"):
         report.add(
             f"{script} is loaded by the page",
             f'src="{script}"' in markup,

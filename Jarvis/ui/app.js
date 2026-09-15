@@ -1,12 +1,12 @@
 /*
- * The client entry point. Subscribes to the event stream, keeps the shared
- * state, drives the eye, and registers the views. Everything else lives in
- * its own module (ui/core, ui/views, ui/voice) so that ZEUS can change one
- * area of its interface without rewriting the whole of it.
+ * The client entry point: the shell of ONE product.  Subscribes to the event
+ * stream, keeps the shared state, drives the orb, registers the views and
+ * builds the sidebar, the performance control and the work surface.
  *
- * All state comes from the server. The UI never guesses what ZEUS is doing --
- * it renders the state event and nothing else. "Start thinking" is not
- * something the send button does locally.
+ * All state comes from the server.  The UI never guesses what ZEUS is doing
+ * -- it renders the state event and nothing else -- and it never names the
+ * intelligence that computed an answer: that truth lives in Settings ›
+ * Erweitert, and nowhere in the ordinary product.
  */
 
 import { $, el } from "./core/dom.js";
@@ -14,6 +14,8 @@ import { api } from "./core/api.js";
 import * as bus from "./core/bus.js";
 import { state, set, setPref, category } from "./core/state.js";
 import * as views from "./core/views.js";
+import * as sidebar from "./core/sidebar.js";
+import * as worksurface from "./core/worksurface.js";
 
 import * as chat from "./views/chat.js";
 import * as activity from "./views/activity.js";
@@ -31,6 +33,7 @@ import * as voiceStudio from "./views/voice.js";
 import * as chessTool from "./views/chess.js";
 import * as thoughts from "./views/thoughts.js";
 import * as calendar from "./views/calendar.js";
+import * as settings from "./views/settings.js";
 import * as palette from "./views/palette.js";
 import * as mic from "./voice/mic.js";
 import * as playback from "./voice/playback.js";
@@ -40,102 +43,55 @@ let stream = null;
 let lastSeq = 0;
 let reconnectDelay = 500;
 
-const VIEW_MODULES = [missions, projects, files, knowledge, calendar, personality, activity, corrections, diagnostics, owner, release, capabilities, voiceStudio, chessTool, thoughts];
+const VIEW_MODULES = [missions, projects, files, knowledge, calendar, personality, activity, corrections, diagnostics, owner, release,
+                      capabilities, voiceStudio, chessTool, thoughts, settings];
 
-/* The cosmos behind the shell: a LIVING star field — slow drift, quiet
-   twinkle — throttled to ~24fps over a few hundred dots, so depth costs
-   almost nothing. Honest about restraint: with reduced motion (or the
-   owner's cosmosMotion preference off, or a hidden tab) it paints once and
-   stands still. */
-const cosmos = { stars: [], w: 0, h: 0, raf: 0, last: 0 };
+/* ------------------------------------------------------------------ */
+/* appearance: dark / light / system, glass, motion                    */
+/* ------------------------------------------------------------------ */
 
-function seedCosmos() {
-  const canvas = $("cosmos");
-  if (!canvas) return;
-  cosmos.w = canvas.width = window.innerWidth;
-  cosmos.h = canvas.height = window.innerHeight;
-  let seed = 9;
-  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  cosmos.stars = Array.from({ length: 360 }, () => ({
-    x: rnd() * cosmos.w, y: rnd() * cosmos.h, d: rnd(),
-    warm: rnd() > 0.86, tw: rnd() * 6.28, sp: 0.02 + rnd() * 0.05,
-    vx: (rnd() - 0.5) * 2.2, vy: (rnd() - 0.5) * 1.4, // px per SECOND — a drift, not a flight
-  }));
+const systemDark = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+export function applyAppearance(next) {
+  const wanted = next || state.ui.appearance || "system";
+  const dark = wanted === "dark" || (wanted === "system" && (systemDark ? systemDark.matches : true));
+  document.documentElement.dataset.appearance = dark ? "dark" : "light";
+  document.documentElement.dataset.glass = state.ui.glass || "normal";
+  document.body.classList.toggle("reduced-motion", Boolean(state.ui.reducedMotion));
+  const intensity = { OFF: 0, LOW: 0.55, NORMAL: 1.0, HIGH: 1.35 }[state.ui.animIntensity || "NORMAL"] ?? 1.0;
+  eye?.setIntensity?.(intensity);
+  document.body.classList.toggle("anim-off", intensity === 0);
 }
+systemDark?.addEventListener?.("change", () => applyAppearance());
 
-function cosmosAlive() {
-  return !state.ui.reducedMotion && state.ui.cosmosMotion !== false;
-}
-
-function drawCosmos(t) {
-  const canvas = $("cosmos");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, cosmos.w, cosmos.h);
-  for (const s of cosmos.stars) {
-    const tw = cosmosAlive() ? 0.7 + 0.3 * Math.sin(t * s.sp * 4 + s.tw) : 1;
-    const a = (s.warm ? 0.12 + s.d * 0.4 : 0.1 + s.d * 0.42) * tw;
-    ctx.fillStyle = s.warm ? `rgba(255,226,190,${a})` : `rgba(175,200,240,${a})`;
-    ctx.beginPath(); ctx.arc(s.x, s.y, 0.4 + s.d * 1.1, 0, Math.PI * 2); ctx.fill();
-  }
-}
-
-function tickCosmos(now) {
-  cosmos.raf = requestAnimationFrame(tickCosmos);
-  if (document.hidden || !cosmosAlive()) return;
-  if (now - cosmos.last < 42) return; // ~24fps is plenty for a twinkle
-  const dt = Math.min(0.2, (now - cosmos.last) / 1000) || 0.04;
-  cosmos.last = now;
-  for (const s of cosmos.stars) {
-    s.x = (s.x + s.vx * dt + cosmos.w) % cosmos.w;
-    s.y = (s.y + s.vy * dt + cosmos.h) % cosmos.h;
-  }
-  drawCosmos(now / 1000);
-}
-
-function paintCosmos() {
-  seedCosmos();
-  drawCosmos(0);
-  if (!cosmos.raf) cosmos.raf = requestAnimationFrame(tickCosmos);
-}
-bus.on("state:ui", () => { if (!cosmosAlive()) drawCosmos(0); });
-
-function startJarvis() {
+function startZeus() {
   if (new URLSearchParams(location.search).has("tv")) {
     document.body.classList.add("tv");
     document.documentElement.requestFullscreen?.().catch(() => {});
   }
-  if (state.ui.reducedMotion) document.body.classList.add("reduced-motion");
-  paintCosmos();
-  window.addEventListener("resize", () => paintCosmos());
+  applyAppearance();
 
   eye = new JarvisEye($("eye"));
-  window.zeusEye = eye; // settings and tests reach the live eye here
+  window.zeusEye = eye;
   eye.start();
-  import("./core/themes.js").then((themes) => themes.apply(state.ui.theme || "COSMOS", eye, state.ui.animIntensity || "NORMAL"));
   if (window.ResizeObserver) new ResizeObserver(() => eye.resize()).observe($("eye"));
   else window.addEventListener("resize", () => eye.resize());
 
   for (const mod of VIEW_MODULES) views.register(mod.view);
   chat.init({ eye });
-  import("./core/workrail.js").then((workrail) => workrail.init({ toast, chat }));
-  // the eye carries a background-work indicator whenever jobs are active
+  sidebar.init({ chat, toast });
+  worksurface.init({ toast });
   bus.on("jobs:active", (n) => eye?.setBackgroundWork?.(Number(n) || 0));
   mic.init({ eye });
   playback.init({ eye });
   palette.init();
   wireShell();
-  buildRail();
   connect();
   refreshStatus();
   refreshHealth();
   setInterval(refreshStatus, 15000);
   setInterval(refreshHealth, 5000);
-  // during boot the veil deserves a live picture: poll fast until it lifts
   const bootPoll = setInterval(() => { if (veilLifted) clearInterval(bootPoll); else refreshHealth(); }, 1000);
-  refreshGpu();
-  setInterval(refreshGpu, 3000);
-  setInterval(drawUptime, 1000);
 
   const target = views.fromHash();
   if (target) views.open(target.id, target.params, { push: false });
@@ -150,12 +106,11 @@ function connect() {
   stream = new EventSource(`/events?token=${encodeURIComponent(window.JARVIS_TOKEN)}&since=${lastSeq}`);
   stream.onopen = () => {
     reconnectDelay = 500;
-    setPill("connected", "live");
+    setPill("verbunden", "live");
     refreshStatus();
-    reconcileMission();
   };
   stream.onerror = () => {
-    setPill("reconnecting", "warn");
+    setPill("verbinde neu", "warn");
     stream.close();
     reconnectDelay = Math.min(10000, reconnectDelay * 2);
     setTimeout(connect, reconnectDelay);
@@ -167,8 +122,6 @@ function connect() {
       try { event = JSON.parse(e.data); } catch { return; }
       if (event.seq) lastSeq = Math.max(lastSeq, event.seq);
       const payload = event.payload || {};
-      // Replayed history (a refresh, a reconnect from seq 0) is the past:
-      // views render it as history and never play its audio or act on it.
       if (event.replay) payload._replay = true;
       payload._seq = event.seq;
       bus.emit(type, payload);
@@ -176,13 +129,11 @@ function connect() {
   }
 }
 
-/* ZEUS opening a view on request ("Zeus, öffne meine Projekte"). Never from
-   replayed history: a refresh must not re-open whatever was opened before. */
+/* ZEUS opening a view on request.  Never from replayed history. */
 bus.on("notification", (payload) => {
   if (payload._replay) return;
   if (payload.kind === "open_view" && payload.view) { views.open(payload.view, payload.params || {}); return; }
   if (payload.kind === "needs_auth" && payload.scope) {
-    // A protected change is waiting for the owner's manually typed password.
     import("./core/authgate.js").then(async (authgate) => {
       const token = await authgate.ensureAuth(payload.scope, { reason: payload.text });
       if (!token) return;
@@ -192,18 +143,24 @@ bus.on("notification", (payload) => {
       }
     });
   }
+  if (payload.text && (payload.kind || "").match(/release|relaunch|restart|owner_config|correction|isolation/)) toast(payload.text, "note");
 });
 
 /* ------------------------------------------------------------------ */
-/* state -> eye, label, HUD                                            */
+/* state -> orb, label                                                 */
 /* ------------------------------------------------------------------ */
+
+const STATE_WORDS = {
+  idle: "bereit", listening: "hört zu", transcribing: "versteht", thinking: "denkt", speaking: "spricht", waiting: "wartet auf dich",
+  working: "arbeitet", verifying: "prüft", coding: "entwickelt", researching: "recherchiert", error: "unterbrochen", offline: "offline",
+};
 
 bus.on("state", (payload) => {
   const name = payload.state || "idle";
   set("eye", payload);
   eye.setState(name);
   const label = $("stateLabel");
-  label.textContent = name;
+  label.textContent = STATE_WORDS[name] || name;
   label.dataset.cat = category(name);
   $("detail").textContent = payload.detail || "";
 });
@@ -212,67 +169,8 @@ bus.on("speech", (payload) => {
   if (typeof payload.energy === "number") eye.setEnergy(payload.energy);
 });
 
-/* The mission HUD: real progress events only. */
-bus.on("progress", (payload) => {
-  if (payload.kind !== "selfdev" && payload.kind !== "capability" && payload.kind !== "mission") return;
-  const phase = String(payload.phase || "");
-  const finished = ["DONE", "FAILED", "CANCELLED"].includes(phase);
-  if (finished) {
-    set("mission", null);
-    $("hud").hidden = true;
-    return;
-  }
-  const mission = { ...(state.mission || {}), ...payload, started: state.mission?.started || Date.now() };
-  set("mission", mission);
-  $("hud").hidden = false;
-  $("hudKind").textContent = payload.kind;
-  $("hudGoal").textContent = payload.summary || payload.request || mission.request || "";
-  $("hudPhase").textContent = phase;
-  const stages = ["UNDERSTAND", "INVESTIGATE", "BUILD", "VERIFY", "ESCALATE", "PROMOTE", "RESTARTING"];
-  const idx = stages.indexOf(phase);
-  $("hudBar").style.width = (idx >= 0 ? ((idx + 1) / stages.length) * 100 : 10) + "%";
-});
-/* The dock is driven by events, and RESTARTING is precisely the phase during
-   which this page loses the process that would send the next one. ZEUS goes
-   away, comes back as a new process, settles the mission to DONE during boot,
-   and the event announcing that is emitted before this page has reconnected.
-   Observed live on 2026-09-08: the dock sat on RESTARTING for about forty
-   minutes after the mission record already said DONE.
-
-   So on every (re)connect the dock asks what is actually running rather than
-   waiting for an event it may have missed. An event can always be lost across
-   a restart; the store cannot. */
-async function reconcileMission() {
-  try {
-    const { missions = [] } = await api("/api/selfdev");
-    const live = missions.filter((m) => !["DONE", "FAILED", "CANCELLED", "WAITING", "AWAITING_AUTHORIZATION", "AWAITING_BUILD"].includes(m.phase));
-    if (!live.length) {
-      set("mission", null);
-      $("hud").hidden = true;
-      return;
-    }
-    const m = live[live.length - 1];
-    bus.emit("mission", { kind: "selfdev", phase: m.phase, request: m.request, summary: m.request, mission_id: m.mission_id });
-  } catch {
-    /* the dock is a readout; a failed reconcile must not break the page */
-  }
-}
-
-bus.on("notification", (payload) => {
-  if (payload.kind === "selfdev" && /cancelled|failed|done|promoted|authoriz|freigabe/i.test(payload.text || "")) {
-    set("mission", null);
-    $("hud").hidden = true;
-  }
-  if (payload.text && (payload.kind || "").match(/selfdev|release|relaunch|restart|owner_config|correction|isolation/)) toast(payload.text, "note");
-});
-setInterval(() => {
-  if (!state.mission) return;
-  const s = Math.floor((Date.now() - state.mission.started) / 1000);
-  $("hudTime").textContent = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
-}, 1000);
-
 export function toast(text, tone = "") {
-  const node = el("div", { class: "toast " + tone, text });
+  const node = el("div", { class: "toast glass-strong " + tone, text });
   $("toasts").append(node);
   setTimeout(() => node.remove(), 6000);
 }
@@ -282,45 +180,38 @@ export function toast(text, tone = "") {
 /* ------------------------------------------------------------------ */
 
 function wireShell() {
-  $("brand").onclick = () => views.close();
   $("btnWorkspaceClose").onclick = () => views.close();
   $("btnInspectorClose").onclick = () => views.closeInspector();
-  $("hud").onclick = () => views.open("missions");
-  $("btnPalette").onclick = () => palette.open();
-  for (const button of document.querySelectorAll("[data-view-button]")) {
-    button.onclick = () => {
-      const id = button.dataset.viewButton;
-      if (views.currentView()?.id === id) views.close(); else views.open(id);
-    };
-  }
-  $("btnNew").onclick = async () => {
-    chat.reset();
-    await api("/api/new", {});
+  $("btnSidebar").onclick = () => {
+    const narrow = window.innerWidth <= 980;
+    if (narrow) $("app").classList.toggle("sidebar-open");
+    else { const collapsed = $("app").classList.toggle("sidebar-collapsed"); setPref("sidebarCollapsed", collapsed); }
   };
-  // the shell's own window controls, backed by Win32 through the core.  In the
-  // default native windowed/maximized shell Chromium already draws a title bar
-  // with min/max/close, so these would be redundant — hide them unless the
-  // window is genuinely frameless (immersive fullscreen/kiosk, no OS chrome).
-  const frameless = window.innerHeight >= (screen.height - 2);
-  const winctl = document.querySelector(".winctl");
-  if (winctl && !frameless) winctl.hidden = true;
-  $("btnWinMin").onclick = () => api("/api/window", { action: "minimize", reason: "owner" });
-  $("btnWinHide").onclick = () => api("/api/window", { action: "hide", reason: "owner" });
+  if (state.ui.sidebarCollapsed) $("app").classList.add("sidebar-collapsed");
+  bus.on("view:open", ({ id }) => {
+    const view = views.get(id);
+    $("topTitle").textContent = view ? view.title : "";
+    $("btnWorkspaceClose").hidden = false;
+    if (window.innerWidth <= 980) $("app").classList.remove("sidebar-open");
+  });
+  bus.on("view:close", () => {
+    $("topTitle").textContent = window.PRODUCT_NAME || "ZEUS";
+    $("btnWorkspaceClose").hidden = true;
+  });
 
   document.addEventListener("keydown", (e) => {
     const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
     if (e.key === "F11") {
-      e.preventDefault();
-      e.stopPropagation();
-      api("/api/window", { action: "toggle_fullscreen", reason: "f11" })
-        .then((r) => { if (r && r.ok === false) toast(r.error || "Window mode change failed", "warn"); });
+      e.preventDefault(); e.stopPropagation();
+      api("/api/window", { action: "toggle_fullscreen", reason: "f11" }).then((r) => { if (r && r.ok === false) toast(r.error || "Fenstermodus konnte nicht gewechselt werden", "warn"); });
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); palette.open(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) { e.preventDefault(); palette.open("search: "); return; }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); views.open("projects"); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "m") { e.preventDefault(); views.open("missions"); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key === ",") { e.preventDefault(); views.open("owner"); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === ",") { e.preventDefault(); views.open("settings"); return; }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); sidebar.newChat(); return; }
     if (e.key === "Escape") {
       if (palette.isOpen()) { palette.close(); return; }
       if ($("panel").classList.contains("open")) { $("panel").classList.remove("open"); return; }
@@ -333,25 +224,8 @@ function wireShell() {
   $("btnClose").onclick = () => $("panel").classList.remove("open");
 }
 
-function buildRail() {
-  const rail = $("rail");
-  const groups = [
-    ["Work", ["missions", "projects", "files", "activity"]],
-    ["Mind", ["knowledge", "personality", "corrections", "capabilities"]],
-    ["System", ["diagnostics", "release", "owner", "voice"]],
-  ];
-  for (const [title, ids] of groups) {
-    rail.append(el("h5", { text: title }));
-    for (const id of ids) {
-      const view = views.get(id);
-      if (!view) continue;
-      rail.append(el("button", { dataset: { viewButton: id }, onClick: () => views.open(id) }, view.title));
-    }
-  }
-}
-
 /* ------------------------------------------------------------------ */
-/* polls: status, health, gpu, uptime                                  */
+/* polls: status, health                                               */
 /* ------------------------------------------------------------------ */
 
 function setPill(text, tone) {
@@ -365,9 +239,8 @@ async function refreshStatus() {
   const status = await api("/api/status");
   if (status.ok === false && status.transport) { setPill("offline", "bad"); return; }
   set("status", status);
-  const conn = status.connection || "OFFLINE";
-  setPill(conn.toLowerCase(), conn === "OFFLINE" ? "bad" : conn === "EXPERT QUOTA EXHAUSTED" ? "warn" : "live");
-  noteUptime(status.uptime_seconds);
+  const conn = String(status.connection || "OFFLINE");
+  setPill(conn === "OFFLINE" ? "offline" : conn === "STARTING" ? "startet" : "verbunden", conn === "OFFLINE" ? "bad" : "live");
 }
 
 async function refreshHealth() {
@@ -375,26 +248,18 @@ async function refreshHealth() {
   if (health.ok === false) { updateVeil({}, null); return; }
   set("health", health);
   const rd = health.readiness || {};
-  for (const span of document.querySelectorAll("#readiness span")) {
-    span.classList.toggle("on", Boolean(rd[span.dataset.stage]));
-  }
+  for (const span of document.querySelectorAll("#readiness span")) span.classList.toggle("on", Boolean(rd[span.dataset.stage]));
   updateVeil(rd, health);
 }
 
-/* The boot veil: the main UI is covered until INTERACTIVE_READY (core
-   answering + conversation model warm).  The owner never sees the shell
-   reconnecting to its own backend; voice keeps warming behind the veil's
-   dissolve with its own honest light. */
+/* The boot veil lifts on INTERACTIVE_READY: the core answers and its intelligence is wired. */
 let veilLifted = false;
 function updateVeil(rd, health) {
   const veil = $("bootVeil");
   if (!veil || veilLifted) return;
-  const lights = { core: rd.CORE_READY, ai: rd.AI_READY, voice: rd.VOICE_READY, universe: rd.CORE_READY };
+  const lights = { core: rd.CORE_READY, ai: rd.AI_READY, voice: rd.VOICE_READY };
   for (const li of veil.querySelectorAll(".bv-systems li")) li.classList.toggle("on", Boolean(lights[li.dataset.k]));
-  const detail = String(health?.detail || "");
-  const phase = !rd.CORE_READY ? "KERN WIRD GESTARTET"
-    : !rd.AI_READY ? (/unavailable|unreachable/i.test(detail) ? "LOKALE INTELLIGENZ WIRD WIEDERHERGESTELLT" : "LOKALE INTELLIGENZ WIRD GELADEN")
-    : "ZEUS ONLINE";
+  const phase = !rd.CORE_READY ? "ZEUS WIRD GESTARTET" : !rd.AI_READY ? "INTELLIGENZ WIRD VERBUNDEN" : "ZEUS IST BEREIT";
   const node = $("bvPhase");
   if (node && node.textContent !== phase) node.textContent = phase;
   if (rd.INTERACTIVE_READY) {
@@ -405,10 +270,6 @@ function updateVeil(rd, health) {
   }
 }
 
-/* Idle warming (§P1): once interactive and the browser reports idle time,
-   prefetch what the owner opens most — the responses prime the server-side
-   caches so the first Projects/Calendar click is warm.  One shot, low cost,
-   never during visible work. */
 let preloaded = false;
 function idlePreload() {
   if (preloaded) return;
@@ -421,47 +282,13 @@ function idlePreload() {
   }, { timeout: 15000 });
 }
 
-let uptimeAt = 0;
-let uptimeSeconds = -1;
-function noteUptime(seconds) {
-  const value = Number(seconds);
-  if (!Number.isFinite(value) || value < 0) return;
-  uptimeSeconds = value;
-  uptimeAt = performance.now();
-  drawUptime();
-}
-function drawUptime() {
-  if (uptimeSeconds < 0) return;
-  const total = Math.max(0, Math.floor(uptimeSeconds + (performance.now() - uptimeAt) / 1000));
-  const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600), m = Math.floor((total % 3600) / 60);
-  $("uptime").textContent = "up " + (d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${total}s`);
-}
-
-const GPU_BUSY_PERCENT = 45;
-async function refreshGpu() {
-  if (document.hidden) return;
-  const data = await api("/api/gpu");
-  set("gpu", data);
-  const meter = $("gpuMeter");
-  const load = data && data.available ? Number(data.utilization_percent) : NaN;
-  if (!Number.isFinite(load)) { meter.hidden = true; return; }
-  const percent = Math.max(0, Math.min(100, Math.round(load)));
-  meter.hidden = false;
-  meter.classList.toggle("busy", percent >= GPU_BUSY_PERCENT);
-  $("gpuFill").style.height = percent + "%";
-  $("gpuValue").textContent = percent + "%";
-  meter.title = `GPU ${data.name || ""} — ${percent}%` + (data.memory_total_mib ? ` · ${data.memory_used_mib} of ${data.memory_total_mib} MiB` : "");
-}
-
-// A script error is shown, not swallowed: a blank pane with a console line
-// nobody reads is the failure mode this replaces.
 window.addEventListener("error", (e) => {
-  // the ResizeObserver loop warning is a benign browser notice, not a fault
   if (String(e.message || "").includes("ResizeObserver loop")) return;
-  toast(`UI error: ${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`, "bad");
+  console.error("[zeus ui]", e.message, e.filename, e.lineno);
+  toast("Ein Teil der Oberfläche hat einen Fehler gemeldet. Details in der Konsole.", "bad");
 });
-window.addEventListener("unhandledrejection", (e) => toast(`UI error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`, "bad"));
+window.addEventListener("unhandledrejection", (e) => { console.error("[zeus ui]", e.reason); });
 
-window.startJarvis = startJarvis;
-window.zeus = { views, bus, state, api, toast };
-startJarvis();
+window.startJarvis = startZeus;
+window.zeus = { views, bus, state, api, toast, applyAppearance, sidebar };
+startZeus();

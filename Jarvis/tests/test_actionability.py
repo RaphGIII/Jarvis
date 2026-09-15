@@ -238,8 +238,8 @@ def test_no_i_meant_after_a_spoken_request_learns_vocabulary_and_reruns(tmp_path
 def test_who_are_you_is_answered_as_zeus_not_as_a_system_description(tmp_path):
     core, provider = make(tmp_path)
     answer, _ = ask(core, "Zeus, wer bist du?")
-    assert answer.startswith("Ich bin Zeus") or answer.startswith("Zeus.")
-    assert "Assistent" in answer and "Wahrnehmung" not in answer and "Gefühl" not in answer
+    assert answer.startswith("Ich bin ZEUS")
+    assert "KI-System" in answer and "Raphael" in answer and "Wahrnehmung" not in answer and "Gefühl" not in answer
     assert not provider.prompts
 
 

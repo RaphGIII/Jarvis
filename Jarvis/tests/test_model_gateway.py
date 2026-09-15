@@ -286,7 +286,8 @@ def test_both_reasoning_free_models_unavailable_is_typed_zero_cost_failure(tmp_p
         gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
                                         mode=ChatMode.FREE))
     assert info.value.typed_status == "FREE_INTELLIGENCE_UNAVAILABLE"
-    assert len(info.value.attempts) == 4 and gateway.governor.summary().month == 0.0
+    # 3.8 and 3.7: two bounded tries each; the third pool model has no scripted answer and fails once.
+    assert len(info.value.attempts) == 5 and gateway.governor.summary().month == 0.0
     assert all("api.openai.com" not in r["url"] and "api.anthropic.com" not in r["url"] for r in net.requests)
 
 
@@ -449,18 +450,29 @@ def test_a_provider_outage_is_not_evidence_the_task_needs_a_stronger_model(tmp_p
     assert info.value.typed_status == "FREE_INTELLIGENCE_UNAVAILABLE"
     after = gateway.reliability.reliability("reasoning.free", TaskClass.KNOWLEDGE)
     assert (after.alpha, after.beta) == (before.alpha, before.beta), "an outage must not move the reliability estimate"
-    assert len(net.requests) == 4, "bounded retries stay inside the free pool"
+    assert len(net.requests) == 6, "bounded retries stay inside the free pool: three models, two tries each"
     assert all("api.openai.com" not in r["url"] for r in net.requests)
     assert gateway.health.status("gemini") is ProviderStatus.PROVIDER_UNAVAILABLE
 
 
-def test_after_quota_exhaustion_auto_mode_routes_around_the_free_lane_within_budget(tmp_path, cfg, creds, net):
+def test_after_quota_exhaustion_auto_mode_makes_exactly_one_guarded_emergency_call(tmp_path, cfg, creds, net):
+    """AUTO does not climb a ladder when the zero-cost pool is out: with the owner's emergency switch on,
+    ONE guarded smart call answers; without it, the typed zero-cost failure is the answer."""
+
+    from runtime.cost_policy import CostPolicy
+
     gateway = make_gateway(tmp_path, cfg, creds, net)
     gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
-    reply = gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True),
-                                            mode=ChatMode.AUTO))
-    assert reply.provider == "openai"
-    assert all("googleapis" not in r["url"] for r in net.requests)
+    request = GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.AUTO)
+    with pytest.raises(GatewayRefused):
+        gateway.complete(request)  # the class is ZERO_COST; SMART is outside it and the emergency is off
+    assert net.requests == []
+    gateway._cost_policy = CostPolicy(allow_paid_api=True, auto_emergency_paid_fallback=True, emergency_max_cost_per_request_eur=0.03, source="test")
+    reply = gateway.complete(request)
+    assert reply.provider == "openai" and reply.decision.emergency is True
+    assert reply.decision.intelligence_class == "ZERO_COST" and "emergency" in reply.decision.class_decision
+    assert reply.role == "reasoning.smart" and reply.estimated_eur <= 0.03
+    assert [r["url"].split("/")[2] for r in net.requests] == ["api.openai.com"], "exactly one paid generation"
 
 
 def test_after_quota_exhaustion_free_mode_does_not_spend(tmp_path, cfg, creds, net):
@@ -473,21 +485,18 @@ def test_after_quota_exhaustion_free_mode_does_not_spend(tmp_path, cfg, creds, n
 
 def test_router_skips_a_cheaper_model_it_does_not_trust_without_trying_it(tmp_path, cfg, creds, net):
     gateway = make_gateway(tmp_path, cfg, creds, net)
-    # Teach the model that the free role fails at composition.
+    # Teach the model that the free role fails at plain knowledge questions.
     for _ in range(12):
-        gateway.reliability.observe(Observation(task_class="composition", role="reasoning.free", provider="gemini", model="g",
+        gateway.reliability.observe(Observation(task_class="knowledge", role="reasoning.free", provider="gemini", model="g",
                                                 goal_verified=False, failure_class="task_failure"))
-    text = "Nimm die letzte Partie, analysiere sie und aktualisiere mein Trainingsprofil"
-    facts = TaskFacts(text=text, subsystems=1, refers_to_context=True)
-    request = GatewayRequest(prompt=text, facts=facts, mode=ChatMode.AUTO)
-    request.task_vector = rule_based(facts)
-    from dataclasses import replace
-
-    request.task_vector = replace(request.task_vector, task_class=TaskClass.COMPOSITION, failure_cost=0.6)
+    text = "Was ist NAT?"
+    request = GatewayRequest(prompt=text, facts=TaskFacts(text=text, is_question=True), mode=ChatMode.AUTO)
+    assert gateway.classify_request(request).intelligence_class.value == "ZERO_COST", "the words alone say zero cost"
     reply = gateway.complete(request)
     assert reply.provider == "openai"
     assert len(net.requests) == 1 and "api.openai.com" in net.requests[0]["url"]
-    assert "skipped cheaper reasoning.free" in reply.decision.reason
+    assert reply.decision.intelligence_class == "SMART" and "learned reliability" in reply.decision.class_decision["reason"]
+    assert reply.decision.class_decision["signals"]["learned_reliability_gap"] > 0
 
 
 def test_classify_http_distinguishes_the_six_states():

@@ -233,7 +233,7 @@ def test_the_page_is_branded_at_serve_time(server):
         page = response.read().decode()
 
     assert "<title>ZEUS</title>" in page
-    assert 'class="brand">ZEUS<' in page
+    assert 'class="bv-brand">ZEUS<' in page and 'id="topTitle">ZEUS<' in page
     assert 'window.ASSISTANT_NAME = "Zeus"' in page
 
 

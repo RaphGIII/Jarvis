@@ -79,7 +79,7 @@ def test_gemini_semantic_timeout_never_reaches_the_local_model_and_never_escalat
     assert executed == [] and semantic_local_calls(local) == [], local.calls
     assert not any(OPENAI in r["url"] for r in net.requests), "FREE never escalates to a paid provider"
     gemini = [r for r in net.requests if GEMINI in r["url"]]
-    assert 1 <= len(gemini) <= 2, "one bounded try per pool model; a model that hung is not waited on twice"
+    assert 1 <= len(gemini) <= 3, "one bounded try per pool model; a model that hung is not waited on twice"
     assert all(r["timeout"] == SEMANTIC_CALL_TIMEOUT_SECONDS for r in gemini), [r["timeout"] for r in gemini]
     assert kernel.gateway.health.status("gemini") is ProviderStatus.TIMEOUT, "a hang is recorded as a timeout, not a generic outage"
     summaries = [str(p.get("summary")) for p in tools(events)]
@@ -292,8 +292,8 @@ def test_a_socket_timeout_is_its_own_status_distinct_from_429_503_auth_and_malfo
     assert seen["timeout"].status is ProviderStatus.TIMEOUT and seen["wrapped_timeout"].status is ProviderStatus.TIMEOUT
     assert seen["unreachable"].status is ProviderStatus.PROVIDER_UNAVAILABLE and seen["overloaded"].status is ProviderStatus.PROVIDER_UNAVAILABLE
     assert {a["failure_class"] for a in seen["timeout"].attempts} == {"timeout"}
-    assert [a["model"] for a in seen["timeout"].attempts] == ["gemini-3.8-flash", "gemini-3.7-flash"], "each pool model once, no second wait"
-    assert len(seen["overloaded"].attempts) == 4, "a 503 keeps the bounded retry per model"
+    assert [a["model"] for a in seen["timeout"].attempts] == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"], "each pool model once, no second wait"
+    assert len(seen["overloaded"].attempts) == 6, "a 503 keeps the bounded retry per model"
     assert ProviderStatus.TIMEOUT.is_outage and ProviderStatus.TIMEOUT.value == "timeout"
 
 

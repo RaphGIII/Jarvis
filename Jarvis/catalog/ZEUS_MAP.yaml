@@ -5,7 +5,7 @@ packages:
     modules:
     - path: config.py
       purpose: ''
-      lines: 90
+      lines: 92
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -342,7 +342,7 @@ packages:
       - tests/test_wake_listener.py
     - path: core/identity.py
       purpose: What the product is called, in one place.
-      lines: 200
+      lines: 204
       public: 5
       tests:
       - tests/test_action_receipts.py
@@ -707,13 +707,16 @@ packages:
       - tests/test_engineering_vector.py
       - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
+      - tests/test_identity_firewall.py
       - tests/test_intelligence_flow.py
+      - tests/test_intelligence_routing.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_semantic_authority.py
       - tests/test_semantic_composition.py
       - tests/test_streaming.py
+      - tests/test_zero_cost_pool.py
     - path: gateway/budget.py
       purpose: 'The cost governor: reserve before you spend, and never past the cap.'
       lines: 299
@@ -723,7 +726,7 @@ packages:
       - tests/test_provider_stack.py
     - path: gateway/config.py
       purpose: Roles, providers, prices and caps -- read from configuration, never from code.
-      lines: 894
+      lines: 950
       public: 8
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -736,6 +739,7 @@ packages:
       - tests/test_provider_stack.py
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
+      - tests/test_zero_cost_pool.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
       lines: 105
@@ -744,21 +748,24 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1181
+      lines: 1529
       public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
       - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
+      - tests/test_identity_firewall.py
+      - tests/test_intelligence_routing.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
+      - tests/test_zero_cost_pool.py
     - path: gateway/health.py
       purpose: Telling a provider problem from a task problem.
-      lines: 165
-      public: 5
+      lines: 223
+      public: 6
       tests:
       - tests/test_barge_in_and_provenance.py
       - tests/test_free_intelligence_only.py
@@ -768,6 +775,13 @@ packages:
       - tests/test_provider_stack.py
       - tests/test_semantic_authority.py
       - tests/test_semantic_composition.py
+      - tests/test_zero_cost_pool.py
+    - path: gateway/intelligence_class.py
+      purpose: Which class of intelligence a request needs -- decided before any provider is chosen.
+      lines: 254
+      public: 5
+      tests:
+      - tests/test_intelligence_routing.py
     - path: gateway/learning.py
       purpose: What ZEUS has learned about which role is good enough for what.
       lines: 219
@@ -784,11 +798,14 @@ packages:
       - tests/test_engineering_vector.py
       - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
+      - tests/test_identity_firewall.py
+      - tests/test_intelligence_routing.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
+      - tests/test_zero_cost_pool.py
     - path: gateway/output_budget.py
       purpose: How long an answer may be, decided before the call -- provider-independent.
       lines: 157
@@ -797,9 +814,10 @@ packages:
       - tests/test_streaming.py
     - path: gateway/persona.py
       purpose: ZEUS stays ZEUS, whoever computed the answer.
-      lines: 100
+      lines: 127
       public: 4
       tests:
+      - tests/test_identity_firewall.py
       - tests/test_model_gateway.py
     - path: gateway/privacy.py
       purpose: 'The privacy router: what may leave the machine, and to whom.'
@@ -809,19 +827,19 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/providers.py
       purpose: 'Provider adapters: request shape in, text and usage out.'
-      lines: 434
+      lines: 492
       public: 8
       tests:
       - tests/test_live_providers.py
     - path: gateway/router.py
       purpose: Choosing the route before anything runs.
-      lines: 330
+      lines: 381
       public: 6
       tests:
       - tests/test_model_gateway.py
     - path: gateway/secrets.py
       purpose: Provider credentials, stored encrypted and never repeated.
-      lines: 246
+      lines: 249
       public: 2
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -831,6 +849,7 @@ packages:
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_streaming.py
+      - tests/test_zero_cost_pool.py
     - path: gateway/task.py
       purpose: 'The typed task vector: what a request is, before anyone asks a model.'
       lines: 237
@@ -840,19 +859,27 @@ packages:
       - tests/test_engineering_router_gateway.py
       - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
+      - tests/test_identity_firewall.py
+      - tests/test_intelligence_routing.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
+      - tests/test_zero_cost_pool.py
     - path: gateway/transport.py
       purpose: The only way a provider reaches the network -- and the FREE-mode wall.
-      lines: 316
+      lines: 320
       public: 6
       tests:
       - tests/test_free_intelligence_only.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+    - path: gateway/zero_cost.py
+      purpose: 'The zero-cost intelligence pool: a registry of routes, not a chain of conditionals.'
+      lines: 172
+      public: 3
+      tests: []
   imagegen:
     purpose: local image generation
     modules:
@@ -1349,6 +1376,7 @@ packages:
       public: 0
       tests:
       - tests/test_engineering_router_gateway.py
+      - tests/test_identity_firewall.py
       - tests/test_owner_core.py
       - tests/test_personality.py
       - tests/test_security_gate.py
@@ -1356,9 +1384,10 @@ packages:
       - tests/test_selfdev_promotion_gate.py
     - path: owner/core.py
       purpose: 'The owner core: five documents, one way to change them.'
-      lines: 479
+      lines: 511
       public: 6
       tests:
+      - tests/test_identity_firewall.py
       - tests/test_owner_core.py
       - tests/test_personality.py
       - tests/test_selfdev_promotion_gate.py
@@ -1388,9 +1417,17 @@ packages:
       public: 0
       tests:
       - tests/test_action_receipts.py
+      - tests/test_identity_firewall.py
       - tests/test_language_and_persona.py
       - tests/test_persona_and_datasets.py
       - tests/test_personality.py
+      - tests/test_vendor_leak_scan.py
+    - path: persona/contract.py
+      purpose: 'The compact PersonalityContract: who ZEUS is and how the owner wants it to speak, in a few hundred characters.'
+      lines: 166
+      public: 4
+      tests:
+      - tests/test_identity_firewall.py
     - path: persona/language.py
       purpose: Working out what language the user is speaking, without asking a model.
       lines: 172
@@ -1406,10 +1443,12 @@ packages:
       - tests/test_persona_and_datasets.py
     - path: persona/smalltalk.py
       purpose: Small talk, answered as Zeus rather than as a system description.
-      lines: 90
-      public: 4
+      lines: 144
+      public: 5
       tests:
+      - tests/test_identity_firewall.py
       - tests/test_personality.py
+      - tests/test_vendor_leak_scan.py
   projects:
     purpose: the project engine and store
     modules:
@@ -1528,6 +1567,7 @@ packages:
       - tests/test_stall_recovery.py
       - tests/test_state_foundations.py
       - tests/test_thoughts.py
+      - tests/test_zero_cost_pool.py
     - path: runtime/action_generator.py
       purpose: ''
       lines: 512
@@ -1571,7 +1611,7 @@ packages:
       - tests/test_semantic_runtime_v02.py
     - path: runtime/cost_policy.py
       purpose: What Jarvis is allowed to spend, and the refusal to spend it quietly.
-      lines: 376
+      lines: 390
       public: 5
       tests:
       - tests/test_capability_teaching_loop.py
@@ -1583,6 +1623,7 @@ packages:
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_semantic_acceptance.py
+      - tests/test_zero_cost_pool.py
     - path: runtime/deadline.py
       purpose: Time budgets that are actually enforced, and calls that cannot outlive them.
       lines: 176
@@ -1760,7 +1801,9 @@ packages:
       - tests/test_fs_intelligence.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
+      - tests/test_identity_firewall.py
       - tests/test_intelligence_flow.py
+      - tests/test_intelligence_routing.py
       - tests/test_intents.py
       - tests/test_isolation.py
       - tests/test_jobs.py
@@ -1850,12 +1893,12 @@ packages:
       - tests/test_semantic_acceptance.py
     - path: service/conversations.py
       purpose: 'Conversation archive: recent chats survive, with compact summaries.'
-      lines: 145
+      lines: 199
       public: 2
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8715
+      lines: 8861
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1930,7 +1973,9 @@ packages:
       - tests/test_barge_in_and_provenance.py
       - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
+      - tests/test_identity_firewall.py
       - tests/test_intelligence_flow.py
+      - tests/test_intelligence_routing.py
       - tests/test_pronunciation.py
       - tests/test_selfdev.py
       - tests/test_semantic_authority.py
@@ -1950,7 +1995,7 @@ packages:
       - tests/test_filesystem.py
     - path: service/http.py
       purpose: The local HTTP + Server-Sent Events interface to Jarvis Core.
-      lines: 820
+      lines: 830
       public: 1
       tests:
       - tests/test_action_receipts.py
@@ -2682,9 +2727,13 @@ api_routes:
 - /api/compose
 - /api/compose/plan
 - /api/conversation
+- /api/conversation/assign
 - /api/conversation/delete
+- /api/conversation/pin
+- /api/conversation/rename
 - /api/conversation/restore
 - /api/conversations
+- /api/conversations/search
 - /api/corpus/add
 - /api/corpus/benchmark
 - /api/corpus/delete
@@ -2765,6 +2814,10 @@ api_routes:
 - /api/pdf/extract
 - /api/pdf/summarize
 - /api/persona
+- /api/personality
+- /api/personality/preview
+- /api/personality/restore
+- /api/personality/save
 - /api/personas
 - /api/processes
 - /api/project
@@ -2829,14 +2882,16 @@ api_routes:
 - /api/world/event
 ui_modules:
 - path: ui/app.js
-  purpose: '* The client entry point. Subscribes to the event stream, keeps the shared'
-  lines: 468
+  purpose: '* The client entry point: the shell of ONE product.  Subscribes to the event'
+  lines: 295
   imports:
   - core/api.js
   - core/bus.js
   - core/dom.js
+  - core/sidebar.js
   - core/state.js
   - core/views.js
+  - core/worksurface.js
   - views/activity.js
   - views/calendar.js
   - views/capabilities.js
@@ -2852,6 +2907,7 @@ ui_modules:
   - views/personality.js
   - views/projects.js
   - views/release.js
+  - views/settings.js
   - views/thoughts.js
   - views/voice.js
   - voice/mic.js
@@ -2874,13 +2930,6 @@ ui_modules:
   purpose: DOM helpers. Every view builds nodes with these, so there is one place that
   lines: 85
   imports: []
-- path: ui/core/gateway.js
-  purpose: 'The mode bar above the composer: AUTO / FREE / SMART / DEEP / BUILD, the'
-  lines: 127
-  imports:
-  - api.js
-  - bus.js
-  - dom.js
 - path: ui/core/markdown.js
   purpose: Stream-safe Markdown for the conversation.
   lines: 226
@@ -2890,6 +2939,21 @@ ui_modules:
   purpose: A LaTeX subset, rendered deterministically to HTML -- no fonts, no library,
   lines: 186
   imports: []
+- path: ui/core/performance.js
+  purpose: 'The ZEUS performance control: one compact selector in the composer instead'
+  lines: 133
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+- path: ui/core/sidebar.js
+  purpose: 'The persistent sidebar: one place to start a chat, find one, reach a'
+  lines: 264
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+  - views.js
 - path: ui/core/state.js
   purpose: 'One observable holding what the server last said: the state event, the'
   lines: 55
@@ -2906,20 +2970,21 @@ ui_modules:
   - bus.js
   - dom.js
   - state.js
-- path: ui/core/workrail.js
-  purpose: 'The left dock: ACTIVE work, recent results, recent conversations.'
-  lines: 165
+- path: ui/core/worksurface.js
+  purpose: 'The work surface: ZEUS never looks frozen.'
+  lines: 144
   imports:
   - api.js
   - bus.js
   - dom.js
-- path: ui/eye.js
-  purpose: '* The ZEUS eye.'
-  lines: 640
-  imports: []
+  - views.js
 - path: ui/graph.js
   purpose: '* The knowledge graph as a starfield.'
   lines: 325
+  imports: []
+- path: ui/orb.js
+  purpose: 'The ZEUS Orb: a refractive glass sphere with a spectral band circulating'
+  lines: 260
   imports: []
 - path: ui/views/activity.js
   purpose: 'Activity: the owner''s transparent operation log, request-centric. Rows'
@@ -2948,13 +3013,13 @@ ui_modules:
   - core/views.js
 - path: ui/views/chat.js
   purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
-  lines: 294
+  lines: 290
   imports:
   - core/api.js
   - core/bus.js
   - core/dom.js
-  - core/gateway.js
   - core/markdown.js
+  - core/performance.js
   - core/state.js
   - core/views.js
   - corrections.js
@@ -3021,7 +3086,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/palette.js
   purpose: 'The command palette (Ctrl+K) and universal search (Ctrl+P): ask ZEUS,'
-  lines: 155
+  lines: 156
   imports:
   - chat.js
   - core/api.js
@@ -3054,6 +3119,16 @@ ui_modules:
   - core/authgate.js
   - core/dom.js
   - core/views.js
+- path: ui/views/settings.js
+  purpose: 'Settings: Allgemein · Persönlichkeit · Erscheinungsbild · Leistung & Kosten'
+  lines: 315
+  imports:
+  - core/api.js
+  - core/authgate.js
+  - core/dom.js
+  - core/performance.js
+  - core/state.js
+  - core/views.js
 - path: ui/views/thoughts.js
   purpose: 'Thoughts: what ZEUS noticed on its own — typed observations with the'
   lines: 68
@@ -3085,8 +3160,8 @@ ui_modules:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 330
+  modules: 333
   packages: 33
-  api_routes: 171
-  ui_modules: 33
-  tests: 124
+  api_routes: 179
+  ui_modules: 35
+  tests: 128

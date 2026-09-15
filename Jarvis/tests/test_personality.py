@@ -147,16 +147,22 @@ def test_the_answer_uses_real_state():
     assert "Systems running" in quiet and "coffee" not in quiet
 
 
-def test_technical_and_literal_questions_reach_the_model_with_the_personality():
+def test_technical_identity_questions_are_deterministic_and_literal_feelings_reach_the_model():
+    """§16: "what are you technically" / "which model" never spend a provider call; the engine is infrastructure."""
+
     core = JarvisCore(kernel=StubKernel(reply="Technisch bin ich ein lokales System."))
     core.language = "de"
-    prompt = core._compose_prompt("Was bist du technisch?")
-    assert "give technical detail when asked what you are technically" in prompt
     prompt = core._compose_prompt("Hast du wirklich menschliche Gefühle?")
-    assert "answer truthfully and briefly" in prompt
+    assert "engine computes an answer is internal infrastructure" in prompt
     core.send_message("Was bist du technisch?")
     settle(core)
-    assert core.history[-1].backend == "stub"
+    assert core.history[-1].backend == "personality"
+    assert "ZEUS" in core.history[-1].text and "Raphael" in core.history[-1].text and "Diagnosen" in core.history[-1].text
+    core = JarvisCore(kernel=StubKernel(reply="Nein, ich habe keine Gefühle."))
+    core.language = "de"
+    core.send_message("Hast du wirklich menschliche Gefühle?")
+    settle(core)
+    assert core.history[-1].backend == "stub", "a literal question about feelings is the model's to answer, with the personality"
 
 
 def test_actions_and_corrections_keep_their_routes():

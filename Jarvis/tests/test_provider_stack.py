@@ -369,10 +369,10 @@ def test_a_gemini_rate_limit_retries_the_free_pool_and_free_mode_does_not_spend_
     assert info.value.typed_status == "FREE_INTELLIGENCE_UNAVAILABLE"
     assert info.value.attempts[0]["failure_class"] == ProviderStatus.RATE_LIMIT.value
     assert info.value.attempts[0]["retry_delay_seconds"] <= 2.0
-    assert gateway.health.status("gemini") is ProviderStatus.PROVIDER_UNAVAILABLE
+    assert gateway.health.status("gemini") is ProviderStatus.RATE_LIMIT, "every model of the provider was rate-limited: the provider is"
     with pytest.raises(GatewayRefused) as refused:
         gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
-    assert "provider_unavailable" in refused.value.decision.reason
+    assert "rate_limit" in refused.value.decision.reason
     assert all("openai" not in r["url"] for r in net.requests), "FREE never spent to route around the free lane"
     assert gateway.transport.refused == [] or all(r["mode"] == "FREE" for r in gateway.transport.refused)
 
