@@ -285,6 +285,10 @@ class ModelRouter:
                 # reasoner: the most reliable route that meets the bar, chosen
                 # directly -- never a cheaper one first to see whether it copes.
                 meeting.sort(key=lambda c: (1 if c.binding.offline_fallback else 0, -c.q, c.cost))
+            elif mode is ChatMode.SMART:
+                # SMART is the owner choosing inexpensive cloud reasoning: the
+                # smart role when it meets the bar, the free tier otherwise.
+                meeting.sort(key=lambda c: (0 if c.role == "reasoning.smart" else 1, 1 if c.binding.offline_fallback else 0, c.cost, -c.q))
             else:
                 # Cheapest first; among equally cheap, the more reliable one.  A
                 # local offline fallback is never preferred over a configured

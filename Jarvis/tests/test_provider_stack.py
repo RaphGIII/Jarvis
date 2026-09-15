@@ -233,6 +233,26 @@ def test_legacy_level_names_in_an_old_file_are_read_as_the_abstract_ones():
 # Abstract effort levels, provider wire formats
 # --------------------------------------------------------------------------
 
+def test_smart_mode_uses_the_smart_role_and_auto_stays_cost_first(tmp_path, cfg, creds):
+    net = FakeNetwork()
+    net.responses["generativelanguage.googleapis.com"] = gemini_reply("frei")
+    net.responses["api.openai.com"] = openai_reply("smart")
+    gateway = make_gateway(tmp_path, cfg, creds, net)
+    question = GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True))
+    auto, _ = gateway.plan(question)
+    assert auto.role == "reasoning.free", "AUTO: the cheapest route that meets the bar"
+    smart_request = GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.SMART)
+    smart, _ = gateway.plan(smart_request)
+    assert smart.role == "reasoning.smart" and smart.model == cfg.roles["reasoning.smart"].model, "SMART: the owner chose the smart tier"
+    assert "reasoning.deep" not in {c.role for c in smart.candidates if c.eligible}, "SMART never reaches the deep role"
+    reply = gateway.complete(smart_request)
+    assert reply.role == "reasoning.smart" and reply.actual_eur > 0.0 and gateway.governor.summary().month == pytest.approx(reply.actual_eur)
+    deep, _ = gateway.plan(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.DEEP))
+    assert deep.role == "reasoning.deep", "DEEP: the strongest that meets the bar, directly"
+    free, _ = gateway.plan(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
+    assert free.role == "reasoning.free" and all(not c.eligible for c in free.candidates if c.role in {"reasoning.smart", "reasoning.deep"})
+
+
 def test_the_four_roles_are_bound_in_configuration_only():
     config = GatewayConfig.defaults()
     for role in ("reasoning.free", "reasoning.deep", "engineer.standard", "engineer.frontier"):
