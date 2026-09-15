@@ -194,3 +194,19 @@ def test_provider_output_cannot_change_identity_or_personality(tmp_path, monkeyp
     assert before == after
     events = ask(core, "Wer hat dich gebaut?", wait=20)
     assert answer_text(events) == "Raphael."
+
+
+def test_compound_identity_questions_are_answered_deterministically():
+    """'Wer bist du und wer hat dich gebaut?' is still an identity question -- live it reached the provider."""
+
+    from persona.smalltalk import identity_answer, identity_kind, identity_kinds
+
+    assert identity_kinds("Wer bist du und wer hat dich gebaut?") == ["identity", "creator"]
+    assert identity_kind("Wer bist du und wer hat dich gebaut?") == "compound"
+    answer = identity_answer("Wer bist du und wer hat dich gebaut?", language="de", assistant="ZEUS", creator="Raphael")
+    assert answer == "Ich bin ZEUS, dein persönliches KI-System, von Raphael entworfen und aufgebaut."
+    assert identity_answer("Bist du ChatGPT? Wer hat dich gebaut?", language="de", assistant="ZEUS", creator="Raphael").startswith("Nein. Ich bin ZEUS")
+    assert identity_answer("Wer bist du, und welches Modell steckt dahinter?", language="de", assistant="ZEUS", creator="Raphael").endswith("Diagnosen.")
+    # mixed with a non-identity clause: the ordinary path (the output guard protects the identity there)
+    assert identity_answer("Wer bist du und was kannst du?", language="de", assistant="ZEUS", creator="Raphael") is None
+    assert identity_answer("Wer bist du und wie wird das Wetter?", language="de", assistant="ZEUS", creator="Raphael") is None

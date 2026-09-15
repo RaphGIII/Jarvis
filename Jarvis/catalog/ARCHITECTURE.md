@@ -34,7 +34,7 @@
 - **learning** — Developmental learning architecture for JARVIS. (54 modules, 2637 lines)
 - **memory** — conversation memory (1 modules, 1 lines)
 - **owner** — The owner's domain: what ZEUS is, how it behaves, what it may spend. (4 modules, 870 lines)
-- **persona** — persona profiles and language (5 modules, 739 lines)
+- **persona** — persona profiles and language (5 modules, 784 lines)
 - **projects** — the project engine and store (5 modules, 2869 lines)
 - **research** — web research tools (3 modules, 561 lines)
 - **runtime** — Runtime services: deadlines, heartbeats, cost policy, the older runtimes. (28 modules, 7733 lines)

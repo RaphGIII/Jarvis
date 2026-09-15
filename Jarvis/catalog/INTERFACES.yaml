@@ -2848,8 +2848,10 @@ modules:
     module: persona.smalltalk
     classes: []
     functions:
+    - signature: 'def identity_kinds(text: str) -> list[str]'
+      doc: Every identity question the utterance asks, in order -- empty when any clause asks something else.
     - signature: 'def identity_kind(text: str) -> str'
-      doc: '"identity" | "creator" | "vendor" | "model" | "" -- which deterministic identity answer applies.'
+      doc: '"identity" | "creator" | "vendor" | "model" | "compound" | "" -- which deterministic identity answer applies.'
     - signature: 'def is_identity_question(text: str) -> bool'
     - signature: 'def identity_answer(text: str, *, language: str=''de'', assistant: str=''ZEUS'', creator: str=''Raphael'',
         rng: random.Random | None=None) -> str | None'

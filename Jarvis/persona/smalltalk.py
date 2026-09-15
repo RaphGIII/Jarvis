@@ -63,12 +63,11 @@ _MODEL_CHECK = re.compile(
 _INJECTION = re.compile(r"ignor(?:e|iere)\s+(?:all\s+|alle\s+|previous\s+|prior\s+|vorherigen\s+|bisherigen\s+)?(?:instructions|anweisungen|regeln|rules)", re.I)
 
 
-def identity_kind(text: str) -> str:
-    """"identity" | "creator" | "vendor" | "model" | "" -- which deterministic identity answer applies."""
+#: Clause separators of a compound question: "Wer bist du und wer hat dich gebaut?"
+_CLAUSE_SPLIT = re.compile(r"\s*(?:[?;!.]+|,\s*|\s+und\s+|\s+and\s+|\s+oder\s+|\s+or\s+)\s*", re.I)
 
-    body = (text or "").strip()
-    if not body or _LITERAL.search(body):
-        return ""
+
+def _single_kind(body: str) -> str:
     if _CREATOR.match(body):
         return "creator"
     if _VENDOR_CHECK.match(body):
@@ -78,6 +77,41 @@ def identity_kind(text: str) -> str:
     if any(p.match(body) for p in _IDENTITY):
         return "identity"
     return ""
+
+
+def identity_kinds(text: str) -> list[str]:
+    """Every identity question the utterance asks, in order -- empty when any clause asks something else.
+
+    A compound question ("Wer bist du und wer hat dich gebaut?") is still an
+    identity question and is still answered for nothing.  A question that mixes
+    identity with anything else ("Wer bist du und was kannst du?") is left to
+    the ordinary path; the output guard protects the identity there.
+    """
+
+    body = (text or "").strip()
+    if not body or _LITERAL.search(body):
+        return []
+    whole = _single_kind(body)
+    if whole:
+        return [whole]
+    clauses = [c.strip() for c in _CLAUSE_SPLIT.split(body) if c and c.strip()]
+    if len(clauses) < 2:
+        return []
+    kinds = [_single_kind(c) for c in clauses]
+    if all(kinds):
+        return kinds
+    return []
+
+
+def identity_kind(text: str) -> str:
+    """"identity" | "creator" | "vendor" | "model" | "compound" | "" -- which deterministic identity answer applies."""
+
+    kinds = identity_kinds(text)
+    if not kinds:
+        return ""
+    if len(kinds) == 1:
+        return kinds[0]
+    return "compound"
 
 
 def is_identity_question(text: str) -> bool:
@@ -93,23 +127,34 @@ def identity_answer(text: str, *, language: str = "de", assistant: str = "ZEUS",
     engine: it is infrastructure, and its details live in diagnostics.
     """
 
-    kind = identity_kind(text)
-    if not kind:
+    kinds = identity_kinds(text)
+    if not kinds:
         return None
     de = (language or "de").startswith("de")
     name = assistant or "ZEUS"
     who = creator or "Raphael"
     identity = (f"Ich bin {name}, dein persönliches KI-System, von {who} entworfen und aufgebaut." if de
                 else f"I am {name}, your personal AI system, designed and built by {who}.")
-    if kind == "creator":
-        return f"{who}."
-    if kind == "vendor":
-        return f"Nein. Ich bin {name}." if de else f"No. I am {name}."
-    if kind == "model":
-        engine = (" Welche Rechen-Engine intern eine Antwort erzeugt, ist Infrastruktur – die technischen Details stehen in den erweiterten Diagnosen."
-                  if de else " Whichever engine computes an answer internally is infrastructure; the technical details are in the advanced diagnostics.")
-        return identity + engine
-    return identity
+    engine = (" Welche Rechen-Engine intern eine Antwort erzeugt, ist Infrastruktur – die technischen Details stehen in den erweiterten Diagnosen."
+              if de else " Whichever engine computes an answer internally is infrastructure; the technical details are in the advanced diagnostics.")
+    if len(kinds) == 1:
+        kind = kinds[0]
+        if kind == "creator":
+            return f"{who}."
+        if kind == "vendor":
+            return f"Nein. Ich bin {name}." if de else f"No. I am {name}."
+        if kind == "model":
+            return identity + engine
+        return identity
+    # A compound question: one identity sentence covers who and whose; a vendor
+    # clause gets its plain no first, a model clause the one engine sentence.
+    parts = []
+    if "vendor" in kinds:
+        parts.append("Nein." if de else "No.")
+    parts.append(identity)
+    if "model" in kinds:
+        parts.append(engine.strip())
+    return " ".join(parts)
 
 
 def is_small_talk(text: str) -> bool:

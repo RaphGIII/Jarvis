@@ -1443,8 +1443,8 @@ packages:
       - tests/test_persona_and_datasets.py
     - path: persona/smalltalk.py
       purpose: Small talk, answered as Zeus rather than as a system description.
-      lines: 144
-      public: 5
+      lines: 189
+      public: 6
       tests:
       - tests/test_identity_firewall.py
       - tests/test_personality.py
