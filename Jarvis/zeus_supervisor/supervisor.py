@@ -60,6 +60,7 @@ class Supervisor:
         self.lock = InstanceLock(self.state_dir)
         self.token = self._load_token()
         self._stop = threading.Event()
+        self._listener_disabled_logged = False
         self.status_page = StatusPage(config.host, config.port, self._status_snapshot, on_stop=self._stop.set, token=self.token)
         # Ollama's lifecycle, owned here for the whole life of the supervisor:
         # the preflight starts it (bounded), the watch loop notices when it
@@ -534,9 +535,56 @@ class Supervisor:
             self.log(f"killed {killed} stale listener process(es)")
         return killed
 
+    def wake_word_enabled(self) -> bool:
+        """The owner's hands-free switch, read from the voice settings the core and Voice Studio share.
+
+        ``data/jarvis/voice/settings.json`` -> ``wake_word_enabled``; absent or
+        unreadable means off.  Read every time it matters, so a change in
+        Voice Studio takes effect without a restart or a rebuild.
+        """
+
+        path = self.config.repository / "data" / "jarvis" / "voice" / "settings.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        value = data.get("wake_word_enabled", False) if isinstance(data, dict) else False
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def _sync_listener(self) -> None:
+        """Start the listener when the owner has switched wake-word listening on; stop it when they switch it off."""
+
+        running = self.listener is not None and self.listener.poll() is None
+        if self.wake_word_enabled():
+            if not running:
+                self._launch_listener()
+        elif running:
+            self.log("wake-word listening switched off by the owner; stopping the listener")
+            self._stop_listener()
+
+    def _stop_listener(self) -> None:
+        if self.listener is None or self.listener.poll() is not None:
+            return
+        try:
+            self.listener.terminate()
+            self.listener.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - a listener that will not die is killed
+            try:
+                self.listener.kill()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _launch_listener(self) -> None:
         if not self.config.voice:
             return
+        if not self.wake_word_enabled():
+            if not self._listener_disabled_logged:
+                self._listener_disabled_logged = True
+                self.log("listener not started: wake-word listening is off (voice settings: wake_word_enabled=false)")
+            return
+        self._listener_disabled_logged = False
         python = self.config.speech_python
         if python is None:
             return
@@ -621,10 +669,18 @@ class Supervisor:
             if code is not None:
                 self.log(f"core exited with code {code}")
                 return int(code)
-            if self.listener is not None and self.listener.poll() is not None and time.monotonic() - last_listener_start > 15:
-                self.log(f"listener exited with code {self.listener.returncode}; restarting it")
-                last_listener_start = time.monotonic()
-                self._launch_listener()
+            if time.monotonic() - last_listener_start > 15:
+                if self.listener is not None and self.listener.poll() is not None and self.wake_word_enabled():
+                    self.log(f"listener exited with code {self.listener.returncode}; restarting it")
+                    last_listener_start = time.monotonic()
+                    self._launch_listener()
+                elif self.config.voice and self.config.speech_python is not None:
+                    # The owner's switch is live: a listener starts or stops
+                    # within this interval of a change in Voice Studio.
+                    before = self.listener
+                    self._sync_listener()
+                    if self.listener is not before:
+                        last_listener_start = time.monotonic()
             if time.monotonic() - last_ollama_check >= self.config.ollama_watch_interval:
                 last_ollama_check = time.monotonic()
                 self._watch_ollama()

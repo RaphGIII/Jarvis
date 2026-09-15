@@ -1,0 +1,371 @@
+{
+  "at": "2026-09-15T13:21:09",
+  "policy_source": "owner-ordered live acceptance 2026-09-15",
+  "baseline_month_eur": 0.006332,
+  "C_standard": {
+    "router": {
+      "need": "CAPABILITY_MISSING",
+      "engineer": "API",
+      "reason": "cheapest route with q=0.79 >= tau=0.75",
+      "codex_state": "NOT_INSTALLED",
+      "codex_detail": "treated as unavailable for this acceptance so the standard API engineer is exercised",
+      "codex_checked": true,
+      "owner_authorized_local": false,
+      "queued": false,
+      "build_local_invocations": 0,
+      "role": "engineer.standard",
+      "provider_name": "engineer.standard",
+      "task_class": "engineering.small",
+      "q": 0.7895,
+      "tau": 0.75,
+      "estimated_eur": 0.1062,
+      "estimate_range_eur": [
+        0.0637,
+        0.1593
+      ],
+      "mode": "BUILD",
+      "candidates": [
+        {
+          "role": "engineer.codex",
+          "provider": "codex",
+          "model": "codex-cli",
+          "cost_class": "ZERO",
+          "estimated_eur": 0.0,
+          "q": 0.7648,
+          "eligible": false,
+          "reason": "codex is not available"
+        },
+        {
+          "role": "engineer.frontier",
+          "provider": "anthropic",
+          "model": "claude-fable-5-1",
+          "cost_class": "METERED",
+          "estimated_eur": 0.21242,
+          "q": 0.8095,
+          "eligible": true,
+          "reason": ""
+        },
+        {
+          "role": "engineer.frontier_alt",
+          "provider": "codex",
+          "model": "gpt-6-astra",
+          "cost_class": "ZERO",
+          "estimated_eur": 0.0,
+          "q": 0.8095,
+          "eligible": false,
+          "reason": "codex is not available"
+        },
+        {
+          "role": "engineer.standard",
+          "provider": "anthropic",
+          "model": "claude-opus-5",
+          "cost_class": "METERED",
+          "estimated_eur": 0.10621,
+          "q": 0.7895,
+          "eligible": true,
+          "reason": ""
+        },
+        {
+          "role": "local.build",
+          "provider": "ollama",
+          "model": "",
+          "cost_class": "ZERO",
+          "estimated_eur": 0.0,
+          "q": 0.0367,
+          "eligible": false,
+          "reason": "local model not available"
+        }
+      ],
+      "vector": {
+        "change_size": 0.333,
+        "integration_breadth": 0.2,
+        "technical_novelty": 0.35,
+        "core_architecture_impact": 0.0,
+        "codebase_context_required": 0.0,
+        "verification_complexity": 0.4,
+        "external_system_count": 0.0,
+        "long_horizon": 0.1,
+        "risk": 0.0,
+        "specification_uncertainty": 0.05,
+        "task_class": "engineering.small",
+        "frontier_required": false,
+        "frontier_indicators": [],
+        "signals": {
+          "systems": [],
+          "missing_effects": 1,
+          "partial_plan": 0,
+          "reusable": 0,
+          "words": 7,
+          "clauses": 2,
+          "novelty_words": 0,
+          "long_horizon_words": 0,
+          "risk_words": 0,
+          "core_words": 0,
+          "catalog_dependents": 0,
+          "impacted_core_modules": [],
+          "permissions": 0,
+          "acceptance_criteria": 4
+        }
+      },
+      "cost": {}
+    },
+    "estimate": {
+      "role": "engineer.standard",
+      "context_tokens": 824,
+      "cached_context_tokens": 0,
+      "expected_output_tokens": 8192,
+      "estimated_eur": 0.2089,
+      "range_eur": [
+        0.1254,
+        0.3134
+      ],
+      "reserved_eur": 0.3134,
+      "hard_max_eur": 5.0,
+      "pricing_confirmed": false,
+      "priced": true,
+      "month_spent_eur": 0.0063,
+      "month_cap_eur": 40.0,
+      "reservable": true,
+      "blocking_cap": ""
+    },
+    "spec_id": "c66c12589d",
+    "vector": {
+      "change_size": 0.333,
+      "integration_breadth": 0.2,
+      "technical_novelty": 0.35,
+      "core_architecture_impact": 0.0,
+      "codebase_context_required": 0.0,
+      "verification_complexity": 0.4,
+      "external_system_count": 0.0,
+      "long_horizon": 0.1,
+      "risk": 0.0,
+      "specification_uncertainty": 0.05,
+      "task_class": "engineering.small",
+      "frontier_required": false,
+      "frontier_indicators": [],
+      "signals": {
+        "systems": [],
+        "missing_effects": 1,
+        "partial_plan": 0,
+        "reusable": 0,
+        "words": 7,
+        "clauses": 2,
+        "novelty_words": 0,
+        "long_horizon_words": 0,
+        "risk_words": 0,
+        "core_words": 0,
+        "catalog_dependents": 0,
+        "impacted_core_modules": [],
+        "permissions": 0,
+        "acceptance_criteria": 4
+      }
+    },
+    "status": "failed",
+    "verified": false,
+    "blocker": "task_failure from anthropic (engineer.standard): HTTP 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011Cf58t94oPdskZwTygRdop\"}",
+    "files_changed": [],
+    "raw": {
+      "context_tokens": {
+        "spec_tokens": 898,
+        "catalog_tokens": 114,
+        "interface_tokens": 26,
+        "source_tokens": 11,
+        "test_tokens": 0,
+        "total_engineering_context_tokens": 1049
+      }
+    },
+    "evidence": [
+      [
+        "greet says hello world",
+        false,
+        "exit=1\n\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sys; sys.path.insert(0, '.'); from greet import greet; assert greet() == 'hello world'; print('OK')\n                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+      ]
+    ],
+    "wall_seconds": 0.8,
+    "workspace": "C:\\Users\\rapha\\AppData\\Local\\Temp\\zeus-live-standard-_uo__mvf",
+    "gateway_call": {
+      "role": null,
+      "provider": null,
+      "model": null,
+      "usage": null,
+      "estimated_eur": null,
+      "actual_eur": null,
+      "latency_seconds": null
+    },
+    "month_before_eur": 0.006332,
+    "month_after_eur": 0.006332,
+    "greet_after": "def greet():\n    return 'hello'\n"
+  },
+  "D_frontier": {
+    "availability": {
+      "available": true,
+      "detail": "engineer.frontier -> anthropic/claude-fable-5-1",
+      "state": "AVAILABLE",
+      "checked_at": 0.0,
+      "evidence": "",
+      "quota_exhausted": false,
+      "version": ""
+    },
+    "router": {
+      "engineer": "API",
+      "role": "engineer.frontier",
+      "provider_name": "engineer.frontier",
+      "reason": "frontier engineering required (major new subsystem; many independent subsystems integrated; long autonomous implementation horizon / persistent state; high verification complexity; multimodal + tools + persistence across several external systems); engineer.frontier chosen directly, estimated EUR 0.49-1.23",
+      "task_class": "engineering.large",
+      "estimated_eur": 0.8226,
+      "estimate_range_eur": [
+        0.4935,
+        1.2339
+      ]
+    },
+    "estimate": {
+      "role": "engineer.frontier",
+      "context_tokens": 19088,
+      "cached_context_tokens": 0,
+      "expected_output_tokens": 16384,
+      "estimated_eur": 1.0101,
+      "range_eur": [
+        0.606,
+        1.5151
+      ],
+      "reserved_eur": 1.5151,
+      "hard_max_eur": 5.0,
+      "pricing_confirmed": false,
+      "priced": true,
+      "month_spent_eur": 0.0063,
+      "month_cap_eur": 40.0,
+      "reservable": true,
+      "blocking_cap": ""
+    },
+    "transport_issued_after": 1
+  },
+  "E_frontier_alt": {
+    "binding": {
+      "provider": "codex",
+      "model": "gpt-6-astra",
+      "enabled": true
+    },
+    "provider_kind": "subscription_cli",
+    "metered": false,
+    "availability": {
+      "available": true,
+      "detail": "subscription CLI available",
+      "state": "AVAILABLE",
+      "checked_at": 0.0,
+      "evidence": "",
+      "quota_exhausted": false,
+      "version": "codex-cli 0.153.4"
+    },
+    "login": "Logged in using ChatGPT",
+    "model_in_codex_client_cache": true,
+    "known_models": [
+      "gpt-6-astra",
+      "gpt-reserve",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "codex-auto-review"
+    ],
+    "router_when_primary_frontier_disabled": {
+      "engineer": "CODEX",
+      "role": "engineer.frontier_alt",
+      "provider_name": "engineer.frontier_alt",
+      "reason": "frontier engineering required (major new subsystem; many independent subsystems integrated; long autonomous implementation horizon / persistent state; high verification complexity; multimodal + tools + persistence across several external systems); engineer.frontier_alt chosen directly (subscription, model gpt-6-astra)",
+      "estimated_eur": 0.0
+    },
+    "cli_probe": {
+      "error": "TimeoutExpired: Command '['codex', 'exec', '--model', 'gpt-6-astra', '-C', 'C:\\\\Users\\\\rapha\\\\AppData\\\\Local\\\\Temp\\\\zeus-astra-probe-461qde82', '--sandbox', 'read-only', '--skip-git-repo-check', 'Antworte ausschließlich mit dem Wort OK.']' timed out after 240 seconds"
+    }
+  },
+  "final_month_eur": 0.006332,
+  "transport": {
+    "issued": 1,
+    "refused": []
+  },
+  "recent_calls": [],
+  "A_unpinned_plan": {
+    "role": "reasoning.free",
+    "model": "gemini-3.8-flash",
+    "reason": "cheapest route with q=0.81 >= tau=0.57",
+    "note": "recorded from the run console: the first script run wrote no file"
+  },
+  "A_smart": {
+    "role": "reasoning.smart",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "pinned_role": true,
+    "usage": {
+      "input_tokens": 628,
+      "cached_input_tokens": 0,
+      "output_tokens": 6,
+      "reasoning_tokens": 0
+    },
+    "latency_seconds": 2.99,
+    "estimated_eur": 0.004632,
+    "actual_eur": 0.002632,
+    "thinking_level": "FAST",
+    "route_attempts": [
+      {
+        "model": "gpt-5.6-terra",
+        "attempt": 1,
+        "failure_class": "ok"
+      }
+    ],
+    "month_before_eur": 0.0,
+    "month_after_eur": 0.002632,
+    "text": "Grün",
+    "note": "recorded from the run console and the spend ledger (settle 2026-09-15T11:20:xx); the first script run wrote no file"
+  },
+  "B_deep": {
+    "role": "reasoning.deep",
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "usage": {
+      "input_tokens": 710,
+      "cached_input_tokens": 0,
+      "output_tokens": 43,
+      "reasoning_tokens": 0
+    },
+    "latency_seconds": 2.88,
+    "estimated_eur": 0.010084,
+    "actual_eur": 0.0037,
+    "thinking_level": "DEEP",
+    "decision_reason": "cheapest route with q=0.76 >= tau=0.72; skipped cheaper reasoning.free (q=0.20)",
+    "candidates": [
+      [
+        "local.fast",
+        false,
+        0.02
+      ],
+      [
+        "reasoning.deep",
+        true,
+        0.76
+      ],
+      [
+        "reasoning.free",
+        true,
+        0.2
+      ],
+      [
+        "reasoning.smart",
+        true,
+        0.73
+      ]
+    ],
+    "answer": {
+      "order": [
+        "A",
+        "B",
+        "C"
+      ],
+      "why": "A erzeugt aus dem Bild die Zugliste, B daraus die Bewertung und C daraus den Trainingsplan."
+    },
+    "answer_correct": true,
+    "calls_between_A_and_B": [],
+    "month_before_eur": 0.002632,
+    "month_after_eur": 0.006332,
+    "note": "recorded from the run console and the spend ledger"
+  }
+}

@@ -94,6 +94,11 @@ def classify_http(status_code: int, body: str, *, provider_kind: str = "") -> Pr
         return ProviderStatus.RATE_LIMIT
     if status_code == 402 or "insufficient_quota" in text or "billing_hard_limit" in text:
         return ProviderStatus.QUOTA_EXHAUSTED
+    if any(marker in text for marker in ("credit balance is too low", "insufficient credits", "purchase credits", "out of credits",
+                                         "billing_error", "insufficient funds")):
+        # Anthropic says this with HTTP 400.  An empty prepaid balance is the
+        # account's state, not the task's: nothing about the model is learned.
+        return ProviderStatus.QUOTA_EXHAUSTED
     if status_code >= 500 or status_code == 408:
         return ProviderStatus.PROVIDER_UNAVAILABLE
     return ProviderStatus.TASK_FAILURE

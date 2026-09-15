@@ -306,9 +306,14 @@ def _choose_frontier(need: EngineeringNeed, task: Any, gateway: Any, vector: Any
 
     chat_mode = ChatMode.parse(mode) if mode is not None else ChatMode.AUTO
     refusals: list[str] = []
+    codex_ready = str(codex_state).upper() == "READY"
+    try:
+        gateway.set_subscription_available(lambda name: codex_ready if name == "codex" else False)
+    except Exception:  # noqa: BLE001
+        pass
     for role in FRONTIER_ROLES:
         binding = gateway.config.binding(role)
-        if binding is None or not binding.enabled:
+        if binding is None or not binding.enabled or not binding.model:
             continue
         try:
             decision = gateway.router.decide(task, chat_mode, None, prompt=prompt or task.facts.get("text", "") or "engineering",
@@ -318,6 +323,14 @@ def _choose_frontier(need: EngineeringNeed, task: Any, gateway: Any, vector: Any
             continue
         candidates = [c.to_dict() for c in decision.candidates]
         if decision.kind is RouteKind.MODEL and decision.role == role:
+            provider = gateway.config.provider_for(role)
+            if provider is not None and provider.kind == "subscription_cli":
+                # The owner's subscription engineer with a frontier-class
+                # model: zero marginal cost, driven by the expert gateway
+                # under this role's name.  Never the paid API in its place.
+                return EngineerDecision(engineer=Engineer.CODEX, queued=False, role=role, provider_name=role, q=decision.q,
+                                        tau=decision.tau, candidates=candidates,
+                                        reason=f"{why}; {role} chosen directly (subscription, model {binding.model})", **common)
             estimate = decision.estimate
             low, high = estimate.range_eur() if estimate else (0.0, 0.0)
             return EngineerDecision(engineer=Engineer.API, queued=False, role=role, provider_name=role, q=decision.q,

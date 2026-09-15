@@ -441,6 +441,18 @@ class JarvisCore:
 
                 gateway = self.model_gateway
                 providers += [ApiEngineerExpert(gateway, "engineer.standard"), ApiEngineerExpert(gateway, "engineer.frontier")]
+                # Engineer roles the owner bound to their Codex subscription
+                # with a named model (engineer.frontier_alt): the same CLI,
+                # that model, registered under the role's name so the
+                # engineering router's choice reaches exactly it.
+                for role, binding in gateway.config.roles.items():
+                    provider = gateway.config.providers.get(binding.provider)
+                    if (role.startswith("engineer.") and role != "engineer.codex" and binding.enabled and binding.model
+                            and provider is not None and provider.kind == "subscription_cli"):
+                        expert = CodexExpert(model=binding.model)
+                        expert.name = role
+                        expert.explicit_only = True
+                        providers.append(expert)
             except Exception as exc:  # noqa: BLE001 - no model gateway, no API engineers; Codex still works
                 self.emit(EventType.DIAGNOSTIC, {"warming": f"API engineers unavailable: {exc}"[:200]})
             self._expert_gateway = ExpertGateway(providers)
@@ -4601,8 +4613,19 @@ class JarvisCore:
             # ("Your job is to: 1. Understand the user's goal ...") stays out
             # of ordinary conversation, where it read as a robot's job sheet.
             system, user = self._compose_messages(text)
+            try:
+                from gateway.gateway import active_context
+
+                context = active_context()
+                if context is not None:
+                    context.owner_text = text
+            except Exception:  # noqa: BLE001 - the budget falls back to the prompt's words
+                pass
             stream = self._generate(provider, user, system=system)
             provenance: dict[str, Any] = {}
+            from service.scitext import StreamNormalizer
+
+            normalizer = StreamNormalizer()
 
             def tee():
                 """One pass over the model's output feeds both the screen and the voice.
@@ -4615,9 +4638,12 @@ class JarvisCore:
                 from runtime.receipts import supporting
                 from service.claims import find_claim
 
-                for chunk in stream:
+                for raw_chunk in stream:
                     if self._stop_applies():
                         return
+                    chunk = normalizer.feed(raw_chunk)
+                    if not chunk:
+                        continue
                     collected.append(chunk)
                     # Checked as each chunk arrives rather than at the end.  A
                     # false claim that has already been printed and spoken has
@@ -4640,6 +4666,11 @@ class JarvisCore:
                             supported.append(backing)
                     self.emit(EventType.TOKEN, {"text": chunk}, scope=scope)
                     yield chunk
+                tail = normalizer.finish()
+                if tail and not self._stop_applies():
+                    collected.append(tail)
+                    self.emit(EventType.TOKEN, {"text": tail}, scope=scope)
+                    yield tail
 
             # Speak only in voice mode. Merely having constructed the speech
             # engine is not consent to talk: a user who dictated once should
@@ -4715,6 +4746,16 @@ class JarvisCore:
             pass
         if provenance:
             reply_meta["provenance"] = provenance
+            if "finish_reason" in provenance:
+                # Whether the answer is whole: a ceiling-truncated answer is
+                # said to be one, and the interface offers to continue it.
+                reply_meta["completion"] = {k: provenance.get(k) for k in ("finish_reason", "truncated", "output_tokens",
+                                                                             "configured_output_budget", "output_budget",
+                                                                             "provider_hard_limit", "aborted")}
+                if provenance.get("truncated"):
+                    self.emit(EventType.TOOL, {"summary": f"answer truncated at the output ceiling ({provenance.get('output_tokens')} tokens of "
+                                                          f"{provenance.get('configured_output_budget')} budgeted); continuation offered",
+                                               "source": "gateway", "completion": reply_meta["completion"]}, scope=scope)
         self._deliver(answer, scope=scope, backend=backend, context_text=context_text, meta=reply_meta)
         self._say_pending_thought(scope)
 

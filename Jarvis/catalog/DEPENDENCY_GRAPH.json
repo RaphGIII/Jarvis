@@ -395,6 +395,9 @@
    "service/engineering.py",
    "service/selfdev.py"
   ],
+  "gateway/output_budget.py": [
+   "gateway/gateway.py"
+  ],
   "gateway/persona.py": [
    "gateway/gateway.py"
   ],
@@ -976,6 +979,9 @@
    "service/intent.py",
    "service/music.py"
   ],
+  "service/scitext.py": [
+   "service/core.py"
+  ],
   "service/selfdev.py": [
    "service/core.py"
   ],
@@ -1461,6 +1467,7 @@
    "gateway/health.py",
    "gateway/learning.py",
    "gateway/modes.py",
+   "gateway/output_budget.py",
    "gateway/persona.py",
    "gateway/privacy.py",
    "gateway/providers.py",
@@ -1476,6 +1483,7 @@
    "gateway/task.py"
   ],
   "gateway/modes.py": [],
+  "gateway/output_budget.py": [],
   "gateway/persona.py": [
    "config.py",
    "core/identity.py"
@@ -1993,6 +2001,7 @@
    "service/observer.py",
    "service/project_ops.py",
    "service/reads.py",
+   "service/scitext.py",
    "service/selfdev.py",
    "service/semantic.py",
    "service/state.py",
@@ -2077,6 +2086,7 @@
   ],
   "service/reads.py": [],
   "service/routing.py": [],
+  "service/scitext.py": [],
   "service/selfdev.py": [
    "brain/json_utils.py",
    "brain/tiers.py",
@@ -2389,6 +2399,7 @@
   "gateway/health.py",
   "gateway/learning.py",
   "gateway/modes.py",
+  "gateway/output_budget.py",
   "gateway/persona.py",
   "gateway/privacy.py",
   "gateway/providers.py",
@@ -2552,6 +2563,7 @@
   "service/project_ops.py",
   "service/reads.py",
   "service/routing.py",
+  "service/scitext.py",
   "service/selfdev.py",
   "service/semantic.py",
   "service/state.py",

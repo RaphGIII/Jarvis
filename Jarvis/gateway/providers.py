@@ -11,12 +11,17 @@ a new ``kind`` in the configuration.  Nothing above this module changes.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterator
 
 from gateway.config import ProviderConfig, RoleBinding
-from gateway.health import GatewayError, ProviderStatus
+from gateway.health import GatewayError, ProviderStatus, classify_http
 from gateway.transport import Ticket, Transport
+
+#: A streaming adapter yields ``{"text": piece}`` as the answer arrives and,
+#: last, ``{"reply": ProviderReply}`` with the usage and the finish reason.
+StreamEvent = dict[str, Any]
 
 
 @dataclass
@@ -80,8 +85,7 @@ class GeminiAdapter:
     kind = "gemini"
     auth = "x-goog-api-key"
 
-    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
-             request: ProviderRequest) -> ProviderReply:
+    def _payload(self, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest) -> tuple[str, dict[str, Any]]:
         url = f"{provider.base_url.rstrip('/')}/v1beta/models/{binding.model}:generateContent"
         generation: dict[str, Any] = {"temperature": request.temperature, "maxOutputTokens": request.max_output_tokens}
         if request.schema is not None:
@@ -107,6 +111,54 @@ class GeminiAdapter:
         }
         if request.system:
             body["system_instruction"] = {"parts": [{"text": request.system}]}
+        return url, body
+
+    @staticmethod
+    def _usage(usage_raw: dict[str, Any]) -> dict[str, int]:
+        return {
+            "input_tokens": int(usage_raw.get("promptTokenCount", 0) or 0),
+            "cached_input_tokens": int(usage_raw.get("cachedContentTokenCount", 0) or 0),
+            "output_tokens": int(usage_raw.get("candidatesTokenCount", 0) or 0) + int(usage_raw.get("thoughtsTokenCount", 0) or 0),
+        }
+
+    def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+               request: ProviderRequest) -> Iterator[StreamEvent]:
+        url, body = self._payload(provider, binding, request)
+        url = url.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
+        usage_raw: dict[str, Any] = {}
+        finish = ""
+        for _event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth):
+            try:
+                chunk = json.loads(data)
+            except ValueError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("error"):
+                err = chunk["error"] if isinstance(chunk["error"], dict) else {"message": str(chunk["error"])}
+                code = int(err.get("code", 0) or 0)
+                raise GatewayError(classify_http(code or 500, json.dumps(err), provider_kind=provider.kind),
+                                   f"stream error: {str(err.get('message', err))[:300]}", role=ticket.role, provider=provider.name,
+                                   http_status=code or None)
+            candidates = chunk.get("candidates") or []
+            if candidates:
+                candidate = candidates[0]
+                parts = (candidate.get("content") or {}).get("parts") or []
+                text = "".join(str(part.get("text", "")) for part in parts if not part.get("thought"))
+                if text:
+                    yield {"text": text}
+                if candidate.get("finishReason"):
+                    finish = str(candidate["finishReason"])
+            elif (chunk.get("promptFeedback") or {}).get("blockReason"):
+                raise GatewayError(ProviderStatus.TASK_FAILURE, f"blocked: {chunk['promptFeedback']['blockReason']}", role=ticket.role,
+                                   provider=provider.name)
+            if chunk.get("usageMetadata"):
+                usage_raw = chunk["usageMetadata"]
+        yield {"reply": ProviderReply(text="", usage=self._usage(usage_raw), finish_reason=finish, model=binding.model)}
+
+    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+             request: ProviderRequest) -> ProviderReply:
+        url, body = self._payload(provider, binding, request)
         reply = transport.post_json(ticket, provider, url, body, auth=self.auth)
         data = reply.data
         candidates = data.get("candidates") or []
@@ -116,12 +168,7 @@ class GeminiAdapter:
                                provider=provider.name)
         parts = (candidates[0].get("content") or {}).get("parts") or []
         text = "".join(str(part.get("text", "")) for part in parts if not part.get("thought"))
-        usage_raw = data.get("usageMetadata") or {}
-        usage = {
-            "input_tokens": int(usage_raw.get("promptTokenCount", 0) or 0),
-            "cached_input_tokens": int(usage_raw.get("cachedContentTokenCount", 0) or 0),
-            "output_tokens": int(usage_raw.get("candidatesTokenCount", 0) or 0) + int(usage_raw.get("thoughtsTokenCount", 0) or 0),
-        }
+        usage = self._usage(data.get("usageMetadata") or {})
         return ProviderReply(text=text, usage=usage, latency_seconds=reply.latency_seconds,
                              finish_reason=str(candidates[0].get("finishReason", "")), model=binding.model)
 
@@ -135,8 +182,7 @@ class OpenAIAdapter:
     kind = "openai"
     auth = "bearer"
 
-    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
-             request: ProviderRequest) -> ProviderReply:
+    def _payload(self, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest) -> tuple[str, dict[str, Any]]:
         url = f"{provider.base_url.rstrip('/')}/v1/responses"
         body: dict[str, Any] = {
             "model": binding.model,
@@ -154,6 +200,65 @@ class OpenAIAdapter:
             body["temperature"] = request.temperature
         if request.schema is not None:
             body["text"] = {"format": {"type": "json_schema", "name": "zeus_response", "schema": request.schema, "strict": False}}
+        return url, body
+
+    @staticmethod
+    def _usage(usage_raw: dict[str, Any]) -> dict[str, int]:
+        in_details = usage_raw.get("input_tokens_details") or {}
+        out_details = usage_raw.get("output_tokens_details") or {}
+        return {
+            "input_tokens": int(usage_raw.get("input_tokens", 0) or 0),
+            "cached_input_tokens": int(in_details.get("cached_tokens", 0) or 0),
+            "output_tokens": int(usage_raw.get("output_tokens", 0) or 0),
+            "reasoning_tokens": int(out_details.get("reasoning_tokens", 0) or 0),
+        }
+
+    def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+               request: ProviderRequest) -> Iterator[StreamEvent]:
+        url, body = self._payload(provider, binding, request)
+        body["stream"] = True
+        final: dict[str, Any] = {}
+        for event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth):
+            try:
+                payload = json.loads(data)
+            except ValueError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            kind = str(payload.get("type") or event or "")
+            if kind == "response.output_text.delta":
+                delta = str(payload.get("delta") or "")
+                if delta:
+                    yield {"text": delta}
+            elif kind in {"response.completed", "response.incomplete", "response.failed"}:
+                final = payload.get("response") or {}
+                if kind == "response.failed":
+                    message = str(((final.get("error") or {}).get("message")) or "response failed")
+                    raise GatewayError(ProviderStatus.TASK_FAILURE, message[:300], role=ticket.role, provider=provider.name)
+            elif "output" in payload and not kind.startswith("response."):
+                # A completed Responses object in one piece (a provider that
+                # did not stream this operation): its text, then its usage.
+                final = payload
+                text = str(payload.get("output_text") or "")
+                if not text:
+                    for item in payload.get("output") or []:
+                        if isinstance(item, dict) and item.get("type") == "message":
+                            for part in item.get("content") or []:
+                                if isinstance(part, dict) and part.get("type") in {"output_text", "text"}:
+                                    text += str(part.get("text", ""))
+                if text:
+                    yield {"text": text}
+            elif kind == "error":
+                raise GatewayError(ProviderStatus.TASK_FAILURE, str(payload.get("message") or payload.get("error") or "stream error")[:300],
+                                   role=ticket.role, provider=provider.name)
+        incomplete = final.get("incomplete_details") if isinstance(final.get("incomplete_details"), dict) else {}
+        finish = str((incomplete or {}).get("reason") or final.get("status") or "completed")
+        yield {"reply": ProviderReply(text="", usage=self._usage(final.get("usage") or {}), finish_reason=finish,
+                                      model=str(final.get("model") or binding.model))}
+
+    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+             request: ProviderRequest) -> ProviderReply:
+        url, body = self._payload(provider, binding, request)
         reply = transport.post_json(ticket, provider, url, body, auth=self.auth)
         data = reply.data
         if data.get("error"):
@@ -176,15 +281,7 @@ class OpenAIAdapter:
             detail = (data.get("incomplete_details") or {}).get("reason", "") if isinstance(data.get("incomplete_details"), dict) else ""
             raise GatewayError(ProviderStatus.TASK_FAILURE, f"response {status}{': ' + detail if detail else ''}", role=ticket.role,
                                provider=provider.name)
-        usage_raw = data.get("usage") or {}
-        in_details = usage_raw.get("input_tokens_details") or {}
-        out_details = usage_raw.get("output_tokens_details") or {}
-        usage = {
-            "input_tokens": int(usage_raw.get("input_tokens", 0) or 0),
-            "cached_input_tokens": int(in_details.get("cached_tokens", 0) or 0),
-            "output_tokens": int(usage_raw.get("output_tokens", 0) or 0),
-            "reasoning_tokens": int(out_details.get("reasoning_tokens", 0) or 0),
-        }
+        usage = self._usage(data.get("usage") or {})
         incomplete = data.get("incomplete_details") if isinstance(data.get("incomplete_details"), dict) else {}
         finish = str((incomplete or {}).get("reason") or status or "")
         return ProviderReply(text=text, usage=usage, latency_seconds=reply.latency_seconds, finish_reason=finish,
@@ -225,15 +322,12 @@ class AnthropicAdapter:
     kind = "anthropic"
     auth = "x-api-key"
 
-    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
-             request: ProviderRequest) -> ProviderReply:
+    def _payload(self, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest) -> tuple[str, dict[str, Any], dict[str, str]]:
         url = f"{provider.base_url.rstrip('/')}/v1/messages"
         prompt = request.prompt
         if request.schema is not None:
-            import json as _json
-
             prompt = (f"{prompt}\n\nAnswer with one JSON object only, matching this JSON schema, no prose:\n"
-                      f"{_json.dumps(request.schema)}")
+                      f"{json.dumps(request.schema)}")
         body: dict[str, Any] = {"model": binding.model, "max_tokens": request.max_output_tokens,
                                 "messages": [{"role": "user", "content": prompt}]}
         if request.system:
@@ -250,6 +344,60 @@ class AnthropicAdapter:
         else:
             body["temperature"] = request.temperature
         headers = {"anthropic-version": "2023-06-01"}
+        return url, body, headers
+
+    def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+               request: ProviderRequest) -> Iterator[StreamEvent]:
+        url, body, headers = self._payload(provider, binding, request)
+        body["stream"] = True
+        input_tokens = cached = output_tokens = 0
+        stop = ""
+        model = binding.model
+        for event, data in transport.post_sse(ticket, provider, url, body, headers=headers, auth=self.auth):
+            try:
+                payload = json.loads(data)
+            except ValueError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            kind = str(payload.get("type") or event or "")
+            if kind == "message_start":
+                message = payload.get("message") or {}
+                usage = message.get("usage") or {}
+                input_tokens = (int(usage.get("input_tokens", 0) or 0) + int(usage.get("cache_read_input_tokens", 0) or 0)
+                                + int(usage.get("cache_creation_input_tokens", 0) or 0))
+                cached = int(usage.get("cache_read_input_tokens", 0) or 0)
+                model = str(message.get("model") or model)
+            elif kind == "content_block_delta":
+                delta = payload.get("delta") or {}
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    yield {"text": str(delta["text"])}
+            elif kind == "message_delta":
+                stop = str((payload.get("delta") or {}).get("stop_reason") or stop)
+                usage = payload.get("usage") or {}
+                output_tokens = int(usage.get("output_tokens", output_tokens) or output_tokens)
+            elif kind == "error":
+                err = payload.get("error") or {}
+                raise GatewayError(ProviderStatus.TASK_FAILURE, str(err.get("message") if isinstance(err, dict) else err)[:300],
+                                   role=ticket.role, provider=provider.name)
+            elif "content" in payload and isinstance(payload.get("content"), list):
+                # A completed message in one piece.
+                text = "".join(str(block.get("text", "")) for block in payload["content"] if isinstance(block, dict) and block.get("type") == "text")
+                usage = payload.get("usage") or {}
+                input_tokens = (int(usage.get("input_tokens", 0) or 0) + int(usage.get("cache_read_input_tokens", 0) or 0)
+                                + int(usage.get("cache_creation_input_tokens", 0) or 0))
+                cached = int(usage.get("cache_read_input_tokens", 0) or 0)
+                output_tokens = int(usage.get("output_tokens", 0) or 0)
+                stop = str(payload.get("stop_reason") or stop)
+                model = str(payload.get("model") or model)
+                if text:
+                    yield {"text": text}
+        yield {"reply": ProviderReply(text="", usage={"input_tokens": input_tokens, "cached_input_tokens": cached, "output_tokens": output_tokens},
+                                      finish_reason=stop, model=model)}
+
+    def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
+             request: ProviderRequest) -> ProviderReply:
+        url, body, headers = self._payload(provider, binding, request)
         reply = transport.post_json(ticket, provider, url, body, headers=headers, auth=self.auth)
         data = reply.data
         blocks = data.get("content") or []

@@ -54,6 +54,12 @@ class VoiceSettings:
     """
 
     enabled: bool = False
+    #: Hands-free wake-word listening (the microphone listener the supervisor
+    #: starts).  Off by default: the listener does not start, the microphone
+    #: stays closed unless the owner uses it explicitly, text chat is
+    #: untouched.  Switching it on in Voice Studio starts the listener at
+    #: runtime; nothing about the wake model, VAD or Voice Studio changes.
+    wake_word_enabled: bool = False
     language: str = ""
     voice_id: str = ""
     #: Speak answers aloud.  Separate from `enabled`: a user may want dictation
@@ -96,7 +102,7 @@ class VoiceSettings:
 
     @staticmethod
     def _coerce(key: str, value: Any) -> Any:
-        if key in {"enabled", "speak_replies"}:
+        if key in {"enabled", "speak_replies", "wake_word_enabled"}:
             if isinstance(value, str):
                 return value.strip().lower() in {"1", "true", "yes", "on"}
             return bool(value)

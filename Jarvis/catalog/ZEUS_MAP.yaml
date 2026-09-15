@@ -707,6 +707,7 @@ packages:
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
       - tests/test_semantic_composition.py
+      - tests/test_streaming.py
     - path: gateway/budget.py
       purpose: 'The cost governor: reserve before you spend, and never past the cap.'
       lines: 299
@@ -716,7 +717,7 @@ packages:
       - tests/test_provider_stack.py
     - path: gateway/config.py
       purpose: Roles, providers, prices and caps -- read from configuration, never from code.
-      lines: 872
+      lines: 894
       public: 8
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -727,6 +728,7 @@ packages:
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+      - tests/test_streaming.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
       lines: 105
@@ -735,17 +737,18 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 770
-      public: 10
+      lines: 1104
+      public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
       - tests/test_gateway_integration.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+      - tests/test_streaming.py
     - path: gateway/health.py
       purpose: Telling a provider problem from a task problem.
-      lines: 143
+      lines: 148
       public: 5
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -762,7 +765,7 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/modes.py
       purpose: The five owner-facing chat modes, and what each one permits.
-      lines: 117
+      lines: 118
       public: 5
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -772,6 +775,13 @@ packages:
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+      - tests/test_streaming.py
+    - path: gateway/output_budget.py
+      purpose: How long an answer may be, decided before the call -- provider-independent.
+      lines: 157
+      public: 5
+      tests:
+      - tests/test_streaming.py
     - path: gateway/persona.py
       purpose: ZEUS stays ZEUS, whoever computed the answer.
       lines: 100
@@ -786,13 +796,13 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/providers.py
       purpose: 'Provider adapters: request shape in, text and usage out.'
-      lines: 281
+      lines: 429
       public: 8
       tests:
       - tests/test_live_providers.py
     - path: gateway/router.py
       purpose: Choosing the route before anything runs.
-      lines: 318
+      lines: 326
       public: 6
       tests:
       - tests/test_model_gateway.py
@@ -807,6 +817,7 @@ packages:
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+      - tests/test_streaming.py
     - path: gateway/task.py
       purpose: 'The typed task vector: what a request is, before anyone asks a model.'
       lines: 237
@@ -818,9 +829,10 @@ packages:
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+      - tests/test_streaming.py
     - path: gateway/transport.py
       purpose: The only way a provider reaches the network -- and the FREE-mode wall.
-      lines: 153
+      lines: 235
       public: 5
       tests:
       - tests/test_model_gateway.py
@@ -1753,6 +1765,7 @@ packages:
       - tests/test_semantic_composition.py
       - tests/test_semantic_plane.py
       - tests/test_service.py
+      - tests/test_streaming.py
       - tests/test_supervisor.py
       - tests/test_thoughts.py
       - tests/test_utterance_gate.py
@@ -1760,6 +1773,7 @@ packages:
       - tests/test_voice_session.py
       - tests/test_wake_pipeline.py
       - tests/test_wake_segmentation.py
+      - tests/test_wake_word_setting.py
     - path: service/acquisition.py
       purpose: When ZEUS is asked for something it cannot do yet.
       lines: 997
@@ -1822,7 +1836,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8510
+      lines: 8551
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1873,7 +1887,7 @@ packages:
       - tests/test_semantic_acceptance.py
     - path: service/engineering.py
       purpose: Who does engineering work, decided once, for every path that needs it.
-      lines: 456
+      lines: 469
       public: 7
       tests:
       - tests/test_engineering_router.py
@@ -1900,6 +1914,7 @@ packages:
       - tests/test_selfdev.py
       - tests/test_semantic_composition.py
       - tests/test_service.py
+      - tests/test_streaming.py
       - tests/test_utterance_gate.py
       - tests/test_voice_service.py
       - tests/test_voice_session.py
@@ -2008,6 +2023,12 @@ packages:
       tests:
       - tests/test_intents.py
       - tests/test_routing.py
+    - path: service/scitext.py
+      purpose: Provider output, made safe to render -- without touching what it says.
+      lines: 119
+      public: 3
+      tests:
+      - tests/test_streaming.py
     - path: service/selfdev.py
       purpose: 'Self-development through ZEUS: "change something about yourself."'
       lines: 1656
@@ -2049,7 +2070,7 @@ packages:
       tests: []
     - path: service/voice.py
       purpose: 'Voice as a service: audio arrives over the wire, audio goes back over the wire.'
-      lines: 480
+      lines: 486
       public: 5
       tests:
       - tests/test_pronunciation.py
@@ -2058,6 +2079,7 @@ packages:
       - tests/test_voice_service.py
       - tests/test_wake_pipeline.py
       - tests/test_wake_segmentation.py
+      - tests/test_wake_word_setting.py
     - path: service/webread.py
       purpose: 'Real page reading: fetch an article and make it summarizable.'
       lines: 91
@@ -2524,6 +2546,7 @@ packages:
       - tests/test_release.py
       - tests/test_supervisor.py
       - tests/test_supervisor_ollama.py
+      - tests/test_wake_word_setting.py
     - path: zeus_supervisor/__main__.py
       purpose: '``python -m zeus_supervisor`` -- the same entry point ZEUS.exe is built from.'
       lines: 154
@@ -2542,6 +2565,7 @@ packages:
       - tests/test_desktop_window.py
       - tests/test_supervisor.py
       - tests/test_supervisor_ollama.py
+      - tests/test_wake_word_setting.py
     - path: zeus_supervisor/control.py
       purpose: 'How the application talks to the supervisor: files, not imports.'
       lines: 130
@@ -2588,12 +2612,13 @@ packages:
       tests: []
     - path: zeus_supervisor/supervisor.py
       purpose: 'The loop: start ZEUS, prove it is up, keep it up, undo what breaks it.'
-      lines: 766
+      lines: 822
       public: 1
       tests:
       - tests/test_desktop_lifecycle.py
       - tests/test_supervisor.py
       - tests/test_supervisor_ollama.py
+      - tests/test_wake_word_setting.py
 entry_points:
   serve: jarvis/serve.py
   cli: jarvis/cli.py
@@ -2831,6 +2856,15 @@ ui_modules:
   - api.js
   - bus.js
   - dom.js
+- path: ui/core/markdown.js
+  purpose: Stream-safe Markdown for the conversation.
+  lines: 226
+  imports:
+  - mathtex.js
+- path: ui/core/mathtex.js
+  purpose: A LaTeX subset, rendered deterministically to HTML -- no fonts, no library,
+  lines: 186
+  imports: []
 - path: ui/core/state.js
   purpose: 'One observable holding what the server last said: the state event, the'
   lines: 55
@@ -2889,12 +2923,13 @@ ui_modules:
   - core/views.js
 - path: ui/views/chat.js
   purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
-  lines: 257
+  lines: 291
   imports:
   - core/api.js
   - core/bus.js
   - core/dom.js
   - core/gateway.js
+  - core/markdown.js
   - core/state.js
   - core/views.js
   - corrections.js
@@ -3003,7 +3038,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/voice.js
   purpose: 'Voice Studio: wake word, microphone/speaker/voice settings, live input'
-  lines: 303
+  lines: 309
   imports:
   - core/api.js
   - core/dom.js
@@ -3025,8 +3060,8 @@ ui_modules:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 328
+  modules: 330
   packages: 33
   api_routes: 171
-  ui_modules: 31
-  tests: 120
+  ui_modules: 33
+  tests: 122

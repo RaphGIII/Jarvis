@@ -1515,7 +1515,11 @@ modules:
       methods: []
     - name: GatewayReply
       methods:
+      - def completion(self) -> dict[str, Any]
       - def to_dict(self) -> dict[str, Any]
+    - name: GatewayStream
+      doc: Text as the provider produces it; the settled :class:`GatewayReply` once it has finished.
+      methods: []
     - name: ModelGateway
       methods:
       - 'def reconfigure(self, config: GatewayConfig) -> None'
@@ -1525,6 +1529,7 @@ modules:
       - 'def privacy_for(self, request: GatewayRequest, *, provider_may_train: bool) -> PrivacyDecision'
       - 'def plan(self, request: GatewayRequest) -> tuple[RouteDecision, PrivacyDecision]'
       - 'def complete(self, request: GatewayRequest) -> GatewayReply'
+      - 'def stream(self, request: GatewayRequest) -> GatewayStream'
       - 'def report_outcome(self, reply: GatewayReply, *, goal_verified: bool, failure_class: str='''') -> None'
       - 'def report_task_outcome(self, task_id: str, *, goal_verified: bool, failure_class: str=''task_failure'') -> int'
       - def status(self) -> dict[str, Any]
@@ -1637,6 +1642,23 @@ modules:
       - 'def permits_role(self, role: str) -> bool'
     functions:
     - signature: 'def policy_for(mode: ChatMode | str) -> ModePolicy'
+  gateway/output_budget.py:
+    module: gateway.output_budget
+    classes:
+    - name: OutputBudget
+      methods:
+      - def reduced(self) -> bool
+      - def to_dict(self) -> dict[str, Any]
+    functions:
+    - signature: 'def budget_for_level(level: str, *, reason: str='''', requested_level: str='''', signals: dict[str, Any]
+        | None=None, hard_limit: int | None=None) -> OutputBudget'
+    - signature: 'def decide_output_budget(text: str, *, task: Any=None, mode: Any=None, structured: bool=False, hard_limit:
+        int | None=None) -> OutputBudget'
+      doc: The level an answer to ``text`` needs, from the owner's words, the task and the mode.
+    - signature: 'def step_down(budget: OutputBudget, *, hard_limit: int | None=None) -> OutputBudget | None'
+      doc: One level less, for a governor that cannot reserve the current one.  None at the floor.
+    - signature: 'def truncated_by_limit(finish_reason: str) -> bool'
+      doc: Whether a provider stopped because it hit the output ceiling, whatever it calls that.
   gateway/persona.py:
     module: gateway.persona
     classes: []
@@ -1684,11 +1706,15 @@ modules:
       - def to_dict(self) -> dict[str, Any]
     - name: GeminiAdapter
       methods:
+      - 'def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
+        -> Iterator[StreamEvent]'
       - 'def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
         -> ProviderReply'
     - name: OpenAIAdapter
       doc: 'The Responses API: reasoning effort, structured output, cached-token usage.'
       methods:
+      - 'def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
+        -> Iterator[StreamEvent]'
       - 'def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
         -> ProviderReply'
     - name: OpenAICompatibleAdapter
@@ -1699,6 +1725,8 @@ modules:
         -> ProviderReply'
     - name: AnthropicAdapter
       methods:
+      - 'def stream(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
+        -> Iterator[StreamEvent]'
       - 'def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding, request: ProviderRequest)
         -> ProviderReply'
     functions:
@@ -1795,6 +1823,8 @@ modules:
       methods:
       - 'def issue(self, *, provider: ProviderConfig, role: str, mode: ChatMode | str, cost_class: CostClass, reservation:
         Reservation | None) -> Ticket'
+      - 'def post_sse(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *, headers: dict[str,
+        str] | None=None, auth: str=''bearer'', timeout: float | None=None)'
       - 'def post_json(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *, headers: dict[str,
         str] | None=None, auth: str=''bearer'', timeout: float | None=None) -> HttpReply'
     functions: []
@@ -4430,6 +4460,19 @@ modules:
       doc: The top-level intent of a request, decided before any domain parser runs.
     - signature: 'def looks_like_prose(query: str, *, max_words: int=12, max_chars: int=120) -> str'
       doc: Why a string must not be sent to a media provider as a search, or ``""``.
+  service/scitext.py:
+    module: service.scitext
+    classes:
+    - name: StreamNormalizer
+      doc: The same normalisation, chunk by chunk, with a carry for tokens a chunk boundary cut.
+      methods:
+      - 'def feed(self, chunk: str) -> str'
+      - def finish(self) -> str
+    functions:
+    - signature: 'def chemistry_to_unicode(formula: str) -> str'
+      doc: '``H2O`` -> H₂O, ``Ca^2+`` -> Ca²⁺, ``HCO3-`` -> HCO₃⁻, ``2H2 + O2 -> 2H2O`` -> 2H₂ + O₂ → 2H₂O.'
+    - signature: 'def normalize(text: str) -> str'
+      doc: 'The whole answer: prose repaired, chemistry markup normalised, code untouched.'
   service/selfdev.py:
     module: service.selfdev
     classes:
@@ -5661,5 +5704,6 @@ modules:
       - 'def log(self, message: str) -> None'
       - def url(self) -> str
       - def run(self) -> int
+      - def wake_word_enabled(self) -> bool
       - 'def shutdown_children(self, *, core_only: bool=False) -> None'
     functions: []

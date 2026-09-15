@@ -20,8 +20,11 @@ import * as views from "../core/views.js";
 import * as corrections from "./corrections.js";
 import * as playback from "../voice/playback.js";
 import * as gateway from "../core/gateway.js";
+import { render as renderMarkdown, renderPartial } from "../core/markdown.js";
 
 let streaming = null;
+let streamText = "";
+let renderQueued = false;
 let eye = null;
 let historyDivider = false;
 
@@ -108,14 +111,27 @@ export function addTurn(kind, who, text, payload) {
   return what;
 }
 
+/* Streaming: every token is appended to the text so far and the turn is
+   re-rendered as stream-safe Markdown on the next animation frame -- content
+   appears as it arrives, never as a typewriter over a finished answer.  The
+   message event then renders the completed text once, deterministically. */
 function appendToken(text) {
   if (!streaming) {
     streaming = addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", "​");
-    if (streaming) { streaming.textContent = ""; streaming.append(el("span", { class: "cursor" })); }
+    if (streaming) { streaming.classList.add("md"); streaming.textContent = ""; streaming.append(el("span", { class: "cursor" })); }
+    streamText = "";
   }
   if (!streaming) return;
-  streaming.insertBefore(document.createTextNode(text), streaming.querySelector(".cursor"));
-  scrollDown();
+  streamText += text;
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    if (!streaming) return;
+    streaming.innerHTML = renderPartial(streamText);
+    streaming.append(el("span", { class: "cursor" }));
+    scrollDown();
+  });
 }
 
 function finishStreaming(finalText, payload) {
@@ -126,11 +142,28 @@ function finishStreaming(finalText, payload) {
     return;
   }
   let what = null;
-  if (streaming && !(payload && payload._replay)) { streaming.textContent = finalText; what = streaming; streaming = null; }
+  if (streaming && !(payload && payload._replay)) { what = streaming; streaming = null; streamText = ""; }
   else if (finalText) what = addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", finalText, payload);
+  if (what) {
+    what.classList.add("md");
+    what.innerHTML = renderMarkdown(finalText);   // the exact completed answer, rendered once
+  }
+  if (what && meta.completion && meta.completion.truncated) attachContinue(what, meta.completion);
   if (what && !(payload && payload._replay)) attachFeedback(what, payload || {});
   $("app").classList.add("conversing");
   scrollDown();
+}
+
+/* A ceiling-truncated answer says so and offers to go on in the same conversation.
+   Continuing is a normal request: the cost policy decides, nothing is spent by itself. */
+function attachContinue(what, completion) {
+  const note = el("div", { class: "truncated" },
+    el("span", { text: `Antwort am Ausgabelimit abgeschnitten (${completion.output_tokens || "?"} von ${completion.configured_output_budget || "?"} Tokens). ` }),
+    el("a", { href: "#", class: "fb-btn", text: "Weiter", onClick: (ev) => {
+      ev.preventDefault();
+      send("Bitte setze deine letzte Antwort genau an der Stelle fort, an der sie abgebrochen wurde, ohne den bisherigen Text zu wiederholen.");
+    } }));
+  what.append(note);
 }
 
 /* ------------------------------------------------------------------ */
@@ -186,6 +219,7 @@ export function endStreaming() {
   if (!streaming) return;
   streaming.querySelector(".cursor")?.remove();
   streaming = null;
+  streamText = "";
 }
 
 function scrollDown() {

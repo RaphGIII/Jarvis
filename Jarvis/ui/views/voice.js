@@ -75,7 +75,13 @@ export const view = {
       form.append(el("div", { class: "field" }, el("label", { text: label }), input, hint ? el("div", { class: "empty", text: hint }) : null));
       return () => [key, type === "number" ? (input.value === "" ? null : Number(input.value)) : input.value];
     };
+    const wakeSwitch = el("input", { type: "checkbox" });
+    wakeSwitch.checked = Boolean(s.wake_word_enabled);
+    form.append(el("div", { class: "field" }, el("label", { text: "hands-free wake word (\u201eZeus\u201c) listening" }), wakeSwitch,
+      el("div", { class: "empty", text: "off: the microphone listener does not start and the microphone stays closed unless you use it; " +
+        "on: the listener starts within a few seconds, no restart needed. Text chat is never affected." })));
     const readers = [
+      () => ["wake_word_enabled", wakeSwitch.checked],
       field("microphone (device name or index)", "microphone"), field("speaker / output", "output"), field("voice (piper model)", "voice"),
       field("wake threshold 0–1 (sensitivity)", "wake_sensitivity", "number", "the score „Zeus“ must reach on two consecutive frames; lower = more sensitive; empty = the model's recommendation"),
       field("voice volume 0–1", "volume", "number", "playback of ZEUS's speech only — never touches the microphone or wake detection"),

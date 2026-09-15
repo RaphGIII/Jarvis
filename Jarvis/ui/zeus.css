@@ -678,3 +678,33 @@ header.top { -webkit-app-region: no-drag; }
 
 /* the canvas takes its width from LAYOUT, never from its own attribute */
 #constellation.galaxy { width: 100%; display: block; }
+
+
+/* ---- rendered answers: Markdown, math, chemistry (chat.js + core/markdown.js) ---- */
+.turn .what.md { white-space: normal; line-height: 1.55; }
+.turn .what.md p { margin: 0 0 .6em; }
+.turn .what.md p:last-child { margin-bottom: 0; }
+.turn .what.md h2, .turn .what.md h3, .turn .what.md h4, .turn .what.md h5 { margin: .8em 0 .35em; font-weight: 600; line-height: 1.3; }
+.turn .what.md h2 { font-size: 1.15em; } .turn .what.md h3 { font-size: 1.08em; } .turn .what.md h4 { font-size: 1em; }
+.turn .what.md ul, .turn .what.md ol { margin: .3em 0 .7em 1.4em; padding: 0; }
+.turn .what.md li { margin: .15em 0; }
+.turn .what.md blockquote { margin: .5em 0; padding: .2em .9em; border-left: 2px solid var(--dim); color: var(--text-soft); }
+.turn .what.md code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,.06); padding: .05em .3em; border-radius: 4px; }
+.turn .what.md pre.code { margin: .5em 0; }
+.turn .what.md pre.code code { background: none; padding: 0; font-size: 12.5px; }
+.turn .what.md pre.code.open { border-style: dashed; }
+.turn .what.md table { border-collapse: collapse; margin: .5em 0; max-width: 100%; display: block; overflow-x: auto; }
+.turn .what.md th, .turn .what.md td { border: 1px solid var(--line); padding: .3em .6em; vertical-align: top; }
+.turn .what.md th { background: rgba(255,255,255,.05); font-weight: 600; }
+.turn .what.md hr { border: 0; border-top: 1px solid var(--line); margin: .8em 0; }
+.turn .what.md a { color: #8fc1ff; }
+.turn .what.md .math { font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; font-size: 1.05em; white-space: nowrap; }
+.turn .what.md .math.display { display: block; text-align: center; margin: .5em 0; white-space: normal; }
+.turn .what.md .frac { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 .15em; line-height: 1.1; }
+.turn .what.md .frac .num { border-bottom: 1px solid currentColor; padding: 0 .2em; }
+.turn .what.md .frac .den { padding: 0 .2em; }
+.turn .what.md .sqrt { border-top: 1px solid currentColor; padding: 0 .1em; }
+.turn .what.md .over { text-decoration: overline; }
+.turn .what.md .vec::after { content: "\20d7"; }
+.turn .what.md .cursor { display: inline-block; }
+.turn .what.md .truncated { margin-top: .5em; font-size: 12.5px; color: var(--dim); }

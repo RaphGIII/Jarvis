@@ -83,6 +83,8 @@ class RouteDecision:
     cost_class: CostClass = CostClass.ZERO
     estimate: CostEstimate | None = None
     thinking_level: str = ""
+    #: The output budget decided for this call (level, tokens, reason), before the call.
+    output_budget: dict[str, Any] = field(default_factory=dict)
     q: float = 0.0
     tau: float = 0.0
     meets_threshold: bool = True
@@ -101,7 +103,7 @@ class RouteDecision:
         return {
             "kind": self.kind.value, "mode": self.mode.value, "role": self.role, "provider": self.provider, "model": self.model,
             "cost_class": self.cost_class.value, "estimate": self.estimate.to_dict() if self.estimate else None,
-            "thinking_level": self.thinking_level, "q": round(self.q, 4), "tau": round(self.tau, 4),
+            "thinking_level": self.thinking_level, "output_budget": dict(self.output_budget), "q": round(self.q, 4), "tau": round(self.tau, 4),
             "meets_threshold": self.meets_threshold, "offline_fallback": self.offline_fallback,
             "hard_override": self.hard_override, "reason": self.reason, "suggestion": self.suggestion,
             "candidates": [c.to_dict() for c in self.candidates], "task": self.task.to_dict(),
@@ -278,11 +280,17 @@ class ModelRouter:
 
         meeting = [c for c in eligible if c.q >= tau]
         if meeting:
-            # Cheapest first; among equally cheap, the more reliable one.  A
-            # local offline fallback is never preferred over a configured
-            # zero-cost cloud role that meets the bar: the brief removes the
-            # small local model from the normal path.
-            meeting.sort(key=lambda c: (c.cost, 1 if c.binding.offline_fallback else 0, -c.q))
+            if mode is ChatMode.DEEP:
+                # DEEP is the owner asking for the strongest configured
+                # reasoner: the most reliable route that meets the bar, chosen
+                # directly -- never a cheaper one first to see whether it copes.
+                meeting.sort(key=lambda c: (1 if c.binding.offline_fallback else 0, -c.q, c.cost))
+            else:
+                # Cheapest first; among equally cheap, the more reliable one.  A
+                # local offline fallback is never preferred over a configured
+                # zero-cost cloud role that meets the bar: the brief removes the
+                # small local model from the normal path.
+                meeting.sort(key=lambda c: (c.cost, 1 if c.binding.offline_fallback else 0, -c.q))
             chosen, decision.meets_threshold = meeting[0], True
         else:
             eligible.sort(key=lambda c: (-c.q, c.cost))

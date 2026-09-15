@@ -95,11 +95,7 @@ class Transport:
         if not base.netloc or target.scheme != base.scheme or target.netloc != base.netloc:
             raise ValueError(f"request URL {redact(url, self.credentials)!r} is not under provider {provider.name}'s base URL")
 
-    def post_json(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *,
-                  headers: dict[str, str] | None = None, auth: str = "bearer", timeout: float | None = None) -> HttpReply:
-        if ticket.provider != provider.name:
-            raise ValueError(f"ticket for {ticket.provider} used with provider {provider.name}")
-        self._check_url(provider, url)
+    def _request_headers(self, provider: ProviderConfig, headers: dict[str, str] | None, auth: str) -> dict[str, str]:
         request_headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "ZEUS/1.0"}
         request_headers.update(headers or {})
         if provider.secret:
@@ -110,6 +106,92 @@ class Transport:
                 request_headers["x-api-key"] = secret
             elif auth == "x-goog-api-key":
                 request_headers["x-goog-api-key"] = secret
+        return request_headers
+
+    def _http_error(self, exc: urllib.error.HTTPError, ticket: Ticket, provider: ProviderConfig) -> GatewayError:
+        text = ""
+        try:
+            text = exc.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            text = ""
+        text = redact(text, self.credentials)
+        status_kind = classify_http(int(exc.code), text, provider_kind=provider.kind)
+        retry_after = None
+        try:
+            header = exc.headers.get("Retry-After") if exc.headers else None
+            retry_after = float(header) if header else None
+        except (TypeError, ValueError):
+            retry_after = None
+        if retry_after is None:
+            match = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', text) or re.search(r"retry in (\d+(?:\.\d+)?)s", text, re.I)
+            if match:
+                retry_after = float(match.group(1))
+        return GatewayError(status_kind, f"HTTP {exc.code}: {text[:500]}", role=ticket.role, provider=provider.name,
+                            http_status=int(exc.code), retry_after_seconds=retry_after)
+
+    def post_sse(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *,
+                 headers: dict[str, str] | None = None, auth: str = "bearer", timeout: float | None = None):
+        """POST and read the reply as Server-Sent Events: yields ``(event, data)`` as they arrive.
+
+        The same ticket, URL and credential rules as :meth:`post_json`; an
+        HTTP failure before the stream opens is classified the same way.
+        Closing the generator closes the connection.
+        """
+
+        if ticket.provider != provider.name:
+            raise ValueError(f"ticket for {ticket.provider} used with provider {provider.name}")
+        self._check_url(provider, url)
+        request_headers = self._request_headers(provider, headers, auth)
+        request_headers["Accept"] = "text/event-stream"
+        payload = json.dumps(body).encode("utf-8")
+        try:
+            request = urllib.request.Request(url, data=payload, headers=request_headers, method="POST")
+            response = self._opener(request, timeout=timeout or provider.timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            raise self._http_error(exc, ticket, provider) from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, redact(str(exc), self.credentials)[:300], role=ticket.role,
+                               provider=provider.name) from None
+        try:
+            if not hasattr(response, "__iter__"):
+                # Not a stream: the whole body, once.  The adapter reads it as
+                # the completed reply it is.
+                raw_body = response.read()
+                text = raw_body.decode("utf-8", errors="replace") if isinstance(raw_body, (bytes, bytearray)) else str(raw_body)
+                yield "", text
+                return
+            event, data_lines = "", []
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+                line = line.rstrip("\r\n")
+                if line == "":
+                    if data_lines:
+                        yield event, "\n".join(data_lines)
+                    event, data_lines = "", []
+                    continue
+                if line.startswith(":"):
+                    continue
+                if line.startswith("event:"):
+                    event = line[6:].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+            if data_lines:
+                yield event, "\n".join(data_lines)
+        except (TimeoutError, OSError) as exc:
+            raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, "stream interrupted: " + redact(str(exc), self.credentials)[:200],
+                               role=ticket.role, provider=provider.name) from None
+        finally:
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def post_json(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *,
+                  headers: dict[str, str] | None = None, auth: str = "bearer", timeout: float | None = None) -> HttpReply:
+        if ticket.provider != provider.name:
+            raise ValueError(f"ticket for {ticket.provider} used with provider {provider.name}")
+        self._check_url(provider, url)
+        request_headers = self._request_headers(provider, headers, auth)
         payload = json.dumps(body).encode("utf-8")
         started = time.perf_counter()
         try:

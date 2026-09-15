@@ -790,7 +790,8 @@ def test_brain_provider_stream_yields_the_gateway_answer(tmp_path, cfg, creds, n
     provider = GatewayBrainProvider(gateway)
     pieces = list(provider.generate_stream("Was ist NAT?", system="sys"))
     assert "".join(pieces).strip() == "Erster Satz. Zweiter Satz! Dritter?"
-    assert len(pieces) == 3
+    assert len(pieces) >= 1, "a provider that answered in one piece yields one piece; a streaming one yields as it goes"
+    assert net.requests[-1]["url"].endswith(":streamGenerateContent?alt=sse"), "the real streaming endpoint was asked"
     assert net.requests[-1]["body"]["system_instruction"]["parts"][0]["text"] == "sys"
 
 

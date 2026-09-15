@@ -50,6 +50,7 @@ from gateway.modes import CostClass, RoleFamily
 
 ROLE_NAMES: tuple[str, ...] = (
     "reasoning.free",
+    "reasoning.smart",
     "reasoning.deep",
     "engineer.standard",
     "engineer.frontier",
@@ -62,7 +63,8 @@ ROLE_NAMES: tuple[str, ...] = (
 )
 
 #: The roles core code may reason about.  Everything else is plumbing.
-INTELLIGENCE_ROLES: tuple[str, ...] = ("reasoning.free", "reasoning.deep", "engineer.standard", "engineer.frontier")
+INTELLIGENCE_ROLES: tuple[str, ...] = ("reasoning.free", "reasoning.smart", "reasoning.deep", "engineer.standard", "engineer.frontier",
+                                       "engineer.frontier_alt")
 
 PROVIDER_KINDS: tuple[str, ...] = ("gemini", "openai", "anthropic", "ollama", "openai_compatible", "subscription_cli")
 
@@ -641,6 +643,13 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "max_output_tokens": 2048, "temperature": 0.3,
             "purpose": "public/non-sensitive knowledge, semantic interpretation, context understanding, capability selection and composition",
         },
+        "reasoning.smart": {
+            "provider": "openai", "model": "gpt-5.6-terra", "enabled": True,
+            "thinking": {"FAST": "low", "NORMAL": "medium", "DEEP": "high"},
+            "reliability_prior": {"knowledge": [8, 1], "semantic": [8, 1], "planning": [7, 1], "composition": [6, 1]},
+            "max_output_tokens": 4096, "temperature": 0.2,
+            "purpose": "inexpensive cloud reasoning: everyday interpretation, planning and explanation when the free tier is not enough",
+        },
         "reasoning.deep": {
             "provider": "openai", "model": "gpt-5.6-sol", "enabled": True,
             "thinking": {"FAST": "low", "NORMAL": "medium", "DEEP": "high", "MAX": "xhigh"},
@@ -663,12 +672,15 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "purpose": "major new subsystems, core architecture, multi-module integrations, long autonomous engineering jobs",
         },
         "engineer.frontier_alt": {
-            # A second frontier engineering provider the owner may configure.
-            # Chosen only when the engineering router names it; never a cascade.
-            "provider": "frontier_alt", "model": "", "enabled": False,
+            # A second frontier engineer: the owner's Codex subscription with
+            # an Astra-class model, when their allowance offers one.  The model
+            # and the switch live in the owner override, never here; the paid
+            # API is not a fallback for this role.  Chosen only when the
+            # engineering router names it; never a cascade.
+            "provider": "codex", "model": "", "enabled": False,
             "reliability_prior": {"engineering.small": [9, 1], "engineering.medium": [9, 1], "engineering.large": [7, 1]},
             "max_output_tokens": 16384, "temperature": 0.1,
-            "purpose": "optional alternative frontier engineering provider",
+            "purpose": "optional second frontier engineer through the owner's Codex subscription (Astra-class model); no API fallback",
         },
         "engineer.codex": {
             "provider": "codex", "model": "codex-cli", "enabled": True,
@@ -686,6 +698,7 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "kind": "gemini", "base_url": "https://generativelanguage.googleapis.com", "enabled": False,
             "secret": "gemini", "credential_env": ["GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY"],
             "may_train_on_requests": True, "metered": False, "timeout_seconds": 120,
+            "options": {"output_hard_limit": 65536},
             "purpose": "free-tier reasoning; quotas and rate limits are the resource constraint, not money",
             "pricing": {
                 "gemini-3.8-flash": [{"input_per_m": 0.0, "cached_input_per_m": 0.0, "output_per_m": 0.0, "currency": "USD",
@@ -702,6 +715,7 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "kind": "gemini", "base_url": "https://generativelanguage.googleapis.com", "enabled": False,
             "secret": "gemini", "credential_env": ["GOOGLE_GEMINI_API_KEY", "GEMINI_API_KEY"],
             "may_train_on_requests": False, "metered": True, "timeout_seconds": 120,
+            "options": {"output_hard_limit": 65536},
             "purpose": "paid-tier Gemini, only when the owner binds a role to it; never a silent continuation of the free tier",
             "pricing": {
                 "gemini-3.8-flash": [{"input_per_m": 0.30, "cached_input_per_m": 0.03, "output_per_m": 2.50, "currency": "USD",
@@ -713,16 +727,24 @@ DEFAULT_DOCUMENT: dict[str, Any] = {
             "kind": "openai", "base_url": "https://api.openai.com", "enabled": False,
             "secret": "openai", "credential_env": ["OPENAI_API_KEY"],
             "may_train_on_requests": False, "metered": True, "timeout_seconds": 300,
-            "purpose": "deep reasoning",
+            "options": {"output_hard_limit": 128000},
+            "purpose": "smart and deep reasoning",
             "pricing": {
                 "gpt-5.6-sol": [{"input_per_m": 4.0, "cached_input_per_m": 0.40, "output_per_m": 20.0, "currency": "USD",
                                  "effective_from": "2026-09-14", "confirmed": True, "source": "OpenAI standard pricing, owner-verified 2026-09-14"}],
+                # Terra's list price was not provided: charged at Sol's price
+                # until the owner confirms it -- an upper bound, never a guess
+                # below the truth.  Once set lower, AUTO prefers Terra on cost.
+                "gpt-5.6-terra": [{"input_per_m": 4.0, "cached_input_per_m": 0.40, "output_per_m": 20.0, "currency": "USD",
+                                   "effective_from": "2026-09-15", "confirmed": False,
+                                   "source": "placeholder = Sol list price as a conservative bound; owner to enter Terra's price"}],
             },
         },
         "anthropic": {
             "kind": "anthropic", "base_url": "https://api.anthropic.com", "enabled": False,
             "secret": "anthropic", "credential_env": ["ANTHROPIC_API_KEY"],
             "may_train_on_requests": False, "metered": True, "timeout_seconds": 600,
+            "options": {"output_hard_limit": 32000},
             "purpose": "engineering",
             "pricing": {
                 # Cache-read prices were not provided: cached input is charged

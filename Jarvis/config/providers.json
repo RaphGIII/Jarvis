@@ -27,7 +27,9 @@
       "metered": true,
       "monthly_cap_eur": null,
       "name": "anthropic",
-      "options": {},
+      "options": {
+        "output_hard_limit": 32000
+      },
       "pricing": {
         "claude-fable-5-1": [
           {
@@ -98,7 +100,9 @@
       "metered": false,
       "monthly_cap_eur": null,
       "name": "gemini",
-      "options": {},
+      "options": {
+        "output_hard_limit": 65536
+      },
       "pricing": {
         "gemini-3.7-flash": [
           {
@@ -139,7 +143,9 @@
       "metered": true,
       "monthly_cap_eur": null,
       "name": "gemini_paid",
-      "options": {},
+      "options": {
+        "output_hard_limit": 65536
+      },
       "pricing": {
         "gemini-3.8-flash": [
           {
@@ -183,7 +189,9 @@
       "metered": true,
       "monthly_cap_eur": null,
       "name": "openai",
-      "options": {},
+      "options": {
+        "output_hard_limit": 128000
+      },
       "pricing": {
         "gpt-5.6-sol": [
           {
@@ -195,9 +203,20 @@
             "output_per_m": 20.0,
             "source": "OpenAI standard pricing, owner-verified 2026-09-14"
           }
+        ],
+        "gpt-5.6-terra": [
+          {
+            "cached_input_per_m": 0.4,
+            "confirmed": false,
+            "currency": "USD",
+            "effective_from": "2026-09-15",
+            "input_per_m": 4.0,
+            "output_per_m": 20.0,
+            "source": "placeholder = Sol list price as a conservative bound; owner to enter Terra's price"
+          }
         ]
       },
-      "purpose": "deep reasoning",
+      "purpose": "smart and deep reasoning",
       "secret": "openai",
       "timeout_seconds": 300.0
     }
@@ -265,8 +284,8 @@
       "max_output_tokens": 16384,
       "model": "",
       "offline_fallback": false,
-      "provider": "frontier_alt",
-      "purpose": "optional alternative frontier engineering provider",
+      "provider": "codex",
+      "purpose": "optional second frontier engineer through the owner's Codex subscription (Astra-class model); no API fallback",
       "reliability_prior": {
         "engineering.large": [
           7.0,
@@ -438,6 +457,40 @@
       },
       "role": "reasoning.free",
       "temperature": 0.3,
+      "thinking": {
+        "DEEP": "high",
+        "FAST": "low",
+        "NORMAL": "medium"
+      },
+      "tier": ""
+    },
+    "reasoning.smart": {
+      "enabled": true,
+      "max_output_tokens": 4096,
+      "model": "gpt-5.6-terra",
+      "offline_fallback": false,
+      "provider": "openai",
+      "purpose": "inexpensive cloud reasoning: everyday interpretation, planning and explanation when the free tier is not enough",
+      "reliability_prior": {
+        "composition": [
+          6.0,
+          1.0
+        ],
+        "knowledge": [
+          8.0,
+          1.0
+        ],
+        "planning": [
+          7.0,
+          1.0
+        ],
+        "semantic": [
+          8.0,
+          1.0
+        ]
+      },
+      "role": "reasoning.smart",
+      "temperature": 0.2,
       "thinking": {
         "DEEP": "high",
         "FAST": "low",

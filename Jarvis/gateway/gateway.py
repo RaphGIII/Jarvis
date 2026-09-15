@@ -39,6 +39,7 @@ from gateway.estimate import actual_cost, estimate_cost
 from gateway.health import FreeIntelligenceUnavailable, GatewayError, ProviderHealth, ProviderStatus
 from gateway.learning import Observation, PerformanceLedger, ReliabilityModel
 from gateway.modes import MODE_POLICIES, ChatMode, CostClass, policy_for
+from gateway.output_budget import OutputBudget, decide_output_budget, step_down, truncated_by_limit
 from gateway.persona import guard_identity, system_prompt_for_role
 from gateway.privacy import Chunk, PrivacyDecision, PrivacyRouter
 from gateway.providers import ProviderRequest, adapter_for
@@ -76,6 +77,9 @@ class RequestContext:
     #: context_dependency, long_horizon, novelty).  Only ever raise the vector.
     soft: dict[str, float] = field(default_factory=dict)
     language: str = ""
+    #: The owner's current words and, when the caller decided one, the output budget.
+    owner_text: str = ""
+    output_budget: Any = None
 
 
 _context: contextvars.ContextVar[RequestContext | None] = contextvars.ContextVar("zeus_gateway_context", default=None)
@@ -125,6 +129,13 @@ class GatewayRequest:
     #: PlanSpec): when only the offline fallback is reachable the call is
     #: refused instead of made.
     allow_offline_fallback: bool = True
+    #: The owner's own words for this request (the prompt may carry the
+    #: whole transcript): what the output budget is read from.
+    owner_text: str = ""
+    #: An OutputBudget the caller decided; otherwise the gateway decides one
+    #: from owner_text, the task and the mode.  ``max_output_tokens`` set by
+    #: the caller outranks both (a structured decision knows its size).
+    output_budget: Any = None
 
 
 @dataclass
@@ -142,6 +153,21 @@ class GatewayReply:
     privacy: PrivacyDecision | None = None
     reservation_id: str = ""
     route_attempts: list[dict[str, Any]] = field(default_factory=list)
+    #: How the provider stopped, and whether that was the output ceiling.
+    finish_reason: str = ""
+    truncated: bool = False
+    output_budget: dict[str, Any] = field(default_factory=dict)
+    max_output_tokens: int = 0
+    provider_hard_limit: int = 0
+    #: The consumer closed the stream before the provider finished.
+    aborted: bool = False
+
+    def completion(self) -> dict[str, Any]:
+        """What a reader needs to judge whether the answer is whole."""
+
+        return {"finish_reason": self.finish_reason, "truncated": self.truncated, "output_tokens": int(self.usage.get("output_tokens", 0) or 0),
+                "configured_output_budget": self.max_output_tokens, "output_budget": dict(self.output_budget),
+                "provider_hard_limit": self.provider_hard_limit, "aborted": self.aborted}
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,8 +175,54 @@ class GatewayReply:
             "estimated_eur": self.estimated_eur, "actual_eur": self.actual_eur, "latency_seconds": round(self.latency_seconds, 3),
             "identity_rewrites": self.identity_rewrites, "decision": self.decision.to_dict(),
             "privacy": self.privacy.to_dict() if self.privacy else None, "reservation_id": self.reservation_id,
-            "route_attempts": list(self.route_attempts), "final_selected_model": self.model,
+            "route_attempts": list(self.route_attempts), "final_selected_model": self.model, "completion": self.completion(),
         }
+
+
+@dataclass
+class _Prepared:
+    """Everything decided before a provider is called: route, privacy, budget, reservation, ticket."""
+
+    request: GatewayRequest
+    mode: ChatMode
+    decision: RouteDecision
+    privacy: PrivacyDecision
+    binding: RoleBinding
+    provider: Any
+    prompt_text: str
+    system: str = ""
+    max_out: int = 0
+    temperature: float = 0.0
+    pricing: Any = None
+    estimate: Any = None
+    reservation: Reservation | None = None
+    ticket: Any = None
+    provider_request: ProviderRequest | None = None
+    adapter: Any = None
+    budget: OutputBudget | None = None
+    hard_limit: int = 0
+    local: bool = False
+    started: float = 0.0
+
+
+class GatewayStream:
+    """Text as the provider produces it; the settled :class:`GatewayReply` once it has finished.
+
+    Iterate it once.  ``reply`` is set when the iteration ends normally;
+    ``error`` when the provider failed; ``aborted`` when the consumer stopped
+    early (the reservation is then settled at the estimate, conservatively).
+    """
+
+    def __init__(self, gateway: "ModelGateway", prepared: _Prepared) -> None:
+        self._gateway = gateway
+        self.prepared = prepared
+        self.decision = prepared.decision
+        self.reply: GatewayReply | None = None
+        self.error: Exception | None = None
+        self.aborted = False
+
+    def __iter__(self) -> Iterator[str]:
+        return self._gateway._run_stream(self.prepared, self)
 
 
 class ModelGateway:
@@ -283,7 +355,9 @@ class ModelGateway:
 
     # -- executing ---------------------------------------------------------------------
 
-    def complete(self, request: GatewayRequest) -> GatewayReply:
+    def _prepare(self, request: GatewayRequest) -> _Prepared:
+        """Route, privacy, output budget, estimate, reservation, ticket -- all before any byte moves."""
+
         mode = ChatMode.parse(request.mode)
         decision, privacy = self.plan(request)
         if decision.kind is not RouteKind.MODEL:
@@ -310,13 +384,29 @@ class ModelGateway:
             decision.kind, decision.reason = RouteKind.REFUSED, "sensitive request may not go to a may-train provider"
             raise GatewayRefused(decision)
         prompt_text = privacy.prompt_text()
-
-        if binding.family.value == "local":
-            return self._complete_local(request, decision, binding, privacy, prompt_text)
+        prepared = _Prepared(request=request, mode=mode, decision=decision, privacy=privacy, binding=binding, provider=provider,
+                             prompt_text=prompt_text, local=binding.family.value == "local")
+        if prepared.local:
+            return prepared
 
         system = request.system or system_prompt_for_role(decision.role)
-        max_out = request.max_output_tokens or binding.max_output_tokens
         temperature = binding.temperature if request.temperature is None else request.temperature
+        hard_limit = int((provider.options or {}).get("output_hard_limit") or 0)
+        # The output budget: the caller's explicit token count wins (a
+        # structured decision knows its size); otherwise a level from the
+        # owner's words, the task and the mode, clipped to the provider's
+        # real maximum.  Decided here, before the estimate and the reservation.
+        budget: OutputBudget | None = request.output_budget
+        if request.max_output_tokens:
+            max_out = int(request.max_output_tokens)
+        else:
+            if budget is None:
+                budget = decide_output_budget(request.owner_text or request.prompt, task=decision.task, mode=mode,
+                                              structured=request.schema is not None, hard_limit=hard_limit or None)
+            max_out = int(budget.tokens)
+        if hard_limit:
+            max_out = min(max_out, hard_limit)
+        decision.output_budget = budget.to_dict() if budget else {"level": "explicit", "tokens": max_out, "reason": "caller-specified"}
         pricing = self.config.pricing_for(decision.role)
         estimate = estimate_cost(prompt=prompt_text, system=system, expected_output_tokens=max_out, pricing=pricing) if pricing else None
         decision.estimate = estimate
@@ -326,15 +416,26 @@ class ModelGateway:
             if estimate is None:
                 decision.kind, decision.reason = RouteKind.REFUSED, "metered route without a price"
                 raise GatewayRefused(decision)
-            try:
-                reservation = self.governor.reserve(role=decision.role, provider=provider.name, model=binding.model,
-                                                    estimated_eur=estimate.estimated_eur, task_id=request.task_id, mode=mode.value,
-                                                    task_cap_eur=policy_for(mode).task_cap_eur, provider_cap_eur=provider.monthly_cap_eur)
-            except BudgetRefused as exc:
-                decision.kind, decision.reason = RouteKind.REFUSED, str(exc)
-                decision.suggestion = "The budget cap is reached; nothing was spent."
-                self._observe(decision, binding, provider.name, goal_verified=False, failure_class="budget_refused", mode=mode)
-                raise GatewayRefused(decision, str(exc)) from None
+            while True:
+                try:
+                    reservation = self.governor.reserve(role=decision.role, provider=provider.name, model=binding.model,
+                                                        estimated_eur=estimate.estimated_eur, task_id=request.task_id, mode=mode.value,
+                                                        task_cap_eur=policy_for(mode).task_cap_eur, provider_cap_eur=provider.monthly_cap_eur)
+                    break
+                except BudgetRefused as exc:
+                    # A paid answer that would not fit is asked for shorter,
+                    # one level at a time, never silently sent as it was.
+                    lower = step_down(budget, hard_limit=hard_limit or None) if budget is not None else None
+                    if lower is None:
+                        decision.kind, decision.reason = RouteKind.REFUSED, str(exc)
+                        decision.suggestion = "The budget cap is reached; nothing was spent."
+                        self._observe(decision, binding, provider.name, goal_verified=False, failure_class="budget_refused", mode=mode)
+                        raise GatewayRefused(decision, str(exc)) from None
+                    budget = lower
+                    max_out = min(int(budget.tokens), hard_limit) if hard_limit else int(budget.tokens)
+                    estimate = estimate_cost(prompt=prompt_text, system=system, expected_output_tokens=max_out, pricing=pricing)
+                    decision.estimate = estimate
+                    decision.output_budget = budget.to_dict()
 
         try:
             ticket = self.transport.issue(provider=provider, role=decision.role, mode=mode, cost_class=decision.cost_class,
@@ -347,38 +448,218 @@ class ModelGateway:
             raise GatewayRefused(decision, str(exc)) from None
 
         thinking = binding.thinking_for(decision.thinking_level) if decision.thinking_level else None
-        provider_request = ProviderRequest(system=system, prompt=prompt_text, max_output_tokens=max_out, temperature=temperature,
-                                           thinking=thinking, schema=request.schema, thinking_level=decision.thinking_level)
-        adapter = adapter_for(provider.kind)
-        started = time.perf_counter()
-        try:
-            reply, route_attempts = self._call_model_pool(adapter, ticket, provider, binding, provider_request, decision=decision,
-                                                          mode=mode, started=started)
-        except GatewayError as exc:
-            if reservation is not None:
-                self.governor.release(reservation, reason=exc.status.value)
-            if exc.status.is_outage:
-                self.health.note(provider.name, exc.status, detail=str(exc), retry_after_seconds=exc.retry_after_seconds)
-            route_attempts = list(getattr(exc, "attempts", []) or [])
-            self._observe(decision, binding, provider.name, goal_verified=False, failure_class=exc.status.value, mode=mode,
-                          latency=time.perf_counter() - started, route_attempts=route_attempts,
-                          model=(route_attempts[-1].get("model") if route_attempts else None))
-            self._emit("gateway.error", exc.to_dict())
-            raise
+        prepared.system, prepared.max_out, prepared.temperature = system, max_out, temperature
+        prepared.pricing, prepared.estimate, prepared.reservation, prepared.ticket = pricing, estimate, reservation, ticket
+        prepared.budget, prepared.hard_limit = budget, hard_limit
+        prepared.provider_request = ProviderRequest(system=system, prompt=prompt_text, max_output_tokens=max_out, temperature=temperature,
+                                                    thinking=thinking, schema=request.schema, thinking_level=decision.thinking_level)
+        prepared.adapter = adapter_for(provider.kind)
+        return prepared
 
+    def _fail(self, prepared: _Prepared, exc: GatewayError, *, route_attempts: list[dict[str, Any]] | None = None) -> None:
+        if prepared.reservation is not None:
+            self.governor.release(prepared.reservation, reason=exc.status.value)
+        if exc.status.is_outage:
+            self.health.note(prepared.provider.name, exc.status, detail=str(exc), retry_after_seconds=exc.retry_after_seconds)
+        attempts = list(route_attempts if route_attempts is not None else (getattr(exc, "attempts", []) or []))
+        self._observe(prepared.decision, prepared.binding, prepared.provider.name, goal_verified=False, failure_class=exc.status.value,
+                      mode=prepared.mode, latency=time.perf_counter() - prepared.started, route_attempts=attempts,
+                      model=(attempts[-1].get("model") if attempts else None))
+        self._emit("gateway.error", exc.to_dict())
+
+    def _finish(self, prepared: _Prepared, reply: Any, route_attempts: list[dict[str, Any]], *, text: str | None = None,
+                rewrites: int = 0) -> GatewayReply:
+        pricing = prepared.pricing
         actual = actual_cost(reply.usage, pricing) if pricing else 0.0
-        if reservation is not None:
-            self.governor.settle(reservation, actual, usage=reply.usage, native=pricing.native_cost(reply.usage) if pricing else None,
+        if prepared.reservation is not None:
+            self.governor.settle(prepared.reservation, actual, usage=reply.usage, native=pricing.native_cost(reply.usage) if pricing else None,
                                  currency=pricing.currency if pricing else "EUR", rate_source=pricing.rate_source if pricing else "")
-        self.health.note(provider.name, ProviderStatus.OK)
-        text, rewrites = guard_identity(reply.text)
-        result = GatewayReply(text=text, decision=decision, role=decision.role, provider=provider.name, model=reply.model or binding.model,
-                              usage=reply.usage, estimated_eur=estimate.estimated_eur if estimate else 0.0, actual_eur=actual,
-                              latency_seconds=time.perf_counter() - started, identity_rewrites=rewrites, privacy=privacy,
-                              reservation_id=reservation.reservation_id if reservation else "", route_attempts=route_attempts)
+        self.health.note(prepared.provider.name, ProviderStatus.OK)
+        if text is None:
+            text, rewrites = guard_identity(reply.text)
+        decision = prepared.decision
+        result = GatewayReply(text=text, decision=decision, role=decision.role, provider=prepared.provider.name,
+                              model=reply.model or prepared.binding.model, usage=reply.usage,
+                              estimated_eur=prepared.estimate.estimated_eur if prepared.estimate else 0.0, actual_eur=actual,
+                              latency_seconds=time.perf_counter() - prepared.started, identity_rewrites=rewrites, privacy=prepared.privacy,
+                              reservation_id=prepared.reservation.reservation_id if prepared.reservation else "", route_attempts=route_attempts,
+                              finish_reason=str(getattr(reply, "finish_reason", "") or ""), truncated=truncated_by_limit(getattr(reply, "finish_reason", "")),
+                              output_budget=dict(decision.output_budget), max_output_tokens=prepared.max_out, provider_hard_limit=prepared.hard_limit)
         self._remember(result)
-        self._track(request.task_id, result)
+        self._track(prepared.request.task_id, result)
         return result
+
+    def complete(self, request: GatewayRequest) -> GatewayReply:
+        prepared = self._prepare(request)
+        if prepared.local:
+            return self._complete_local(request, prepared.decision, prepared.binding, prepared.privacy, prepared.prompt_text)
+        prepared.started = time.perf_counter()
+        try:
+            reply, route_attempts = self._call_model_pool(prepared.adapter, prepared.ticket, prepared.provider, prepared.binding,
+                                                          prepared.provider_request, decision=prepared.decision, mode=prepared.mode,
+                                                          started=prepared.started)
+        except GatewayError as exc:
+            self._fail(prepared, exc)
+            raise
+        return self._finish(prepared, reply, route_attempts)
+
+    # -- streaming -----------------------------------------------------------------------
+
+    def stream(self, request: GatewayRequest) -> GatewayStream:
+        """The same decision as :meth:`complete`, made now; the answer arrives as the stream is iterated.
+
+        A provider that cannot stream this operation answers in one piece,
+        yielded once.  The reservation is settled from the provider's usage
+        when the stream ends, and at the estimate if the consumer stops early.
+        """
+
+        prepared = self._prepare(request)
+        return GatewayStream(self, prepared)
+
+    def _run_stream(self, prepared: _Prepared, holder: GatewayStream) -> Iterator[str]:
+        if prepared.local:
+            yield from self._stream_local(prepared, holder)
+            return
+        prepared.started = time.perf_counter()
+        adapter = prepared.adapter
+        if not hasattr(adapter, "stream"):
+            reply = self.complete(prepared.request) if False else None  # never: every configured kind streams; kept for foreign adapters
+            try:
+                raw, route_attempts = self._call_model_pool(adapter, prepared.ticket, prepared.provider, prepared.binding, prepared.provider_request,
+                                                            decision=prepared.decision, mode=prepared.mode, started=prepared.started)
+            except GatewayError as exc:
+                self._fail(prepared, exc)
+                holder.error = exc
+                raise
+            holder.reply = self._finish(prepared, raw, route_attempts)
+            if holder.reply.text:
+                yield holder.reply.text
+            return
+        pieces: list[str] = []
+        rewrites = 0
+        route_attempts: list[dict[str, Any]] = []
+        final = None
+        gen = self._stream_model_pool(prepared, route_attempts)
+        try:
+            for event in gen:
+                if "text" in event:
+                    text, n = guard_identity(event["text"])
+                    rewrites += n
+                    pieces.append(text)
+                    yield text
+                elif "reply" in event:
+                    final = event["reply"]
+        except GatewayError as exc:
+            self._fail(prepared, exc, route_attempts=route_attempts)
+            holder.error = exc
+            raise
+        except GeneratorExit:
+            # The consumer stopped listening.  What the provider produced is
+            # billed anyway: settle at the estimate, the conservative figure.
+            holder.aborted = True
+            gen.close()
+            if prepared.reservation is not None and prepared.estimate is not None:
+                self.governor.settle(prepared.reservation, prepared.estimate.estimated_eur, usage={"note": "stream aborted by the consumer"})
+            self._observe(prepared.decision, prepared.binding, prepared.provider.name, goal_verified=False, failure_class="cancelled",
+                          mode=prepared.mode, latency=time.perf_counter() - prepared.started, route_attempts=route_attempts)
+            raise
+        if final is None:
+            from gateway.providers import ProviderReply
+
+            final = ProviderReply(text="", usage={"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}, finish_reason="")
+        final.text = "".join(pieces)
+        holder.reply = self._finish(prepared, final, route_attempts, text=final.text, rewrites=rewrites)
+
+    def _stream_model_pool(self, prepared: _Prepared, route_attempts: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        """The free pool's fallback for streams: another model only before any text has been shown."""
+
+        adapter, provider, binding = prepared.adapter, prepared.provider, prepared.binding
+        models = binding.model_pool
+        if prepared.decision.cost_class is not CostClass.ZERO or len(models) <= 1:
+            attempt_started = time.perf_counter()
+            yield from adapter.stream(self.transport, prepared.ticket, provider, binding, prepared.provider_request)
+            route_attempts.append({"model": binding.model, "attempt": 1, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0,
+                                   "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+            return
+        last_error: GatewayError | None = None
+        for model in models:
+            model_price = self.config.pricing_for_model(prepared.decision.role, model)
+            if provider.metered or (model_price is not None and model_price.metered):
+                raise ZeroCostViolation(f"{prepared.decision.role} model {model} is not zero-cost")
+            attempt_binding = replace(binding, model=model, models=(model,))
+            for attempt in range(1, FREE_POOL_MAX_ATTEMPTS_PER_MODEL + 1):
+                attempt_started = time.perf_counter()
+                shown = False
+                try:
+                    for event in adapter.stream(self.transport, prepared.ticket, provider, attempt_binding, prepared.provider_request):
+                        if "text" in event:
+                            shown = True
+                        if "reply" in event and event["reply"] is not None:
+                            event["reply"].model = event["reply"].model or model
+                        yield event
+                    route_attempts.append({"model": model, "attempt": attempt, "failure_class": "ok", "http_status": None,
+                                           "retry_delay_seconds": 0.0, "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+                    self._emit_free_pool(prepared.decision, provider.name, route_attempts, final_model=model, started=prepared.started,
+                                         monetary_cost_eur=0.0, goal_verified=None)
+                    return
+                except GatewayError as exc:
+                    last_error = exc
+                    transient = self._is_transient_free_pool_error(exc) and not shown
+                    retry_delay = self._free_pool_retry_delay(attempt) if transient and attempt < FREE_POOL_MAX_ATTEMPTS_PER_MODEL else 0.0
+                    route_attempts.append({"model": model, "attempt": attempt, "failure_class": exc.status.value, "http_status": exc.http_status,
+                                           "retry_delay_seconds": round(retry_delay, 3), "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+                    if not transient:
+                        raise
+                    if retry_delay > 0:
+                        self._retry_sleep(retry_delay)
+        self._emit_free_pool(prepared.decision, provider.name, route_attempts, final_model="", started=prepared.started, monetary_cost_eur=0.0,
+                             goal_verified=False)
+        raise FreeIntelligenceUnavailable(role=prepared.decision.role, provider=provider.name, attempts=route_attempts) from last_error
+
+    def _stream_local(self, prepared: _Prepared, holder: GatewayStream) -> Iterator[str]:
+        request, decision, binding = prepared.request, prepared.decision, prepared.binding
+        if self._local_provider is None:
+            decision.kind, decision.reason = RouteKind.REFUSED, "no local provider is wired"
+            raise GatewayRefused(decision)
+        provider = self._local_provider(decision.role)
+        started = time.perf_counter()
+        kwargs: dict[str, Any] = {}
+        if request.max_output_tokens:
+            kwargs["max_tokens"] = request.max_output_tokens
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
+        pieces: list[str] = []
+        rewrites = 0
+        try:
+            if hasattr(provider, "generate_stream"):
+                try:
+                    iterator = provider.generate_stream(prepared.prompt_text, system=request.system or None, **kwargs)
+                except TypeError:
+                    iterator = provider.generate_stream(prepared.prompt_text, **kwargs)
+                for chunk in iterator:
+                    text, n = guard_identity(str(chunk))
+                    rewrites += n
+                    pieces.append(text)
+                    yield text
+            else:
+                text, rewrites = guard_identity(str(provider.generate(prepared.prompt_text, **kwargs)))
+                pieces.append(text)
+                yield text
+        except GeneratorExit:
+            holder.aborted = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - local failures are outages too
+            self.health.note(binding.provider, ProviderStatus.PROVIDER_UNAVAILABLE, detail=str(exc)[:200])
+            raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, str(exc)[:300], role=decision.role, provider=binding.provider) from exc
+        meta = dict(getattr(provider, "last_metadata", {}) or {})
+        usage = {"input_tokens": int(meta.get("prompt_tokens") or 0), "cached_input_tokens": 0,
+                 "output_tokens": int(meta.get("generated_tokens") or 0)}
+        holder.reply = GatewayReply(text="".join(pieces), decision=decision, role=decision.role, provider=binding.provider,
+                                    model=str(getattr(provider, "model_name", "") or binding.model), usage=usage, estimated_eur=0.0,
+                                    actual_eur=0.0, latency_seconds=time.perf_counter() - started, identity_rewrites=rewrites,
+                                    privacy=prepared.privacy, finish_reason=str(meta.get("finish_reason") or ""))
+        self._remember(holder.reply)
+        self._track(request.task_id, holder.reply)
 
     def _call_model_pool(self, adapter: Any, ticket: Ticket, provider: Any, binding: RoleBinding,
                          provider_request: ProviderRequest, *, decision: RouteDecision, mode: ChatMode,
@@ -651,7 +932,7 @@ class GatewayBrainProvider:
         # -- are about executing, and are decided by the caller, not here.
         return GatewayRequest(prompt=prompt, mode=context.mode, chunks=list(context.chunks), facts=context.facts, schema=schema,
                               max_output_tokens=max_tokens, temperature=temperature, system=system or "", task_id=context.task_id,
-                              soft=dict(context.soft), overrides=False)
+                              soft=dict(context.soft), overrides=False, owner_text=context.owner_text, output_budget=context.output_budget)
 
     def _run(self, prompt: str, *, schema: dict[str, Any] | None = None, max_tokens: int | None = None,
              temperature: float | None = None, system: str | None = None) -> str:
@@ -674,17 +955,21 @@ class GatewayBrainProvider:
                 raise
             return self._fallback(prompt, schema=schema, max_tokens=max_tokens, temperature=temperature, system=system,
                                   why=exc.status.value)
+        self._note_reply(reply)
+        return reply.text
+
+    def _note_reply(self, reply: GatewayReply) -> None:
         self.last_reply = reply
         self.last_decision = reply.decision.to_dict()
         self.last_provenance = {"role": reply.role, "provider": reply.provider, "model": reply.model,
                                 "offline_fallback": bool(reply.decision.offline_fallback), "route_attempts": list(reply.route_attempts),
-                                "actual_eur": reply.actual_eur}
+                                "actual_eur": reply.actual_eur, "estimated_eur": reply.estimated_eur, "usage": dict(reply.usage),
+                                "latency_seconds": round(reply.latency_seconds, 3), "streamed": False, **reply.completion()}
         self.last_metadata = {
             "latency_seconds": reply.latency_seconds, "generated_tokens": reply.usage.get("output_tokens"),
             "prompt_tokens": reply.usage.get("input_tokens"), "role": reply.role, "provider": reply.provider, "model": reply.model,
             "estimated_eur": reply.estimated_eur, "actual_eur": reply.actual_eur, "offline_fallback": reply.decision.offline_fallback,
         }
-        return reply.text
 
     def _fallback(self, prompt: str, *, schema: dict[str, Any] | None, max_tokens: int | None, temperature: float | None,
                   system: str | None, why: str) -> str:
@@ -703,13 +988,34 @@ class GatewayBrainProvider:
                     text = self.fallback.generate(f"{system}\n\n{prompt}", **kwargs)
             else:
                 text = self.fallback.generate(prompt, **kwargs)
+        self._note_fallback(why)
+        return str(text)
+
+    def _note_fallback(self, why: str) -> None:
         self.last_metadata = dict(getattr(self.fallback, "last_metadata", {}) or {})
         self.last_metadata.update({"offline_fallback": True, "fallback_reason": why})
         self.last_decision = {**self.last_decision, "fell_back_to_local": True, "fallback_reason": why}
         self.last_provenance = {"role": "local.fast", "provider": str(getattr(self.fallback, "provider_name", "") or "local"),
                                 "model": str(getattr(self.fallback, "model_name", "") or ""), "offline_fallback": True,
                                 "fallback_reason": why, "actual_eur": 0.0}
-        return str(text)
+
+    def _fallback_stream(self, prompt: str, *, max_tokens: int | None, temperature: float | None, system: str | None, why: str) -> Iterator[str]:
+        kwargs: dict[str, Any] = {}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if hasattr(self.fallback, "generate_stream"):
+            try:
+                iterator = self.fallback.generate_stream(prompt, system=system, **kwargs) if system is not None else self.fallback.generate_stream(prompt, **kwargs)
+            except TypeError:
+                iterator = self.fallback.generate_stream(f"{system}\n\n{prompt}" if system else prompt, **kwargs)
+            for chunk in iterator:
+                yield str(chunk)
+        else:
+            yield self._fallback(prompt, schema=None, max_tokens=max_tokens, temperature=temperature, system=system, why=why)
+            return
+        self._note_fallback(why)
 
     # -- BrainProvider protocol -----------------------------------------------------------
 
@@ -726,18 +1032,46 @@ class GatewayBrainProvider:
 
     def generate_stream(self, prompt: str, *, max_tokens: int | None = None, temperature: float | None = None,
                         top_p: float | None = None, system: str | None = None) -> Iterator[str]:
-        # Cloud roles answer in one piece; the conversation loop streams
-        # whatever it receives, so yield the answer in sentence-sized chunks
-        # rather than blocking the speaker until the end.
-        text = self._run(prompt, max_tokens=max_tokens, temperature=temperature, system=system)
-        if self.last_metadata.get("offline_fallback") and hasattr(self.fallback, "generate_stream"):
-            yield text
-            return
-        import re
+        """The answer as the provider produces it -- real streaming, provider-independent.
 
-        for piece in re.split(r"(?<=[.!?\n])\s+", text):
-            if piece:
-                yield piece + (" " if not piece.endswith("\n") else "")
+        The route, budget and reservation are decided before the first byte;
+        the first text reaches the caller as soon as the provider sends it.
+        When the gateway refuses (or the provider is down before it started)
+        the local fallback streams instead, if the request context allows it;
+        provenance names whichever answered.
+        """
+
+        request = self._request(prompt, schema=None, max_tokens=max_tokens, temperature=temperature, system=system)
+        self.last_reply = None
+        self.last_provenance = {}
+        try:
+            stream = self.gateway.stream(request)
+        except GatewayRefused as exc:
+            self.last_decision = exc.decision.to_dict()
+            if self.fallback is None or not self._fallback_allowed():
+                raise
+            yield from self._fallback_stream(prompt, max_tokens=max_tokens, temperature=temperature, system=system, why=exc.decision.reason)
+            return
+        iterator = iter(stream)
+        started = False
+        while True:
+            try:
+                chunk = next(iterator)
+            except StopIteration:
+                break
+            except GatewayError as exc:
+                self.last_decision = {"kind": "provider_error", **exc.to_dict()}
+                if started or getattr(exc, "typed_status", "") == "FREE_INTELLIGENCE_UNAVAILABLE":
+                    raise
+                if self.fallback is None or not self._fallback_allowed() or not exc.status.is_outage:
+                    raise
+                yield from self._fallback_stream(prompt, max_tokens=max_tokens, temperature=temperature, system=system, why=exc.status.value)
+                return
+            started = True
+            yield chunk
+        if stream.reply is not None:
+            self._note_reply(stream.reply)
+            self.last_provenance["streamed"] = True
 
     def think(self, user_prompt: str, max_tokens: int = 512) -> str:
         return self.generate(user_prompt, max_tokens=max_tokens)
