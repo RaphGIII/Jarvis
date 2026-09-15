@@ -741,7 +741,7 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1152
+      lines: 1158
       public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -753,7 +753,7 @@ packages:
       - tests/test_streaming.py
     - path: gateway/health.py
       purpose: Telling a provider problem from a task problem.
-      lines: 161
+      lines: 165
       public: 5
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -1846,7 +1846,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8680
+      lines: 8726
       public: 2
       tests:
       - tests/test_action_receipts.py

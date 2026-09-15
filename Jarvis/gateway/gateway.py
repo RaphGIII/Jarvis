@@ -601,7 +601,11 @@ class ModelGateway:
         models = binding.model_pool
         if prepared.decision.cost_class is not CostClass.ZERO or len(models) <= 1:
             attempt_started = time.perf_counter()
-            yield from adapter.stream(self.transport, prepared.ticket, provider, binding, prepared.provider_request)
+            try:
+                yield from adapter.stream(self.transport, prepared.ticket, provider, binding, prepared.provider_request)
+            except GatewayError as exc:
+                exc.model = exc.model or binding.model
+                raise
             route_attempts.append({"model": binding.model, "attempt": 1, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0,
                                    "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
             return
@@ -627,6 +631,7 @@ class ModelGateway:
                                          monetary_cost_eur=0.0, goal_verified=None)
                     return
                 except GatewayError as exc:
+                    exc.model = exc.model or model
                     last_error = exc
                     transient = self._is_transient_free_pool_error(exc) and not shown
                     retry_delay = self._free_pool_retry_delay(attempt) if transient and attempt < FREE_POOL_MAX_ATTEMPTS_PER_MODEL else 0.0
@@ -716,6 +721,7 @@ class ModelGateway:
                                          monetary_cost_eur=0.0, goal_verified=None)
                     return reply, attempts
                 except GatewayError as exc:
+                    exc.model = exc.model or model
                     last_error = exc
                     transient = self._is_transient_free_pool_error(exc)
                     retry_delay = self._free_pool_retry_delay(attempt) if transient and attempt < FREE_POOL_MAX_ATTEMPTS_PER_MODEL else 0.0

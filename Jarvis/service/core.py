@@ -4821,6 +4821,52 @@ class JarvisCore:
             # and the admission is a human sentence, never a stack line
             self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
             de = self.language.startswith("de")
+            from service.semantic import is_provider_outage
+
+            if is_provider_outage(exc):
+                # The reasoning provider is unreachable and nothing may stand
+                # in for it in this mode.  Observed live: this was reported
+                # as "the local model did not answer" with the eye red, which
+                # blamed a model that was never asked.  The typed message
+                # names the outage; the eye waits instead of failing.
+                outage = self._outage_of(exc, self.chat_mode)
+                self.emit(EventType.TOOL, {"summary": f"intelligence: {outage['status']} ({outage.get('failure_class') or 'outage'}) on the "
+                                                      "conversation path; no local model stands in, no paid escalation",
+                                           "outage": outage, "source": "intelligence"}, scope=scope)
+                meta: dict[str, Any] = {}
+                try:
+                    if self._last_user_meta().get("request_id"):
+                        meta["request_id"] = self._last_user_meta()["request_id"]
+                except Exception:  # noqa: BLE001
+                    pass
+                partial = "".join(collected).strip()
+                if partial:
+                    # The provider stopped mid-answer (observed live: a stream
+                    # that stalled and timed out after three chunks).  What
+                    # the owner already saw is the record; it is stored as
+                    # incomplete, labelled with the provider and model that
+                    # really produced it (the error names them; the
+                    # provider's receipt was never written), and the
+                    # interface offers to continue it.
+                    who = {"role": str(getattr(exc, "role", "") or ""), "provider": str(getattr(exc, "provider", "") or ""),
+                           "model": str(getattr(exc, "model", "") or ""), "streamed": True,
+                           "interrupted": str(outage.get("failure_class") or "outage")}
+                    label = f"{who['provider']}/{who['model'] or who['role']}" if who["provider"] else (backend or "gateway")
+                    meta["provenance"] = who
+                    meta["completion"] = {"finish_reason": f"stream_interrupted:{who['interrupted']}", "truncated": False, "complete": False,
+                                          "output_tokens": 0, "configured_output_budget": None, "output_budget": {},
+                                          "provider_hard_limit": None, "aborted": False}
+                    self._deliver(partial, scope=scope, backend=label, final_state=JarvisState.WAITING, meta=meta,
+                                  context_text=f"[answer interrupted by the provider ({who['interrupted']}); stored incomplete]")
+                    return
+                message = (self._free_unavailable_message(outage["reason"]) if outage["status"] == "FREE_INTELLIGENCE_UNAVAILABLE"
+                           else ((f"Das Denkmodell ist gerade nicht erreichbar ({outage['reason'][:120]}). Versuch es gleich noch einmal "
+                                  "oder wechsle den Modus.") if de else
+                                 (f"The reasoning provider is not reachable right now ({outage['reason'][:120]}). Try again shortly "
+                                  "or switch the mode.")))
+                self._deliver(message, scope=scope, backend="intelligence", final_state=JarvisState.WAITING, meta=meta,
+                              context_text=f"[{outage['status'].lower()}: {outage.get('failure_class') or 'outage'}; no answer generated]")
+                return
             try:
                 from brain.providers import ProviderError
 

@@ -124,6 +124,80 @@ def test_ambiguous_request_after_the_outage_gets_a_clean_typed_message(tmp_path)
     assert any("INTELLIGENCE_UNAVAILABLE" in str(p.get("summary")) and "FREE_" not in str(p.get("summary")) for p in tools(events))
 
 
+def test_a_free_chat_question_during_the_outage_gets_the_typed_message_not_a_blame_on_the_local_model(tmp_path):
+    net, core, kernel, local, executed = outage_world(tmp_path, http_503())
+    events = ask(core, "Erkläre mir die kompetitive Enzymhemmung.", wait=30)
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    assert FREE_MESSAGE in message["text"] and "lokale KI" not in message["text"], message["text"]
+    assert message["backend"] == "intelligence"
+    assert local.calls == [], "FREE: the local model is not asked for prose in place of the free provider either"
+    assert not any(OPENAI in r["url"] for r in net.requests)
+    states = [e.payload.get("state") for e in events if e.type is EventType.STATE]
+    assert "error" not in states, states
+    assert any("conversation path" in str(p.get("summary")) for p in tools(events))
+
+
+class StallingStream:
+    """An event stream that serves some chunks and then hangs until the socket times out."""
+
+    def __init__(self, blocks: list[str]) -> None:
+        self._blocks = blocks
+        self.status = 200
+
+    def __iter__(self):
+        for block in self._blocks:
+            for line in block.split("\n"):
+                yield (line + "\n").encode("utf-8")
+            yield b"\n"
+        raise TimeoutError("timed out")
+
+    def read(self) -> bytes:
+        return b""
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class StallingNetwork(FakeNetwork):
+    """Serves the free provider's stream from a body that stalls after its first chunks."""
+
+    def __init__(self, blocks: list[str]) -> None:
+        super().__init__()
+        self.blocks = blocks
+
+    def __call__(self, request, timeout=None):
+        body = json.loads(request.data.decode("utf-8")) if request.data else {}
+        self.requests.append({"url": request.full_url, "headers": dict(request.header_items()), "body": body, "timeout": timeout})
+        if GEMINI in request.full_url and "alt=sse" in request.full_url:
+            return StallingStream(self.blocks)
+        return super().__call__(request, timeout)
+
+
+def test_a_stream_that_stalls_mid_answer_is_stored_incomplete_not_blamed_on_the_local_model(tmp_path):
+    from test_streaming import gemini_chunks
+
+    chunks = gemini_chunks(["Bei der kompetitiven Hemmung ", "konkurriert ein Inhibitor"])[:-1]  # no finish, then the stall
+    net = StallingNetwork(chunks)
+    core, kernel, local, executed = make_world(tmp_path, net)
+    kernel.gateway._retry_sleep = lambda _delay: None  # noqa: SLF001
+    core.set_chat_mode("FREE")
+    events = ask(core, "Erkläre mir die kompetitive Enzymhemmung.", wait=30)
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    assert message["text"] == "Bei der kompetitiven Hemmung", message["text"]
+    assert message["backend"] == "gemini/gemini-3.8-flash" and "lokale KI" not in message["text"], message["backend"]
+    assert message["meta"]["provenance"]["model"] == "gemini-3.8-flash" and message["meta"]["provenance"]["interrupted"] == "timeout"
+    completion = message["meta"]["completion"]
+    assert completion["complete"] is False and completion["finish_reason"] == "stream_interrupted:timeout" and completion["aborted"] is False
+    assert local.calls == [] and kernel.gateway.health.status("gemini") is ProviderStatus.TIMEOUT
+    assert "error" not in [e.payload.get("state") for e in events if e.type is EventType.STATE]
+
+
 # ---------------------------------------------------------------------------
 # 4 + 6: a spelled-out file write runs from its syntax -- with or without a reasoning provider
 # ---------------------------------------------------------------------------

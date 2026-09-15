@@ -40,16 +40,20 @@ class GatewayError(RuntimeError):
     """A provider call did not produce a usable answer, and here is what kind of not."""
 
     def __init__(self, status: ProviderStatus, message: str, *, role: str = "", provider: str = "",
-                 http_status: int | None = None, retry_after_seconds: float | None = None) -> None:
+                 http_status: int | None = None, retry_after_seconds: float | None = None, model: str = "") -> None:
         self.status = status
         self.role = role
         self.provider = provider
         self.http_status = http_status
         self.retry_after_seconds = retry_after_seconds
+        #: The concrete model the failed call was addressed to, when the
+        #: caller knows it (the pool loops set it): what an interrupted
+        #: answer is labelled with, never a placeholder.
+        self.model = model
         super().__init__(f"{status.value} from {provider or '?'} ({role or '?'}): {message}")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"status": self.status.value, "role": self.role, "provider": self.provider,
+        return {"status": self.status.value, "role": self.role, "provider": self.provider, "model": self.model,
                 "http_status": self.http_status, "retry_after_seconds": self.retry_after_seconds, "message": str(self)}
 
 
