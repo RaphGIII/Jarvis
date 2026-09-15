@@ -299,6 +299,50 @@ class JarvisCore:
         except Exception as exc:  # noqa: BLE001
             return {"available": False, "role": "", "provider": "", "reason": f"{type(exc).__name__}: {exc}"[:200], "suggestion": ""}
 
+    #: The typed outage the intelligence flow reported for the current
+    #: request, so later steps of the same turn do not consult a provider
+    #: that was just found unreachable -- and never the local model instead.
+    _semantic_outage: dict[str, Any] | None = None
+
+    def _decision_provider(self) -> Any:
+        """The only provider allowed to decide what the owner means.
+
+        The gateway's reasoning role, with no way down to the legacy local
+        model: :meth:`GatewayBrainProvider.for_decisions`.  A kernel that
+        wires no gateway at all (a drill, a test with its own provider) hands
+        out the configured provider as it is.  A kernel that has a gateway
+        but did not route the conversational tier through it has only the
+        local model -- and that model does not decide, so this raises.
+        """
+
+        from brain.tiers import ModelTier
+        from service.semantic import SemanticAuthorityUnavailable
+
+        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+        for_decisions = getattr(provider, "for_decisions", None)
+        if callable(for_decisions):
+            return for_decisions()
+        try:
+            self.kernel.gateway
+        except AttributeError:
+            return provider
+        raise SemanticAuthorityUnavailable("only the local model is wired for conversation; it does not decide what a request means")
+
+    @staticmethod
+    def _outage_of(exc: BaseException, mode: Any) -> dict[str, Any]:
+        """The typed shape of a decision-call failure, for the transcript and the owner."""
+
+        from gateway.modes import ChatMode
+
+        # The status is the mode's, not the exception's: the free pool raises
+        # its typed error in AUTO as well, where the general status applies.
+        status = "FREE_INTELLIGENCE_UNAVAILABLE" if ChatMode.parse(mode) is ChatMode.FREE else "INTELLIGENCE_UNAVAILABLE"
+        decision = getattr(exc, "decision", None)
+        failure = getattr(getattr(exc, "status", None), "value", "") or ("no_route" if decision is not None else type(exc).__name__)
+        reason = decision.reason if decision is not None else str(exc)
+        return {"status": status, "failure_class": failure, "reason": reason[:300],
+                "question": getattr(decision, "suggestion", "") if decision is not None else ""}
+
     def _free_unavailable_message(self, reason: str) -> str:
         """FREE mode: the free reasoning provider is not reachable; nothing paid and nothing local stands in."""
 
@@ -935,7 +979,7 @@ class JarvisCore:
         # model choosing from the closed list of installed capability ids is
         # how "Fingerprint der Datei X" reaches the checksum capability without
         # that wording having been taught.  Pure chat never pays for this call.
-        if self._names_concrete_object(text) and self._capability_hints():
+        if self._names_concrete_object(text) and self._capability_hints() and self._semantic_outage is None:
             try:
                 goal = self._semantic_goal(text, scope)
             except Exception as exc:  # noqa: BLE001
@@ -1960,7 +2004,7 @@ class JarvisCore:
             aliases_hint = self.aliases.matches(text)
         except Exception:  # noqa: BLE001
             aliases_hint = []
-        provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+        provider = self._decision_provider()
         goal = self.semantic.plan(text, provider, apps=apps_hint, projects=projects_hint,
                                   aliases=aliases_hint, guidance=guidance, capabilities=self._capability_hints())
         if goal is not None:
@@ -2112,6 +2156,7 @@ class JarvisCore:
         cards = capability_cards(registry) + builtin_cards(available)
         projects = [ProjectSummary(str(p.get("title") or ""), str(p.get("goal") or p.get("summary") or "")[:200])
                     for p in self.owner_projects() if str(p.get("title") or "").strip()]
+        self._semantic_outage = None
         context = retrieve(text, state, cards, projects)
         if context.empty:
             return False
@@ -2130,6 +2175,8 @@ class JarvisCore:
         self.emit(EventType.TOOL, {"summary": summary, "intelligence": result.to_dict(), "source": "intelligence"}, scope=scope)
         de = self.language.startswith("de")
         if result.status in {"INTELLIGENCE_UNAVAILABLE", "FREE_INTELLIGENCE_UNAVAILABLE"}:
+            self._semantic_outage = {"status": result.status, "reason": result.reason, "question": result.question,
+                                     "failure_class": "timeout" if "timeout" in result.reason else ""}
             if not self._world_has_context(state):
                 # Without world context nothing here needed a semantic
                 # decision: the typed single-action paths (a file write, a
@@ -4393,25 +4440,43 @@ class JarvisCore:
         # planner call does not happen at all.
         if not looks_compound(text) and self._dispatch_known_capability(text, scope):
             return
+        # Deterministic syntax before any model: a write whose file name and
+        # content are both spelled out is understood without inference.
+        if not looks_compound(text) and self._execute_deterministic(text, scope):
+            return
         # Contracts first: the semantic goal behind the words, the world state,
         # and a search over what existing capabilities produce.  A plan runs;
         # a proven gap goes to engineering with the evidence; an ungrounded
         # reading is a question; no semantic provider is said out loud.
         if self._answer_by_intelligence(text, scope):
             return
-        # The semantic control plane: FAST_LOCAL reads the goal behind the
-        # words and picks ONE tool from a closed set.  This replaces lexical
-        # guessing as the primary intelligence — the legacy planner below
-        # remains the fallback for file writing and everything "delegate".
+        if self._semantic_outage is not None:
+            # The flow found the reasoning provider unreachable.  The rest of
+            # this turn does not ask it again and does not ask the local
+            # model instead.
+            self._answer_without_semantics(text, scope, classification, outage=self._semantic_outage, action_request=action_request)
+            return
+        # The semantic control plane: the reasoning provider reads the goal
+        # behind the words and picks ONE tool from a closed set.  This
+        # replaces lexical guessing as the primary intelligence — the legacy
+        # planner below remains the fallback for file writing and everything
+        # "delegate".  Both are asked of the decision provider only; the
+        # legacy local model never sees either prompt.
+        from service.semantic import is_provider_outage
+
         try:
             goal = self._semantic_goal(text, scope, guidance="\n".join(guidance_lines(relevant)))
         except Exception as exc:  # noqa: BLE001 - no semantics, the legacy path remains
+            if is_provider_outage(exc):
+                self._answer_without_semantics(text, scope, classification, outage=self._outage_of(exc, self.chat_mode),
+                                               action_request=action_request)
+                return
             goal = None
             self.emit(EventType.DIAGNOSTIC, {"semantic": f"failed: {type(exc).__name__}: {exc}"}, scope=scope)
         if goal is not None and self._dispatch_semantic_goal(goal, text, scope, classification):
             return
         try:
-            provider = self.kernel.provider(ModelTier.FAST_LOCAL)
+            provider = self._decision_provider()
             plan = self.actions.plan(text, provider, guidance="\n".join(guidance_lines(relevant)))
             if relevant and not plan.declined:
                 plan.arguments, applied = apply_overrides(plan.arguments, relevant, action=plan.action)
@@ -4420,6 +4485,10 @@ class JarvisCore:
                     self.emit(EventType.TOOL, {"summary": f"owner corrections applied: {', '.join(applied)}",
                                                "corrections": [c.correction_id for c in relevant]}, scope=scope)
         except Exception as exc:
+            if is_provider_outage(exc):
+                self._answer_without_semantics(text, scope, classification, outage=self._outage_of(exc, self.chat_mode),
+                                               action_request=action_request)
+                return
             self.state.set(JarvisState.ERROR, detail=str(exc)[:200])
             self.emit(EventType.ERROR, {"error": f"{type(exc).__name__}: {exc}"}, scope=scope)
             return
@@ -4499,6 +4568,62 @@ class JarvisCore:
             # shape as a music gap, without the music.
             self._answer_by_capability(text, scope, plan)
             return
+
+        self._execute_action_plan(plan, text, scope)
+
+    def _execute_deterministic(self, text: str, scope: str) -> bool:
+        """A side effect spelled out in full runs from its syntax alone: no model, no inference.
+
+        Today that is one shape -- a file write naming the file and its
+        content -- and it runs the same receipt path as a planned write.
+        """
+
+        from service.actions import parse_file_write
+
+        plan = parse_file_write(text)
+        if plan is None:
+            return False
+        self.emit(EventType.TOOL, {"summary": f"deterministic action: {plan.action} {plan.arguments.get('path', '')} (no model consulted)",
+                                   "action": plan.to_dict(), "source": "actions"}, scope=scope)
+        self._execute_action_plan(plan, text, scope)
+        return True
+
+    def _answer_without_semantics(self, text: str, scope: str, classification: Any, *, outage: dict[str, Any],
+                                  action_request: bool = False) -> None:
+        """No reasoning provider can say what the owner means: do what syntax allows, otherwise say so.
+
+        Exactly one of three outcomes, all typed, none involving the legacy
+        local model: a deterministic execution, or one clean message that
+        names the outage and the shape a request needs to run without a
+        model.  FREE never escalates to a paid provider here; the mode policy
+        already forbids it and nothing on this path asks the gateway again.
+        """
+
+        status = str(outage.get("status") or "INTELLIGENCE_UNAVAILABLE")
+        reason = str(outage.get("reason") or "")
+        self.emit(EventType.TOOL, {"summary": f"intelligence: {status} ({outage.get('failure_class') or 'outage'}); "
+                                              "no local model decides, no paid escalation",
+                                   "outage": dict(outage), "source": "intelligence"}, scope=scope)
+        if self._execute_deterministic(text, scope):
+            return
+        de = self.language.startswith("de")
+        if status == "FREE_INTELLIGENCE_UNAVAILABLE":
+            message = self._free_unavailable_message(reason)
+        else:
+            message = self._semantic_unavailable_message(reason, str(outage.get("question") or ""))
+        wants_side_effect = bool(action_request) or bool(getattr(getattr(classification, "intent", None), "has_side_effect", False))
+        if wants_side_effect:
+            message += ((" Eine Datei kann ich auch ohne Denkmodell schreiben, wenn du Name und Inhalt wörtlich nennst: "
+                         "„schreibe Datei notiz.txt mit Inhalt …“.") if de else
+                        (" A file I can write without the reasoning model if you spell out name and content: "
+                         "\"write file note.txt with content …\"."))
+        self._deliver(message, scope=scope, backend="intelligence", final_state=JarvisState.WAITING,
+                      context_text=f"[{status.lower()}: {outage.get('failure_class') or 'outage'}; no semantic decision taken; nothing executed]")
+
+    def _execute_action_plan(self, plan: Any, text: str, scope: str) -> None:
+        """Run one typed action plan and deliver the sentence its receipt supports."""
+
+        from service.actions import compose
 
         self.emit(
             EventType.TOOL,

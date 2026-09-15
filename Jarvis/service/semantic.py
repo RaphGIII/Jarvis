@@ -76,6 +76,26 @@ GOAL_SCHEMA: dict[str, Any] = {
 }
 
 
+class SemanticAuthorityUnavailable(RuntimeError):
+    """No configured reasoning provider can decide what the owner means.
+
+    Raised instead of asking the legacy local model.  That model may answer
+    prose; it never infers intent, chooses a goal, a plan or a capability, and
+    it never stands in after a provider failure.
+    """
+
+
+def is_provider_outage(exc: BaseException) -> bool:
+    """Whether an exception from a decision call means "no semantic provider", not "bad answer"."""
+
+    if isinstance(exc, SemanticAuthorityUnavailable):
+        return True
+    if hasattr(exc, "decision"):  # GatewayRefused: no route in this mode / budget / health
+        return True
+    status = getattr(exc, "status", None)
+    return bool(getattr(status, "is_outage", False))
+
+
 @dataclass
 class SemanticGoal:
     """What the owner wants, as one typed goal.  A proposal, never a result."""
@@ -188,9 +208,13 @@ class SemanticPlanner:
         except TypeError:
             try:
                 raw = provider.generate(prompt)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                if is_provider_outage(exc):
+                    raise
                 return None
-        except Exception:  # noqa: BLE001 - no model, no semantic layer; fast paths remain
+        except Exception as exc:  # noqa: BLE001 - a bad answer means no goal; a missing provider is the caller's to report
+            if is_provider_outage(exc):
+                raise
             return None
 
         from brain.json_utils import lenient_json_loads

@@ -129,6 +129,23 @@ class Transport:
         return GatewayError(status_kind, f"HTTP {exc.code}: {text[:500]}", role=ticket.role, provider=provider.name,
                             http_status=int(exc.code), retry_after_seconds=retry_after)
 
+    @staticmethod
+    def _timed_out(exc: BaseException) -> bool:
+        """Whether a urllib/socket failure is the provider not answering in time."""
+
+        if isinstance(exc, TimeoutError):
+            return True
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError):
+            return True
+        return "timed out" in str(exc).lower()
+
+    def _transport_error(self, exc: BaseException, ticket: Ticket, provider: ProviderConfig, limit: float, *, prefix: str = "") -> GatewayError:
+        if self._timed_out(exc):
+            return GatewayError(ProviderStatus.TIMEOUT, f"{prefix}no answer within {limit:.0f}s", role=ticket.role, provider=provider.name)
+        return GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, prefix + redact(str(exc), self.credentials)[:300], role=ticket.role,
+                            provider=provider.name)
+
     def post_sse(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *,
                  headers: dict[str, str] | None = None, auth: str = "bearer", timeout: float | None = None):
         """POST and read the reply as Server-Sent Events: yields ``(event, data)`` as they arrive.
@@ -144,14 +161,14 @@ class Transport:
         request_headers = self._request_headers(provider, headers, auth)
         request_headers["Accept"] = "text/event-stream"
         payload = json.dumps(body).encode("utf-8")
+        limit = float(timeout or provider.timeout_seconds)
         try:
             request = urllib.request.Request(url, data=payload, headers=request_headers, method="POST")
-            response = self._opener(request, timeout=timeout or provider.timeout_seconds)
+            response = self._opener(request, timeout=limit)
         except urllib.error.HTTPError as exc:
             raise self._http_error(exc, ticket, provider) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, redact(str(exc), self.credentials)[:300], role=ticket.role,
-                               provider=provider.name) from None
+            raise self._transport_error(exc, ticket, provider, limit) from None
         try:
             if not hasattr(response, "__iter__"):
                 # Not a stream: the whole body, once.  The adapter reads it as
@@ -178,8 +195,7 @@ class Transport:
             if data_lines:
                 yield event, "\n".join(data_lines)
         except (TimeoutError, OSError) as exc:
-            raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, "stream interrupted: " + redact(str(exc), self.credentials)[:200],
-                               role=ticket.role, provider=provider.name) from None
+            raise self._transport_error(exc, ticket, provider, limit, prefix="stream interrupted: ") from None
         finally:
             try:
                 response.close()
@@ -194,9 +210,10 @@ class Transport:
         request_headers = self._request_headers(provider, headers, auth)
         payload = json.dumps(body).encode("utf-8")
         started = time.perf_counter()
+        limit = float(timeout or provider.timeout_seconds)
         try:
             request = urllib.request.Request(url, data=payload, headers=request_headers, method="POST")
-            with self._opener(request, timeout=timeout or provider.timeout_seconds) as response:
+            with self._opener(request, timeout=limit) as response:
                 raw = response.read()
                 status = int(getattr(response, "status", 200) or 200)
         except urllib.error.HTTPError as exc:
@@ -221,8 +238,7 @@ class Transport:
             raise GatewayError(status_kind, f"HTTP {exc.code}: {text[:500]}", role=ticket.role, provider=provider.name,
                                http_status=int(exc.code), retry_after_seconds=retry_after) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, redact(str(exc), self.credentials)[:300], role=ticket.role,
-                               provider=provider.name) from None
+            raise self._transport_error(exc, ticket, provider, limit) from None
         latency = time.perf_counter() - started
         try:
             data = json.loads(raw.decode("utf-8"))

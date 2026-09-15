@@ -986,6 +986,7 @@
    "service/core.py"
   ],
   "service/semantic.py": [
+   "service/actions.py",
    "service/core.py"
   ],
   "service/state.py": [
@@ -1907,6 +1908,7 @@
    "brain/json_utils.py",
    "projects/store.py",
    "runtime/receipts.py",
+   "service/semantic.py",
    "tools/registry.py"
   ],
   "service/aliases.py": [],

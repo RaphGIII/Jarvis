@@ -23,7 +23,11 @@ symmetric.  Classifying conversation as an action costs a few hundred
 milliseconds and produces a correct answer anyway, because the planner is
 allowed to decline and fall back.  Classifying an action as conversation
 produces a confident lie about the user's filesystem.  When a verb could go
-either way -- "schreibe mir", "make me" -- it goes to ACTION.
+either way -- "leg das ab", "make me" -- it goes to ACTION.  The exception is
+writing: "schreibe mir eine Erklärung" is a request for prose and stays a
+conversation; :mod:`service.routing` decides that from the verb's object
+(a file, a path, a message with something to send it) and never from the
+verb alone.
 
 The residual risk, stated rather than hidden: this cannot catch every phrasing.
 That is why it is not the only defence.  :mod:`service.claims` checks the
@@ -488,6 +492,14 @@ def classify(text: str, *, corrections: Iterable[Any] = (), capability_names: It
     for hint in PROJECT_HINTS:
         if hint in normalized:
             return Classification(Intent.PROJECT, f"describes durable work: {hint!r}", matched=hint, route=top)
+
+    composition = getattr(getattr(top, "reading", None), "composition", "")
+    if composition:
+        # The top level read the writing verb by its object: prose to read
+        # here.  The substring list below would call it an action on the
+        # word alone, and that is the lookup this rule exists to prevent.
+        return Classification(Intent.CONVERSATION, f"written prose, nothing to do on the machine: {composition}",
+                              matched="prose-composition", route=top)
 
     filename = FILENAME.search(normalized)
     separable = SEPARABLE_ACTION.search(normalized)

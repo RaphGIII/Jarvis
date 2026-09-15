@@ -22,6 +22,10 @@ class ProviderStatus(str, Enum):
     QUOTA_EXHAUSTED = "quota_exhausted"
     AUTHENTICATION_ERROR = "authentication_error"
     MODEL_UNAVAILABLE = "model_unavailable"
+    #: The provider accepted the request and never answered within the bound.
+    #: Kept apart from 429/503/malformed/auth: a hang says nothing about the
+    #: key, the quota or the task, and it must never be retried at full length.
+    TIMEOUT = "timeout"
     TASK_FAILURE = "task_failure"
 
     @property
@@ -29,7 +33,7 @@ class ProviderStatus(str, Enum):
         """True for anything that is about the provider, not the task."""
 
         return self in {ProviderStatus.PROVIDER_UNAVAILABLE, ProviderStatus.RATE_LIMIT, ProviderStatus.QUOTA_EXHAUSTED,
-                        ProviderStatus.AUTHENTICATION_ERROR, ProviderStatus.MODEL_UNAVAILABLE}
+                        ProviderStatus.AUTHENTICATION_ERROR, ProviderStatus.MODEL_UNAVAILABLE, ProviderStatus.TIMEOUT}
 
 
 class GatewayError(RuntimeError):
@@ -57,7 +61,14 @@ class FreeIntelligenceUnavailable(GatewayError):
     def __init__(self, message: str = "free intelligence is temporarily unavailable", *, role: str = "reasoning.free",
                  provider: str = "", attempts: list[dict[str, Any]] | None = None) -> None:
         self.attempts = list(attempts or [])
-        super().__init__(ProviderStatus.PROVIDER_UNAVAILABLE, message, role=role, provider=provider)
+        # The pool's status is what every attempt said: a pool whose models
+        # all hung is a timeout, recorded as such; anything mixed is the
+        # general outage.
+        classes = {str(a.get("failure_class")) for a in self.attempts} - {"ok"}
+        status = ProviderStatus.TIMEOUT if classes and classes == {ProviderStatus.TIMEOUT.value} else ProviderStatus.PROVIDER_UNAVAILABLE
+        if classes:
+            message = f"{message} ({', '.join(sorted(classes))})"
+        super().__init__(status, message, role=role, provider=provider)
 
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
@@ -118,6 +129,8 @@ class ProviderHealth:
             cooldown = retry_after_seconds or 3600.0
         elif status is ProviderStatus.PROVIDER_UNAVAILABLE:
             cooldown = retry_after_seconds or 60.0
+        elif status is ProviderStatus.TIMEOUT:
+            cooldown = retry_after_seconds or 30.0  # a hang under load; short, so a recovered provider is used again soon
         elif status is ProviderStatus.AUTHENTICATION_ERROR:
             cooldown = 0.0  # a key does not fix itself; report, do not hide
         self.state[provider] = {"status": status.value, "detail": detail[:300], "at": time.time(),

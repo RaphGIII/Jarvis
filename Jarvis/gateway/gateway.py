@@ -51,6 +51,10 @@ from gateway.transport import ReservationRequired, Ticket, Transport, ZeroCostVi
 
 TRANSIENT_FREE_POOL_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 FREE_POOL_MAX_ATTEMPTS_PER_MODEL = 2
+#: One structured semantic decision (GoalSpec, PlanSpec, a goal from the
+#: closed set) must answer within this bound.  Measured live these calls take
+#: a few seconds; the provider default of 120 s let one hang for 134 s.
+SEMANTIC_CALL_TIMEOUT_SECONDS = 30.0
 FREE_POOL_BASE_DELAY_SECONDS = 1.0
 FREE_POOL_MAX_DELAY_SECONDS = 2.0
 
@@ -136,6 +140,10 @@ class GatewayRequest:
     #: from owner_text, the task and the mode.  ``max_output_tokens`` set by
     #: the caller outranks both (a structured decision knows its size).
     output_budget: Any = None
+    #: A bound on the provider call for this request, in seconds.  None = the
+    #: provider's configured timeout.  A timeout is reported as its own
+    #: status (``timeout``), never mistaken for a 429, 503 or a bad key.
+    timeout_seconds: float | None = None
 
 
 @dataclass
@@ -462,7 +470,8 @@ class ModelGateway:
         prepared.pricing, prepared.estimate, prepared.reservation, prepared.ticket = pricing, estimate, reservation, ticket
         prepared.budget, prepared.hard_limit = budget, hard_limit
         prepared.provider_request = ProviderRequest(system=system, prompt=prompt_text, max_output_tokens=max_out, temperature=temperature,
-                                                    thinking=thinking, schema=request.schema, thinking_level=decision.thinking_level)
+                                                    thinking=thinking, schema=request.schema, thinking_level=decision.thinking_level,
+                                                    timeout_seconds=request.timeout_seconds)
         prepared.adapter = adapter_for(provider.kind)
         return prepared
 
@@ -623,6 +632,8 @@ class ModelGateway:
                     retry_delay = self._free_pool_retry_delay(attempt) if transient and attempt < FREE_POOL_MAX_ATTEMPTS_PER_MODEL else 0.0
                     route_attempts.append({"model": model, "attempt": attempt, "failure_class": exc.status.value, "http_status": exc.http_status,
                                            "retry_delay_seconds": round(retry_delay, 3), "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+                    if exc.status is ProviderStatus.TIMEOUT and not shown:
+                        break  # the next pool model gets one bounded try; the same model is not waited on twice
                     if not transient:
                         raise
                     if retry_delay > 0:
@@ -711,6 +722,8 @@ class ModelGateway:
                     attempts.append({"model": model, "attempt": attempt, "failure_class": exc.status.value,
                                      "http_status": exc.http_status, "retry_delay_seconds": round(retry_delay, 3),
                                      "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
+                    if exc.status is ProviderStatus.TIMEOUT:
+                        break  # the next pool model gets one bounded try; the same model is not waited on twice
                     if not transient:
                         raise
                     if retry_delay > 0:
@@ -910,10 +923,16 @@ class GatewayBrainProvider:
 
     provider_name = "zeus-gateway"
 
-    def __init__(self, gateway: ModelGateway, *, fallback: Any | None = None, fallback_allowed: Callable[[], bool] | None = None) -> None:
+    def __init__(self, gateway: ModelGateway, *, fallback: Any | None = None, fallback_allowed: Callable[[], bool] | None = None,
+                 decision: bool = False) -> None:
         self.gateway = gateway
         self.fallback = fallback
         self._fallback_allowed = fallback_allowed or (lambda: True)
+        #: True for the view handed to semantic decisions (what does the owner
+        #: mean, which goal, which plan, which capability): no local fallback
+        #: exists on it, the offline route is refused before the call, and
+        #: every call is bounded by SEMANTIC_CALL_TIMEOUT_SECONDS.
+        self.decision = decision
         self.last_metadata: dict[str, Any] = {}
         self.last_decision: dict[str, Any] = {}
         self.last_reply: GatewayReply | None = None
@@ -927,6 +946,18 @@ class GatewayBrainProvider:
         """The execution receipt of the last generation, for the transcript's backend label."""
 
         return dict(self.last_provenance)
+
+    def for_decisions(self) -> "GatewayBrainProvider":
+        """The same gateway, with no way down to the local model.
+
+        The legacy local model may answer prose when nothing else can.  It may
+        never infer what the owner means: no GoalSpec, no PlanSpec, no goal
+        from the closed set, no capability choice.  This view cannot reach it
+        -- ``fallback`` is None, the offline route is refused in ``_prepare``,
+        and a provider that hangs is cut off at the semantic bound.
+        """
+
+        return GatewayBrainProvider(self.gateway, fallback=None, decision=True)
 
     @property
     def model_name(self) -> str:
@@ -947,7 +978,9 @@ class GatewayBrainProvider:
         # -- are about executing, and are decided by the caller, not here.
         return GatewayRequest(prompt=prompt, mode=context.mode, chunks=list(context.chunks), facts=context.facts, schema=schema,
                               max_output_tokens=max_tokens, temperature=temperature, system=system or "", task_id=context.task_id,
-                              soft=dict(context.soft), overrides=False, owner_text=context.owner_text, output_budget=context.output_budget)
+                              soft=dict(context.soft), overrides=False, owner_text=context.owner_text, output_budget=context.output_budget,
+                              allow_offline_fallback=not self.decision,
+                              timeout_seconds=SEMANTIC_CALL_TIMEOUT_SECONDS if self.decision else None)
 
     def _run(self, prompt: str, *, schema: dict[str, Any] | None = None, max_tokens: int | None = None,
              temperature: float | None = None, system: str | None = None) -> str:

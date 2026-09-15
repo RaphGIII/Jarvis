@@ -36,6 +36,8 @@ class ProviderRequest:
     schema: dict[str, Any] | None = None
     #: The abstract level the setting came from (FAST / NORMAL / DEEP / MAX), for the record.
     thinking_level: str = ""
+    #: A bound on this one call, in seconds; None = the provider's configured timeout.
+    timeout_seconds: float | None = None
 
 
 @dataclass
@@ -127,7 +129,7 @@ class GeminiAdapter:
         url = url.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
         usage_raw: dict[str, Any] = {}
         finish = ""
-        for _event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth):
+        for _event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds):
             try:
                 chunk = json.loads(data)
             except ValueError:
@@ -159,7 +161,7 @@ class GeminiAdapter:
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
         url, body = self._payload(provider, binding, request)
-        reply = transport.post_json(ticket, provider, url, body, auth=self.auth)
+        reply = transport.post_json(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds)
         data = reply.data
         candidates = data.get("candidates") or []
         if not candidates:
@@ -218,7 +220,7 @@ class OpenAIAdapter:
         url, body = self._payload(provider, binding, request)
         body["stream"] = True
         final: dict[str, Any] = {}
-        for event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth):
+        for event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds):
             try:
                 payload = json.loads(data)
             except ValueError:
@@ -259,7 +261,7 @@ class OpenAIAdapter:
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
         url, body = self._payload(provider, binding, request)
-        reply = transport.post_json(ticket, provider, url, body, auth=self.auth)
+        reply = transport.post_json(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds)
         data = reply.data
         if data.get("error"):
             raise GatewayError(ProviderStatus.TASK_FAILURE, str(data["error"])[:300], role=ticket.role, provider=provider.name)
@@ -304,7 +306,7 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
                                 "temperature": request.temperature}
         if request.schema is not None:
             body["response_format"] = {"type": "json_schema", "json_schema": {"name": "zeus_response", "schema": request.schema}}
-        reply = transport.post_json(ticket, provider, url, body, auth=self.auth)
+        reply = transport.post_json(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds)
         data = reply.data
         try:
             choice = data["choices"][0]
@@ -353,7 +355,7 @@ class AnthropicAdapter:
         input_tokens = cached = output_tokens = 0
         stop = ""
         model = binding.model
-        for event, data in transport.post_sse(ticket, provider, url, body, headers=headers, auth=self.auth):
+        for event, data in transport.post_sse(ticket, provider, url, body, headers=headers, auth=self.auth, timeout=request.timeout_seconds):
             try:
                 payload = json.loads(data)
             except ValueError:
@@ -398,7 +400,7 @@ class AnthropicAdapter:
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
         url, body, headers = self._payload(provider, binding, request)
-        reply = transport.post_json(ticket, provider, url, body, headers=headers, auth=self.auth)
+        reply = transport.post_json(ticket, provider, url, body, headers=headers, auth=self.auth, timeout=request.timeout_seconds)
         data = reply.data
         blocks = data.get("content") or []
         text = "".join(str(block.get("text", "")) for block in blocks if block.get("type") == "text")

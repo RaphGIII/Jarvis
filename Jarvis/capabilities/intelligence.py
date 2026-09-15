@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
@@ -506,10 +507,19 @@ class FlowResult:
                 "route_kind": self.route_kind}
 
 
+#: The whole semantic decision path -- GoalSpec, PlanSpec, one correction
+#: round -- must settle within this many seconds.  Each call is bounded by
+#: the gateway's SEMANTIC_CALL_TIMEOUT_SECONDS as well; a free pool of two
+#: models that both hang spends the deadline on the GoalSpec alone and the
+#: flow then reports the typed unavailable status instead of trying more.
+SEMANTIC_DEADLINE_SECONDS = 60.0
+
+
 class IntelligenceFlow:
     def __init__(self, gateway: Any, cards: Iterable[Card], projects: Iterable[ProjectSummary] = (), *,
                  mode: Any = None, task_id: str = "", max_depth: int = 6,
-                 reliability: Callable[[str], float | None] | None = None) -> None:
+                 reliability: Callable[[str], float | None] | None = None,
+                 deadline_seconds: float = SEMANTIC_DEADLINE_SECONDS) -> None:
         self.gateway = gateway
         self.cards = list(cards)
         self.projects = list(projects)
@@ -519,6 +529,11 @@ class IntelligenceFlow:
         #: Learned per-capability reliability (from real runs); None = the health assumption.
         self.reliability = reliability
         self.metrics = FlowMetrics()
+        self.deadline_seconds = float(deadline_seconds)
+        self._started = time.perf_counter()
+
+    def remaining_seconds(self) -> float:
+        return self.deadline_seconds - (time.perf_counter() - self._started)
 
     def unavailable_status(self) -> str:
         """FREE mode has its own typed answer: the free provider is not reachable and nothing paid or local replaces it."""
@@ -544,20 +559,29 @@ class IntelligenceFlow:
     def _ask(self, prompt: str, schema: dict[str, Any], *, facts: Any, max_tokens: int, kind: str) -> tuple[str | None, Any, dict[str, Any]]:
         """One structured call.  Returns (text, reply, unavailable-reason dict)."""
 
-        from gateway.gateway import GatewayError, GatewayRefused, GatewayRequest
+        from gateway.gateway import SEMANTIC_CALL_TIMEOUT_SECONDS, GatewayError, GatewayRefused, GatewayRequest
 
+        remaining = self.remaining_seconds()
+        if remaining < 3.0:
+            # Bounded, and said so: no further provider call is started once
+            # the decision path has used its time.
+            self.metrics.notes.append(f"semantic deadline of {self.deadline_seconds:.0f}s exhausted before the {kind} call")
+            return None, None, {"reason": f"timeout: the semantic decision path used its {self.deadline_seconds:.0f}s before the {kind}",
+                                "question": ""}
         self.metrics.total_model_context_tokens += estimate_tokens(prompt)
         self.metrics.provider_calls += 1
         request = GatewayRequest(prompt=prompt, mode=self.mode if self.mode is not None else "AUTO", facts=facts, schema=schema,
                                  max_output_tokens=max_tokens, temperature=0.0, task_id=self.task_id, overrides=False,
-                                 allow_offline_fallback=False)
+                                 allow_offline_fallback=False, timeout_seconds=min(SEMANTIC_CALL_TIMEOUT_SECONDS, remaining))
         try:
             reply = self.gateway.complete(request)
         except GatewayRefused as exc:
             return None, None, {"reason": f"no reasoning route: {exc.decision.reason[:200]}", "question": exc.decision.suggestion}
         except GatewayError as exc:
+            classes = sorted({str(a.get("failure_class")) for a in getattr(exc, "attempts", [])} - {"ok", "None"})
             if getattr(exc, "typed_status", "") == "FREE_INTELLIGENCE_UNAVAILABLE":
-                return None, None, {"reason": "free intelligence is temporarily unavailable", "question": ""}
+                return None, None, {"reason": "free intelligence is temporarily unavailable" + (f" ({', '.join(classes)})" if classes else ""),
+                                    "question": ""}
             return None, None, {"reason": f"reasoning provider {exc.status.value}: {exc}"[:300], "question": ""}
         if reply.decision.offline_fallback:
             return None, reply, {"reason": "only the offline fallback model is reachable; it does not produce a " + kind,
@@ -733,6 +757,7 @@ class IntelligenceFlow:
     # -- the run ------------------------------------------------------------------------------
 
     def run(self, text: str, state: WorldState) -> FlowResult:
+        self._started = time.perf_counter()
         context = retrieve(text, state, self.cards, self.projects)
         result = FlowResult(status="NONE", context=context, metrics=self.metrics)
         if context.empty:

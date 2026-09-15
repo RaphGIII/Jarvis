@@ -91,6 +91,10 @@ class Reading:
     world_objects: tuple[str, ...] = ()
     core_terms: tuple[str, ...] = ()
     capability_terms: tuple[str, ...] = ()
+    #: Why a writing verb was read as a request for prose ("schreibe mir eine
+    #: Erklärung") rather than as a side effect; empty when it acts on a file,
+    #: a path or a messaging capability.
+    composition: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +104,7 @@ class Reading:
             "self_refs": list(self.self_refs)[:6], "modify_verbs": list(self.modify_verbs)[:6],
             "action_verbs": list(self.action_verbs)[:6], "world_objects": list(self.world_objects)[:6],
             "core_terms": list(self.core_terms)[:4], "capability_terms": list(self.capability_terms)[:4],
+            "composition": self.composition,
         }
 
 
@@ -267,6 +272,50 @@ _DESCRIBE = re.compile(
 #: names no project verb.
 _MISSION_SHAPE = re.compile(r"\b(schritt\s+fuer\s+schritt|step\s+by\s+step|plane?\s+und|plan\s+and|mehrstufig|multi-?step|langfristig|long-?term)\b")
 
+#: Writing is not a side effect by itself.  "Schreibe mir eine Erklärung zur
+#: Glykolyse" asks for prose to read here; "schreibe eine Datei test.txt mit
+#: Inhalt Hallo" acts on the file system; "schreibe meiner Freundin eine
+#: Nachricht" is an action only where something can send a message.  The
+#: verb decides none of that -- its object and the registered capabilities do.
+_COMPOSE_VERBS = re.compile(r"^(schreib\w*|verfass\w*|formulier\w*|write|compose|draft)$")
+_PROSE_GENRES = re.compile(
+    r"\b(erklaerung\w*|zusammenfassung\w*|gedicht\w*|geschichte\w*|witz\w*|essay\w*|aufsatz\w*|texte?|absatz|absaetze|abschnitt\w*"
+    r"|beschreibung\w*|definition\w*|uebersicht\w*|ueberblick\w*|anleitung\w*|rezept\w*|vergleich\w*|kommentar\w*|antwort\w*"
+    r"|satz|saetze|formel\w*|gleichung\w*|beispiel\w*|argument\w*|begruendung\w*|liste|stichpunkte|gliederung\w*|einleitung\w*"
+    r"|fazit|rede|ansprache|slogan\w*|ueberschrift\w*|titel|herleitung\w*|zusammenhang\w*|erlaeuterung\w*"
+    r"|explanation\w*|summary|summaries|poem\w*|story|stories|joke\w*|paragraph\w*|description\w*|overview\w*|recipe\w*"
+    r"|comparison\w*|equation\w*|example\w*|outline\w*|introduction\w*|conclusion\w*|speech|headline\w*|caption\w*|limerick\w*|haiku)\b"
+)
+_MESSAGE_NOUNS = re.compile(r"\b(nachricht\w*|sms|whatsapp|telegram|signal|e-?mails?|mail|message\w*|dm|briefe?|letters?)\b")
+_MESSAGING_CAPABILITY = re.compile(r"(nachricht|messag|mail|sms|whatsapp|telegram|signal|notify|chat\.send)", re.I)
+_FILE_LIKE = re.compile(r"\b[\w\-]+\.(?:txt|md|py|json|csv|yaml|yml|log|ini|cfg|html|js|toml|docx|pdf)\b|\b[a-z]:[\\/]")
+
+
+def composition_reading(body: str, action_verbs: Iterable[str], world_objects: Iterable[str],
+                        capability_names: Iterable[str] = ()) -> str:
+    """Why the writing verbs in ``body`` ask for prose rather than a side effect, or ``""``.
+
+    ``body`` is the folded request.  Non-empty only when every action verb
+    is a writing verb and the object written is prose: a genre word with no
+    file, path or world object next to it, or a message where no messaging
+    capability is registered.
+    """
+
+    verbs = [v for v in action_verbs if v]
+    if not verbs or not all(_COMPOSE_VERBS.match(v) for v in verbs):
+        return ""
+    message = _MESSAGE_NOUNS.search(body)
+    if message is not None:
+        if any(_MESSAGING_CAPABILITY.search(str(name)) for name in capability_names):
+            return ""
+        return f"a {message.group(0)} to write, and nothing registered that could send one"
+    if list(world_objects) or _FILE_LIKE.search(body):
+        return ""
+    genre = _PROSE_GENRES.search(body)
+    if genre is None:
+        return ""
+    return f"asks for prose to read here: {genre.group(0)}"
+
 
 def _findall(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:
     out: list[str] = []
@@ -325,6 +374,12 @@ def read(text: str, *, capability_names: Iterable[str] = ()) -> Reading:
     owned_words = {m.group(2) for m in owned.finditer(body)}
     world_objects = tuple(w for w in _findall(_WORLD_OBJECTS, body) if w not in owned_words)
     components = _findall(_SELF_COMPONENTS, body)
+    # "Schreibe mir eine Erklärung": the writing IS the answer.  The verb
+    # stops being an action and the request is read as a question.
+    composition = composition_reading(body, action_verbs, world_objects, capability_names)
+    if composition:
+        action_verbs = []
+        is_question = True
 
     self_score = 0
     self_score += 2 * min(len([r for r in self_refs if r not in {"dass du", "wie du", "wenn du", "the way you", "how you", "when you", "that you"}]), 4)
@@ -375,7 +430,7 @@ def read(text: str, *, capability_names: Iterable[str] = ()) -> Reading:
         operation=operation, object=obj, self_score=self_score, world_score=world_score,
         is_question=is_question, self_refs=tuple(self_refs), modify_verbs=tuple(modify_verbs),
         action_verbs=tuple(action_verbs), world_objects=world_objects, core_terms=core_terms,
-        capability_terms=tuple(capability_terms),
+        capability_terms=tuple(capability_terms), composition=composition,
     )
 
 
@@ -475,6 +530,9 @@ def _decide(r: Reading, conflicts: list[str]) -> tuple[TopLevelIntent, str, str]
             )
         return TopLevelIntent.REAL_WORLD_ACTION, "high" if r.action_verbs else "medium", \
             f"acts on the world: {', '.join((r.action_verbs or r.modify_verbs)[:2])}"
+
+    if r.composition and r.operation in {"ask", "none"}:
+        return TopLevelIntent.CONVERSATION, "high", f"written prose, nothing to do on the machine: {r.composition}"
 
     if r.operation == "ask" or r.operation == "none":
         return TopLevelIntent.CONVERSATION, "high" if not r.self_refs else "medium", \

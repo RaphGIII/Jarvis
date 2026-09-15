@@ -390,6 +390,7 @@ modules:
       - def to_dict(self) -> dict[str, Any]
     - name: IntelligenceFlow
       methods:
+      - def remaining_seconds(self) -> float
       - def unavailable_status(self) -> str
       - 'def vocabulary(cards: Iterable[Card]) -> list[str]'
       - 'def understand(self, text: str, context: RetrievedContext) -> tuple[GoalSpec | None, dict[str, Any], Any]'
@@ -1538,6 +1539,7 @@ modules:
       doc: Speaks the ``BrainProvider`` protocol; routes through the gateway.
       methods:
       - def provenance(self) -> dict[str, Any]
+      - def for_decisions(self) -> 'GatewayBrainProvider'
       - def model_name(self) -> str
       - def spec(self) -> Any
       - 'def generate(self, prompt: str, *, max_tokens: int | None=None, temperature: float | None=None, top_p: float | None=None,
@@ -3610,6 +3612,8 @@ modules:
       - 'def plan(self, request: str, provider: Any, *, guidance: str='''') -> ActionPlan'
       - 'def execute(self, plan: ActionPlan, *, request: str='''') -> Receipt'
     functions:
+    - signature: 'def parse_file_write(text: str) -> ActionPlan | None'
+      doc: The file write a request spells out in full, or None.
     - signature: 'def compose(receipt: Receipt, *, language: str='''') -> str'
       doc: The sentence the user reads, built from the receipt and nothing else.
   service/aliases.py:
@@ -4453,6 +4457,9 @@ modules:
       - def to_dict(self) -> dict[str, Any]
     functions:
     - signature: 'def fold(text: str) -> str'
+    - signature: 'def composition_reading(body: str, action_verbs: Iterable[str], world_objects: Iterable[str], capability_names:
+        Iterable[str]=()) -> str'
+      doc: Why the writing verbs in ``body`` ask for prose rather than a side effect, or ``""``.
     - signature: 'def read(text: str, *, capability_names: Iterable[str]=()) -> Reading'
       doc: The object/operation analysis, with every signal that fed it.
     - signature: 'def asks_about_itself(text: str) -> bool'
@@ -4506,6 +4513,11 @@ modules:
   service/semantic.py:
     module: service.semantic
     classes:
+    - name: SemanticAuthorityUnavailable
+      bases:
+      - RuntimeError
+      doc: No configured reasoning provider can decide what the owner means.
+      methods: []
     - name: SemanticGoal
       doc: What the owner wants, as one typed goal.  A proposal, never a result.
       methods:
@@ -4515,7 +4527,9 @@ modules:
       methods:
       - 'def plan(self, request: str, provider: Any, *, apps: Iterable[str]=(), projects: Iterable[str]=(), aliases: Iterable[dict[str,
         Any]]=(), guidance: str='''', capabilities: Iterable[dict[str, Any]]=()) -> SemanticGoal | None'
-    functions: []
+    functions:
+    - signature: 'def is_provider_outage(exc: BaseException) -> bool'
+      doc: Whether an exception from a decision call means "no semantic provider", not "bad answer".
   service/state.py:
     module: service.state
     classes:

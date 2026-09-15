@@ -242,7 +242,14 @@ def test_a_capable_model_finds_a_capability_by_meaning_and_zeus_runs_it(world, m
     assert "Installierte ZEUS-F" in sent and manifest.capability_id in sent, "the planner was shown the installed capabilities"
 
 
-def test_the_offline_model_naming_a_capability_is_asked_about_not_acted_on(world, monkeypatch):
+def test_the_offline_model_is_never_asked_to_name_a_capability(world, monkeypatch):
+    """Formerly: the offline model's match was asked about.  Now it is not consulted at all.
+
+    A capability choice is a semantic decision; without the reasoning
+    provider it is not made.  The request still gets an answer -- prose from
+    whatever may answer prose -- and nothing runs.
+    """
+
     core, kernel, net, local = world
     manifest = _checksum_manifest()
     core.capabilities.registry.register(manifest)
@@ -250,13 +257,12 @@ def test_the_offline_model_naming_a_capability_is_asked_about_not_acted_on(world
 
     kernel.gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
     core.set_chat_mode("FREE")
-    local.generate_structured = lambda prompt, schema, **kwargs: _planner_json(manifest.capability_id)
+    structured: list[str] = []
+    local.generate_structured = lambda prompt, schema, **kwargs: structured.append(prompt) or _planner_json(manifest.capability_id)
     executed: list[str] = []
     monkeypatch.setattr(core, "_execute_capability", lambda m, goal, text, scope, phrase="": executed.append(m.capability_id)
                         or core._deliver("ausgeführt", scope=scope, backend=m.capability_id))
     events = ask(core, "Gib mir den Fingerprint der Datei D:/x.bin")
-    assert executed == [], "the offline model's match is a question, not an action"
-    assert "Meinst du" in answer_text(events)
-    assert core._pending and core._pending["action"].operation == "capability.run"
-    events = ask(core, "ja")
-    assert executed == [manifest.capability_id]
+    assert executed == [] and structured == [], "the offline model is not asked which capability the owner means"
+    assert "Meinst du" not in answer_text(events) and not getattr(core, "_pending", None)
+    assert answer_text(events), "the owner still gets an answer"

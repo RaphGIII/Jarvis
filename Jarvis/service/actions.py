@@ -29,6 +29,7 @@ verification, not adding a sentence to a prompt; a chat turn that could invoke
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,46 @@ class ActionPlan:
 
 
 SUPPORTED_ACTIONS = ("file.write", "file.read", "project.create", "capability", "none")
+
+#: "Schreibe eine Datei test.txt mit Inhalt Hallo." -- a write whose file name
+#: AND content are both spelled out needs no model to be understood.  Every
+#: piece is required: a writing verb, a file name with a known extension, and
+#: an explicit content marker.  Anything less is not deterministic and goes
+#: to the reasoning provider (or, without one, to the owner as a question).
+_WRITE_VERB = re.compile(r"\b(schreib\w*|erstell\w*|erzeug\w*|leg\w*|speicher\w*|write|create|save|make)\b", re.I)
+_WRITE_FILE = re.compile(r"(?<![\w.])(?P<name>[\w\-]+\.(?:txt|md|py|json|csv|yaml|yml|log|ini|cfg|html|js|toml))\b", re.I)
+_WRITE_CONTENT = re.compile(r"\b(?:mit\s+(?:dem\s+)?inhalt|inhalt|with\s+(?:the\s+)?contents?|containing|content)\s*[:=]?\s*(?P<content>.+)$",
+                            re.I | re.S)
+_QUOTES = "\"'„“”‚‘’«»"
+
+
+def parse_file_write(text: str) -> ActionPlan | None:
+    """The file write a request spells out in full, or None.
+
+    Deterministic syntax only.  The content is everything after the content
+    marker; surrounding quotes are removed, and one trailing full stop is
+    dropped when the content was not quoted ("mit Inhalt Hallo." writes
+    ``Hallo``).  A request that names no file, or names one without saying
+    what goes in it, returns None -- it is not this function's to guess.
+    """
+
+    body = (text or "").strip()
+    if not body or not _WRITE_VERB.search(body):
+        return None
+    name = _WRITE_FILE.search(body)
+    marker = _WRITE_CONTENT.search(body)
+    if name is None or marker is None or marker.start() < name.end():
+        return None
+    content = marker.group("content").strip()
+    quoted = len(content) >= 2 and content[0] in _QUOTES and content[-1] in _QUOTES
+    if quoted:
+        content = content[1:-1]
+    elif content.endswith("."):
+        content = content[:-1].rstrip()
+    if not content:
+        return None
+    return ActionPlan("file.write", arguments={"path": name.group("name"), "content": content},
+                      reason="deterministic: file name and content are spelled out in the request")
 
 
 PLANNER_PROMPT = """You turn a user's request into one machine-readable action. You do not perform it.
@@ -156,6 +197,13 @@ class ActionExecutor:
             # than one that runs with defaults.
             raw = provider.generate(prompt)
         except Exception as exc:
+            from service.semantic import is_provider_outage
+
+            if is_provider_outage(exc):
+                # No reasoning provider: the caller decides what happens
+                # without one.  Swallowing this here is how the local model
+                # once got to plan instead.
+                raise
             return ActionPlan("none", reason=f"the planner could not be reached: {exc}")
 
         try:
