@@ -14,7 +14,7 @@
    Visual classification (category colour, pin, hide) never moves a folder
    on disk. */
 
-import { el, kv, section, badge, button } from "../core/dom.js";
+import { el, clear, kv, section, badge, button } from "../core/dom.js";
 import { api } from "../core/api.js";
 import * as bus from "../core/bus.js";
 import * as views from "../core/views.js";
@@ -22,9 +22,9 @@ import * as chat from "./chat.js";
 import { Galaxy, warp } from "./projects.js";
 
 const CATEGORY_HUE = {
-  PROJECTS: [102, 201, 255], DEVELOPMENT: [127, 224, 180], GAMES: [190, 140, 250],
-  MEDIA: [240, 140, 190], DOCUMENTS: [240, 200, 110], AI_MODELS: [160, 130, 250],
-  TOOLS: [120, 210, 220], SYSTEM: [130, 145, 170], OTHER: [150, 170, 200],
+  PROJECTS: [241, 230, 209], DEVELOPMENT: [226, 206, 170], GAMES: [196, 182, 160],
+  MEDIA: [214, 196, 172], DOCUMENTS: [205, 183, 143], AI_MODELS: [180, 170, 150],
+  TOOLS: [163, 161, 156], SYSTEM: [122, 120, 114], OTHER: [138, 136, 131],
 };
 const CATEGORY_COLOUR = Object.fromEntries(Object.entries(CATEGORY_HUE).map(([k, [r, g, b]]) => [k, `rgb(${r},${g},${b})`]));
 const ENTER_ZOOM = 1.75;   // zooming closer than this over a folder expands it in place
@@ -48,6 +48,7 @@ const store = (key, fallback) => { try { return JSON.parse(localStorage.getItem(
 const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 let pins = new Set(store("zeus.files.pins", []));
 let hiddenPaths = new Set(store("zeus.files.hidden", []));
+let listMode = store("zeus.files.mode", "visual") === "list";   // Visuell | Liste -- the same folders either way
 
 export const view = {
   id: "files",
@@ -165,7 +166,7 @@ async function buildGraph() {
       edges.push({ source: "fsroot", target: fsId(d.path), type: "relates" });
     }
     nodes.push({
-      id: "galaxy:projects", kind: "project", label: "Projekte", hue: [225, 235, 255],
+      id: "galaxy:projects", kind: "project", label: "Projekte", hue: [241, 230, 209],
       importance: "FOCUS", baseR: 24, ringed: true, tasks: 0,
       data: { isGalaxyLink: true, name: "Projekte" }, health: { state: "HEALTHY", reason: "" },
     });
@@ -206,7 +207,7 @@ async function render(pane) {
   save("zeus.files.root", root || "D:\\");
   const crumbs = el("div", { class: "fs-crumbs" });
   const parts = root ? root.replace(/\\+$/, "").split("\\") : [];
-  crumbs.append(el("button", { class: "chip" + (root ? "" : " on"), text: "◈ Universum", onClick: () => go(null) }));
+  crumbs.append(el("button", { class: "chip" + (root ? "" : " on"), text: "Dein Rechner", onClick: () => go(null) }));
   parts.forEach((part, i) => {
     const target = parts.slice(0, i + 1).join("\\") + "\\";
     crumbs.append(el("span", { class: "sep", text: "›" }), el("button", { class: "chip" + (i === parts.length - 1 ? " on" : ""), text: part || "\\", onClick: () => go(target) }));
@@ -217,13 +218,17 @@ async function render(pane) {
     shortcuts.append(el("button", { class: "chip" + (target === root ? " on" : ""), text: label, onClick: () => go(target) }));
   }
   const counts = el("span", { class: "empty", style: { padding: 0 } });
-  pane.append(el("div", { class: "toolbar galaxy-overlay" }, crumbs, search, shortcuts, counts));
+  const modes = el("span", { class: "seg fs-modes" },
+    el("button", { class: listMode ? "" : "on", text: "Visuell", onClick: () => setMode(false) }),
+    el("button", { class: listMode ? "on" : "", text: "Liste", onClick: () => setMode(true) }));
+  pane.append(el("div", { class: "toolbar " + (listMode ? "fs-toolbar" : "galaxy-overlay") }, crumbs, search, shortcuts, modes, counts));
+  if (listMode) { await renderList(pane, search, counts); return; }
 
   const wrap = el("div", { class: "galaxy-wrap" });
   const canvas = el("canvas", { id: "constellation", class: "galaxy files" });
   const legend = el("div", { class: "galaxy-legend" },
     ...Object.entries(CATEGORY_COLOUR).map(([k, c]) => el("span", { style: { "--c": c }, text: k.toLowerCase().replace("_", "/") })));
-  const hint = el("div", { class: "galaxy-hint", text: root ? "rauszoomen → größere ebene · doppelklick betreten · rechtsklick menü · esc zurück" : "reinzoomen/doppelklick → system betreten · die projekte-galaxie ist teil dieses universums" });
+  const hint = el("div", { class: "galaxy-hint", text: root ? "Doppelklick öffnet · Rechtsklick Menü · Esc zurück" : "Doppelklick öffnet ein Laufwerk · Projekte sind Teil dieser Übersicht" });
   wrap.append(canvas, legend, hint);
   pane.append(wrap);
 
@@ -262,7 +267,7 @@ async function render(pane) {
         for (const n of ns) { const [x, y] = g.toScreen(n); spread = Math.max(spread, Math.hypot(x - cx, y - cy) + n.r * g.cam.z + 30); }
         const [r, gg, b] = CATEGORY_HUE[cat] || CATEGORY_HUE.OTHER;
         const neb = ctx.createRadialGradient(cx, cy, spread * 0.15, cx, cy, spread);
-        neb.addColorStop(0, `rgba(${r},${gg},${b},.075)`); neb.addColorStop(0.7, `rgba(${r},${gg},${b},.035)`); neb.addColorStop(1, "transparent");
+        neb.addColorStop(0, `rgba(${r},${gg},${b},.030)`); neb.addColorStop(0.7, `rgba(${r},${gg},${b},.012)`); neb.addColorStop(1, "transparent");
         ctx.fillStyle = neb; ctx.beginPath(); ctx.arc(cx, cy, spread, 0, Math.PI * 2); ctx.fill();
       }
     },
@@ -275,7 +280,7 @@ async function render(pane) {
         if (!groups.has(n.data.category)) groups.set(n.data.category, []);
         groups.get(n.data.category).push(n);
       }
-      ctx.textAlign = "center"; ctx.font = "600 10px Segoe UI, sans-serif";
+      ctx.textAlign = "center"; ctx.font = "500 10px \"Segoe UI Variable Text\", \"Segoe UI\", sans-serif";
       for (const [cat, ns] of groups) {
         if (ns.length < 2) continue;
         let sx = 0, sy = 0, top = Infinity;
@@ -349,6 +354,67 @@ async function render(pane) {
   } catch {}
 }
 
+function setMode(list) {
+  listMode = Boolean(list);
+  save("zeus.files.mode", listMode ? "list" : "visual");
+  views.open("files", { path: root || "" }, { push: false, force: true });
+}
+
+const FS_ICON = {
+  dir: '<path d="M4 7.5a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
+  file: '<path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5v4h4"/>',
+  drive: '<rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M7 14.5h.01M10.5 14.5h.01"/>',
+};
+const fsIcon = (kind) => el("span", { class: "i", html: `<svg viewBox="0 0 24 24">${FS_ICON[kind] || FS_ICON.file}</svg>` });
+const fmtSize = (n) => n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(0)} KB` : n != null ? `${n} B` : "";
+
+/* The list: every folder and file of the level, sortable by eye, one click deep, the same
+   inspector and actions as the visual field.  The drives level lists the drives. */
+async function renderList(pane, search, counts) {
+  const box = el("div", { class: "fs-list" });
+  pane.append(box);
+  let rows = [];
+  if (!root) {
+    const { drives } = await api("/api/fs/roots");
+    rows = (drives || []).map((d) => ({ name: d.label || d.path, path: d.path, type: "dir", drive: true, category: d.primary ? "PROJECTS" : "SYSTEM",
+      size: d.total_bytes, free: d.free_bytes }));
+    counts.textContent = `${rows.length} Laufwerke`;
+  } else {
+    const { dirs, files, truncated, error } = await listing(root);
+    rows = [...dirs, ...files];
+    counts.textContent = `${dirs.length} Ordner · ${files.length} Dateien` + (truncated ? " · gekürzt" : "") + (error ? ` · ${error}` : "");
+  }
+  const draw = () => {
+    clear(box);
+    const q = search.value.trim().toLowerCase();
+    const shown = rows.filter((e) => !q || String(e.name).toLowerCase().includes(q));
+    box.append(el("div", { class: "fs-row head" }, el("span"), el("span", { class: "fs-name", text: "Name" }), el("span", { class: "fs-cat", text: "Art" }),
+      el("span", { class: "fs-when", text: "Geändert" }), el("span", { class: "fs-size", text: "Größe" }), el("span")));
+    if (root) box.append(el("div", { class: "fs-row up", onClick: goUp }, el("span"), el("span", { class: "fs-name", text: "‹ Übergeordneter Ordner" })));
+    for (const e of shown) box.append(fsRow(e));
+    if (!shown.length) box.append(el("div", { class: "empty", text: "Nichts gefunden." }));
+  };
+  search.oninput = draw;
+  draw();
+}
+
+function fsRow(e) {
+  const isDir = e.type === "dir";
+  const node = { data: { ...e, isFs: true }, label: e.name };
+  const kind = isDir ? (e.category || "").toLowerCase().replace("_", " / ") : (String(e.name).includes(".") ? String(e.name).split(".").pop().toLowerCase() : "");
+  const size = e.drive && e.size ? `${fmtSize(e.size - (e.free || 0))} von ${fmtSize(e.size)}` : isDir ? (e.children_count != null ? `${e.children_count} Einträge` : "") : fmtSize(e.size);
+  const row = el("div", { class: "fs-row" + (isDir ? " dir" : "") + (pins.has(String(e.path).toLowerCase()) ? " pinned" : ""), title: e.path,
+                          onClick: () => (isDir ? go(e.path) : inspectEntry(node)) },
+    fsIcon(e.drive ? "drive" : isDir ? "dir" : "file"),
+    el("span", { class: "fs-name", text: e.name }),
+    el("span", { class: "fs-cat", text: kind }),
+    el("span", { class: "fs-when", text: String(e.modified || "").slice(0, 16).replace("T", "  ") }),
+    el("span", { class: "fs-size", text: size }),
+    el("span", { class: "more", text: "⋯", title: "Details", onClick: (ev) => { ev.stopPropagation(); inspectEntry(node); } }));
+  row.oncontextmenu = (ev) => { ev.preventDefault(); inspectEntry(node); };
+  return row;
+}
+
 function armZoomPoll() {
   clearInterval(zoomTimer);
   zoomTimer = setInterval(() => {
@@ -419,7 +485,7 @@ function inspectEntry(n) {
     section("Pfad", kv("pfad", d.path), kv("geändert", (d.modified || "").slice(0, 19).replace("T", " ")),
       d.type === "dir" ? kv("einträge", String(d.children_count ?? "—")) : kv("größe", size)),
     el("div", { class: "toolbar" },
-      d.type === "dir" ? button("Galaxie betreten", () => go(d.path), "primary") : null,
+      d.type === "dir" ? button("Öffnen", () => go(d.path), "primary") : null,
       button("Im Explorer öffnen", () => api("/api/fs/open", { path: d.path })),
       button("Pfad kopieren", () => navigator.clipboard?.writeText(d.path)),
       n.projectRef ? button("Projekt öffnen", () => views.open("projects", { id: n.projectRef.id })) : null,
@@ -437,7 +503,7 @@ function contextMenu(n, sx, sy) {
   if (!d.isFs) return;
   const item = (label, fn) => el("button", { text: label, onClick: async () => { galaxy?.closeMenu(); await fn(); } });
   const menu = el("div", { class: "galaxy-menu" }, el("h6", { text: d.name || n.label }),
-    d.type === "dir" ? item("Galaxie betreten", () => go(d.path)) : null,
+    d.type === "dir" ? item("Öffnen", () => go(d.path)) : null,
     item("Im Explorer öffnen", () => api("/api/fs/open", { path: d.path })),
     item("Pfad kopieren", () => navigator.clipboard?.writeText(d.path)),
     item(pins.has(d.path.toLowerCase()) ? "Loslösen" : "Anheften", () => { togglePin(d.path); views.open("files", { path: root || "" }, { push: false, force: true }); }),

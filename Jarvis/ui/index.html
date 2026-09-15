@@ -5,16 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="google" content="notranslate" />
 <title>__PRODUCT_NAME__</title>
-<!-- The shell (theme tokens, sidebar, orb, chat, composer, settings) and the
+<!-- The shell (tokens, sidebar, sphere, chat, composer, settings) and the
      view styles are two sheets on purpose: the shell can change its whole
-     look without touching how a galaxy or a calendar is drawn. -->
+     look without touching how a graph or a calendar is drawn. -->
 <link rel="stylesheet" href="zeus.css" />
 <link rel="stylesheet" href="views.css" />
 <style>
   body.tv { cursor: none; }
-  body.tv #eye { width: 44vh !important; height: 44vh !important; }
+  body.tv #eye { width: 62vh !important; }
   body.tv footer.compose { display: none; }
-  body.tv #stateLabel { font-size: 14px; letter-spacing: .5em; }
 </style>
 </head>
 <body>
@@ -39,19 +38,33 @@
 
   <div id="main">
     <header id="topbar">
-      <button id="btnSidebar" title="Seitenleiste ein-/ausblenden">☰</button>
+      <button id="btnSidebar" class="tb-btn" title="Seitenleiste">
+        <span class="i"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3" /><path d="M9.5 5v14" /></svg></span>
+      </button>
       <div id="topTitle">__PRODUCT_NAME__</div>
+      <button id="btnWorkspaceClose" hidden title="Zurück zum Chat (Esc)">Zurück</button>
       <span class="spacer"></span>
-      <button id="workPill" title="Was ZEUS gerade tut"><span class="dot"></span><span class="txt">Bereit</span><span class="n"></span></button>
+      <button id="btnSearch" class="tb-btn" title="Suchen und ausführen (Ctrl+K)">
+        <span class="i"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg></span>
+      </button>
+      <button id="workPill" title="Was ZEUS gerade tut">
+        <span class="i"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6H21" /></svg></span>
+        <span class="dot"></span><span class="txt">Bereit</span><span class="n"></span>
+      </button>
       <span class="pill" id="connPill">verbinden</span>
-      <button id="btnWorkspaceClose" hidden title="Zurück zum Chat (Esc)">Zurück zum Chat</button>
+      <button id="btnProfile" class="avatar" title="Einstellungen">R</button>
     </header>
 
     <main class="presence">
       <div id="stage">
-        <div id="orbWrap"><canvas id="eye" width="380" height="380"></canvas></div>
-        <div id="stateLabel" data-cat="blue">offline</div>
-        <div id="heroLine">Was möchtest du wissen oder erledigen?</div>
+        <div id="orbWrap"><canvas id="eye" width="476" height="340"></canvas></div>
+        <div class="hero">
+          <div class="hero-brand">ZEUS</div>
+          <div class="hero-sub">Dein persönliches KI-System</div>
+          <div class="hero-rule"></div>
+          <div class="hero-motto">Wissen. Klarheit. Fortschritt.</div>
+        </div>
+        <div id="stateLabel" data-state="offline" data-cat="blue">offline</div>
         <div id="detail"></div>
         <div id="readiness"><span data-stage="UI_READY"></span><span data-stage="CORE_READY"></span><span data-stage="AI_READY" class="ai"></span><span data-stage="VOICE_READY"></span></div>
       </div>
@@ -73,24 +86,26 @@
     </main>
 
     <footer class="compose">
-      <div class="composer glass edge-light">
-        <textarea id="input" rows="1" placeholder="Frag __ASSISTANT_NAME__ etwas oder gib eine Aufgabe …" autofocus></textarea>
+      <div class="composer edge-light">
+        <button class="icon-btn" id="btnPlus" title="Aktionen (Ctrl+K)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+        <textarea id="input" rows="1" placeholder="Stell __PRODUCT_NAME__ eine Frage …" autofocus></textarea>
         <div class="compose-tools">
           <div id="perf" class="perf"></div>
-          <span class="spacer"></span>
           <button class="icon-btn" id="btnMic" title="Spracheingabe">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0" /><path d="M12 18v4" />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <rect x="9" y="2.5" width="6" height="11.5" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0" /><path d="M12 17.5v3.5" />
             </svg>
           </button>
           <button class="icon-btn" id="btnSend" title="Senden">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 19V5M5 12l7-7 7 7" />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />
             </svg>
           </button>
         </div>
       </div>
-      <div class="hint">Enter sendet · Shift+Enter neue Zeile · Esc unterbricht · Ctrl+K Befehle</div>
+      <div class="compose-foot"><span id="perfSpend" class="perf-spend"></span><span id="perfEstimate" class="perf-est" hidden></span></div>
     </footer>
   </div>
 </div>

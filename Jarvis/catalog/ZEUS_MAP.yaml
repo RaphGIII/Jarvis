@@ -2883,7 +2883,7 @@ api_routes:
 ui_modules:
 - path: ui/app.js
   purpose: '* The client entry point: the shell of ONE product.  Subscribes to the event'
-  lines: 295
+  lines: 301
   imports:
   - core/api.js
   - core/bus.js
@@ -2941,14 +2941,14 @@ ui_modules:
   imports: []
 - path: ui/core/performance.js
   purpose: 'The ZEUS performance control: one compact selector in the composer instead'
-  lines: 133
+  lines: 138
   imports:
   - api.js
   - bus.js
   - dom.js
 - path: ui/core/sidebar.js
   purpose: 'The persistent sidebar: one place to start a chat, find one, reach a'
-  lines: 264
+  lines: 320
   imports:
   - api.js
   - bus.js
@@ -2980,11 +2980,11 @@ ui_modules:
   - views.js
 - path: ui/graph.js
   purpose: '* The knowledge graph as a starfield.'
-  lines: 325
+  lines: 326
   imports: []
 - path: ui/orb.js
-  purpose: 'The ZEUS Orb: a refractive glass sphere with a spectral band circulating'
-  lines: 260
+  purpose: The ZEUS sphere.
+  lines: 319
   imports: []
 - path: ui/views/activity.js
   purpose: 'Activity: the owner''s transparent operation log, request-centric. Rows'
@@ -3005,7 +3005,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/capabilities.js
   purpose: 'Capability Center: every acquired capability with its LIFECYCLE'
-  lines: 142
+  lines: 146
   imports:
   - chat.js
   - core/api.js
@@ -3013,7 +3013,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/chat.js
   purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
-  lines: 290
+  lines: 300
   imports:
   - core/api.js
   - core/bus.js
@@ -3048,7 +3048,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/files.js
   purpose: 'Files: the OS universe.'
-  lines: 451
+  lines: 517
   imports:
   - chat.js
   - core/api.js
@@ -3068,7 +3068,7 @@ ui_modules:
   - projects.js
 - path: ui/views/missions.js
   purpose: 'Mission Control: every long-running autonomous job — self-development'
-  lines: 219
+  lines: 230
   imports:
   - core/api.js
   - core/authgate.js
@@ -3104,7 +3104,7 @@ ui_modules:
   - owner.js
 - path: ui/views/projects.js
   purpose: 'Projects: the owner''s project universe.'
-  lines: 892
+  lines: 893
   imports:
   - chat.js
   - core/api.js

@@ -42,11 +42,14 @@ function eur(value) {
 function render() {
   if (!btn) return;
   clear(btn);
+  btn.dataset.level = mode;
+  btn.title = "Leistung: " + labelFor(mode);
   btn.append(el("span", { class: "brand", text: "ZEUS" }), el("span", { class: "lvl", text: labelFor(mode) }), el("span", { class: "chev", text: "▾" }));
   clear(spendEl);
   if (status && status.spend) {
     const s = status.spend;
     spendEl.append(el("b", { text: eur(s.month) }), el("span", { text: ` / ${eur(s.monthly_hard_cap)}` }));
+    spendEl.hidden = false;
     spendEl.title = "Ausgaben diesen Monat / dein monatliches Limit";
   }
 }
@@ -73,7 +76,7 @@ async function setMode(next) {
 
 function openMenu() {
   if (menu) { closeMenu(); return; }
-  menu = el("div", { class: "perf-menu glass-strong" }, el("h6", { text: "Leistung für diesen Chat" }));
+  menu = el("div", { class: "perf-menu glass" }, el("h6", { text: "Leistung für diesen Chat" }));
   for (const [id, label, desc] of LEVELS) {
     menu.append(el("button", { class: "perf-opt" + (id === mode ? " on" : ""), onClick: () => setMode(id) },
       el("span", { class: "mark", text: id === mode ? "✓" : "" }),
@@ -119,9 +122,11 @@ export function init() {
   if (!root) return;
   clear(root);
   btn = el("button", { class: "perf-btn", title: "Leistungsstufe wählen", onClick: (e) => { e.stopPropagation(); openMenu(); } });
-  spendEl = el("span", { class: "perf-spend" });
-  estimateEl = el("span", { class: "perf-est", hidden: true });
-  root.append(btn, spendEl, estimateEl);
+  spendEl = $("perfSpend") || el("span", { class: "perf-spend" });
+  estimateEl = $("perfEstimate") || el("span", { class: "perf-est", hidden: true });
+  root.append(btn);
+  if (!spendEl.isConnected) root.append(spendEl);
+  if (!estimateEl.isConnected) root.append(estimateEl);
   render();
   refresh();
   const input = $("input");

@@ -28,10 +28,10 @@ import * as chat from "./chat.js";
 import { Galaxy, warp } from "./projects.js";
 
 const DOMAIN_HUE = {
-  STUDIUM: [240, 200, 110], MEDIZIN: [255, 140, 150], TECHNIK: [127, 224, 180],
-  "ZEUS INTERN": [102, 201, 255], "FÄHIGKEITEN": [120, 210, 220], PROJEKTE: [160, 190, 255],
-  DATEIEN: [200, 180, 140], ERKENNTNISSE: [240, 170, 90], NOTIZEN: [150, 170, 200],
-  BIBLIOTHEK: [190, 150, 250],
+  STUDIUM: [241, 230, 209], MEDIZIN: [226, 206, 170], TECHNIK: [205, 183, 143],
+  "ZEUS INTERN": [196, 182, 160], "FÄHIGKEITEN": [180, 170, 150], PROJEKTE: [214, 196, 172],
+  DATEIEN: [163, 161, 156], ERKENNTNISSE: [232, 214, 180], NOTIZEN: [138, 136, 131],
+  BIBLIOTHEK: [188, 176, 156],
 };
 const DOMAIN_COLOUR = Object.fromEntries(Object.entries(DOMAIN_HUE).map(([k, [r, g, b]]) => [k, `rgb(${r},${g},${b})`]));
 
@@ -104,8 +104,8 @@ bus.on("knowledge", () => { if (suspended) stale = true; });
 async function mountGalaxy(pane, params) {
   const search = el("input", { placeholder: "Fokus… (Titel, Typ)", value: params.q || "", style: { maxWidth: "220px" } });
   const counts = el("span", { class: "empty", style: { padding: 0 } });
-  const listChip = el("button", { class: "chip", text: "☰ Ebenen", onClick: () => views.open("knowledge", { mode: "list" }) });
-  const editChip = el("button", { class: "chip", text: "✎ Bearbeiten", onClick: () => { drawer.dataset.open = drawer.dataset.open === "true" ? "false" : "true"; } });
+  const listChip = el("button", { class: "chip", text: "Ebenen", onClick: () => views.open("knowledge", { mode: "list" }) });
+  const editChip = el("button", { class: "chip", text: "Bearbeiten", onClick: () => { drawer.dataset.open = drawer.dataset.open === "true" ? "false" : "true"; } });
   pane.append(el("div", { class: "toolbar galaxy-overlay" }, search, listChip, editChip, counts));
 
   const wrap = el("div", { class: "galaxy-wrap" });
@@ -231,13 +231,13 @@ function nebulae(ctx, g) {
     for (const n of ns) { const [x, y] = g.toScreen(n); spread = Math.max(spread, Math.hypot(x - cx, y - cy) + n.r * g.cam.z + 26); }
     const [r, gg, b] = DOMAIN_HUE[domain] || DOMAIN_HUE.NOTIZEN;
     const neb = ctx.createRadialGradient(cx, cy, spread * 0.15, cx, cy, spread);
-    neb.addColorStop(0, `rgba(${r},${gg},${b},.07)`); neb.addColorStop(0.7, `rgba(${r},${gg},${b},.03)`); neb.addColorStop(1, "transparent");
+    neb.addColorStop(0, `rgba(${r},${gg},${b},.028)`); neb.addColorStop(0.7, `rgba(${r},${gg},${b},.010)`); neb.addColorStop(1, "transparent");
     ctx.fillStyle = neb; ctx.beginPath(); ctx.arc(cx, cy, spread, 0, Math.PI * 2); ctx.fill();
   }
 }
 
 function sectorLabels(ctx, g) {
-  ctx.textAlign = "center"; ctx.font = "600 10px Segoe UI, sans-serif";
+  ctx.textAlign = "center"; ctx.font = "500 10px \"Segoe UI Variable Text\", \"Segoe UI\", sans-serif";
   for (const [domain, ns] of groupsOf(g)) {
     if (ns.length < 2) continue;
     let sx = 0, top = Infinity;
@@ -302,7 +302,7 @@ async function inspectLibrary(entry) {
 }
 
 async function summarizePdf(absPath) {
-  const status = el("div", { class: "empty", text: "Lese und fasse zusammen… (lokales Modell, dauert einen Moment)" });
+  const status = el("div", { class: "empty", text: "Lese und fasse zusammen … das dauert einen Moment." });
   views.inspect("PDF-Zusammenfassung", status);
   const r = await api("/api/pdf/summarize", { path: absPath });
   if (r.ok === false) { status.textContent = r.error || "fehlgeschlagen"; return; }
@@ -398,7 +398,7 @@ async function mountList(pane, params) {
   };
   const render = () => {
     clear(crumbs); clear(board);
-    crumbs.append(el("button", { class: "chip" + (path.length ? "" : " on"), text: "◈ Wissen", onClick: () => { path = []; search.value = ""; render(); } }));
+    crumbs.append(el("button", { class: "chip" + (path.length ? "" : " on"), text: "Wissen", onClick: () => { path = []; search.value = ""; render(); } }));
     path.forEach((id, i) => crumbs.append(el("span", { class: "sep", text: "›" }),
       el("button", { class: "chip" + (i === path.length - 1 ? " on" : ""), text: (byId.get(id)?.title || id).slice(0, 30), onClick: () => { path = path.slice(0, i + 1); render(); } })));
     const q = search.value.trim().toLowerCase();

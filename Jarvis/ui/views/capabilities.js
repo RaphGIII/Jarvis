@@ -19,6 +19,9 @@ import * as chat from "./chat.js";
 const LIFECYCLE_TONE = { ACTIVE: "ok", VERIFIED: "ok", TESTING: "blue", DRAFT: "blue", DISCOVERED: "dim",
   DEGRADED: "warn", BROKEN: "bad", DISABLED: "bad", SUPERSEDED: "dim" };
 const HEALTH_TONE = { HEALTHY: "ok", AT_RISK: "warn", BROKEN: "bad", UNKNOWN: "dim" };
+const LIFE_WORD = { ACTIVE: "aktiv", VERIFIED: "geprüft", TESTING: "in Prüfung", DRAFT: "Entwurf", DISCOVERED: "entdeckt", DEGRADED: "eingeschränkt", BROKEN: "gestört", DISABLED: "aus", SUPERSEDED: "ersetzt" };
+const HEALTH_WORD = { HEALTHY: "gesund", AT_RISK: "gefährdet", BROKEN: "gestört", UNKNOWN: "ungeprüft" };
+const readable = (id) => String(id || "").replace(/[._-]+/g, " ");
 
 export const view = {
   id: "capabilities",
@@ -27,22 +30,22 @@ export const view = {
     const [data, queue] = await Promise.all([api("/api/capabilities"), api("/api/capabilities/requests").catch(() => ({ requests: [] }))]);
     const caps = data.capabilities || [];
     const pending = (queue && queue.requests) || [];
-    const search = el("input", { placeholder: "Filter capabilities…", value: params.q || "" });
+    const search = el("input", { placeholder: "Fähigkeiten filtern …", value: params.q || "" });
     const grid = el("div", { class: "grid" });
     const render = () => {
       clear(grid);
       const q = search.value.toLowerCase();
       const shown = caps.filter((c) => !q || `${c.capability_id} ${c.description} ${(c.aliases || []).join(" ")}`.toLowerCase().includes(q));
-      if (!shown.length) grid.append(el("div", { class: "empty", text: caps.length ? "Nothing matches." : "No capabilities acquired yet. Ask for something ZEUS cannot do and it learns it." }));
+      if (!shown.length) grid.append(el("div", { class: "empty", text: caps.length ? "Nichts passt zu diesem Filter." : "Noch keine erworbenen Fähigkeiten. Bitte ZEUS um etwas, das es noch nicht kann, und es lernt es." }));
       for (const c of shown) {
         const h = health(c);
         const life = lifecycle(c);
-        const card = el("div", { class: "card click" }, el("div", { class: "title", text: c.capability_id }),
-          el("div", { class: "meta" }, badge(life, LIFECYCLE_TONE[life] || "dim"), badge(h.health, HEALTH_TONE[h.health] || "dim"),
-            el("span", { text: `v${c.version || "?"}` }),
-            c.codex_required ? badge("needs Codex", "bad") : badge("local", "ok"),
-            h.consecutive_failures ? el("span", { text: `${h.consecutive_failures} failure(s) in a row` }) : null,
-            el("span", { text: purpose(c) })));
+        // what ZEUS can do, in words -- the technical id is secondary
+        const card = el("div", { class: "card click" }, el("div", { class: "title", text: purpose(c) || readable(c.capability_id) }),
+          el("div", { class: "meta" }, badge(LIFE_WORD[life] || life, LIFECYCLE_TONE[life] || "dim"), badge(HEALTH_WORD[h.health] || h.health, HEALTH_TONE[h.health] || "dim"),
+            c.codex_required ? badge("braucht Verstärkung", "warn") : null,
+            h.consecutive_failures ? el("span", { text: `${h.consecutive_failures}× zuletzt gescheitert` }) : null,
+            el("span", { class: "mono-id", text: readable(c.capability_id) })));
         card.onclick = () => inspect(c);
         grid.append(card);
       }
@@ -52,7 +55,7 @@ export const view = {
     const remote = caps.filter((c) => c.codex_required).length;
     pane.append(el("div", { class: "toolbar" }, search,
       el("span", { class: "empty", style: { padding: 0 },
-        text: `${caps.length} registered${broken ? ` · ${broken} BROKEN` : ""}${remote ? ` · ${remote} still need Codex` : ""}` })));
+        text: `${caps.length} Fähigkeiten${broken ? ` · ${broken} gestört` : ""}${remote ? ` · ${remote} unvollendet` : ""}` })));
     if (pending.length) pane.append(queueSection(pending));
     pane.append(grid);
     render();
@@ -64,11 +67,12 @@ export const view = {
    state that parked them, so "I will do it later" is checkable rather than a
    promise made in a chat bubble that nobody can find again. */
 function queueSection(pending) {
+  const firstLine = (t) => String(t || "").split("\n").map((l) => l.trim()).filter(Boolean)[0] || "";
   const rows = pending.map((r) => el("div", { class: "kv" },
-    el("span", { class: "k", text: new Date((r.requested_at || 0) * 1000).toLocaleString() }),
-    el("span", { class: "v", text: `${r.goal} — ${r.reason || "queued"}` })));
-  return el("div", { class: "card" }, el("div", { class: "title", text: `${pending.length} queued capability request(s)` }),
-    el("div", { class: "meta" }, badge("waiting for Codex", "warn")), ...rows);
+    el("span", { class: "k", text: new Date((r.requested_at || 0) * 1000).toLocaleDateString("de-DE") }),
+    el("span", { class: "v", text: firstLine(r.goal).slice(0, 120) })));
+  return el("div", { class: "card" }, el("div", { class: "title", text: `${pending.length} vorgemerkte Wünsche` }),
+    el("div", { class: "meta" }, badge("wartet auf Verstärkung", "warn")), ...rows);
 }
 
 function parse(v) {

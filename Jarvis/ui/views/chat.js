@@ -119,6 +119,7 @@ function appendToken(text) {
   }
   if (!streaming) return;
   streamText += text;
+  eye?.noteOutput?.(text.length);   // the wave answers to output, smoothed by the sphere itself
   if (renderQueued) return;
   renderQueued = true;
   requestAnimationFrame(() => {
@@ -270,6 +271,15 @@ export function send(text, source = "text") {
   return api("/api/message", { text: clean, source, request_id: requestId(), mode: performance.currentMode() });
 }
 
+/* The sidebar and the palette hand a beginning to the composer; the owner finishes the sentence. */
+export function focusComposer(prefill) {
+  const input = $("input");
+  if (!input) return;
+  if (prefill != null) { input.value = prefill; input.dispatchEvent(new Event("input")); }
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function wireComposer() {
   const input = $("input");
   const submit = () => {
@@ -284,6 +294,6 @@ function wireComposer() {
   });
   input.addEventListener("input", () => {
     input.style.height = "auto";
-    input.style.height = Math.min(150, input.scrollHeight) + "px";
+    input.style.height = Math.min(200, input.scrollHeight) + "px";
   });
 }

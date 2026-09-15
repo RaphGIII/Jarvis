@@ -53,8 +53,10 @@ const VIEW_MODULES = [missions, projects, files, knowledge, calendar, personalit
 const systemDark = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
 export function applyAppearance(next) {
-  const wanted = next || state.ui.appearance || "system";
-  const dark = wanted === "dark" || (wanted === "system" && (systemDark ? systemDark.matches : true));
+  // Dark is the product.  The light appearance exists for the owner who asks for it explicitly;
+  // "system" never turns ZEUS light by itself.
+  const wanted = next || state.ui.appearance || "dark";
+  const dark = wanted !== "light";
   document.documentElement.dataset.appearance = dark ? "dark" : "light";
   document.documentElement.dataset.glass = state.ui.glass || "normal";
   document.body.classList.toggle("reduced-motion", Boolean(state.ui.reducedMotion));
@@ -162,6 +164,7 @@ bus.on("state", (payload) => {
   const label = $("stateLabel");
   label.textContent = STATE_WORDS[name] || name;
   label.dataset.cat = category(name);
+  label.dataset.state = name;
   $("detail").textContent = payload.detail || "";
 });
 
@@ -170,7 +173,7 @@ bus.on("speech", (payload) => {
 });
 
 export function toast(text, tone = "") {
-  const node = el("div", { class: "toast glass-strong " + tone, text });
+  const node = el("div", { class: "toast glass " + tone, text });
   $("toasts").append(node);
   setTimeout(() => node.remove(), 6000);
 }
@@ -181,6 +184,9 @@ export function toast(text, tone = "") {
 
 function wireShell() {
   $("btnWorkspaceClose").onclick = () => views.close();
+  $("btnSearch").onclick = () => palette.open();
+  $("btnProfile").onclick = () => views.open("settings", {});
+  $("btnPlus").onclick = () => palette.open();
   $("btnInspectorClose").onclick = () => views.closeInspector();
   $("btnSidebar").onclick = () => {
     const narrow = window.innerWidth <= 980;
@@ -195,7 +201,7 @@ function wireShell() {
     if (window.innerWidth <= 980) $("app").classList.remove("sidebar-open");
   });
   bus.on("view:close", () => {
-    $("topTitle").textContent = window.PRODUCT_NAME || "ZEUS";
+    $("topTitle").textContent = $("app").classList.contains("conversing") ? "Chat" : (window.PRODUCT_NAME || "ZEUS");
     $("btnWorkspaceClose").hidden = true;
   });
 

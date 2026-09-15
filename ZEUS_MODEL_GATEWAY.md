@@ -188,6 +188,20 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 
 **Offen (ehrlich):** Groq/Cerebras/OpenRouter sind Registry-Slots ohne Schlüssel und ohne Verifikation — die dynamische Preisprüfung gegen den Live-Dienst ist nicht implementiert, `verified_zero_cost` wird vom Owner in der Config gesetzt. Der Notfall-Pfad ist standardmäßig aus. Die helle Erscheinung ist angelegt, nicht ausgestaltet. Voice ist unverändert (nächster Sprint).
 
+## Sprint 11 (2026-09-15): Die endgültige visuelle Sprache – schwarz, warmes Licht, eine Kugel
+
+**Nur Oberfläche.** Intelligenz, Routing, Klassifikation, Kosten, Fähigkeiten, Identität und Persönlichkeit sind eingefroren und unverändert; die Views behalten jede Funktion.
+
+**Visuelles System** (`ui/zeus.css`, Token-Block `--zeus-*`): Grund `#050505`/`#070707`/`#090909`, Seitenleiste `#0a0a0a`, matte Flächen `#0e0e0d`; Text `#f3f2ef` / `#a3a19c` / `#65645f`; Trennlinien `rgba(255,255,255,.08)`; Licht Champagner/Elfenbein `#f1e6d1` / `#e2ceaa` / `#cdb78f`, sparsam; Fehler `#c9917a`, Erfolg `#9fb59c`. Kein Blau, kein Violett, kein Glas außer an Kugel und Composer-Kante. Die alten Token-Namen (`--blue`, `--dim` …) sind Aliase auf die neue Palette, damit `views.css` und die Canvas-Views dieselbe Sprache sprechen. Typografie: Segoe UI Variable (Text/Display) mit System-Fallbacks; Nachrichten 15,5 px / 1,62. Dunkel ist das Produkt; „Hell“ existiert nur auf ausdrücklichen Wunsch (`applyAppearance`).
+
+**Die Kugel** (`ui/orb.js`, `ZeusOrb`/`ZeusSphere`, Canvas 2D, ein rAF-Loop, Delta-Zeit, alle Parameter geglättet): dichte fast schwarze Kugel, dünner leuchtender Umfang mit warmem Licht oben links (konischer Verlauf), zwei Reflexe, weicher Schatten; eine kontinuierliche Welle durch die Mitte, leicht über den Rand hinaus. Zustände IDLE/THINKING/SPEAKING/WORKING/ERROR (warmer Farbschub) fließen ineinander; SUCCESS ist ein Puls des Umfangs < 800 ms. Aktivität: `noteOutput(chars)` aus dem Token-Stream → Attack/Release-Hüllkurve → Amplitude, Frequenz, Komplexität; `setActivity(0..1)` und `setAudioFrequencyData(bins)` sind für Voice vorbereitet. Reduced Motion: fast statisch. Qualitäts-Drossel bei teuren Frames.
+
+**Shell** (`ui/index.html`, `ui/core/sidebar.js`): Seitenleiste 272 px mit Marke „Z E U S“, „Neuer Chat“, Suche, CHATS (Heute/Gestern/Letzte 7 Tage/Älter, angeheftet), PROJEKTE (nur Owner-Projekte, „Neues Projekt“), WORKSPACE (Wissen, Fähigkeiten, Studium, Dateien, Kalender, Missionen), SYSTEM (Persönlichkeit, Einstellungen), unten Raphael mit Zustandszeile („ZEUS ist bereit.“ / „ZEUS denkt.“). Kopfzeile minimal: Seitenleiste, Titel nur im Workspace, Suche, Arbeitsindikator, Verbindungspunkt, Profil. Leere Startseite: Kugel, ZEUS, „Dein persönliches KI-System“, Trennstrich, „Wissen. Klarheit. Fortschritt.“, Composer (bis 860 px, 64 px, Pille, Aktionen links, „ZEUS ▾“ + Mikrofon + Senden rechts, darunter „€0.01 / €40.00“). Im Gespräch schrumpft die Kugel in den Kopf; ZEUS-Antworten sind Text auf Schwarz, Owner-Nachrichten ein dunkelgrauer Block.
+
+**Workspace:** Galaxien (Projekte, Dateien, Wissen) ohne Sterne, Partikel und Nebelfarben – schwarzes Feld, elfenbeinfarbene Körper, graue Satelliten, Haarlinien; der Wissensgraph ebenso. Dateien haben neben „Visuell“ eine „Liste“ (Name/Art/Geändert/Größe, gleiche Aktionen, gleicher Inspektor). Missionen in Owner-Worten (Research, Analyse, Entwicklung, Verifikation, Warten, Freigabe erforderlich, Abgeschlossen), IDs nur unter „Technische Details“. Fähigkeiten zeigen, was ZEUS kann; die technische Kennung ist sekundär. Persönlichkeit und Einstellungen in derselben Sprache.
+
+**Behobene Fallen:** `#app.spatial main.workspace` hatte drei Grid-Spalten für zwei Kinder – die Galaxien waren 2 px breit. Die Seitenleiste zeigte „Erweitert“-Vokabular nirgends; der Leak-Scan (Klasse C) bleibt bei null.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:
@@ -202,7 +216,7 @@ Aus P0:
 
 P0.5 (Voice: TEXT/LISTEN/TALK, `speech.stt/tts`) — nur die Rollen sind in der Config deklariert, keine Adapter, keine UI.
 P0.6 (ZEUS Catalog, Engineering Context Builder) — gebaut (Sprint 3). Offen: Modul-Manifeste mit Permissions je Capability und ein Impact-Test-Lauf statt der vollen Suite bei isolierten Änderungen.
-UI-Komplettumbau — Sprint 10: Seitenleiste, Leistungsregler, Arbeitsfläche, Liquid Glass, Einstellungen; helle Erscheinung angelegt, nicht ausgestaltet.
+UI — Sprint 10/11: Seitenleiste, Leistungsregler, Arbeitsfläche, die schwarze Sprache mit warmem Licht und der Kugel; helle Erscheinung nur auf Wunsch.
 
 ## Beobachtungen aus dem Live-Test
 

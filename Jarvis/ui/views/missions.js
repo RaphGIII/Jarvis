@@ -16,13 +16,23 @@ const PHASES = {
   engine: ["CREATED", "UNDERSTAND", "PLAN", "EXECUTE", "VERIFY", "DIAGNOSE", "COMPLETE"],
   acquisition: ["UNDERSTAND", "SPECIFY", "BUILD", "VERIFY", "PROMOTE", "DONE"],
 };
-const FILTERS = [["all", "All"], ["active", "Active"], ["waiting", "Waiting"], ["blocked", "Blocked"], ["paused", "Paused"], ["failed", "Failed"], ["cancelled", "Cancelled"], ["completed", "Completed"]];
+const FILTERS = [["all", "Alle"], ["active", "Aktiv"], ["waiting", "Warten"], ["blocked", "Blockiert"], ["paused", "Pausiert"], ["failed", "Gescheitert"], ["cancelled", "Abgebrochen"], ["completed", "Abgeschlossen"]];
 const STATE_TONE = { active: "active", waiting: "warn", blocked: "bad", paused: "dim", failed: "bad", cancelled: "dim", completed: "ok" };
+/* Owner-facing words for the work.  Internal phase names never reach the card. */
+const STATE_WORD = { active: "Aktiv", waiting: "Warten", blocked: "Freigabe erforderlich", paused: "Pausiert", failed: "Gescheitert", cancelled: "Abgebrochen", completed: "Abgeschlossen" };
+const PHASE_WORD = {
+  UNDERSTAND: "Analyse", INVESTIGATE: "Research", SURVEY: "Research", SPECIFY: "Analyse", PLAN: "Analyse", DIAGNOSE: "Analyse", CREATED: "Warten",
+  ENGINEER: "Entwicklung", BUILD: "Entwicklung", EXECUTE: "Entwicklung", ESCALATE: "Entwicklung", VERIFY: "Verifikation", PROMOTE: "Abschluss",
+  RESTARTING: "Abschluss", DONE: "Abgeschlossen", COMPLETE: "Abgeschlossen", AWAITING_AUTHORIZATION: "Freigabe erforderlich", AWAITING_BUILD: "Freigabe erforderlich",
+  WAITING: "Warten", FAILED: "Gescheitert", CANCELLED: "Abgebrochen",
+};
+const phaseWord = (m) => m.state === "completed" ? "Abgeschlossen" : m.owner_input_required ? "Freigabe erforderlich" : PHASE_WORD[String(m.phase || "").toUpperCase()] || STATE_WORD[m.state] || "Arbeit";
+const SYSTEM_WORD = { selfdev: "Entwicklung", engine: "Auftrag", acquisition: "Neue Fähigkeit" };
 const isFinished = (m) => m.finished || ["completed", "failed", "cancelled"].includes(m.state);
 
 export const view = {
   id: "missions",
-  title: "Laufende Arbeit",
+  title: "Missionen",
   async mount(pane, params) {
     const tabs = el("div", { class: "toolbar" });
     const list = el("div");
@@ -33,10 +43,10 @@ export const view = {
     const render = () => {
       clear(list);
       const shown = missions.filter((m) => filter === "all" || m.state === filter);
-      if (!shown.length) list.append(el("div", { class: "empty", text: missions.length ? "Nothing in this filter." : "No missions yet. Say „Zeus, ändere …“ and one appears here." }));
+      if (!shown.length) list.append(el("div", { class: "empty", text: missions.length ? "Nichts in dieser Auswahl." : "Noch keine Missionen. Gib ZEUS eine längere Aufgabe, und sie erscheint hier." }));
       for (const fam of families(shown)) list.append(card(fam, (m) => views.open("missions", { ...params, mission: m.id })));
-      const counts = FILTERS.slice(1).map(([k]) => `${missions.filter((m) => m.state === k).length} ${k}`).filter((t) => !t.startsWith("0 ")).join(" · ");
-      status.textContent = `${counts || "nothing"} · ${missions.length} total`;
+      const counts = FILTERS.slice(1).map(([k, label]) => `${missions.filter((m) => m.state === k).length} ${label.toLowerCase()}`).filter((t) => !t.startsWith("0 ")).join(" · ");
+      status.textContent = counts || "";
     };
     const status = el("span", { class: "empty", style: { padding: 0 } });
     for (const [key, label] of FILTERS) {
@@ -76,19 +86,18 @@ function phaseBar(m) {
 function card(attempts, open) {
   const m = attempts[0];
   const node = el("div", { class: "card click" },
-    el("div", { class: "title", text: m.title || m.goal || "(no request)" }),
-    el("div", { class: "meta" }, badge(m.system || m.kind, "blue"), el("span", { text: "phase" }), badge(m.phase || "?", isFinished(m) ? "dim" : "active"),
-      el("span", { text: "result" }), badge(m.state, STATE_TONE[m.state] || "dim"),
-      m.deployment ? [el("span", { text: "deployment" }), badge(m.deployment, m.deployment === "promoted" ? "ok" : "bad")] : null,
-      m.tasks?.total ? el("span", { text: `${m.tasks.done}/${m.tasks.total} tasks` }) : null,
-      el("span", { text: `${m.evidence || 0} evidence` }), el("span", { text: ago(m.updated) })),
-    m.next_action ? el("div", { class: "empty", style: { padding: "4px 0 0" }, text: `next: ${m.next_action}` }) : null,
-    (m.blockers || []).length ? el("div", { class: "empty", style: { padding: "4px 0 0", color: "var(--red)" }, text: `blocked: ${m.blockers.join("; ")}` }) : null,
+    el("div", { class: "title", text: m.title || m.goal || "Auftrag" }),
+    el("div", { class: "meta" }, badge(phaseWord(m), isFinished(m) ? (m.state === "completed" ? "ok" : STATE_TONE[m.state] || "dim") : "active"),
+      el("span", { text: SYSTEM_WORD[m.system] || "" }),
+      m.tasks?.total ? el("span", { text: `${m.tasks.done}/${m.tasks.total} Schritte` }) : null,
+      el("span", { text: ago(m.updated) })),
+    m.next_action && !isFinished(m) ? el("div", { class: "empty", style: { padding: "4px 0 0" }, text: m.next_action }) : null,
+    (m.blockers || []).length && !isFinished(m) ? el("div", { class: "empty", style: { padding: "4px 0 0" }, text: "Wartet auf dich – Details in der Mission." }) : null,
     phaseBar(m));
   if (attempts.length > 1) {
-    const strip = el("div", { class: "meta", style: { marginTop: "6px" } }, el("span", { text: `${attempts.length} attempts:` }));
+    const strip = el("div", { class: "meta", style: { marginTop: "6px" } }, el("span", { text: `${attempts.length} Anläufe:` }));
     attempts.slice().reverse().forEach((a, i) => {
-      const b = el("button", { class: "ghost", style: { padding: "0 6px", fontSize: "10px" }, text: `#${i + 1} ${a.state}` });
+      const b = el("button", { class: "ghost", style: { padding: "0 6px", fontSize: "10px" }, text: `#${i + 1} ${STATE_WORD[a.state] || a.state}` });
       b.onclick = (e) => { e.stopPropagation(); open(a); };
       strip.append(b);
     });
@@ -100,7 +109,7 @@ function card(attempts, open) {
 
 async function inspect(row) {
   const detail = await api("/api/mission", { id: row.id });
-  if (!detail.ok) { views.inspect(`Mission ${row.id}`, el("div", { class: "empty", text: detail.error || "no detail" })); return; }
+  if (!detail.ok) { views.inspect(row.title || "Mission", el("div", { class: "empty", text: "Zu dieser Mission liegen gerade keine Details vor." })); return; }
   if (detail.system === "selfdev") return inspectSelfdev(detail.mission, row);
   const m = detail.mission || {};
   const tasks = (m.tasks || []).map((t) => el("div", { class: "kv" }, el("span", { class: "k", text: t.status || "?" }), el("span", { class: "v", text: `${t.title || t.task_id || ""}${t.result ? " — " + String(t.result).slice(0, 100) : ""}` })));
@@ -109,12 +118,12 @@ async function inspect(row) {
     el("span", { class: "when", text: clockOf(e.at) }), el("span", { class: "text", text: `${e.phase || ""}: ${e.detail || ""}` })));
   const actions = el("div", { class: "toolbar" });
   if (!isFinished(row)) {
-    actions.append(button("Pause", () => api("/api/mission/pause", { mission_id: row.id })));
-    actions.append(button("Cancel", () => api("/api/mission/cancel", { mission_id: row.id }), "ghost danger"));
+    actions.append(button("Pausieren", () => api("/api/mission/pause", { mission_id: row.id })));
+    actions.append(button("Abbrechen", () => api("/api/mission/cancel", { mission_id: row.id }), "ghost danger"));
   }
-  if (row.state === "paused" || row.state === "blocked") actions.append(button("Resume", () => api("/api/mission/resume", { mission_id: row.id }), "primary"));
-  views.inspect(row.title || `Mission ${row.id}`,
-    section("Goal", el("div", { class: "kv" }, el("span", { class: "v", text: m.goal || row.goal || "" })), kv("interpretation", m.interpretation)),
+  if (row.state === "paused" || row.state === "blocked") actions.append(button("Fortsetzen", () => api("/api/mission/resume", { mission_id: row.id }), "primary"));
+  views.inspect(row.title || "Mission",
+    section("Ziel", el("div", { class: "kv" }, el("span", { class: "v", text: m.goal || row.goal || "" })), kv("interpretation", m.interpretation)),
     (m.constraints || []).length ? section("Constraints", ...m.constraints.map((c) => kv("must", c))) : null,
     (m.acceptance_criteria || []).length ? section("Acceptance criteria", ...m.acceptance_criteria.map((c) => kv("criterion", c))) : null,
     section("State", kv("phase", m.phase), kv("result", row.state), kv("outcome", m.outcome || "running"), kv("next action", m.next_action),
@@ -123,8 +132,9 @@ async function inspect(row) {
     tasks.length ? section("Tasks", ...tasks) : null,
     evidence.length ? section("Evidence", ...evidence) : null,
     detail.brief ? section("Brief", el("pre", { class: "code", text: typeof detail.brief === "string" ? detail.brief : JSON.stringify(detail.brief, null, 1) })) : null,
-    history.length ? section("Workstream", el("div", { class: "timeline" }, ...history)) : null,
+    history.length ? section("Verlauf", el("div", { class: "timeline" }, ...history)) : null,
     actions,
+    el("details", { class: "padv" }, el("summary", { text: "Technische Details" }), kv("mission", row.id), kv("phase", m.phase), kv("outcome", m.outcome || "running")),
   );
 }
 
@@ -169,14 +179,14 @@ function inspectSelfdev(m, row) {
       views.open("missions");
     }, "primary"));
   }
-  if (!finished && m.phase !== "RESTARTING") actions.append(button("Cancel", async () => { await api("/api/selfdev/cancel", { mission_id: m.mission_id }); }, "ghost danger"));
-  if (m.outcome === "failed" && m.verification?.ok) actions.append(button("Resume (verified candidate)", async () => { await api("/api/selfdev/resume", { mission_id: m.mission_id }); }, "primary"));
-  if (m.evidence_patch) actions.append(button("Diff (kept)", () => showDiff(m, row)));
+  if (!finished && m.phase !== "RESTARTING") actions.append(button("Abbrechen", async () => { await api("/api/selfdev/cancel", { mission_id: m.mission_id }); }, "ghost danger"));
+  if (m.outcome === "failed" && m.verification?.ok) actions.append(button("Fortsetzen (geprüfter Kandidat)", async () => { await api("/api/selfdev/resume", { mission_id: m.mission_id }); }, "primary"));
+  if (m.evidence_patch) actions.append(button("Änderungen ansehen", () => showDiff(m, row)));
   if (m.expected_revision) actions.append(button("Version", () => views.open("release")));
   const c = m.control || {};
   const already = (c.ALREADY_IMPLEMENTED || []).map((line) => el("div", { class: "kv" },
     el("span", { class: "k", text: "exists" }), el("span", { class: "v", text: String(line).slice(0, 200) })));
-  views.inspect(row.title || `Mission ${m.mission_id}`,
+  views.inspect(row.title || "Mission",
     section("Requested modification (the owner's words)", el("div", { class: "kv" }, el("span", { class: "v", text: m.request }))),
     section("Auftrag",
       kv("goal", c.GOAL || m.request),
@@ -203,8 +213,9 @@ function inspectSelfdev(m, row) {
     m.verification_goal ? section("Goal check", kv("verdict", typeof m.verification_goal === "string" ? m.verification_goal : JSON.stringify(m.verification_goal).slice(0, 200))) : null,
     isolation.length ? section("Isolation", ...isolation) : null,
     m.promotion?.promotion_id ? section("Promotion", kv("id", m.promotion.promotion_id), kv("outcome", m.promotion.outcome), kv("revision", m.promotion.promoted_revision)) : null,
-    section("Workstream", el("div", { class: "timeline" }, ...events)),
+    section("Verlauf", el("div", { class: "timeline" }, ...events)),
     actions,
+    el("details", { class: "padv" }, el("summary", { text: "Technische Details" }), kv("mission", m.mission_id), kv("row", row.id)),
   );
 }
 

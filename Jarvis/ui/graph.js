@@ -16,9 +16,10 @@
  * constellation drifts instead of freezing into a picture.
  */
 
+// structure over decoration: primary kinds take the light, the rest stay neutral grey
 const NODE_COLOURS = {
-  note: 198, concept: 268, project: 168, person: 42, task: 12,
-  capability: 148, document: 210, conversation: 300, source: 60, fact: 190,
+  note: 0, concept: 1, project: 1, person: 1, task: 0,
+  capability: 0, document: 0, conversation: 0, source: 0, fact: 1,
 };
 
 class KnowledgeStarfield {
@@ -169,10 +170,10 @@ class KnowledgeStarfield {
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     if (!this.nodes.length) {
-      ctx.fillStyle = "#3c4a60";
-      ctx.font = "14px 'Segoe UI', system-ui, sans-serif";
+      ctx.fillStyle = "#65645f";
+      ctx.font = "14px 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("Nothing in the knowledge graph yet.", rect.width / 2, rect.height / 2);
+      ctx.fillText("Noch nichts im Wissensgraph.", rect.width / 2, rect.height / 2);
       return;
     }
 
@@ -188,7 +189,7 @@ class KnowledgeStarfield {
     for (const edge of this.edges) {
       const a = this.toScreen(edge.source), b = this.toScreen(edge.target);
       const involved = this.selected && (edge.source === this.selected || edge.target === this.selected);
-      ctx.strokeStyle = involved ? "rgba(120,200,255,0.55)" : "rgba(90,120,160,0.16)";
+      ctx.strokeStyle = involved ? "rgba(226,206,170,0.55)" : "rgba(255,255,255,0.07)";
       ctx.lineWidth = involved ? 1.4 : 0.7;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -207,15 +208,15 @@ class KnowledgeStarfield {
       const radius = (4 + Math.min(9, Math.sqrt(node.degree) * 3)) * this.camera.zoom;
       const strength = dim ? 0.12 : node === this.selected ? 1 : neighbours.has(node) ? 0.8 : 0.5;
 
-      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius * 3.2);
-      glow.addColorStop(0, `hsla(${hue}, 90%, 70%, ${0.55 * strength})`);
+      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius * 2.6);
+      glow.addColorStop(0, `rgba(226,206,170,${0.16 * strength})`);
       glow.addColorStop(1, "hsla(0,0%,0%,0)");
       ctx.fillStyle = glow;
       ctx.beginPath();
       ctx.arc(p.x, p.y, radius * 3.2, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = `hsla(${hue}, 95%, ${focused ? 88 : 74}%, ${Math.max(0.2, strength)})`;
+      ctx.fillStyle = focused ? `rgba(241,230,209,${Math.max(0.3, strength)})` : hue > 0 ? `rgba(226,206,170,${Math.max(0.2, strength)})` : `rgba(163,161,156,${Math.max(0.2, strength)})`;
       ctx.beginPath();
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.fill();
@@ -223,8 +224,8 @@ class KnowledgeStarfield {
       // Labels only where they can be read: zoomed in, focused, or important.
       const labelled = this.camera.zoom > 0.85 || focused || node.degree >= 4;
       if (labelled && !dim) {
-        ctx.fillStyle = focused ? "#e8f1fb" : "rgba(200,216,235,0.72)";
-        ctx.font = `${focused ? 13 : 11}px 'Segoe UI', system-ui, sans-serif`;
+        ctx.fillStyle = focused ? "#f3f2ef" : "rgba(163,161,156,0.8)";
+        ctx.font = `${focused ? 13 : 11}px 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif`;
         ctx.textAlign = "center";
         const label = node.title.length > 30 ? node.title.slice(0, 29) + "…" : node.title;
         ctx.fillText(label, p.x, p.y + radius + 14);

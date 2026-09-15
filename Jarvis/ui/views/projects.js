@@ -31,9 +31,9 @@ import * as chat from "./chat.js";
 
 const IMPORTANCE = ["PINNED", "FOCUS", "ACTIVE", "NORMAL", "LOW_PRIORITY", "DORMANT", "TEST", "ARCHIVED"];
 const IMPORTANCE_WEIGHT = { PINNED: 1.0, FOCUS: 0.95, ACTIVE: 0.8, NORMAL: 0.6, LOW_PRIORITY: 0.4, DORMANT: 0.3, TEST: 0.25, ARCHIVED: 0.2 };
-const HEALTH_COLOUR = { HEALTHY: "#7fe0b4", AT_RISK: "#f0c674", BLOCKED: "#ff7b7b", DORMANT: "#6f7f99", COMPLETE: "#66c9ff" };
-const HEALTH_HUE = { HEALTHY: [120, 230, 180], AT_RISK: [240, 200, 110], BLOCKED: [255, 120, 120], DORMANT: [120, 135, 165], COMPLETE: [110, 200, 255] };
-const KIND_COLOUR = { self: "#9fdcff", mission: "#b8c9e6", capability: "#8fa1c2", knowledge: "#9b8cf0", thought: "#f0c674" };
+const HEALTH_COLOUR = { HEALTHY: "#e2ceaa", AT_RISK: "#cdb78f", BLOCKED: "#c9917a", DORMANT: "#65645f", COMPLETE: "#a3a19c" };
+const HEALTH_HUE = { HEALTHY: [226, 206, 170], AT_RISK: [205, 183, 143], BLOCKED: [201, 145, 122], DORMANT: [101, 100, 95], COMPLETE: [163, 161, 156] };
+const KIND_COLOUR = { self: "#f1e6d1", mission: "#a3a19c", capability: "#7d7b75", knowledge: "#cdb78f", thought: "#e2ceaa" };
 const MODES = ["GALAXY", "DEPENDENCY", "TIMELINE", "HIERARCHY", "KNOWLEDGE", "MISSION FLOW"];
 const STATE_TONE = { active: "active", running: "active", working: "active", executing: "active", blocked: "blocked", failed: "blocked",
                      accepted: "done", complete: "done", completed: "done", paused: "idle", draft: "idle" };
@@ -66,23 +66,24 @@ export const view = {
     lastDigest = digestOf(graph.nodes?.map((n) => [n.id, n.updated_at, n.importance, n.health?.state]) || graph);
     const wrap = el("div", { class: "galaxy-wrap" });
     const canvas = el("canvas", { id: "constellation", class: "galaxy" });
-    const search = el("input", { placeholder: "Focus… (project, mission, capability)", value: params.focus || params.q || "", style: { maxWidth: "240px" } });
-    const everyToggle = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } }, el("input", { type: "checkbox", checked: everything }), " show everything");
+    const search = el("input", { placeholder: "Fokus … (Projekt, Mission, Fähigkeit)", value: params.focus || params.q || "", style: { maxWidth: "240px" } });
+    const everyToggle = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } }, el("input", { type: "checkbox", checked: everything }), " alles zeigen");
     const counts = el("span", { class: "empty", style: { padding: 0 } });
     const chips = el("span", { class: "galaxy-toolbar", style: { display: "inline-flex", gap: "4px" } });
     const levels = ["ALL", "FOCUS", "ACTIVE", "BLOCKED"];
     let level = params.level || "ALL";
-    for (const l of levels) chips.append(el("button", { class: "chip" + (level === l ? " on" : ""), text: l.toLowerCase(), onClick: (ev) => {
+    const LEVEL_WORD = { ALL: "alle", FOCUS: "Fokus", ACTIVE: "aktiv", BLOCKED: "blockiert" };
+    for (const l of levels) chips.append(el("button", { class: "chip" + (level === l ? " on" : ""), text: LEVEL_WORD[l] || l.toLowerCase(), onClick: (ev) => {
       level = l; for (const c of chips.querySelectorAll(".chip")) c.classList.toggle("on", c === ev.currentTarget); galaxy?.setLevel(level); } }));
     // immersive: everything floats OVER the galaxy; nothing frames it.
     // The alternative layout modes stay reachable via ?mode=… but the select
     // is gone: one strong default view beats six half-views in a dropdown.
     const toolbar = el("div", { class: "toolbar galaxy-overlay" }, search, chips, everyToggle, counts);
     const legend = el("div", { class: "galaxy-legend" },
-      el("span", { style: { "--c": HEALTH_COLOUR.HEALTHY }, text: "healthy" }), el("span", { style: { "--c": HEALTH_COLOUR.AT_RISK }, text: "at risk" }),
-      el("span", { style: { "--c": HEALTH_COLOUR.BLOCKED }, text: "blocked" }), el("span", { style: { "--c": KIND_COLOUR.mission }, text: "mission" }),
-      el("span", { style: { "--c": KIND_COLOUR.capability }, text: "capability" }), el("span", { style: { "--c": KIND_COLOUR.knowledge }, text: "knowledge" }));
-    const hint = el("div", { class: "galaxy-hint", text: "rauszoomen → universum · doppelklick eintauchen · ziehen · rechtsklick menü · esc zurück" });
+      el("span", { style: { "--c": HEALTH_COLOUR.HEALTHY }, text: "gesund" }), el("span", { style: { "--c": HEALTH_COLOUR.AT_RISK }, text: "gefährdet" }),
+      el("span", { style: { "--c": HEALTH_COLOUR.BLOCKED }, text: "blockiert" }), el("span", { style: { "--c": KIND_COLOUR.mission }, text: "Mission" }),
+      el("span", { style: { "--c": KIND_COLOUR.capability }, text: "Fähigkeit" }), el("span", { style: { "--c": KIND_COLOUR.knowledge }, text: "Wissen" }));
+    const hint = el("div", { class: "galaxy-hint", text: "Doppelklick öffnet · Ziehen ordnet · Rechtsklick Menü · Esc zurück" });
     wrap.append(toolbar, canvas, legend, hint);
     wrap.append(focusDrawer(overview, graph, params));
     pane.append(wrap);
@@ -111,7 +112,7 @@ export const view = {
     window.zeusGalaxy = galaxy; // console/test access to the live scene
     if (savedCam && !params.focus && !params.id) Object.assign(galaxy.cam, savedCam);
     const nP = graph.nodes.filter((n) => n.kind === "project").length, nM = graph.nodes.filter((n) => n.kind === "mission").length;
-    counts.textContent = `${nP} project${nP === 1 ? "" : "s"} · ${nM} mission${nM === 1 ? "" : "s"} · ${graph.nodes.filter((n) => n.kind === "capability").length} capabilities · ${graph.nodes.filter((n) => n.kind === "thought").length} thoughts` + (graph.hidden ? ` · ${graph.hidden} hidden` : "");
+    counts.textContent = `${nP} Projekt${nP === 1 ? "" : "e"} · ${nM} Mission${nM === 1 ? "" : "en"} · ${graph.nodes.filter((n) => n.kind === "capability").length} Fähigkeiten` + (graph.hidden ? ` · ${graph.hidden} ausgeblendet` : "");
     search.oninput = () => galaxy.focusText(search.value);
     if (search.value) galaxy.focusText(search.value);
     everyToggle.firstChild.onchange = (e) => views.open("projects", { ...params, everything: e.target.checked ? "1" : "" });
@@ -196,8 +197,8 @@ export class Galaxy {
     this.menu = null;
     // three parallax layers of stars and a sparse particle drift
     const rnd = mulberry(7);
-    this.layers = [0.35, 0.7, 1.15].map((depth, i) => ({ depth, stars: Array.from({ length: [260, 140, 60][i] }, () => ({ x: rnd(), y: rnd(), s: [0.7, 1.1, 1.7][i] * (0.7 + rnd() * 0.6), a: 0.25 + rnd() * 0.6, tw: rnd() * 6.28, hue: rnd() })) }));
-    this.motes = Array.from({ length: 48 }, () => ({ x: rnd(), y: rnd(), vx: (rnd() - 0.5) * 0.00012, vy: (rnd() - 0.5) * 0.00012, a: 0.08 + rnd() * 0.2, s: 0.8 + rnd() * 1.4 }));
+    this.layers = [].map((depth, i) => ({ depth, stars: Array.from({ length: [260, 140, 60][i] }, () => ({ x: rnd(), y: rnd(), s: [0.7, 1.1, 1.7][i] * (0.7 + rnd() * 0.6), a: 0.25 + rnd() * 0.6, tw: rnd() * 6.28, hue: rnd() })) }));
+    this.motes = Array.from({ length: 0 }, () => ({ x: rnd(), y: rnd(), vx: (rnd() - 0.5) * 0.00012, vy: (rnd() - 0.5) * 0.00012, a: 0.08 + rnd() * 0.2, s: 0.8 + rnd() * 1.4 }));
     this.build(graph);
     this.applyFilters();
     this.resize(); this.bind();
@@ -378,9 +379,9 @@ export class Galaxy {
     ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     // deep space: a slow gradient wash with two faint nebular tints
     const bg = ctx.createRadialGradient(W * 0.5, H * 0.45, 20, W * 0.5, H * 0.45, Math.max(W, H) * 0.75);
-    bg.addColorStop(0, "#0b1424"); bg.addColorStop(0.55, "#060a14"); bg.addColorStop(1, "#02040a");
+    bg.addColorStop(0, "#0a0a09"); bg.addColorStop(0.55, "#060606"); bg.addColorStop(1, "#050505");
     ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-    for (const [fx, fy, col] of [[0.18, 0.72, "rgba(60,90,160,.10)"], [0.8, 0.3, "rgba(120,80,170,.08)"]]) {
+    for (const [fx, fy, col] of [[0.5, 0.45, "rgba(226,206,170,.025)"]]) {
       const g = ctx.createRadialGradient(W * fx - this.cam.x * 0.03, H * fy - this.cam.y * 0.03, 0, W * fx, H * fy, Math.max(W, H) * 0.45);
       g.addColorStop(0, col); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
@@ -390,12 +391,12 @@ export class Galaxy {
       for (const s of layer.stars) {
         const x = ((s.x * W - px) % W + W) % W, y = ((s.y * H - py) % H + H) % H;
         const tw = REDUCED() ? 1 : 0.75 + 0.25 * Math.sin(t / 40 + s.tw);
-        ctx.fillStyle = s.hue > 0.85 ? `rgba(200,215,255,${s.a * tw})` : s.hue < 0.08 ? `rgba(255,225,190,${s.a * tw})` : `rgba(170,195,235,${s.a * tw})`;
+        ctx.fillStyle = `rgba(226,206,170,${s.a * tw})`;
         ctx.beginPath(); ctx.arc(x, y, s.s * (0.8 + 0.2 * z), 0, Math.PI * 2); ctx.fill();
       }
     }
     // particle drift
-    for (const m of this.motes) { ctx.fillStyle = `rgba(150,190,240,${m.a})`; ctx.beginPath(); ctx.arc(m.x * W, m.y * H, m.s, 0, Math.PI * 2); ctx.fill(); }
+    for (const m of this.motes) { ctx.fillStyle = `rgba(226,206,170,${m.a})`; ctx.beginPath(); ctx.arc(m.x * W, m.y * H, m.s, 0, Math.PI * 2); ctx.fill(); }
     // under-layer (category nebulas in the File universe) sits behind bodies
     if (this.opts.drawUnder) this.opts.drawUnder(ctx, this);
     // knowledge nebula
@@ -405,7 +406,7 @@ export class Galaxy {
       for (let i = 0; i < 4; i++) {
         const ox = Math.cos(t / 400 + i * 1.7) * 14 * z, oy = Math.sin(t / 360 + i * 2.1) * 10 * z, rr = k.r * (1.6 + i * 0.5) * z;
         const g = ctx.createRadialGradient(kx + ox, ky + oy, 0, kx + ox, ky + oy, rr);
-        g.addColorStop(0, i % 2 ? "rgba(140,110,240,.16)" : "rgba(90,130,240,.12)"); g.addColorStop(1, "transparent");
+        g.addColorStop(0, i % 2 ? "rgba(205,183,143,.07)" : "rgba(226,206,170,.05)"); g.addColorStop(1, "transparent");
         ctx.fillStyle = g; ctx.beginPath(); ctx.arc(kx + ox, ky + oy, rr, 0, Math.PI * 2); ctx.fill();
       }
     }
@@ -417,7 +418,7 @@ export class Galaxy {
       const [px, py] = this.toScreen(p);
       const dimmed = this.dim && !this.dim.has(p.id);
       for (const d of rings) {
-        ctx.strokeStyle = dimmed ? "rgba(140,170,220,.04)" : "rgba(140,170,220,.10)"; ctx.lineWidth = 1;
+        ctx.strokeStyle = dimmed ? "rgba(255,255,255,.025)" : "rgba(255,255,255,.06)"; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.ellipse(px, py, d * z, d * z * 0.62, 0, 0, Math.PI * 2); ctx.stroke();
       }
     }
@@ -427,10 +428,10 @@ export class Galaxy {
       if (e.type === "mission_of" || e.type === "uses" || e.type === "subproject_of") { if (lod < 2 && !e.active) continue; }
       const [ax, ay] = this.toScreen(e.a), [bx, by] = this.toScreen(e.b);
       const dimmed = this.dim && !this.dim.has(e.a.id) && !this.dim.has(e.b.id);
-      ctx.strokeStyle = e.type === "thought" ? `rgba(240,198,116,${dimmed ? .05 : .28})` : e.active ? `rgba(127,224,180,${dimmed ? .05 : .32})` : `rgba(110,160,230,${dimmed ? .03 : .10})`;
+      ctx.strokeStyle = e.type === "thought" ? `rgba(226,206,170,${dimmed ? .05 : .26})` : e.active ? `rgba(241,230,209,${dimmed ? .05 : .30})` : `rgba(255,255,255,${dimmed ? .025 : .07})`;
       ctx.lineWidth = e.active ? 1.3 : 0.8; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-      if (e.active && !REDUCED()) { const p = (t / 90) % 1; ctx.fillStyle = "rgba(127,224,180,.85)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 1.8, 0, Math.PI * 2); ctx.fill(); }
-      if (e.type === "thought" && !REDUCED()) { const p = (t / 140 + e.b.seed % 100 / 100) % 1; ctx.fillStyle = "rgba(240,198,116,.9)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 2, 0, Math.PI * 2); ctx.fill(); }
+      if (e.active && !REDUCED()) { const p = (t / 90) % 1; ctx.fillStyle = "rgba(241,230,209,.85)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 1.8, 0, Math.PI * 2); ctx.fill(); }
+      if (e.type === "thought" && !REDUCED()) { const p = (t / 140 + e.b.seed % 100 / 100) % 1; ctx.fillStyle = "rgba(226,206,170,.9)"; ctx.beginPath(); ctx.arc(ax + (bx - ax) * p, ay + (by - ay) * p, 2, 0, Math.PI * 2); ctx.fill(); }
     }
     // bodies, far to near
     const labels = [];
@@ -464,15 +465,15 @@ export class Galaxy {
     // labels without collisions (priority: self, systems, then the rest)
     ctx.textAlign = "center"; const placed = [];
     for (const l of labels.sort((a, b) => b.size - a.size)) {
-      ctx.font = `${l.size}px Segoe UI, sans-serif`; const w = ctx.measureText(l.text).width + 8, h = l.size + 4;
+      ctx.font = `${l.size}px "Segoe UI Variable Text", "Segoe UI", sans-serif`; const w = ctx.measureText(l.text).width + 8, h = l.size + 4;
       const box = { x: l.x - w / 2, y: l.y, w, h };
       if (placed.some((b) => !(box.x + box.w < b.x || b.x + b.w < box.x || box.y + box.h < b.y || b.y + b.h < box.y))) { if (l.n.kind !== "project" && l.n.kind !== "self") continue; }
       placed.push(box);
-      ctx.fillStyle = "rgba(4,7,14,.55)"; ctx.fillRect(box.x, box.y + 1, box.w, box.h);
-      ctx.fillStyle = l.n === this.hover ? "#ffffff" : l.n.kind === "project" ? "#d5e1f2" : l.n.kind === "knowledge" ? "#c6bcf5" : "#93a4bd";
+      ctx.fillStyle = "rgba(5,5,5,.6)"; ctx.fillRect(box.x, box.y + 1, box.w, box.h);
+      ctx.fillStyle = l.n === this.hover ? "#f3f2ef" : l.n.kind === "project" ? "#d8d5cf" : l.n.kind === "knowledge" ? "#cdb78f" : "#8a8883";
       ctx.fillText(l.text, l.x, l.y + l.size);
     }
-    if (this.box) { ctx.strokeStyle = "rgba(143,211,255,.7)"; ctx.setLineDash([4, 3]); ctx.strokeRect(this.box.x, this.box.y, this.box.w, this.box.h); ctx.setLineDash([]); }
+    if (this.box) { ctx.strokeStyle = "rgba(226,206,170,.6)"; ctx.setLineDash([4, 3]); ctx.strokeRect(this.box.x, this.box.y, this.box.w, this.box.h); ctx.setLineDash([]); }
     if (this.opts.drawExtras) this.opts.drawExtras(ctx, this);
   }
 
@@ -490,7 +491,7 @@ export class Galaxy {
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.2 * pulse, 0, Math.PI * 2); ctx.fill();
     // corona
     g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 1.55);
-    g.addColorStop(0, `rgba(255,255,255,${faded ? .55 : .95})`); g.addColorStop(0.35, `rgba(${cr},${cg},${cb},${faded ? .55 : .9})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+    g.addColorStop(0, `rgba(251,247,239,${faded ? .5 : .9})`); g.addColorStop(0.35, `rgba(${cr},${cg},${cb},${faded ? .55 : .9})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.55, 0, Math.PI * 2); ctx.fill();
     // the far half of the ring passes BEHIND the body
     if (ringed) {
@@ -499,14 +500,14 @@ export class Galaxy {
     }
     // core
     g = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, 0, x, y, r);
-    g.addColorStop(0, "#ffffff"); g.addColorStop(0.55, `rgb(${Math.min(255, cr + 60)},${Math.min(255, cg + 60)},${Math.min(255, cb + 60)})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},.85)`);
-    ctx.fillStyle = sel ? "#ffffff" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    g.addColorStop(0, "#fbf7ef"); g.addColorStop(0.55, `rgb(${Math.min(255, cr + 22)},${Math.min(255, cg + 22)},${Math.min(255, cb + 22)})`); g.addColorStop(1, `rgba(${cr},${cg},${cb},.85)`);
+    ctx.fillStyle = sel ? "#fbf7ef" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
     // terminator: a soft shadow on the side away from the light gives the
     // disc a sphere's face instead of a flat dot
     if (r > 5 && !sel) {
       ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
       g = ctx.createRadialGradient(x - r * 0.55, y - r * 0.55, r * 0.2, x, y, r * 1.45);
-      g.addColorStop(0, "rgba(3,6,14,0)"); g.addColorStop(0.68, "rgba(3,6,14,0)"); g.addColorStop(1, "rgba(3,6,14,.55)");
+      g.addColorStop(0, "rgba(5,5,5,0)"); g.addColorStop(0.68, "rgba(5,5,5,0)"); g.addColorStop(1, "rgba(5,5,5,.6)");
       ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
       ctx.restore();
     }
@@ -517,44 +518,44 @@ export class Galaxy {
     }
     // diffraction spikes for the important systems
     if (["PINNED", "FOCUS", "ACTIVE"].includes(n.importance) && !faded) {
-      ctx.strokeStyle = `rgba(255,255,255,${.18 * pulse})`; ctx.lineWidth = 1;
+      ctx.strokeStyle = `rgba(241,230,209,${.12 * pulse})`; ctx.lineWidth = 1;
       for (const a of [0, Math.PI / 2]) { ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r * 2.6, y + Math.sin(a) * r * 2.6); ctx.lineTo(x - Math.cos(a) * r * 2.6, y - Math.sin(a) * r * 2.6); ctx.stroke(); }
     }
-    if (hs === "BLOCKED") { ctx.strokeStyle = `rgba(255,120,120,${.35 + .25 * Math.sin(t / 18)})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r * 1.9, 0, Math.PI * 2); ctx.stroke(); }
-    if (n.locked) { ctx.strokeStyle = "#dce5f0"; ctx.lineWidth = 1; ctx.strokeRect(x - 3, y - r - 10, 6, 5); }
-    if (n.importance === "PINNED") { ctx.fillStyle = "#f0c674"; ctx.beginPath(); ctx.arc(x + r * 0.95, y - r * 0.95, 2.6, 0, Math.PI * 2); ctx.fill(); }
-    if (sel) { ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
+    if (hs === "BLOCKED") { ctx.strokeStyle = `rgba(201,145,122,${.35 + .2 * Math.sin(t / 18)})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r * 1.9, 0, Math.PI * 2); ctx.stroke(); }
+    if (n.locked) { ctx.strokeStyle = "#a3a19c"; ctx.lineWidth = 1; ctx.strokeRect(x - 3, y - r - 10, 6, 5); }
+    if (n.importance === "PINNED") { ctx.fillStyle = "#f1e6d1"; ctx.beginPath(); ctx.arc(x + r * 0.95, y - r * 0.95, 2.6, 0, Math.PI * 2); ctx.fill(); }
+    if (sel) { ctx.strokeStyle = "rgba(241,230,209,.7)"; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.arc(x, y, r + 6, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
     // progress arc: tasks done
-    if (n.tasks) { const f = (n.tasks_done || 0) / n.tasks; ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f); ctx.stroke(); }
+    if (n.tasks) { const f = (n.tasks_done || 0) / n.tasks; ctx.strokeStyle = "rgba(241,230,209,.55)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f); ctx.stroke(); }
   }
 
   drawCore(ctx, x, y, r, t) {
     const pulse = REDUCED() ? 1 : 1 + Math.sin(t / 22) * 0.06;
     let g = ctx.createRadialGradient(x, y, 0, x, y, r * 4 * pulse);
-    g.addColorStop(0, "rgba(159,220,255,.35)"); g.addColorStop(0.4, "rgba(79,195,247,.12)"); g.addColorStop(1, "transparent");
+    g.addColorStop(0, "rgba(241,230,209,.22)"); g.addColorStop(0.4, "rgba(226,206,170,.07)"); g.addColorStop(1, "transparent");
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4 * pulse, 0, Math.PI * 2); ctx.fill();
     g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, "#ffffff"); g.addColorStop(0.5, "#bfe8ff"); g.addColorStop(1, "rgba(79,195,247,.6)");
+    g.addColorStop(0, "#fbf7ef"); g.addColorStop(0.5, "#e2ceaa"); g.addColorStop(1, "rgba(205,183,143,.7)");
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "rgba(159,220,255,.35)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r * 1.8, t / 60, t / 60 + Math.PI * 1.3); ctx.stroke();
+    ctx.strokeStyle = "rgba(226,206,170,.30)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r * 1.8, t / 60, t / 60 + Math.PI * 1.3); ctx.stroke();
   }
 
   drawBody(ctx, n, x, y, r, t) {
-    const colour = KIND_COLOUR[n.kind] || "#6b7c93";
+    const colour = KIND_COLOUR[n.kind] || "#7d7b75";
     const sel = this.selected.has(n.id) || n === this.hover;
-    if (n.kind === "mission" && n.state === "active") { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4); g.addColorStop(0, "rgba(127,224,180,.35)"); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, Math.PI * 2); ctx.fill(); }
-    if (n.kind === "thought") { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5); g.addColorStop(0, `rgba(240,198,116,${.35 + .25 * Math.sin(t / 20 + n.seed)})`); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill(); }
+    if (n.kind === "mission" && n.state === "active") { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4); g.addColorStop(0, "rgba(241,230,209,.22)"); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, Math.PI * 2); ctx.fill(); }
+    if (n.kind === "thought") { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.5); g.addColorStop(0, `rgba(226,206,170,${.22 + .14 * Math.sin(t / 20 + n.seed)})`); g.addColorStop(1, "transparent"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3.5, 0, Math.PI * 2); ctx.fill(); }
     const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
-    g.addColorStop(0, "#ffffff"); g.addColorStop(0.6, colour); g.addColorStop(1, colour + "aa");
-    ctx.fillStyle = sel ? "#ffffff" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    g.addColorStop(0, "#f3f2ef"); g.addColorStop(0.6, colour); g.addColorStop(1, colour + "aa");
+    ctx.fillStyle = sel ? "#f3f2ef" : g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
     // even the small moons get a face: a hint of shadow away from the light
     if (r > 4 && !sel) {
       ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
-      ctx.fillStyle = "rgba(3,6,14,.4)"; ctx.beginPath(); ctx.arc(x + r * 0.55, y + r * 0.55, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "rgba(5,5,5,.45)"; ctx.beginPath(); ctx.arc(x + r * 0.55, y + r * 0.55, r, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
-    if (n.kind === "capability") { ctx.strokeStyle = "rgba(143,161,194,.6)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0.3, Math.PI * 1.4); ctx.stroke(); }
-    if (n.kind === "mission" && ["blocked", "failed"].includes(n.state)) { ctx.strokeStyle = "rgba(255,120,120,.7)"; ctx.beginPath(); ctx.arc(x, y, r + 2, 0, Math.PI * 2); ctx.stroke(); }
+    if (n.kind === "capability") { ctx.strokeStyle = "rgba(163,161,156,.5)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0.3, Math.PI * 1.4); ctx.stroke(); }
+    if (n.kind === "mission" && ["blocked", "failed"].includes(n.state)) { ctx.strokeStyle = "rgba(201,145,122,.7)"; ctx.beginPath(); ctx.arc(x, y, r + 2, 0, Math.PI * 2); ctx.stroke(); }
   }
 
   /* ---- interaction ---------------------------------------------------- */
@@ -737,7 +738,7 @@ export class Galaxy {
       item(n.locked ? "Release position" : "Lock position", async () => { if (n.locked) await this.release(n); else await this.lock(n, true); reload(); }),
       item(p.hidden ? "Unhide" : "Hide", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }),
       item("Archive", async () => { await api("/api/project/update", { id: n.id, importance: "ARCHIVED" }); reload(); }),
-      el("div", { class: "sep" }), el("h6", { text: "Importance" }),
+      el("div", { class: "sep" }), el("h6", { text: "Gewicht" }),
       el("div", { class: "row" }, ...IMPORTANCE.map((i) => el("button", { class: i === (p.importance || n.importance) ? "on" : "", text: i.toLowerCase().replace("_", " "), onClick: async () => { this.closeMenu(); await api("/api/project/update", { id: n.id, importance: i }); reload(); } }))),
       el("div", { class: "sep" }),
       item("Create mission", () => chat.send(`Zeus, starte eine Mission für das Projekt „${p.title || n.label}“: nächster sinnvoller Schritt.`, "galaxy")),
