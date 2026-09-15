@@ -292,6 +292,27 @@ def test_a_ceiling_truncated_stream_is_reported_and_continuation_offered(tmp_pat
     assert any("truncated at the output ceiling" in str(e.payload.get("summary", "")) for e in events if e.type is EventType.TOOL)
 
 
+def test_a_stream_the_provider_ends_without_a_finish_reason_is_not_presented_as_complete(tmp_path):
+    net = SSENetwork()
+    # Two chunks, no finishReason anywhere -- what Gemini did live under "high demand".
+    net.streams["generativelanguage.googleapis.com"] = ["data: " + json.dumps({"candidates": [{"content": {"parts": [{"text": "Im Säure-"}]}}]}),
+                                                         "data: " + json.dumps({"candidates": [{"content": {"parts": [{"text": "Basen-Haushalt wandert K⁺ nach extra"}]}}],
+                                                                                "usageMetadata": {"promptTokenCount": 600, "candidatesTokenCount": 12}})]
+    core, kernel, local, executed = make_world(tmp_path, net)
+    events = ask(core, QUESTION, wait=30)
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    completion = message["meta"]["completion"]
+    assert message["text"] == "Im Säure-Basen-Haushalt wandert K⁺ nach extra"
+    assert completion["complete"] is False and completion["truncated"] is False and completion["aborted"] is False
+    assert completion["finish_reason"] == "stream_ended_without_finish_reason"
+    assert any("may be incomplete" in str(e.payload.get("summary", "")) for e in events if e.type is EventType.TOOL)
+    # A stream with a finish reason is whole.
+    net.streams["generativelanguage.googleapis.com"] = gemini_chunks(["Ganz.", " Fertig."])
+    events = ask(core, QUESTION, wait=30)
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    assert message["meta"]["completion"]["complete"] is True and message["meta"]["completion"]["finish_reason"] == "STOP"
+
+
 def test_openai_and_anthropic_streams_carry_text_usage_cost_and_stop_reasons(tmp_path, cfg, creds):
     net = SSENetwork()
     net.streams["api.openai.com"] = openai_events(["Erste ", "Antwort."], status="incomplete", out_tokens=300)

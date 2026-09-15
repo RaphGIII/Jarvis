@@ -1515,6 +1515,7 @@ modules:
       methods: []
     - name: GatewayReply
       methods:
+      - def complete(self) -> bool
       - def completion(self) -> dict[str, Any]
       - def to_dict(self) -> dict[str, Any]
     - name: GatewayStream

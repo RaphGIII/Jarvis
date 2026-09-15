@@ -4749,12 +4749,16 @@ class JarvisCore:
             if "finish_reason" in provenance:
                 # Whether the answer is whole: a ceiling-truncated answer is
                 # said to be one, and the interface offers to continue it.
-                reply_meta["completion"] = {k: provenance.get(k) for k in ("finish_reason", "truncated", "output_tokens",
+                reply_meta["completion"] = {k: provenance.get(k) for k in ("finish_reason", "truncated", "complete", "output_tokens",
                                                                              "configured_output_budget", "output_budget",
                                                                              "provider_hard_limit", "aborted")}
                 if provenance.get("truncated"):
                     self.emit(EventType.TOOL, {"summary": f"answer truncated at the output ceiling ({provenance.get('output_tokens')} tokens of "
                                                           f"{provenance.get('configured_output_budget')} budgeted); continuation offered",
+                                               "source": "gateway", "completion": reply_meta["completion"]}, scope=scope)
+                elif provenance.get("complete") is False and not provenance.get("aborted"):
+                    self.emit(EventType.TOOL, {"summary": f"answer may be incomplete: the provider ended the stream without a finish reason "
+                                                          f"({provenance.get('output_tokens')} tokens); continuation offered",
                                                "source": "gateway", "completion": reply_meta["completion"]}, scope=scope)
         self._deliver(answer, scope=scope, backend=backend, context_text=context_text, meta=reply_meta)
         self._say_pending_thought(scope)

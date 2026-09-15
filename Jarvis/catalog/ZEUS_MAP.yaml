@@ -737,7 +737,7 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1104
+      lines: 1119
       public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -802,7 +802,7 @@ packages:
       - tests/test_live_providers.py
     - path: gateway/router.py
       purpose: Choosing the route before anything runs.
-      lines: 326
+      lines: 330
       public: 6
       tests:
       - tests/test_model_gateway.py
@@ -1836,7 +1836,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8551
+      lines: 8555
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -2923,7 +2923,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/chat.js
   purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
-  lines: 291
+  lines: 294
   imports:
   - core/api.js
   - core/bus.js

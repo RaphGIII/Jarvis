@@ -162,10 +162,20 @@ class GatewayReply:
     #: The consumer closed the stream before the provider finished.
     aborted: bool = False
 
+    #: A stream that ended without the provider saying why: the answer may be whole, but nobody said so.
+    STREAM_ENDED = "stream_ended_without_finish_reason"
+
+    @property
+    def complete(self) -> bool:
+        """The provider said it finished on its own terms: not the ceiling, not a cut stream, not an abort."""
+
+        return bool(self.finish_reason) and not self.truncated and self.finish_reason != self.STREAM_ENDED and not self.aborted
+
     def completion(self) -> dict[str, Any]:
         """What a reader needs to judge whether the answer is whole."""
 
-        return {"finish_reason": self.finish_reason, "truncated": self.truncated, "output_tokens": int(self.usage.get("output_tokens", 0) or 0),
+        return {"finish_reason": self.finish_reason, "truncated": self.truncated, "complete": self.complete,
+                "output_tokens": int(self.usage.get("output_tokens", 0) or 0),
                 "configured_output_budget": self.max_output_tokens, "output_budget": dict(self.output_budget),
                 "provider_hard_limit": self.provider_hard_limit, "aborted": self.aborted}
 
@@ -567,6 +577,11 @@ class ModelGateway:
             from gateway.providers import ProviderReply
 
             final = ProviderReply(text="", usage={"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}, finish_reason="")
+        if not final.finish_reason:
+            # Observed live: under "high demand" Gemini closed the stream after
+            # a dozen characters with no finish reason.  Such an answer is
+            # not presented as whole; the interface offers to continue it.
+            final.finish_reason = GatewayReply.STREAM_ENDED
         final.text = "".join(pieces)
         holder.reply = self._finish(prepared, final, route_attempts, text=final.text, rewrites=rewrites)
 

@@ -148,7 +148,7 @@ function finishStreaming(finalText, payload) {
     what.classList.add("md");
     what.innerHTML = renderMarkdown(finalText);   // the exact completed answer, rendered once
   }
-  if (what && meta.completion && meta.completion.truncated) attachContinue(what, meta.completion);
+  if (what && meta.completion && (meta.completion.truncated || meta.completion.complete === false) && !meta.completion.aborted) attachContinue(what, meta.completion);
   if (what && !(payload && payload._replay)) attachFeedback(what, payload || {});
   $("app").classList.add("conversing");
   scrollDown();
@@ -157,8 +157,11 @@ function finishStreaming(finalText, payload) {
 /* A ceiling-truncated answer says so and offers to go on in the same conversation.
    Continuing is a normal request: the cost policy decides, nothing is spent by itself. */
 function attachContinue(what, completion) {
+  const why = completion.truncated
+    ? `Antwort am Ausgabelimit abgeschnitten (${completion.output_tokens || "?"} von ${completion.configured_output_budget || "?"} Tokens). `
+    : `Die Antwort ist möglicherweise unvollständig – der Anbieter hat den Stream ohne Abschluss beendet (${completion.output_tokens || "?"} Tokens). `;
   const note = el("div", { class: "truncated" },
-    el("span", { text: `Antwort am Ausgabelimit abgeschnitten (${completion.output_tokens || "?"} von ${completion.configured_output_budget || "?"} Tokens). ` }),
+    el("span", { text: why }),
     el("a", { href: "#", class: "fb-btn", text: "Weiter", onClick: (ev) => {
       ev.preventDefault();
       send("Bitte setze deine letzte Antwort genau an der Stelle fort, an der sie abgebrochen wurde, ohne den bisherigen Text zu wiederholen.");
