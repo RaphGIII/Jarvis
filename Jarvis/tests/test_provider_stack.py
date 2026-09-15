@@ -492,7 +492,7 @@ def test_free_mode_with_the_free_provider_exhausted_is_a_typed_free_unavailabili
     events = ask(core, "fuck, schon wieder verloren", wait=30)
     assert executed == [] and tool_events(events, "intelligence: FREE_INTELLIGENCE_UNAVAILABLE")
     text = answer_text(events)
-    assert "FREE" in text and "weder ein bezahltes Modell noch das lokale Modell" in text
+    assert "Die kostenlose KI ist gerade ausgelastet" in text and "SMART" in text
     assert all("openai" not in r["url"] for r in net.requests), "no silent paid call"
     assert not any("Verständnisschicht" in c for c in local.calls), "no silent local GoalSpec"
 

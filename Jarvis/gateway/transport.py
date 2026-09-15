@@ -45,6 +45,19 @@ class ReservationRequired(RuntimeError):
 
 
 @dataclass(frozen=True)
+class StreamTimeouts:
+    """The four bounds of one streamed call, in seconds; ``total`` 0 = no ceiling."""
+
+    connect: float = 10.0
+    first_token: float = 20.0
+    idle: float = 20.0
+    total: float = 150.0
+
+    def to_dict(self) -> dict[str, float]:
+        return {"connect": self.connect, "first_token": self.first_token, "idle": self.idle, "total": self.total}
+
+
+@dataclass(frozen=True)
 class Ticket:
     ticket_id: str
     provider: str
@@ -146,13 +159,38 @@ class Transport:
         return GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, prefix + redact(str(exc), self.credentials)[:300], role=ticket.role,
                             provider=provider.name)
 
+    @staticmethod
+    def _socket_of(response: Any) -> Any:
+        """The socket under an HTTP response, for re-arming its timeout per phase; None for bodies that have none."""
+
+        for path in (("fp", "raw", "_sock"), ("_sock",), ("sock",)):
+            obj: Any = response
+            try:
+                for name in path:
+                    obj = getattr(obj, name)
+            except AttributeError:
+                continue
+            if obj is not None and hasattr(obj, "settimeout"):
+                return obj
+        return None
+
     def post_sse(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *,
-                 headers: dict[str, str] | None = None, auth: str = "bearer", timeout: float | None = None):
+                 headers: dict[str, str] | None = None, auth: str = "bearer", timeout: float | None = None,
+                 timeouts: StreamTimeouts | None = None):
         """POST and read the reply as Server-Sent Events: yields ``(event, data)`` as they arrive.
 
         The same ticket, URL and credential rules as :meth:`post_json`; an
         HTTP failure before the stream opens is classified the same way.
         Closing the generator closes the connection.
+
+        ``timeouts`` gives the stream its four bounds -- the response headers
+        (connect), the first event, the gap between events (idle), and the
+        whole request -- each armed on the socket for exactly its phase.
+        Observed live before this existed: one 120 s silence bound covered
+        everything, so a provider that held the connection 115 s before a
+        503, or stalled after three chunks, kept the owner waiting two
+        minutes.  Without ``timeouts`` the single ``timeout`` (or the
+        provider's) bounds every phase, as before.
         """
 
         if ticket.provider != provider.name:
@@ -162,13 +200,33 @@ class Transport:
         request_headers["Accept"] = "text/event-stream"
         payload = json.dumps(body).encode("utf-8")
         limit = float(timeout or provider.timeout_seconds)
+        phases = timeouts or StreamTimeouts(connect=limit, first_token=limit, idle=limit, total=0.0)
+        started = time.perf_counter()
+
+        def remaining() -> float:
+            return (phases.total - (time.perf_counter() - started)) if phases.total > 0 else float("inf")
+
+        phase = "connect"
+        bound = phases.connect if phases.total <= 0 else max(0.1, min(phases.connect, phases.total))
         try:
             request = urllib.request.Request(url, data=payload, headers=request_headers, method="POST")
-            response = self._opener(request, timeout=limit)
+            response = self._opener(request, timeout=bound)
         except urllib.error.HTTPError as exc:
             raise self._http_error(exc, ticket, provider) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise self._transport_error(exc, ticket, provider, limit) from None
+            raise self._transport_error(exc, ticket, provider, bound, prefix=f"{phase}: ") from None
+        sock = self._socket_of(response)
+
+        def arm(seconds: float) -> None:
+            nonlocal bound
+            left = remaining()
+            bound = seconds if left == float("inf") else max(0.1, min(seconds, left))
+            if sock is not None:
+                try:
+                    sock.settimeout(bound)
+                except Exception:  # noqa: BLE001 - a body without a real socket keeps the connect bound
+                    pass
+
         try:
             if not hasattr(response, "__iter__"):
                 # Not a stream: the whole body, once.  The adapter reads it as
@@ -177,6 +235,8 @@ class Transport:
                 text = raw_body.decode("utf-8", errors="replace") if isinstance(raw_body, (bytes, bytearray)) else str(raw_body)
                 yield "", text
                 return
+            phase = "first token"
+            arm(phases.first_token)
             event, data_lines = "", []
             for raw in response:
                 line = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
@@ -184,6 +244,11 @@ class Transport:
                 if line == "":
                     if data_lines:
                         yield event, "\n".join(data_lines)
+                        if remaining() <= 0:
+                            raise GatewayError(ProviderStatus.TIMEOUT, f"total ceiling of {phases.total:.0f}s reached", role=ticket.role,
+                                               provider=provider.name)
+                        phase = "idle"
+                        arm(phases.idle)
                     event, data_lines = "", []
                     continue
                 if line.startswith(":"):
@@ -195,7 +260,7 @@ class Transport:
             if data_lines:
                 yield event, "\n".join(data_lines)
         except (TimeoutError, OSError) as exc:
-            raise self._transport_error(exc, ticket, provider, limit, prefix="stream interrupted: ") from None
+            raise self._transport_error(exc, ticket, provider, bound, prefix=f"stream interrupted ({phase}): ") from None
         finally:
             try:
                 response.close()

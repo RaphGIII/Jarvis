@@ -115,7 +115,8 @@ def test_free_mode_set_through_the_message_never_pays(world):
     events = ask(core, "Erkläre mir bitte ausführlich die Frank-Starling-Mechanik.", mode="FREE")
     assert core.chat_mode is ChatMode.FREE
     text = answer_text(events)
-    assert "lokale Antwort" in text
+    assert "Die kostenlose KI ist gerade ausgelastet" in text and "lokale Antwort" not in text
+    assert local.calls == [], "the local model answers nobody"
     assert not any("api.openai.com" in r["url"] for r in net.requests)
     assert kernel.gateway.governor.summary().month == 0.0
 

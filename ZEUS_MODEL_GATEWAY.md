@@ -156,6 +156,18 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 
 **Tests:** `tests/test_semantic_authority.py` (14: Timeout → kein 4B, kein OpenAI, Timeout-Status, 30 s am Socket, < 10 s; Pool 503 → kein 4B; mehrdeutig nach Ausfall → eine saubere Nachricht in FREE und AUTO; deterministische Datei ohne Modell; Routing-Beispiele; Timeout vs. 429/503/unerreichbar; Deadline ohne weiteren Aufruf; Komposition/Replan/Fehlende-Fähigkeit ohne lokales Modell; `for_decisions` ohne Weg nach unten; Kernel nur mit lokalem Modell entscheidet nicht). Der frühere Test „Offline-Modell nennt eine Fähigkeit → Rückfrage“ ist ersetzt: das Offline-Modell wird gar nicht gefragt.
 
+## Sprint 9 (2026-09-15): Kein lokales 4B-Modell mehr vor dem Owner, phasenweise Stream-Timeouts
+
+**Befund (live, Kandidat b3fb7f4):** Gemini-Pool im Health-Cooldown → der Router gab FREE-Prosa an `local.fast` (qwen3:4b-instruct), chemisch falsch. Ein Gemini-Stream hielt die Verbindung 115 s vor einem 503, ein stockender Stream wartete die vollen 120 s Stille.
+
+**Das lokale Modell antwortet niemandem.** `local.fast` ist in keinem Modus erlaubt (`gateway/modes.py`: die Policies nennen `local.build` statt `local.*`; der Engineering-Coder bleibt). Der Kernel gibt dem `GatewayBrainProvider` keinen Fallback mehr (`core/kernel.py`); ohne Route sagt der Kern es deterministisch. Startup: READY entsteht aus dem Gateway-Status (Stufe `intelligence`, `service/lifecycle.py`; `fast_local` wird als Alias weiter gelesen) — nichts wird generiert, das 4B-Modell nicht geladen; die Status-Anzeige (`_probe_health`) liest den Gateway-Status statt zu generieren. Ollama wird vom Supervisor weiterhin für `local.build` (Engineering) gestartet; die Konversation braucht es nicht.
+
+**Owner-Text bei Ausfall** (deterministisch, kostenlos, ohne 429/503/Provider-Wortlaut; Details nur in Activity): FREE „Die kostenlose KI ist gerade ausgelastet. Du kannst es erneut versuchen oder für diese Anfrage SMART verwenden.“ — sonst „Das Denkmodell ist gerade nicht erreichbar. Versuch es gleich noch einmal oder wechsle den Modus.“ (`JarvisCore.FREE_UNAVAILABLE_DE/EN`, `INTELLIGENCE_UNAVAILABLE_DE/EN`). SMART wird genannt, nie automatisch gewählt; Terra/Sol/Anthropic werden aus FREE nicht angefasst.
+
+**Stream-Timeouts** (`gateway/transport.py` `StreamTimeouts`, am Socket pro Phase scharf geschaltet): interaktiv `connect 10 s / erstes Token 20 s / Leerlauf zwischen Chunks 20 s / gesamt 150 s` (`INTERACTIVE_STREAM_TIMEOUTS`); bewusst lange Generierungen — Engineering, Denkstufe DEEP/MAX, Ausgabebudget deep/large — `10 / 60 / 90 / 900 s` (`LONG_STREAM_TIMEOUTS`); ein Aufrufer kann eigene Werte setzen (`GatewayRequest.timeouts`). Freier Pool: 3.8 Timeout / Tagesquote (429) / transienter Fehler → 3.7 (Quote und Timeout ohne Wiederholung desselben Modells); 3.7 ebenso → `FREE_INTELLIGENCE_UNAVAILABLE`. Schlimmster Fall vor dem ersten Token: 2 × (10 + 20) s. Nach gezeigtem Text: Leerlauf-Timeout → der gezeigte Text wird unvollständig gespeichert, „Weiter“ angeboten.
+
+**Tests:** `tests/test_free_intelligence_only.py` (15: 503/Timeout → ein Satz, null lokal, null bezahlt; Cooldown → derselbe Satz; AUTO-Satz; READY ohne lokale Generierung, Badge ohne Generierung; kein Modus erlaubt `local.fast`; Provider ohne Fallback; FREE ohne freie Route abgelehnt; deterministische Datei ohne LLM; erstes-Token-Stall → 3.7; Chunk-Stall → unvollständig; Tagesquote → 3.7 ohne Retry; beide weg → sauber; normales Streaming; SMART/DEEP und lange Grenzen). Ersetzt: „Offline-Fallback antwortet und wird so beschriftet“, „FREE ohne freie Route antwortet lokal“.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:

@@ -36,8 +36,8 @@ from test_model_gateway import FakeNetwork, LocalStub, cfg, creds, gemini_reply,
 
 GEMINI = "generativelanguage.googleapis.com"
 OPENAI = "api.openai.com"
-FREE_MESSAGE = "weder ein bezahltes Modell noch das lokale Modell"
-GENERAL_MESSAGE = "Das lokale Modell entscheidet so etwas nicht"
+FREE_MESSAGE = "Die kostenlose KI ist gerade ausgelastet"
+GENERAL_MESSAGE = "Das Denkmodell ist gerade nicht erreichbar"
 
 
 def http_503() -> urllib.error.HTTPError:

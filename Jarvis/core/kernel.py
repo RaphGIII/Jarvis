@@ -192,7 +192,11 @@ class JarvisKernel:
             return local
         from gateway.gateway import GatewayBrainProvider
 
-        return GatewayBrainProvider(self.gateway, fallback=local)
+        # No fallback: the legacy local model never answers the owner.  When
+        # the gateway has no route, the caller says so deterministically.
+        # The local provider object is still built lazily for GPU
+        # housekeeping and for the engineering tiers; nothing here loads it.
+        return GatewayBrainProvider(self.gateway, fallback=None)
 
     @property
     def gateway(self) -> Any:

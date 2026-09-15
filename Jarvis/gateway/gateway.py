@@ -46,7 +46,7 @@ from gateway.providers import ProviderRequest, adapter_for
 from gateway.router import ModelRouter, RouteDecision, RouteKind
 from gateway.secrets import CredentialStore
 from gateway.task import TaskFacts, TaskVector, rule_based
-from gateway.transport import ReservationRequired, Ticket, Transport, ZeroCostViolation
+from gateway.transport import ReservationRequired, StreamTimeouts, Ticket, Transport, ZeroCostViolation
 
 
 TRANSIENT_FREE_POOL_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
@@ -55,6 +55,15 @@ FREE_POOL_MAX_ATTEMPTS_PER_MODEL = 2
 #: closed set) must answer within this bound.  Measured live these calls take
 #: a few seconds; the provider default of 120 s let one hang for 134 s.
 SEMANTIC_CALL_TIMEOUT_SECONDS = 30.0
+#: Streamed answers to the owner: response headers within 10 s, the first
+#: token within 20 s, no gap longer than 20 s, the whole answer within 150 s.
+#: A miss before any text is shown moves the free pool to its next model;
+#: after text is shown the answer is stored incomplete and continuation is
+#: offered.  Measured live: Gemini's first token arrives in 2-7 s.
+INTERACTIVE_STREAM_TIMEOUTS = StreamTimeouts(connect=10.0, first_token=20.0, idle=20.0, total=150.0)
+#: Deliberate long generations -- engineering, DEEP/MAX thinking, deep or
+#: large output budgets -- wait longer for the first token and between chunks.
+LONG_STREAM_TIMEOUTS = StreamTimeouts(connect=10.0, first_token=60.0, idle=90.0, total=900.0)
 FREE_POOL_BASE_DELAY_SECONDS = 1.0
 FREE_POOL_MAX_DELAY_SECONDS = 2.0
 
@@ -144,6 +153,9 @@ class GatewayRequest:
     #: provider's configured timeout.  A timeout is reported as its own
     #: status (``timeout``), never mistaken for a 429, 503 or a bad key.
     timeout_seconds: float | None = None
+    #: The phased bounds for a streamed answer; None = the gateway chooses
+    #: INTERACTIVE_STREAM_TIMEOUTS or LONG_STREAM_TIMEOUTS from the route.
+    timeouts: StreamTimeouts | None = None
 
 
 @dataclass
@@ -221,6 +233,7 @@ class _Prepared:
     hard_limit: int = 0
     local: bool = False
     started: float = 0.0
+    timeouts: StreamTimeouts | None = None
 
 
 class GatewayStream:
@@ -466,12 +479,20 @@ class ModelGateway:
             raise GatewayRefused(decision, str(exc)) from None
 
         thinking = binding.thinking_for(decision.thinking_level) if decision.thinking_level else None
+        # Interactive chat is bounded tightly; a deliberate long generation
+        # (engineering, deep thinking, a deep or large output budget) is not
+        # cut off by the interactive bounds.
+        long_generation = (request.purpose == "engineer" or str(decision.role).startswith("engineer")
+                           or str((decision.output_budget or {}).get("level")) in {"deep", "large"}
+                           or str(decision.thinking_level) in {"DEEP", "MAX"})
+        timeouts = request.timeouts or (LONG_STREAM_TIMEOUTS if long_generation else INTERACTIVE_STREAM_TIMEOUTS)
+        prepared.timeouts = timeouts
         prepared.system, prepared.max_out, prepared.temperature = system, max_out, temperature
         prepared.pricing, prepared.estimate, prepared.reservation, prepared.ticket = pricing, estimate, reservation, ticket
         prepared.budget, prepared.hard_limit = budget, hard_limit
         prepared.provider_request = ProviderRequest(system=system, prompt=prompt_text, max_output_tokens=max_out, temperature=temperature,
                                                     thinking=thinking, schema=request.schema, thinking_level=decision.thinking_level,
-                                                    timeout_seconds=request.timeout_seconds)
+                                                    timeout_seconds=request.timeout_seconds, timeouts=timeouts)
         prepared.adapter = adapter_for(provider.kind)
         return prepared
 
@@ -637,8 +658,8 @@ class ModelGateway:
                     retry_delay = self._free_pool_retry_delay(attempt) if transient and attempt < FREE_POOL_MAX_ATTEMPTS_PER_MODEL else 0.0
                     route_attempts.append({"model": model, "attempt": attempt, "failure_class": exc.status.value, "http_status": exc.http_status,
                                            "retry_delay_seconds": round(retry_delay, 3), "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
-                    if exc.status is ProviderStatus.TIMEOUT and not shown:
-                        break  # the next pool model gets one bounded try; the same model is not waited on twice
+                    if exc.status in {ProviderStatus.TIMEOUT, ProviderStatus.QUOTA_EXHAUSTED} and not shown:
+                        break  # a hang or a spent daily quota: the next pool model gets its bounded try at once
                     if not transient:
                         raise
                     if retry_delay > 0:
@@ -728,8 +749,8 @@ class ModelGateway:
                     attempts.append({"model": model, "attempt": attempt, "failure_class": exc.status.value,
                                      "http_status": exc.http_status, "retry_delay_seconds": round(retry_delay, 3),
                                      "latency_seconds": round(time.perf_counter() - attempt_started, 3)})
-                    if exc.status is ProviderStatus.TIMEOUT:
-                        break  # the next pool model gets one bounded try; the same model is not waited on twice
+                    if exc.status in {ProviderStatus.TIMEOUT, ProviderStatus.QUOTA_EXHAUSTED}:
+                        break  # a hang or a spent daily quota: the next pool model gets its bounded try at once
                     if not transient:
                         raise
                     if retry_delay > 0:
@@ -739,7 +760,9 @@ class ModelGateway:
         raise FreeIntelligenceUnavailable(role=decision.role, provider=provider.name, attempts=attempts) from last_error
 
     def _is_transient_free_pool_error(self, exc: GatewayError) -> bool:
-        return exc.http_status in TRANSIENT_FREE_POOL_HTTP_STATUSES
+        # A daily quota does not clear in two seconds: the next pool model is
+        # tried at once.  A per-minute limit or a 5xx gets the bounded retry.
+        return exc.http_status in TRANSIENT_FREE_POOL_HTTP_STATUSES and exc.status is not ProviderStatus.QUOTA_EXHAUSTED
 
     def _free_pool_retry_delay(self, attempt: int) -> float:
         base = min(FREE_POOL_MAX_DELAY_SECONDS, FREE_POOL_BASE_DELAY_SECONDS * (2 ** max(0, attempt - 1)))

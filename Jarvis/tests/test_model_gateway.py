@@ -187,8 +187,10 @@ def test_free_mode_never_reaches_a_metered_provider(tmp_path, cfg, creds, net):
     gateway = make_gateway(tmp_path, cfg, creds, net, local=local)
     request = knowledge("Erkläre mir die Frank-Starling-Mechanik ausführlich mit Herleitung.")
     request.mode = ChatMode.FREE
-    reply = gateway.complete(request)
-    assert reply.provider == "ollama" and reply.decision.offline_fallback
+    with pytest.raises(GatewayRefused) as refused:
+        gateway.complete(request)
+    assert "SMART" in refused.value.decision.suggestion or "does not permit" in refused.value.decision.reason
+    assert local.calls == [], "the local model is not a route: FREE without a free lane is refused, not answered locally"
     hosts = {r["url"].split("/")[2] for r in net.requests}
     assert "api.openai.com" not in hosts and "api.anthropic.com" not in hosts
     assert gateway.governor.summary().month == 0.0
@@ -464,9 +466,9 @@ def test_after_quota_exhaustion_auto_mode_routes_around_the_free_lane_within_bud
 def test_after_quota_exhaustion_free_mode_does_not_spend(tmp_path, cfg, creds, net):
     gateway = make_gateway(tmp_path, cfg, creds, net, local=LocalStub())
     gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
-    reply = gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True),
-                                            mode=ChatMode.FREE))
-    assert reply.provider == "ollama" and net.requests == []
+    with pytest.raises(GatewayRefused):
+        gateway.complete(GatewayRequest(prompt="Was ist NAT?", facts=TaskFacts(text="Was ist NAT?", is_question=True), mode=ChatMode.FREE))
+    assert net.requests == [], "nothing metered was tried and nothing local answered"
 
 
 def test_router_skips_a_cheaper_model_it_does_not_trust_without_trying_it(tmp_path, cfg, creds, net):

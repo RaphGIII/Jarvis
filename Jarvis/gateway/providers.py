@@ -17,7 +17,7 @@ from typing import Any, Iterator
 
 from gateway.config import ProviderConfig, RoleBinding
 from gateway.health import GatewayError, ProviderStatus, classify_http
-from gateway.transport import Ticket, Transport
+from gateway.transport import StreamTimeouts, Ticket, Transport
 
 #: A streaming adapter yields ``{"text": piece}`` as the answer arrives and,
 #: last, ``{"reply": ProviderReply}`` with the usage and the finish reason.
@@ -38,6 +38,9 @@ class ProviderRequest:
     thinking_level: str = ""
     #: A bound on this one call, in seconds; None = the provider's configured timeout.
     timeout_seconds: float | None = None
+    #: The phased bounds of a streamed call (connect / first token / idle /
+    #: total); None = one bound for every phase.
+    timeouts: StreamTimeouts | None = None
 
 
 @dataclass
@@ -129,7 +132,7 @@ class GeminiAdapter:
         url = url.replace(":generateContent", ":streamGenerateContent") + "?alt=sse"
         usage_raw: dict[str, Any] = {}
         finish = ""
-        for _event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds):
+        for _event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds, timeouts=request.timeouts):
             try:
                 chunk = json.loads(data)
             except ValueError:
@@ -220,7 +223,7 @@ class OpenAIAdapter:
         url, body = self._payload(provider, binding, request)
         body["stream"] = True
         final: dict[str, Any] = {}
-        for event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds):
+        for event, data in transport.post_sse(ticket, provider, url, body, auth=self.auth, timeout=request.timeout_seconds, timeouts=request.timeouts):
             try:
                 payload = json.loads(data)
             except ValueError:
@@ -355,7 +358,7 @@ class AnthropicAdapter:
         input_tokens = cached = output_tokens = 0
         stop = ""
         model = binding.model
-        for event, data in transport.post_sse(ticket, provider, url, body, headers=headers, auth=self.auth, timeout=request.timeout_seconds):
+        for event, data in transport.post_sse(ticket, provider, url, body, headers=headers, auth=self.auth, timeout=request.timeout_seconds, timeouts=request.timeouts):
             try:
                 payload = json.loads(data)
             except ValueError:

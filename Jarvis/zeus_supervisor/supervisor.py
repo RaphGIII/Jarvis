@@ -629,7 +629,7 @@ class Supervisor:
         if str(health.get("reason", "")).startswith("process exited"):
             return False
         http_ok = bool((stages.get("http") or {}).get("ok"))
-        fast = stages.get("fast_local") or {}
+        fast = stages.get("intelligence") or stages.get("fast_local") or {}
         return http_ok and not bool(fast.get("ok"))
 
     def _wait_ready(self) -> dict[str, Any]:

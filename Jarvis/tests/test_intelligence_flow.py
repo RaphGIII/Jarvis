@@ -251,10 +251,10 @@ def test_no_provider_route_is_typed_intelligence_unavailable_not_a_local_guess(t
                                                                          "reason": "local guess"})
     preview = core.compose_contract_preview("fuck, schon wieder verloren")
     assert preview["status"] == "FREE_INTELLIGENCE_UNAVAILABLE" and preview["goal"] is None and preview["plan"] is None
-    assert "offline fallback" in preview["reason"]
+    assert "no reasoning route" in preview["reason"], "no route at all: the local model is not one"
     assert not any("Verständnisschicht" in c for c in local.calls), "the local model was never asked for a GoalSpec"
     events = ask(core, "fuck, schon wieder verloren", wait=30)
-    assert executed == [] and "weder ein bezahltes Modell noch das lokale Modell" in answer_text(events)
+    assert executed == [] and "Die kostenlose KI ist gerade ausgelastet" in answer_text(events)
     core.set_chat_mode("AUTO")
     kernel.gateway.health.note("openai", ProviderStatus.QUOTA_EXHAUSTED)  # the paid route is gone too
     preview = core.compose_contract_preview("fuck, schon wieder verloren")

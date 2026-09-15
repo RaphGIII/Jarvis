@@ -241,9 +241,9 @@ def test_with_only_the_offline_model_reachable_no_semantic_decision_is_taken(wor
     assert executed == [], "the legacy local model's goal was not acted on"
     unavailable = tool_events(events, "intelligence: FREE_INTELLIGENCE_UNAVAILABLE")
     assert unavailable and unavailable[0]["intelligence"]["goal"] is None
-    assert "offline fallback" in unavailable[0]["intelligence"]["reason"]
+    assert "no reasoning route" in unavailable[0]["intelligence"]["reason"]
     text = answer_text(events)
-    assert "nicht erreichbar" in text and "weder ein bezahltes Modell noch das lokale Modell" in text
+    assert "Die kostenlose KI ist gerade ausgelastet" in text
     assert not any("Verständnisschicht" in c or "Planungsschicht" in c for c in local.calls), "the local model was never even asked"
     assert not any(e.type is EventType.PROGRESS for e in events), "no engineering was started"
 
@@ -254,7 +254,7 @@ def test_semantic_authority_is_reported_truthfully(world):
     kernel.gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
     core.set_chat_mode("FREE")
     authority = core.semantic_authority()
-    assert authority["available"] is False and authority["role"] == "local.fast"
+    assert authority["available"] is False and authority["role"] != "local.fast", "no route at all: the local model is not a route"
 
 
 # ---------------------------------------------------------------------------

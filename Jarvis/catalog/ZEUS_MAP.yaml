@@ -49,6 +49,7 @@ packages:
       - tests/test_brain_router_v1.py
       - tests/test_build_remote_executor_v1.py
       - tests/test_console.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_json_utils.py
       - tests/test_model_tiers.py
@@ -110,6 +111,7 @@ packages:
       - tests/test_brain_router_v1.py
       - tests/test_build_remote_executor_v1.py
       - tests/test_console.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_model_tiers.py
       - tests/test_resources.py
@@ -357,7 +359,7 @@ packages:
       - tests/test_wake_listener.py
     - path: core/kernel.py
       purpose: 'The composition root: one place that assembles a working Jarvis.'
-      lines: 351
+      lines: 355
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -703,6 +705,7 @@ packages:
       - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_live_providers.py
@@ -741,10 +744,11 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1158
+      lines: 1181
       public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
@@ -757,6 +761,7 @@ packages:
       public: 5
       tests:
       - tests/test_barge_in_and_provenance.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_model_gateway.py
@@ -771,12 +776,13 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/modes.py
       purpose: The five owner-facing chat modes, and what each one permits.
-      lines: 118
+      lines: 125
       public: 5
       tests:
       - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
@@ -803,7 +809,7 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/providers.py
       purpose: 'Provider adapters: request shape in, text and usage out.'
-      lines: 431
+      lines: 434
       public: 8
       tests:
       - tests/test_live_providers.py
@@ -832,6 +838,7 @@ packages:
       tests:
       - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
@@ -840,9 +847,10 @@ packages:
       - tests/test_streaming.py
     - path: gateway/transport.py
       purpose: The only way a provider reaches the network -- and the FREE-mode wall.
-      lines: 251
-      public: 5
+      lines: 316
+      public: 6
       tests:
+      - tests/test_free_intelligence_only.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
   imagegen:
@@ -1748,6 +1756,7 @@ packages:
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
       - tests/test_filesystem.py
+      - tests/test_free_intelligence_only.py
       - tests/test_fs_intelligence.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
@@ -1846,7 +1855,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8726
+      lines: 8715
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1856,6 +1865,7 @@ packages:
       - tests/test_capability_learning_end_to_end.py
       - tests/test_capability_teaching_loop.py
       - tests/test_devices.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_identity.py
       - tests/test_intelligence_flow.py
@@ -1918,6 +1928,7 @@ packages:
       - tests/test_actionability.py
       - tests/test_activity.py
       - tests/test_barge_in_and_provenance.py
+      - tests/test_free_intelligence_only.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_pronunciation.py
@@ -1996,7 +2007,7 @@ packages:
       - tests/test_basics_sprint.py
     - path: service/lifecycle.py
       purpose: 'Readiness, restart and shutdown: the core''s side of the supervisor contract.'
-      lines: 365
+      lines: 377
       public: 1
       tests:
       - tests/test_desktop_lifecycle.py
@@ -3078,4 +3089,4 @@ totals:
   packages: 33
   api_routes: 171
   ui_modules: 33
-  tests: 123
+  tests: 124

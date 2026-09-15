@@ -60,22 +60,34 @@ class Lifecycle:
         with self._lock:
             return {k: dict(v) for k, v in self._stages.items()}
 
+    def _intelligence(self) -> dict[str, Any] | None:
+        """The stage that says whether the owner can be answered.
+
+        ``intelligence`` is the gateway's reasoning route being wired (no
+        generation, no local model loaded).  ``fast_local`` is the name the
+        stage had when READY was earned by the legacy local model answering
+        "OK"; still read, so an older core or test reports the same way.
+        """
+
+        return self._stages.get("intelligence") or self._stages.get("fast_local")
+
     @property
     def ready(self) -> bool:
-        stage = self._stages.get("fast_local")
+        with self._lock:
+            stage = self._intelligence()
         return bool(stage and stage.get("ok"))
 
     def health(self) -> dict[str, Any]:
-        """READY means a real answer came out of the conversation model here."""
+        """READY means the intelligence that answers the owner is wired in this process."""
 
         stages = self.stages
-        fast = stages.get("fast_local")
+        fast = stages.get("intelligence") or stages.get("fast_local")
         if fast is None:
-            detail = "loading the conversation model"
+            detail = "wiring the intelligence"
         elif fast.get("ok"):
             detail = "ready"
         else:
-            detail = f"conversation model unavailable: {fast.get('detail', '')}"
+            detail = f"intelligence unavailable: {fast.get('detail', '')}"
         voice = stages.get("voice", {}).get("ok")
         recogniser = stages.get("recogniser", {}).get("ok")
         return {
@@ -99,7 +111,7 @@ class Lifecycle:
 
         stages = self.stages
         ui = bool(stages.get("http", {}).get("ok"))
-        ai = bool(stages.get("fast_local", {}).get("ok"))
+        ai = bool((stages.get("intelligence") or stages.get("fast_local") or {}).get("ok"))
         voice = bool(stages.get("voice", {}).get("ok")) and bool(stages.get("recogniser", {}).get("ok"))
         # INTERACTIVE = the owner can genuinely use the product: core answering
         # and the conversation model warm.  Voice keeps warming behind the main

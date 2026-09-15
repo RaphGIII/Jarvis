@@ -206,16 +206,17 @@ def test_when_the_first_pool_model_fails_the_label_names_the_model_that_actually
     assert any(a["model"] == "gemini-3.8-flash" and a["failure_class"] != "ok" for a in provenance["route_attempts"])
 
 
-def test_an_offline_fallback_answer_is_labelled_as_the_local_model_it_came_from(tmp_path):
+def test_the_free_pool_in_cooldown_is_the_deterministic_sentence_not_the_local_model(tmp_path):
+    """Formerly: the offline fallback answered and was labelled as such.  Now nothing local answers."""
+
     net = HookedNetwork()
     core, kernel, local, executed = make_world(tmp_path, net)
     kernel.gateway.health.note("gemini", ProviderStatus.QUOTA_EXHAUSTED)
     core.set_chat_mode("FREE")
     events = ask(core, QUESTION, wait=30)
     message = next(e.payload for e in events if e.type is EventType.MESSAGE)
-    assert message["text"] == "lokale Antwort"
-    assert message["backend"] == "ollama/stub-local"
-    assert message["meta"]["provenance"]["offline_fallback"] is True and message["meta"]["provenance"]["role"] == "local.fast"
+    assert message["text"] == core.FREE_UNAVAILABLE_DE and message["backend"] == "intelligence"
+    assert local.calls == [] and net.requests == []
 
 
 def test_the_gateway_provider_provenance_is_per_generation(tmp_path):

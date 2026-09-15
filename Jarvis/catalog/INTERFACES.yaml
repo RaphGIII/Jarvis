@@ -1818,6 +1818,10 @@ modules:
       - RuntimeError
       doc: A metered call was requested without a budget reservation.  Nothing was sent.
       methods: []
+    - name: StreamTimeouts
+      doc: The four bounds of one streamed call, in seconds; ``total`` 0 = no ceiling.
+      methods:
+      - def to_dict(self) -> dict[str, float]
     - name: Ticket
       methods: []
     - name: HttpReply
@@ -1827,7 +1831,7 @@ modules:
       - 'def issue(self, *, provider: ProviderConfig, role: str, mode: ChatMode | str, cost_class: CostClass, reservation:
         Reservation | None) -> Ticket'
       - 'def post_sse(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *, headers: dict[str,
-        str] | None=None, auth: str=''bearer'', timeout: float | None=None)'
+        str] | None=None, auth: str=''bearer'', timeout: float | None=None, timeouts: StreamTimeouts | None=None)'
       - 'def post_json(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *, headers: dict[str,
         str] | None=None, auth: str=''bearer'', timeout: float | None=None) -> HttpReply'
     functions: []

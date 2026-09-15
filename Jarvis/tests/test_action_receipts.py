@@ -884,8 +884,10 @@ def test_the_health_badge_never_probes_the_build_model(tmp_path):
 
     core._probe_health()
 
-    assert probe.probed == [ModelTier.FAST_LOCAL]
-    assert ModelTier.BUILD_LOCAL not in probe.probed
+    # Since the local model stopped answering the owner, the badge probes no
+    # tier at all: it reads the gateway's status, and generates nothing.
+    assert probe.probed == []
+    assert ModelTier.BUILD_LOCAL not in probe.probed and ModelTier.FAST_LOCAL not in probe.probed
 
 
 def test_reading_diagnostics_does_not_change_what_it_reports(tmp_path):

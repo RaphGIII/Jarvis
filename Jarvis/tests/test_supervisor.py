@@ -140,10 +140,10 @@ def test_lifecycle_health_requires_real_generation() -> None:
     core = JarvisCore()
     health = core.lifecycle.health()
     assert health["ready"] is False
-    assert "loading" in health["detail"]
-    core.lifecycle.mark("fast_local", True, "OK")
+    assert "wiring the intelligence" in health["detail"]
+    core.lifecycle.mark("intelligence", True, "reasoning.free: gemini/gemini-3.8-flash")
     assert core.lifecycle.health()["ready"] is True
-    core.lifecycle.mark("fast_local", False, "boom")
+    core.lifecycle.mark("intelligence", False, "boom")
     health = core.lifecycle.health()
     assert health["ready"] is False and "boom" in health["detail"]
 
