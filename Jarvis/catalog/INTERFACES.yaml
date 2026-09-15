@@ -1531,6 +1531,7 @@ modules:
     - name: GatewayBrainProvider
       doc: Speaks the ``BrainProvider`` protocol; routes through the gateway.
       methods:
+      - def provenance(self) -> dict[str, Any]
       - def model_name(self) -> str
       - def spec(self) -> Any
       - 'def generate(self, prompt: str, *, max_tokens: int | None=None, temperature: float | None=None, top_p: float | None=None,

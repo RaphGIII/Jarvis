@@ -98,6 +98,13 @@ class JarvisCore:
         self._history: list[ConversationTurn] = []
         self._current_work: threading.Thread | None = None
         self._stop_requested = threading.Event()
+        #: Every owner request is a generation; a stop targets the generation
+        #: that was current when it was issued and nothing that comes later.
+        self._answer_generation = 0
+        self._stop_generation = -1
+        #: Whether the answer being produced right now is spoken aloud.  Only
+        #: a spoken answer is something a wake word may interrupt.
+        self._answer_spoken = False
         self._started_at = time.time()
         self._health_ok = False
         self._health_detail = ""
@@ -520,9 +527,39 @@ class JarvisCore:
         )
         with self._lock:
             self._current_work = thread
+            self._answer_generation += 1
         self._stop_requested.clear()
         thread.start()
         return {"ok": True, "accepted": text, "request_id": request_id}
+
+    def _stop_applies(self) -> bool:
+        """A stop counts only for the generation it was issued in: a stale flag never poisons a later answer."""
+
+        return self._stop_requested.is_set() and self._stop_generation >= self._answer_generation
+
+    def _request_stop(self) -> None:
+        self._stop_generation = self._answer_generation
+        self._stop_requested.set()
+
+    @staticmethod
+    def _answer_provenance(provider: Any, default_backend: str) -> tuple[str, dict[str, Any]]:
+        """The backend label of an answer comes from what produced it, never from a tier's catalog entry.
+
+        A gateway provider reports the role, provider and model that actually
+        answered (or the offline fallback it used); a plain local provider
+        reports its model name.  The tier's configured model is the label of
+        last resort, for providers that say nothing about themselves.
+        """
+
+        provenance = getattr(provider, "provenance", None)
+        if isinstance(provenance, dict) and provenance.get("model"):
+            who = str(provenance.get("provider") or provenance.get("role") or "").strip()
+            label = f"{who}/{provenance['model']}" if who else str(provenance["model"])
+            return label, dict(provenance)
+        name = getattr(provider, "model_name", "")
+        if isinstance(name, str) and name.strip() and name != "gateway":
+            return name, {"model": name, "provider": str(getattr(provider, "provider_name", "") or "")}
+        return default_backend, {}
 
     def _answer_guarded(self, text: str, scope: str, request_id: str = "") -> None:
         """Run :meth:`_answer`, and never let it fail in silence.
@@ -4565,6 +4602,7 @@ class JarvisCore:
             # of ordinary conversation, where it read as a robot's job sheet.
             system, user = self._compose_messages(text)
             stream = self._generate(provider, user, system=system)
+            provenance: dict[str, Any] = {}
 
             def tee():
                 """One pass over the model's output feeds both the screen and the voice.
@@ -4578,7 +4616,7 @@ class JarvisCore:
                 from service.claims import find_claim
 
                 for chunk in stream:
-                    if self._stop_requested.is_set():
+                    if self._stop_applies():
                         return
                     collected.append(chunk)
                     # Checked as each chunk arrives rather than at the end.  A
@@ -4611,11 +4649,16 @@ class JarvisCore:
                 and self._voice.settings.enabled
                 and self._voice.settings.speak_replies
             )
-            if speak:
-                self.voice.speak_stream(tee(), scope=scope)
-            else:
-                for _ in tee():
-                    pass
+            self._answer_spoken = bool(speak)
+            try:
+                if speak:
+                    self.voice.speak_stream(tee(), scope=scope)
+                else:
+                    for _ in tee():
+                        pass
+            finally:
+                self._answer_spoken = False
+                backend, provenance = self._answer_provenance(provider, backend)
         except Exception as exc:
             # bounded agentic recovery (§ the live "ProviderError timed out"):
             # one retry with a REDUCED prompt before admitting the failure —
@@ -4670,6 +4713,8 @@ class JarvisCore:
                 reply_meta["request_id"] = last_user["request_id"]
         except Exception:  # noqa: BLE001
             pass
+        if provenance:
+            reply_meta["provenance"] = provenance
         self._deliver(answer, scope=scope, backend=backend, context_text=context_text, meta=reply_meta)
         self._say_pending_thought(scope)
 
@@ -7020,7 +7065,7 @@ class JarvisCore:
         """
 
         stopped = self._running_now()
-        self._stop_requested.set()
+        self._request_stop()
         if self._voice is not None:
             # Barge-in has to reach the speaker, not just the generator: the
             # audio already synthesised would otherwise keep playing over the
@@ -7056,14 +7101,33 @@ class JarvisCore:
                 return {"ok": True, "interrupted": ["speech"], "speaking": True}
             self.emit(EventType.DIAGNOSTIC, {"voice_interrupt": "nothing to interrupt", "session": session, "wake": wake})
             return {"ok": True, "interrupted": [], "speaking": False}
-        self._stop_requested.set()
-        if self._voice is not None:
-            self._voice.interrupt()
+        # A wake word is evidence that the owner spoke over ZEUS's voice.  It
+        # is no evidence against an answer that is not being spoken: a typed
+        # question's answer keeps arriving whatever the microphone heard.
+        # Observed live: a false wake (score 0.91, no speech followed) cancelled
+        # a finished cloud answer and the owner received an empty message.
+        stopped: list[str] = []
+        if speaking or "speech" in running:
+            if self._voice is not None:
+                self._voice.interrupt()
+            stopped.append("speech")
+        # SPEAKING is the answer being read aloud; THINKING with a spoken
+        # answer is the same thing before the first sentence is out.
+        if "answer" in running and (self._answer_spoken or self.state.snapshot.state is JarvisState.SPEAKING):
+            self._request_stop()
+            if self._voice is not None:
+                self._voice.interrupt()
+            stopped.append("answer")
+        if not stopped:
+            self.emit(EventType.DIAGNOSTIC, {"voice_interrupt": "answer in progress is not spoken; a wake word does not cancel it",
+                                             "session": session, "wake": wake, "protected": running})
+            return {"ok": True, "interrupted": [], "speaking": False, "protected": running}
         de = self.language.startswith("de")
         self.emit(EventType.NOTIFICATION, {"text": ("Unterbrochen — ich höre zu." if de else "Interrupted — listening."), "kind": "barge_in",
-                                           "stopped": running, "session": session, "wake": wake})
-        self.state.set(JarvisState.LISTENING, detail=f"barge-in {session}".strip())
-        return {"ok": True, "interrupted": running, "speaking": speaking}
+                                           "stopped": stopped, "session": session, "wake": wake})
+        if "answer" in stopped:
+            self.state.set(JarvisState.LISTENING, detail=f"barge-in {session}".strip())
+        return {"ok": True, "interrupted": stopped, "speaking": speaking}
 
     #: The listener's session states, mirrored into the core's state so the
     #: interface (the eye) shows LISTENING while the device is armed.

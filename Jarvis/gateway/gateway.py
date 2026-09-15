@@ -621,6 +621,16 @@ class GatewayBrainProvider:
         self.last_metadata: dict[str, Any] = {}
         self.last_decision: dict[str, Any] = {}
         self.last_reply: GatewayReply | None = None
+        #: Who produced the most recent generation: role, provider, model, and
+        #: whether it was the offline fallback.  Reset at the start of every
+        #: generation, so it never describes an earlier answer.
+        self.last_provenance: dict[str, Any] = {}
+
+    @property
+    def provenance(self) -> dict[str, Any]:
+        """The execution receipt of the last generation, for the transcript's backend label."""
+
+        return dict(self.last_provenance)
 
     @property
     def model_name(self) -> str:
@@ -646,6 +656,8 @@ class GatewayBrainProvider:
     def _run(self, prompt: str, *, schema: dict[str, Any] | None = None, max_tokens: int | None = None,
              temperature: float | None = None, system: str | None = None) -> str:
         request = self._request(prompt, schema=schema, max_tokens=max_tokens, temperature=temperature, system=system)
+        self.last_reply = None
+        self.last_provenance = {}
         try:
             reply = self.gateway.complete(request)
         except GatewayRefused as exc:
@@ -664,6 +676,9 @@ class GatewayBrainProvider:
                                   why=exc.status.value)
         self.last_reply = reply
         self.last_decision = reply.decision.to_dict()
+        self.last_provenance = {"role": reply.role, "provider": reply.provider, "model": reply.model,
+                                "offline_fallback": bool(reply.decision.offline_fallback), "route_attempts": list(reply.route_attempts),
+                                "actual_eur": reply.actual_eur}
         self.last_metadata = {
             "latency_seconds": reply.latency_seconds, "generated_tokens": reply.usage.get("output_tokens"),
             "prompt_tokens": reply.usage.get("input_tokens"), "role": reply.role, "provider": reply.provider, "model": reply.model,
@@ -691,6 +706,9 @@ class GatewayBrainProvider:
         self.last_metadata = dict(getattr(self.fallback, "last_metadata", {}) or {})
         self.last_metadata.update({"offline_fallback": True, "fallback_reason": why})
         self.last_decision = {**self.last_decision, "fell_back_to_local": True, "fallback_reason": why}
+        self.last_provenance = {"role": "local.fast", "provider": str(getattr(self.fallback, "provider_name", "") or "local"),
+                                "model": str(getattr(self.fallback, "model_name", "") or ""), "offline_fallback": True,
+                                "fallback_reason": why, "actual_eur": 0.0}
         return str(text)
 
     # -- BrainProvider protocol -----------------------------------------------------------

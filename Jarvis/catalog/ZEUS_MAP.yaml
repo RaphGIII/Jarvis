@@ -45,6 +45,7 @@ packages:
       tests:
       - tests/test_acceptance.py
       - tests/test_action_receipts.py
+      - tests/test_barge_in_and_provenance.py
       - tests/test_brain_router_v1.py
       - tests/test_build_remote_executor_v1.py
       - tests/test_console.py
@@ -105,6 +106,7 @@ packages:
       tests:
       - tests/test_acceptance.py
       - tests/test_action_receipts.py
+      - tests/test_barge_in_and_provenance.py
       - tests/test_brain_router_v1.py
       - tests/test_build_remote_executor_v1.py
       - tests/test_console.py
@@ -696,6 +698,7 @@ packages:
       lines: 31
       public: 0
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
       - tests/test_gateway_integration.py
@@ -716,6 +719,7 @@ packages:
       lines: 872
       public: 8
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
       - tests/test_gateway_integration.py
@@ -731,9 +735,10 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 752
+      lines: 770
       public: 10
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_gateway_integration.py
       - tests/test_live_providers.py
       - tests/test_model_gateway.py
@@ -743,6 +748,7 @@ packages:
       lines: 143
       public: 5
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_model_gateway.py
@@ -759,6 +765,7 @@ packages:
       lines: 117
       public: 5
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
       - tests/test_gateway_integration.py
@@ -794,6 +801,7 @@ packages:
       lines: 246
       public: 2
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_engineering_vector.py
       - tests/test_live_providers.py
@@ -804,6 +812,7 @@ packages:
       lines: 237
       public: 5
       tests:
+      - tests/test_barge_in_and_provenance.py
       - tests/test_engineering_router_gateway.py
       - tests/test_gateway_integration.py
       - tests/test_live_providers.py
@@ -1703,6 +1712,7 @@ packages:
       - tests/test_action_receipts.py
       - tests/test_actionability.py
       - tests/test_activity.py
+      - tests/test_barge_in_and_provenance.py
       - tests/test_basics_sprint.py
       - tests/test_calendar.py
       - tests/test_capability_failure_policy.py
@@ -1812,11 +1822,12 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8446
+      lines: 8510
       public: 2
       tests:
       - tests/test_action_receipts.py
       - tests/test_actionability.py
+      - tests/test_barge_in_and_provenance.py
       - tests/test_capability_failure_policy.py
       - tests/test_capability_learning_end_to_end.py
       - tests/test_capability_teaching_loop.py
@@ -1882,6 +1893,7 @@ packages:
       tests:
       - tests/test_actionability.py
       - tests/test_activity.py
+      - tests/test_barge_in_and_provenance.py
       - tests/test_gateway_integration.py
       - tests/test_intelligence_flow.py
       - tests/test_pronunciation.py
@@ -2021,6 +2033,7 @@ packages:
       public: 3
       tests:
       - tests/test_action_receipts.py
+      - tests/test_barge_in_and_provenance.py
       - tests/test_service.py
       - tests/test_voice_session.py
     - path: service/system_context.py
@@ -3016,4 +3029,4 @@ totals:
   packages: 33
   api_routes: 171
   ui_modules: 31
-  tests: 119
+  tests: 120
