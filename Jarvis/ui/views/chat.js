@@ -41,6 +41,7 @@ export function init(deps) {
     }
     const who = meta.source === "microphone" || meta.source === "ui_mic" ? "Du · 🎙" : meta.source === "correction_rerun" ? "Du · korrigiert" : "Du";
     const what = addTurn("user" + (p._replay ? " history" : ""), who, p.text, p);
+    if (pending && !p._replay) { $("log").append(pending); scrollDown(); }
     if (what && meta.wake_word) what.append(el("span", { class: "wake-tag", text: ` ${meta.wake_word} · ${Number(meta.wake_score).toFixed(2)}` }));
     if (what && meta.speech_level) {
       what.append(el("span", { class: "wake-tag", title: `speech confidence ${meta.speech_confidence}`, text: ` ${meta.speech_level}` }));
@@ -55,6 +56,7 @@ export function init(deps) {
   bus.on("transcript", () => { /* the verdict follows as a user_message, or not at all */ });
   bus.on("error", (p) => {
     if (p._replay) return;
+    clearPending();
     endStreaming();
     // §UX: raw ProviderError(...) lines belong in Activity/Diagnostics, not
     // in the conversation.  The chat gets one honest human sentence.
@@ -69,7 +71,7 @@ export function init(deps) {
     if (p.kind === "open_view") return;
     addTurn("note", "", p.text);
   });
-  bus.on("state", (p) => { if (p.state !== "thinking" && p.state !== "speaking") endStreaming(); });
+  bus.on("state", (p) => { if (p.state !== "thinking" && p.state !== "speaking") endStreaming(); if (p.state === "idle" || p.state === "error" || p.state === "waiting") clearPending(); });
   bus.on("tool", onToolOrProgress);
   bus.on("progress", onToolOrProgress);
 }
@@ -81,6 +83,7 @@ function onToolOrProgress(payload) {
 }
 
 export function reset() {
+  clearPending();
   clear($("log"));
   streaming = null;
   historyDivider = false;
@@ -113,6 +116,7 @@ export function addTurn(kind, who, text, payload) {
    message event then renders the completed text once, deterministically. */
 function appendToken(text) {
   if (!streaming) {
+    clearPending();
     streaming = addTurn("jarvis", window.ASSISTANT_NAME || "ZEUS", "​");
     if (streaming) { streaming.classList.add("md"); streaming.textContent = ""; streaming.append(el("span", { class: "cursor" })); }
     streamText = "";
@@ -132,6 +136,7 @@ function appendToken(text) {
 }
 
 function finishStreaming(finalText, payload) {
+  clearPending();
   const meta = (payload && payload.meta) || {};
   if (meta.source === "zeus_thought") {
     if (streaming) { streaming.parentElement?.remove(); streaming = null; }
@@ -262,13 +267,32 @@ function requestId() {
   return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/-/g, "").slice(0, 12);
 }
 
-export function send(text, source = "text") {
+export function send(text, source = "text", extra = {}) {
   const clean = (text || "").trim();
   if (!clean) return;
   document.querySelector(".turn.interim")?.remove();
   if (views.isWorkspace()) views.close();
+  showPending();
   // One id per press: a retried POST cannot become a second request.
-  return api("/api/message", { text: clean, source, request_id: requestId(), mode: performance.currentMode() });
+  const body = { text: clean, source, request_id: requestId(), mode: extra.mode || performance.currentMode() };
+  if (extra.authorization) body.authorization = extra.authorization;
+  return api("/api/message", body);
+}
+
+/* Between the owner's message and the first token ZEUS is visibly at work: one quiet line,
+   replaced by the answer the moment it starts, never left behind. */
+let pending = null;
+function showPending() {
+  clearPending();
+  pending = el("div", { class: "turn jarvis pending" }, el("div", { class: "who", text: window.ASSISTANT_NAME || "ZEUS" }),
+    el("div", { class: "what" }, el("span", { class: "thinking" }, el("i"), el("i"), el("i")), el("span", { class: "thinking-word", text: "denkt" })));
+  $("log").append(pending);
+  $("app").classList.add("conversing");
+  scrollDown();
+}
+export function clearPending() {
+  pending?.remove();
+  pending = null;
 }
 
 /* The sidebar and the palette hand a beginning to the composer; the owner finishes the sentence. */

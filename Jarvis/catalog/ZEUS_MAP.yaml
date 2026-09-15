@@ -1379,6 +1379,7 @@ packages:
       - tests/test_identity_firewall.py
       - tests/test_owner_core.py
       - tests/test_personality.py
+      - tests/test_protected_memory.py
       - tests/test_security_gate.py
       - tests/test_selfdev_candidate_integrity.py
       - tests/test_selfdev_promotion_gate.py
@@ -1398,6 +1399,12 @@ packages:
       tests:
       - tests/test_owner_core.py
       - tests/test_personality.py
+    - path: owner/protected_memory.py
+      purpose: 'Which memory writes are protected: ZEUS''s personality, its creator and owner, and the owner''s own person.'
+      lines: 121
+      public: 3
+      tests:
+      - tests/test_protected_memory.py
     - path: owner/security_gate.py
       purpose: 'The Owner Security Gate: a manually typed password in front of the changes that matter.'
       lines: 282
@@ -1405,6 +1412,7 @@ packages:
       tests:
       - tests/test_engineering_router_gateway.py
       - tests/test_personality.py
+      - tests/test_protected_memory.py
       - tests/test_security_gate.py
       - tests/test_selfdev_candidate_integrity.py
       - tests/test_selfdev_promotion_gate.py
@@ -1815,6 +1823,7 @@ packages:
       - tests/test_music.py
       - tests/test_personality.py
       - tests/test_pronunciation.py
+      - tests/test_protected_memory_gate.py
       - tests/test_replan_semantic_equivalence.py
       - tests/test_routing.py
       - tests/test_selfdev.py
@@ -1898,7 +1907,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8861
+      lines: 8952
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1977,6 +1986,7 @@ packages:
       - tests/test_intelligence_flow.py
       - tests/test_intelligence_routing.py
       - tests/test_pronunciation.py
+      - tests/test_protected_memory_gate.py
       - tests/test_selfdev.py
       - tests/test_semantic_authority.py
       - tests/test_semantic_composition.py
@@ -1995,7 +2005,7 @@ packages:
       - tests/test_filesystem.py
     - path: service/http.py
       purpose: The local HTTP + Server-Sent Events interface to Jarvis Core.
-      lines: 830
+      lines: 833
       public: 1
       tests:
       - tests/test_action_receipts.py
@@ -2883,7 +2893,7 @@ api_routes:
 ui_modules:
 - path: ui/app.js
   purpose: '* The client entry point: the shell of ONE product.  Subscribes to the event'
-  lines: 301
+  lines: 313
   imports:
   - core/api.js
   - core/bus.js
@@ -2941,14 +2951,15 @@ ui_modules:
   imports: []
 - path: ui/core/performance.js
   purpose: 'The ZEUS performance control: one compact selector in the composer instead'
-  lines: 138
+  lines: 146
   imports:
   - api.js
   - bus.js
   - dom.js
+  - state.js
 - path: ui/core/sidebar.js
   purpose: 'The persistent sidebar: one place to start a chat, find one, reach a'
-  lines: 320
+  lines: 331
   imports:
   - api.js
   - bus.js
@@ -2956,7 +2967,7 @@ ui_modules:
   - views.js
 - path: ui/core/state.js
   purpose: 'One observable holding what the server last said: the state event, the'
-  lines: 55
+  lines: 56
   imports:
   - bus.js
 - path: ui/core/themes.js
@@ -2965,7 +2976,7 @@ ui_modules:
   imports: []
 - path: ui/core/views.js
   purpose: 'The view registry: Presence (the eye and the conversation), Workspace (a'
-  lines: 210
+  lines: 216
   imports:
   - bus.js
   - dom.js
@@ -2983,8 +2994,8 @@ ui_modules:
   lines: 326
   imports: []
 - path: ui/orb.js
-  purpose: The ZEUS sphere.
-  lines: 319
+  purpose: 'The ZEUS core: a procedural black hole.'
+  lines: 346
   imports: []
 - path: ui/views/activity.js
   purpose: 'Activity: the owner''s transparent operation log, request-centric. Rows'
@@ -3013,7 +3024,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/chat.js
   purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
-  lines: 300
+  lines: 324
   imports:
   - core/api.js
   - core/bus.js
@@ -3058,7 +3069,7 @@ ui_modules:
   - projects.js
 - path: ui/views/knowledge.js
   purpose: 'Wissen: the knowledge universe.'
-  lines: 542
+  lines: 564
   imports:
   - chat.js
   - core/api.js
@@ -3104,7 +3115,7 @@ ui_modules:
   - owner.js
 - path: ui/views/projects.js
   purpose: 'Projects: the owner''s project universe.'
-  lines: 893
+  lines: 898
   imports:
   - chat.js
   - core/api.js
@@ -3121,7 +3132,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/settings.js
   purpose: 'Settings: Allgemein · Persönlichkeit · Erscheinungsbild · Leistung & Kosten'
-  lines: 315
+  lines: 316
   imports:
   - core/api.js
   - core/authgate.js
@@ -3160,8 +3171,8 @@ ui_modules:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 333
+  modules: 334
   packages: 33
   api_routes: 179
   ui_modules: 35
-  tests: 128
+  tests: 130

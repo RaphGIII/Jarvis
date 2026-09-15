@@ -708,6 +708,9 @@
    "runtime/paths.py",
    "service/selfdev.py"
   ],
+  "owner/protected_memory.py": [
+   "service/core.py"
+  ],
   "owner/security_gate.py": [
    "service/core.py"
   ],
@@ -1790,6 +1793,7 @@
   ],
   "owner/core.py": [],
   "owner/protected.py": [],
+  "owner/protected_memory.py": [],
   "owner/security_gate.py": [],
   "persona/__init__.py": [],
   "persona/contract.py": [
@@ -1991,6 +1995,7 @@
    "knowledge/ingest.py",
    "knowledge/operations.py",
    "owner/core.py",
+   "owner/protected_memory.py",
    "owner/security_gate.py",
    "persona/contract.py",
    "persona/language.py",
@@ -2527,6 +2532,7 @@
   "owner/__init__.py",
   "owner/core.py",
   "owner/protected.py",
+  "owner/protected_memory.py",
   "owner/security_gate.py",
   "persona/__init__.py",
   "persona/contract.py",

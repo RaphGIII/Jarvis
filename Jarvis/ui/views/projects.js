@@ -261,10 +261,15 @@ export class Galaxy {
   /* ---- layout: systems on a golden-angle spiral, relaxed apart --------- */
   layout(initial) {
     const W = this.W(), H = this.H();
+    // a view that lays its bodies out itself (Wissen) keeps the engine's relax loop out of the frame
+    if (this.opts.externalLayout) { const z = this.byId.get("zeus"); if (z) { z.x = W / 2; z.y = H / 2; } return; }
     const systems = this.nodes.filter((n) => n.kind === "project" && n.visible && !n.sub);
     const zeus = this.byId.get("zeus");
     const place = (n, x, y) => { if (!n.ownerPlaced && !n.locked) { if (initial || this.mode !== "GALAXY") { n.x = x; n.y = y; } else { n.tx = x; n.ty = y; } } };
-    const systemRadius = (n) => n.r + 30 + Math.min(96, 16 * this.childrenOf(n).length);
+    // children counted once per layout, not once per pair per iteration
+    const childCount = new Map();
+    for (const c of this.nodes) if (c.parent) childCount.set(c.parent, (childCount.get(c.parent) || 0) + 1);
+    const systemRadius = (n) => n.r + 30 + Math.min(96, 16 * (childCount.get(n) || 0));
     if (this.mode === "GALAXY") {
       systems.sort((a, b) => (IMPORTANCE_WEIGHT[b.importance] || 0) - (IMPORTANCE_WEIGHT[a.importance] || 0) || (a.seed - b.seed));
       const cx = W / 2, cy = H / 2, golden = Math.PI * (3 - Math.sqrt(5));

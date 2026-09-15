@@ -130,7 +130,13 @@ export async function open(id, params = {}, { push = true, force = false } = {})
     await view.mount(root, params);
   } catch (err) {
     console.error(`[views] ${id} failed to mount`, err);
-    root.append(el("div", { class: "empty", text: `${view.title} could not be opened: ${err.message || err}` }));
+    root.append(el("div", { class: "view-failed" },
+      el("div", { class: "vf-title", text: `${view.title} ist gerade nicht verfügbar.` }),
+      el("div", { class: "vf-sub", text: "Der Bereich konnte nicht geladen werden. Du kannst es erneut versuchen; die technische Ursache steht unter Erweitert › Diagnostics." }),
+      el("div", { class: "toolbar" },
+        el("button", { class: "ghost", text: "Erneut versuchen", onClick: () => open(id, params, { push: false, force: true }) }),
+        el("button", { class: "ghost", text: "Zurück zum Chat", onClick: () => close() }))));
+    window.__zeusViewErrors = [...(window.__zeusViewErrors || []).slice(-9), { view: id, error: String(err && err.stack || err) }];
   }
   shell.remove();
   if (seq !== openSeq) {

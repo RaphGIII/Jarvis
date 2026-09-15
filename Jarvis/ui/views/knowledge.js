@@ -116,11 +116,17 @@ async function mountGalaxy(pane, params) {
   wrap.append(canvas, legend, hint);
   pane.append(wrap);
 
+  // a skeleton at once; the data is bounded and each call has a time budget
+  const skeleton = el("div", { class: "view-loading" }, el("div", { class: "view-loading-orb" }), el("span", { text: "Wissen wird geladen" }));
+  wrap.append(skeleton);
+  const budget = (promise, ms, fallback) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]).catch(() => fallback);
   const [data, lib] = await Promise.all([
-    api("/api/knowledge/graph", { query: "", limit: 400 }),
-    api("/api/library/tree").catch(() => ({ entries: [] })),
+    budget(api("/api/knowledge/graph", { query: "", limit: 320 }), 9000, { nodes: [], edges: [], truncated: true, timed_out: true }),
+    budget(api("/api/library/tree"), 4000, { entries: [] }),
   ]);
-  const kNodes = data.nodes || [], kEdges = data.edges || [];
+  skeleton.remove();
+  if (!galaxyWanted()) return;   // the owner left while it loaded
+  const kNodes = (data.nodes || []).slice(0, 320), kEdges = data.edges || [];
   const degree = {};
   for (const e of kEdges) { degree[e.source] = (degree[e.source] || 0) + 1; degree[e.target] = (degree[e.target] || 0) + 1; }
 
@@ -139,7 +145,7 @@ async function mountGalaxy(pane, params) {
   }
   for (const e of kEdges) edges.push({ source: e.source, target: e.target, type: "relates" });
   // the library: real files on the shelf, their own sector
-  for (const entry of (lib.entries || []).slice(0, 120)) {
+  for (const entry of (lib.entries || []).slice(0, 80)) {
     nodes.push({
       id: "lib:" + entry.path, kind: "project", label: entry.name.slice(0, 28), hue: DOMAIN_HUE.BIBLIOTHEK,
       importance: entry.type === "dir" ? "ACTIVE" : "NORMAL", tasks: 0,
@@ -150,7 +156,7 @@ async function mountGalaxy(pane, params) {
   }
 
   galaxy = new Galaxy(canvas, wrap, { nodes, edges }, {
-    mode: "GALAXY", persistDrag: false, minZoom: 0.3,
+    mode: "GALAXY", persistDrag: false, minZoom: 0.3, externalLayout: true,
     onZoomOutBeyond: () => {
       warp(canvas, "rise");
       if (galaxy) Object.assign(galaxy.cam, { x: 0, y: 0, z: 1, vx: 0, vy: 0 });
@@ -168,7 +174,8 @@ async function mountGalaxy(pane, params) {
   clusterDomains(galaxy);
   if (savedCam && !params.q) Object.assign(galaxy.cam, savedCam);
   window.zeusGalaxy = galaxy;
-  counts.textContent = `${kNodes.length} Wissensknoten · ${kEdges.length} Verknüpfungen · ${(lib.entries || []).length} Bibliothek` + (data.truncated ? " · gekürzt" : "");
+  counts.textContent = `${kNodes.length} Wissensknoten · ${kEdges.length} Verknüpfungen · ${(lib.entries || []).length} Bibliothek`
+    + (data.timed_out ? " · Laden dauerte zu lange, Teilansicht" : data.truncated ? " · gekürzt" : "");
   search.oninput = () => galaxy?.focusText(search.value);
   if (search.value) galaxy.focusText(search.value);
 
@@ -193,23 +200,38 @@ function clusterDomains(g) {
       const ga = i * 2.399963 + di;
       const rr = 26 + 24 * Math.sqrt(i);
       n.tx = cx + Math.cos(ga) * rr; n.ty = cy + Math.sin(ga) * rr * 0.75;
+      // first paint: the bodies sit where their sector puts them, no waiting for the relaxation
+      n.x = n.tx; n.y = n.ty;
     });
   });
-  for (let it = 0; it < 80; it++) {
-    let moved = false;
-    for (const a of members) for (const b of members) {
-      if (a === b) continue;
-      const dx = a.tx - b.tx, dy = a.ty - b.ty, dd = Math.max(1, Math.hypot(dx, dy));
-      const min = a.r + b.r + 22;
-      if (dd < min) {
-        const push = (min - dd) / 2, ux = dx / dd, uy = dy / dd;
-        a.tx += ux * push; a.ty += uy * push; b.tx -= ux * push; b.ty -= uy * push; moved = true;
+  // the relaxation runs in frame-sized steps (a few ms each) so the page never freezes; bodies
+  // glide into their final places while the owner can already read and move around
+  let it = 0;
+  const relaxStep = () => {
+    if (!g.raf && it > 0) return;   // the galaxy was destroyed
+    const started = performance.now();
+    while (it < 80 && performance.now() - started < 6) {
+      let moved = false;
+      for (const a of members) for (const b of members) {
+        if (a === b) continue;
+        const dx = a.tx - b.tx, dy = a.ty - b.ty, dd = Math.max(1, Math.hypot(dx, dy));
+        const min = a.r + b.r + 22;
+        if (dd < min) {
+          const push = (min - dd) / 2, ux = dx / dd, uy = dy / dd;
+          a.tx += ux * push; a.ty += uy * push; b.tx -= ux * push; b.ty -= uy * push; moved = true;
+        }
       }
+      for (const n of members) { const R = n.r + 12; n.tx = Math.max(R, Math.min(W - R, n.tx)); n.ty = Math.max(R + 28, Math.min(H - R - 22, n.ty)); }
+      it += 1;
+      if (!moved) { it = 80; break; }
     }
-    for (const n of members) { const R = n.r + 12; n.tx = Math.max(R, Math.min(W - R, n.tx)); n.ty = Math.max(R + 28, Math.min(H - R - 22, n.ty)); }
-    if (!moved) break;
-  }
+    g.settled = false;
+    if (it < 80) requestAnimationFrame(relaxStep);
+  };
+  requestAnimationFrame(relaxStep);
 }
+
+function galaxyWanted() { return active && !suspended && lastMode !== "list"; }
 
 function groupsOf(g) {
   const groups = new Map();

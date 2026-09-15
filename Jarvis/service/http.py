@@ -209,7 +209,8 @@ class JarvisHTTPServer:
         routes: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "/api/message": lambda body: self.core.send_message(
                 str(body.get("text", "")), scope=str(body.get("scope", "")),
-                meta={"source": str(body.get("source") or "text"), "mode": str(body.get("mode") or "")},
+                meta={"source": str(body.get("source") or "text"), "mode": str(body.get("mode") or ""),
+                      "authorization": str(body.get("authorization") or "")},
                 request_id=str(body.get("request_id", "")),
             ),
             "/api/status": lambda _: self.core.status(),
@@ -277,6 +278,7 @@ class JarvisHTTPServer:
             "/api/knowledge/create": lambda body: self.core.knowledge_create(
                 str(body.get("title", "")), str(body.get("text", body.get("body", ""))), type=str(body.get("type", "note")),
                 tags=list(body.get("tags") or []), links=body.get("links") or [], provenance=str(body.get("provenance", "owner")),
+                authorization=str(body.get("authorization") or ""),
             ),
             "/api/knowledge/link": lambda body: self.core.knowledge_link(
                 str(body.get("source", "")), str(body.get("target", "")), str(body.get("relation", "relates_to"))
@@ -338,8 +340,9 @@ class JarvisHTTPServer:
             # The knowledge library: REAL files under one owner-visible root.
             "/api/library/tree": lambda _: self.core.library.tree(),
             "/api/library/folder": lambda body: self.core.library.create_folder(str(body.get("path", ""))),
-            "/api/library/note": lambda body: self.core.library.write_note(
-                str(body.get("folder", "")), str(body.get("title", "")), str(body.get("text", ""))),
+            "/api/library/note": lambda body: self.core.library_note(
+                str(body.get("folder", "")), str(body.get("title", "")), str(body.get("text", "")),
+                authorization=str(body.get("authorization") or "")),
             "/api/library/import": lambda body: self.core.library.import_file(
                 str(body.get("source", "")), folder=str(body.get("folder", ""))),
             "/api/library/move": lambda body: self.core.library.move(str(body.get("path", "")), str(body.get("into", ""))),

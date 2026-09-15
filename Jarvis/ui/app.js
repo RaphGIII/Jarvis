@@ -143,6 +143,10 @@ bus.on("notification", (payload) => {
       if (retry.operation === "project.delete" && retry.target) {
         await api("/api/project/delete", { id: retry.target, authorization: token });
       }
+      // a protected memory write: the same words again, now with the owner's authorization
+      if (retry.operation === "message" && retry.text) {
+        await chat.send(retry.text, retry.source || "text", { authorization: token, mode: retry.mode });
+      }
     });
   }
   if (payload.text && (payload.kind || "").match(/release|relaunch|restart|owner_config|correction|isolation/)) toast(payload.text, "note");
@@ -185,6 +189,14 @@ export function toast(text, tone = "") {
 function wireShell() {
   $("btnWorkspaceClose").onclick = () => views.close();
   $("btnSearch").onclick = () => palette.open();
+  // the app window's own controls: only inside the desktop shell (Chromium app mode), never in a browser tab
+  const standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  if (standalone) {
+    $("winctl").hidden = false;
+    $("btnWinMin").onclick = () => api("/api/window", { action: "minimize", reason: "owner" });
+    $("btnWinFull").onclick = () => api("/api/window", { action: "toggle_fullscreen", reason: "owner" });
+    $("btnWinClose").onclick = () => api("/api/window", { action: "close", reason: "owner" });
+  }
   $("btnProfile").onclick = () => views.open("settings", {});
   $("btnPlus").onclick = () => palette.open();
   $("btnInspectorClose").onclick = () => views.closeInspector();

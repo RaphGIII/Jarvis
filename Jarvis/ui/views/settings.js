@@ -225,6 +225,7 @@ async function performance(body) {
   const spending = (owner && owner.documents && owner.documents.spending) || {};
   body.append(card("Diesen Monat",
     row("Ausgaben", el("span", { text: `€${Number(spend.month || 0).toFixed(2)} von €${Number(spend.monthly_hard_cap || 0).toFixed(2)}` }), "Hartes Monatslimit; darüber hinaus wird nichts ausgegeben."),
+    row("Ausgaben im Chat anzeigen", toggle(state.ui.showSpend !== false, (on) => { setPref("showSpend", on); }), "Aus: unter dem Eingabefeld erscheint keine Zahl mehr – und sie ändert sich auch nicht."),
     row("Standard-Leistung", seg(LEVELS.map(([id, label]) => [id, label]), status?.mode || "AUTO", async (v) => { await api("/api/gateway/mode", { mode: v }); })),
   ));
   const changes = {};

@@ -202,6 +202,24 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 
 **Behobene Fallen:** `#app.spatial main.workspace` hatte drei Grid-Spalten für zwei Kinder – die Galaxien waren 2 px breit. Die Seitenleiste zeigte „Erweitert“-Vokabular nirgends; der Leak-Scan (Klasse C) bleibt bei null.
 
+## Sprint 12 (2026-09-16): Schärfe, Kern-Animation, Wissen, Streaming sichtbar, Kostenanzeige, Passwort-Gate für geschützte Erinnerungen
+
+**Schärfe.** Kein `backdrop-filter` mehr auf Textflächen (Composer und Popover sind matt und deckend), Bewegungen auf Text nur noch über Opazität (keine Subpixel-Verschiebung), die Canvas-Box wird auf ganze Pixel gerundet (`round()` in CSS, Backing Store = Box × echte DPR bis 3), Schriftgrößen auf ganze Pixel, kein `text-indent`-Trick mehr für die gesperrten Wortmarken.
+
+**Der Kern** (`ui/orb.js`, prozedural, Canvas 2D): ein perfekt schwarzer Ereignishorizont, ein dünner Photonenring mit wanderndem Licht, ein leuchtendes Elfenbein-Band vor dem Horizont (links heller: Doppler), die gelenste Rückseite als weicher Bogen über dem Horizont. Zustände IDLE (langsamer Fluss), LISTENING/THINKING (schneller, hellerer Halo), STREAMING (die Bandkante atmet mit der Ausgabe – Hüllkurve aus `noteOutput`), ERROR (warmer Farbschub, langsam), OFFLINE (fast still). Eingänge `setActivity(0..1)` und `setAudioFrequencyData(bins)` für Voice bleiben.
+
+**Shell.** Platzhalter „Wie kann ich dir helfen, Raphael …“ (Name aus der Identität). Seitenleiste: die drei jüngsten Chats, „Mehr anzeigen (n)“ für den Rest, Gruppierung nach letzter Aktivität; Fußzeile bleibt sichtbar. Fenster-Steuerung (Minimieren, Vollbild, Schließen) nur im Desktop-Fenster (`display-mode: standalone`). Ein Bereich, der nicht laden kann, sagt es in ZEUS-Worten mit „Erneut versuchen“ statt still zu scheitern.
+
+**Wissen.** Der Galaxie-Layout-Loop rief `childrenOf` (O(n)) in jeder Paar-Iteration: ~3 Mrd. Schritte, 6,6 s Freeze, auf einem langsameren Rechner ein „Hang“. Jetzt: Kinder einmal gezählt; Wissen setzt sein eigenes Layout (`externalLayout`), erste Darstellung sofort aus den Sektorpositionen, die Relaxation läuft in Frame-Häppchen (≤ 6 ms), Skelett beim Laden, Zeitbudgets für die Aufrufe (9 s / 4 s) mit Teilansicht statt Absturz, Knoten auf 320 und Bibliothek auf 80 begrenzt. Mount: 0,1 s statt 6,6 s.
+
+**Streaming sichtbar.** Zwischen Senden und erstem Token steht eine leise Zeile „ZEUS · denkt“ (drei ruhige Punkte), ersetzt durch den ersten Token. Live gemessen: Token-Ereignisse alle ~130 ms, gestreamter Text == gespeicherte Nachricht (1614 Zeichen identisch).
+
+**Kostenanzeige.** Einstellung „Ausgaben im Chat anzeigen“ (Leistung & Kosten). Aus heißt aus: die Zeile ist leer und wird nie mehr geschrieben – auch nicht nach Status-Refresh oder Neustart (persistiert).
+
+**Passwort-Gate für geschützte Erinnerungen** (`owner/protected_memory.py`, Scope `PROTECTED_MEMORY`, Stufe 2). Regel: geschützt ⇔ (Speicher-Verb ∧ geschütztes Subjekt) ∨ Identitäts-Direktive. Speicher-Verb: speicher/merk dir/notier/überschreib/behalte/vergiss/remember/save/store/overwrite. Subjekte: Persönlichkeit (Persönlichkeit, Charakter, deine Regeln/Name/Identität, wer du bist, verhalte dich, antworte immer), Schöpfer/Owner (Raphael, Schöpfer, Erschaffer, Entwickler, Besitzer, owner, creator), Owners Person (über mich, ich bin/heiße, mein Name/Geburtstag/Adresse/Alter/Telefon/Passwort/Familie/Krankheit/Arzt …). Direktive: „du bist ab jetzt …“, „dein Name ist …“, „nenn dich …“, „du wurdest von … gebaut“, „vergiss Raphael“. Gate-Punkte: `send_message` (hält die Nachricht, Antwort „Das betrifft meine Persönlichkeit oder dich als meinen Owner …“, `needs_auth`-Dialog, erneutes Senden mit Freigabe), das Primitiv `knowledge.create` des Planers, `/api/knowledge/create`, `/api/library/note`. Der Token landet nie im Transkript; Halten, Freigabe und Ablehnung stehen als Ereignisse in Fortschritt. ZEUS' eigene Erkenntnisse (Thought-Inbox) sind keine Owner-Anweisung und bleiben ungegated.
+
+**Desktop.** Das Fenster war bereits rahmenlos (Caption/ThickFrame entfernt, 1920×1080); neu sind die eigenen Fenster-Steuerelemente. Offen: der Moment zwischen Chromium-Start und Rahmenentfernung (Watcher 250 ms) zeigt kurz ein gerahmtes Fenster.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:

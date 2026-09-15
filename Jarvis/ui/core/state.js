@@ -38,6 +38,7 @@ export function set(key, value) {
 export function setPref(key, value) {
   state.ui[key] = value;
   persist();
+  try { bus.emit("pref:" + key, value); } catch {}
   bus.emit("state:ui", state.ui);
 }
 

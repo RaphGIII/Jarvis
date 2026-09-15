@@ -53,6 +53,11 @@
       </button>
       <span class="pill" id="connPill">verbinden</span>
       <button id="btnProfile" class="avatar" title="Einstellungen">R</button>
+      <span class="winctl" id="winctl" hidden>
+        <button id="btnWinMin" title="Minimieren"><span class="i"><svg viewBox="0 0 24 24"><path d="M6 12h12" /></svg></span></button>
+        <button id="btnWinFull" title="Vollbild / Fenster (F11)"><span class="i"><svg viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M4 16v4h4M20 16v4h-4" /></svg></span></button>
+        <button id="btnWinClose" title="ZEUS schließen"><span class="i"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17" /></svg></span></button>
+      </span>
     </header>
 
     <main class="presence">
@@ -90,7 +95,7 @@
         <button class="icon-btn" id="btnPlus" title="Aktionen (Ctrl+K)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
         </button>
-        <textarea id="input" rows="1" placeholder="Stell __PRODUCT_NAME__ eine Frage …" autofocus></textarea>
+        <textarea id="input" rows="1" placeholder="Wie kann ich dir helfen, Raphael …" autofocus></textarea>
         <div class="compose-tools">
           <div id="perf" class="perf"></div>
           <button class="icon-btn" id="btnMic" title="Spracheingabe">

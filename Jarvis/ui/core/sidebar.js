@@ -63,6 +63,8 @@ let filter = "";
 let menuNode = null;
 let renaming = "";
 let ownerName = "Raphael";
+let showAll = false;              // the chat list stays compact until the owner asks for more
+const RECENT = 3;
 
 export function init({ chat, toast }) {
   chatMod = chat;
@@ -72,6 +74,8 @@ export function init({ chat, toast }) {
   api("/api/diagnostics").then((d) => {
     const who = d && d.identity && (d.identity.creator || d.identity.owner_name);
     if (who) { ownerName = String(who); renderFoot(); }
+    const input = $("input");
+    if (input) input.placeholder = `Wie kann ich dir helfen, ${ownerName} …`;
   }).catch(() => {});
   bus.on("user_message", (p) => {
     if (p._replay) return;
@@ -191,17 +195,24 @@ function renderChats() {
   if (filter.trim()) return; // the search renders its own list
   const live = { id: "", title: liveTitle || "Aktueller Chat", summary: "" };
   box.append(chatRow(live, { live: true }));
-  const pinned = conversations.filter((c) => c.pinned);
-  const rest = conversations.filter((c) => !c.pinned);
+  const stamp = (c) => String(c.updated_at || c.at || "");
+  const ordered = [...conversations].sort((a, b) => stamp(b).localeCompare(stamp(a)));
+  const pinned = ordered.filter((c) => c.pinned);
+  const rest = ordered.filter((c) => !c.pinned);
   if (pinned.length) {
     box.append(el("div", { class: "sb-sub", text: "Angeheftet" }));
     for (const c of pinned) box.append(chatRow(c));
   }
+  const shown = showAll ? rest : rest.slice(0, RECENT);
   let lastGroup = "";
-  for (const c of rest) {
-    const group = groupOf(c.at);
+  for (const c of shown) {
+    const group = groupOf(c.updated_at || c.at);
     if (group !== lastGroup) { box.append(el("div", { class: "sb-sub", text: group })); lastGroup = group; }
     box.append(chatRow(c));
+  }
+  if (rest.length > RECENT) {
+    box.append(el("button", { class: "sb-item quiet", onClick: () => { showAll = !showAll; renderChats(); } },
+      el("span", { class: "i" }), el("span", { class: "lbl", text: showAll ? "Weniger anzeigen" : `Mehr anzeigen (${rest.length - RECENT})` })));
   }
   if (!conversations.length) box.append(el("div", { class: "sb-empty", text: "Noch keine gespeicherten Chats." }));
 }

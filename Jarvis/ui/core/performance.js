@@ -9,6 +9,12 @@
 import { $, el, clear, debounce } from "./dom.js";
 import { api } from "./api.js";
 import * as bus from "./bus.js";
+import { state } from "./state.js";
+
+/* Off means off: with the setting disabled the spend line is empty and is never written again. */
+export function spendVisible() {
+  return state.ui.showSpend !== false;
+}
 
 export const LEVELS = [
   ["AUTO", "Automatisch", "ZEUS wählt die passende Leistung selbst"],
@@ -46,6 +52,7 @@ function render() {
   btn.title = "Leistung: " + labelFor(mode);
   btn.append(el("span", { class: "brand", text: "ZEUS" }), el("span", { class: "lvl", text: labelFor(mode) }), el("span", { class: "chev", text: "▾" }));
   clear(spendEl);
+  if (!spendVisible()) { spendEl.hidden = true; return; }
   if (status && status.spend) {
     const s = status.spend;
     spendEl.append(el("b", { text: eur(s.month) }), el("span", { text: ` / ${eur(s.monthly_hard_cap)}` }));
@@ -112,7 +119,7 @@ const estimateFor = debounce(async (text) => {
   if (d.kind === "refused") { showEstimate("in dieser Leistungsstufe nicht möglich", "warn"); return; }
   if (d.kind !== "model") { showEstimate("", ""); return; }
   const cost = Number((d.estimate || {}).estimated_eur || 0);
-  if (cost <= 0) { showEstimate("", ""); return; }
+  if (cost <= 0 || !spendVisible()) { showEstimate("", ""); return; }
   const [lo, hi] = (d.estimate || {}).range_eur || [cost, cost];
   showEstimate(`≈ ${eur(lo)} – ${eur(hi)}`, "cost");
 }, 500);
@@ -132,6 +139,7 @@ export function init() {
   const input = $("input");
   if (input) input.addEventListener("input", () => estimateFor(input.value));
   bus.on("message", () => { showEstimate("", ""); refresh(); });
+  bus.on("pref:showSpend", () => render());
   bus.on("user_message", () => showEstimate("", ""));
   setInterval(refresh, 60_000);
 }

@@ -2773,6 +2773,17 @@ modules:
       doc: Whether ``path`` (relative to the Jarvis directory) is owner-protected.
     - signature: 'def protected_violations(paths: Iterable[str | Path], extra: Iterable[str]=()) -> list[str]'
       doc: The subset of ``paths`` that may not be written by a generated change.
+  owner/protected_memory.py:
+    module: owner.protected_memory
+    classes:
+    - name: MemoryWriteClass
+      methods:
+      - def reason(self) -> str
+      - def to_dict(self) -> dict
+    functions:
+    - signature: 'def classify_memory_write(text: str, *, title: str='''', implicit_save: bool=False) -> MemoryWriteClass'
+      doc: The exact rule from the module docstring, applied to the owner's words (and a note's title).
+    - signature: 'def is_protected_memory_write(text: str, *, title: str='''') -> bool'
   owner/security_gate.py:
     module: owner.security_gate
     classes:
@@ -3864,6 +3875,7 @@ modules:
       - def history(self) -> list[ConversationTurn]
       - 'def send_message(self, text: str, *, scope: str='''', meta: dict[str, Any] | None=None, request_id: str='''') ->
         dict[str, Any]'
+      - 'def library_note(self, folder: str, title: str, text: str, *, authorization: str='''') -> dict[str, Any]'
       - 'def set_chat_mode(self, mode: Any, *, announce: bool=True) -> dict[str, Any]'
       - def system_context(self) -> Any
       - def missions(self) -> Any
@@ -4013,7 +4025,8 @@ modules:
       - def graph(self) -> Any
       - 'def knowledge_graph(self, *, query: str='''', limit: int=300) -> dict[str, Any]'
       - 'def knowledge_create(self, title: str, text: str='''', *, type: str=''note'', tags: Any=(), links: Any=(), provenance:
-        str=''owner'', metadata: dict[str, Any] | None=None, confidence: float=0.9) -> dict[str, Any]'
+        str=''owner'', metadata: dict[str, Any] | None=None, confidence: float=0.9, authorization: str='''', _granted: bool=False)
+        -> dict[str, Any]'
       - 'def knowledge_link(self, source: str, target: str, relation: str=''relates_to'', *, provenance: str=''owner'') ->
         dict[str, Any]'
       - 'def knowledge_read(self, reference: str) -> dict[str, Any]'

@@ -558,6 +558,8 @@ class JarvisCore:
             for key in list(seen)[:-400]:
                 del seen[key]
         meta["request_id"] = request_id
+        # A password token never enters the transcript: taken out here, checked below.
+        authorization = str(meta.pop("authorization", "") or "")
         if meta.get("mode"):
             self.set_chat_mode(meta["mode"], announce=False)
 
@@ -578,6 +580,12 @@ class JarvisCore:
             self._history.append(turn)
         self.emit(EventType.USER_MESSAGE, turn.to_dict(), scope=scope)
 
+        # A protected memory write -- ZEUS's personality, its creator and owner, the owner's own
+        # person -- waits for the password before anything is remembered or overwritten.
+        held = self._hold_protected_memory(text, authorization, scope=scope, request_id=request_id, meta=meta)
+        if held is not None:
+            return held
+
         # Answering happens off the request thread so the HTTP call returns at
         # once and the client watches the event stream, which is what makes
         # "Jarvis starts speaking before the answer is finished" possible.
@@ -590,6 +598,74 @@ class JarvisCore:
         self._stop_requested.clear()
         thread.start()
         return {"ok": True, "accepted": text, "request_id": request_id}
+
+    # ------------------------------------------------------------------
+    # Protected memory: personality, creator/owner, the owner's person
+    # ------------------------------------------------------------------
+
+    PROTECTED_MEMORY_HELD_DE = ("Das betrifft meine Persönlichkeit oder dich als meinen Owner. Solche Erinnerungen ändere ich nur mit deiner "
+                                "Passwort-Freigabe – gib es bitte im Dialog ein, dann speichere ich es.")
+    PROTECTED_MEMORY_HELD_EN = ("That concerns my personality or you as my owner. I only change such memories with your password – "
+                                "enter it in the dialog and I will save it.")
+
+    def _memory_grants(self) -> dict[str, dict[str, Any]]:
+        grants = getattr(self, "_protected_memory_grants", None)
+        if grants is None:
+            grants = self._protected_memory_grants = {}
+        return grants
+
+    def _hold_protected_memory(self, text: str, authorization: str, *, scope: str, request_id: str,
+                               meta: dict[str, Any]) -> dict[str, Any] | None:
+        """None when the message may proceed; otherwise the held answer, with the needs_auth notification sent."""
+
+        from owner.protected_memory import SCOPE as PROTECTED_MEMORY, classify_memory_write
+
+        verdict = classify_memory_write(text)
+        if not verdict.protected:
+            return None
+        record = {**verdict.to_dict(), "request_id": request_id, "text": text[:200]}
+        if authorization and self.security.authorized(authorization, PROTECTED_MEMORY):
+            # granted: the primitives that write memory may run for THIS request, and the record says so
+            grants = self._memory_grants()
+            grants[text.strip()] = record
+            for key in list(grants)[:-50]:
+                del grants[key]
+            self.emit(EventType.TOOL, {"summary": f"geschützte Erinnerung freigegeben ({verdict.reason})",
+                                       "protected_memory": {**record, "decision": "authorized"}}, scope=scope)
+            return None
+        self.emit(EventType.TOOL, {"summary": f"geschützte Erinnerung wartet auf dein Passwort ({verdict.reason})",
+                                   "protected_memory": {**record, "decision": "held"}}, scope=scope)
+        self.emit(EventType.NOTIFICATION, {"kind": "needs_auth", "scope": PROTECTED_MEMORY,
+                                           "text": "Diese Erinnerung betrifft ZEUS selbst oder dich – Freigabe mit Passwort.",
+                                           "retry": {"operation": "message", "text": text, "mode": str(meta.get("mode") or ""),
+                                                     "source": str(meta.get("source") or "text")}}, scope=scope)
+        de = self.language.startswith("de")
+        self._deliver(self.PROTECTED_MEMORY_HELD_DE if de else self.PROTECTED_MEMORY_HELD_EN, scope=scope, backend="policy",
+                      final_state=JarvisState.WAITING, context_text="[protected memory write: awaiting the owner's password]")
+        return {"ok": True, "held": True, "needs_auth": PROTECTED_MEMORY, "request_id": request_id, "accepted": text}
+
+    def _protected_memory_allowed(self, title: str, text: str, *, request: str = "", authorization: str = "") -> dict[str, Any] | None:
+        """None when a memory write may happen; otherwise the needs_auth answer (and an audit line)."""
+
+        from owner.protected_memory import SCOPE as PROTECTED_MEMORY, classify_memory_write
+
+        verdict = classify_memory_write(f"{text}\n{request}", title=title, implicit_save=True)
+        if not verdict.protected:
+            return None
+        if authorization and self.security.authorized(authorization, PROTECTED_MEMORY):
+            return None
+        if request.strip() and request.strip() in self._memory_grants():
+            return None
+        self.emit(EventType.TOOL, {"summary": f"geschützte Erinnerung abgelehnt – ohne Passwort ({verdict.reason})",
+                                   "protected_memory": {**verdict.to_dict(), "title": title[:120], "decision": "refused"}})
+        denied = self.require_auth(authorization, PROTECTED_MEMORY)
+        return denied or {"ok": False, "needs_auth": PROTECTED_MEMORY, "error": "protected memory write"}
+
+    def library_note(self, folder: str, title: str, text: str, *, authorization: str = "") -> dict[str, Any]:
+        denied = self._protected_memory_allowed(title, text, authorization=authorization)
+        if denied is not None:
+            return denied
+        return self.library.write_note(folder, title, text)
 
     def _stop_applies(self) -> bool:
         """A stop counts only for the generation it was issued in: a stale flag never poisons a later answer."""
@@ -3427,9 +3503,15 @@ class JarvisCore:
             return Receipt(kind="knowledge.search", executor="knowledge", ok=True, detail=f"{len(nodes)} node(s): " + ", ".join(str(n.get("title", "")) for n in nodes[:5]),
                            verifications=[Verification(check="graph queried", passed=True, observed=f"{len(nodes)} nodes")], evidence={"query": args.get("query", "")})
         if name == "knowledge.create":
+            denied = self._protected_memory_allowed(str(args.get("title", "")), str(args.get("text", args.get("content", ""))), request=request)
+            if denied is not None:
+                return Receipt(kind="knowledge.create", executor="knowledge", ok=False,
+                               detail="geschützte Erinnerung – wartet auf deine Passwort-Freigabe",
+                               verifications=[Verification(check="owner password for a protected memory write", passed=False, observed="not authorized")],
+                               evidence={"needs_auth": denied.get("needs_auth")})
             result = self.knowledge_create(str(args.get("title", "")), str(args.get("text", args.get("content", ""))), type=str(args.get("type", "note")),
                                            tags=args.get("tags") or (), links=args.get("links") or (), provenance="owner request",
-                                           metadata={"request": request[:300]})
+                                           metadata={"request": request[:300]}, _granted=True)
             ok = bool(result.get("ok"))
             return Receipt(kind="knowledge.create", executor="knowledge", ok=ok,
                            detail=(f"stored {result.get('type')} '{result.get('title')}' with {len(result.get('relations', []))} relation(s)" if ok else result.get("error", "failed"))[:300],
@@ -7111,7 +7193,7 @@ class JarvisCore:
             store.set_status(thought_id, "ACTED_ON")
             return {"ok": True, "status": "ACTED_ON"}
         if action == "save_knowledge":
-            result = self.knowledge_create(thought.title, f"{thought.text}\n\nWhy it matters: {thought.why_it_matters}",
+            result = self.knowledge_create(thought.title, _granted=True, text=f"{thought.text}\n\nWhy it matters: {thought.why_it_matters}",
                                            type="verified_lesson" if thought.type in {"INSIGHT", "OPTIMIZATION"} else "note",
                                            tags=[thought.type.lower(), "thought"], links=[{"target": "ZEUS", "relation": "concerns"}],
                                            provenance="zeus thought", metadata={"thought_id": thought_id, "evidence": thought.evidence})
@@ -8272,14 +8354,23 @@ class JarvisCore:
         return None
 
     def knowledge_create(self, title: str, text: str = "", *, type: str = "note", tags: Any = (), links: Any = (),
-                         provenance: str = "owner", metadata: dict[str, Any] | None = None, confidence: float = 0.9) -> dict[str, Any]:
-        """Store one typed node and its typed relations; verified by reading it back."""
+                         provenance: str = "owner", metadata: dict[str, Any] | None = None, confidence: float = 0.9,
+                         authorization: str = "", _granted: bool = False) -> dict[str, Any]:
+        """Store one typed node and its typed relations; verified by reading it back.
+
+        A protected memory (personality, creator/owner, the owner's person) needs the owner's
+        PROTECTED_MEMORY authorization -- or a grant the chat gate already recorded (``_granted``).
+        """
 
         from knowledge.graph import EdgeType, NodeType
 
         title = str(title or "").strip()
         if not title:
             return {"ok": False, "error": "a title is required"}
+        if not _granted:
+            denied = self._protected_memory_allowed(title, str(text or ""), authorization=authorization)
+            if denied is not None:
+                return denied
         try:
             node = self.graph.remember(self._node_type(type), title, str(text or ""), tags=[str(t) for t in (tags or []) if str(t).strip()],
                                       provenance=provenance, confidence=float(confidence), metadata=dict(metadata or {}))
