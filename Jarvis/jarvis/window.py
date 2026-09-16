@@ -57,12 +57,7 @@ DEFAULT_SIZE = (1280, 860)
 #: The shell starts borderless fullscreen unless the owner has toggled it.
 #: This is a native window mode, not Chromium's kiosk/browser fullscreen, so
 #: Windows still sees a normal top-level app window and Alt+Tab keeps working.
-DEFAULT_WINDOW_MODE = "maximized"
-
-#: Where the frameless shell's window is created: far off every monitor, so the
-#: frame Chromium insists on is never painted where the owner can see it.  The
-#: desktop shell styles the window and brings it onto the monitor.
-OFFSCREEN_POSITION = (-32000, -32000)
+DEFAULT_WINDOW_MODE = "fullscreen"
 
 #: Chromium engines on Windows, relative to a program-files or local-app-data
 #: root.  Edge first: it is present on every supported Windows installation,
@@ -106,9 +101,7 @@ def normalize_window_mode(value: str) -> str:
         return "kiosk"
     if text in {"browser_fullscreen", "immersive", "chromium_fullscreen"}:
         return "browser_fullscreen"
-    if text in {"maximized", "maximised", "borderless", "borderless_maximized", ""}:
-        return "maximized"
-    if text in {"fullscreen", "borderless_fullscreen", "full", "vollbild"}:
+    if text in {"fullscreen", "borderless_fullscreen", "full", "vollbild", "maximized", "maximised", "borderless", "borderless_maximized", ""}:
         return "fullscreen"
     if text == "fullscreen":
         return "fullscreen"
@@ -212,22 +205,20 @@ def window_command(
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
     ]
-    # ZEUS is an operating environment, not a browser page.  The default shell
-    # is native borderless fullscreen.  Chromium can only create a framed
-    # window, so that window is created OFF-SCREEN: service.desktop removes the
-    # Windows frame, gives it ZEUS's taskbar identity and only then moves the
-    # same normal top-level window onto the monitor.  The owner never sees a
-    # browser frame, and Alt+Tab still sees a normal application (deliberately
-    # not --kiosk and not Chromium's --start-fullscreen).  F11 toggles through
-    # /api/window and the chosen mode is persisted in the desktop state
-    # directory.  ZEUS_WINDOW_MODE remains an explicit per-device override.
+    # ZEUS is an operating environment, not a browser page.  A Chromium --app
+    # window paints its OWN title bar inside the client area (title, minimize,
+    # maximize, close) -- no Win32 style removes it, and --kiosk still paints
+    # a 32 px bar.  The one presentation without any of it is Chromium
+    # fullscreen: a normal top-level window covering the monitor, created that
+    # way from the first frame, so no frame is ever seen.  It is not exclusive
+    # fullscreen; Alt+Tab, the taskbar button, minimise and close all behave
+    # as for any application.  ZEUS_WINDOW_MODE remains an explicit per-device
+    # override ("windowed" shows Chromium's framed app window on purpose).
     resolved_mode = normalize_window_mode(mode or os.getenv("ZEUS_WINDOW_MODE", ""))
     if resolved_mode == "kiosk":
         command.append("--kiosk")
-    elif resolved_mode == "browser_fullscreen":
+    elif resolved_mode in {"fullscreen", "maximized", "browser_fullscreen"}:
         command.append("--start-fullscreen")
-    elif resolved_mode in {"fullscreen", "maximized"}:
-        command.append(f"--window-position={OFFSCREEN_POSITION[0]},{OFFSCREEN_POSITION[1]}")
     return command
 
 

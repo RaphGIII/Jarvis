@@ -194,7 +194,6 @@ function wireShell() {
   if (standalone) {
     $("winctl").hidden = false;
     $("btnWinMin").onclick = () => api("/api/window", { action: "minimize", reason: "owner" });
-    $("btnWinFull").onclick = () => api("/api/window", { action: "toggle_maximize", reason: "owner" });
     $("btnWinClose").onclick = () => api("/api/window", { action: "close", reason: "owner" });
   }
   $("btnProfile").onclick = () => views.open("settings", {});

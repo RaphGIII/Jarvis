@@ -107,13 +107,12 @@ def test_the_command_is_an_application_window_on_its_own_profile(tmp_path: Path)
     assert f"--user-data-dir={tmp_path}" in command
     assert any(argument.startswith("--window-size=") for argument in command)
     assert "--no-first-run" in command
-    # Default: native borderless fullscreen, not Chromium kiosk/browser
-    # fullscreen.  The window is created OFF-SCREEN so the frame Chromium
-    # paints is never seen; service.desktop styles it and moves it onto the
-    # monitor, and Alt+Tab keeps working.
-    assert "--window-position=-32000,-32000" in command
+    # Default: Chromium fullscreen from the first frame -- the only presentation
+    # of a Chromium --app window without its own painted title bar.  Not kiosk
+    # (which still paints a bar), not maximized (which shows the bar).
+    assert "--start-fullscreen" in command
     assert "--start-maximized" not in command
-    assert "--start-fullscreen" not in command
+    assert not any(argument.startswith("--window-position=") for argument in command)
     assert "--kiosk" not in command
 
 
@@ -122,7 +121,6 @@ def test_windowed_mode_keeps_a_normal_launch_vector(tmp_path: Path) -> None:
 
     assert any(argument.startswith("--window-size=") for argument in command)
     assert "--start-maximized" not in command
-    assert not any(argument.startswith("--window-position=-32000") for argument in command)
     assert "--start-fullscreen" not in command
     assert "--kiosk" not in command
 
@@ -227,15 +225,13 @@ def test_an_engine_that_will_not_start_is_reported_not_raised(monkeypatch: pytes
 # Borderless in every mode
 # --------------------------------------------------------------------------
 
-def test_the_default_mode_is_borderless_maximized_and_starts_off_screen(tmp_path: Path) -> None:
-    assert window.DEFAULT_WINDOW_MODE == "maximized"
-    assert window.normalize_window_mode("") == "maximized"
-    assert window.normalize_window_mode("maximized") == "maximized"
-    assert window.normalize_window_mode("fullscreen") == "fullscreen"
+def test_the_default_mode_is_chromium_fullscreen(tmp_path: Path) -> None:
+    assert window.DEFAULT_WINDOW_MODE == "fullscreen"
+    assert window.normalize_window_mode("") == "fullscreen"
+    assert window.normalize_window_mode("maximized") == "fullscreen"
     assert window.normalize_window_mode("windowed") == "windowed"
-    for mode in ("maximized", "fullscreen"):
-        command = window.window_command("msedge.exe", "http://127.0.0.1:8420/", profile_dir=tmp_path, mode=mode)
-        assert "--window-position=-32000,-32000" in command and "--start-maximized" not in command
+    command = window.window_command("msedge.exe", "http://127.0.0.1:8420/", profile_dir=tmp_path, mode="maximized")
+    assert "--start-fullscreen" in command
 
 
 def test_no_mode_restores_the_native_frame() -> None:
@@ -248,22 +244,27 @@ def test_no_mode_restores_the_native_frame() -> None:
     windowed = inspect.getsource(desktop.style_windowed)
     assert "& ~(WS_CAPTION | WS_THICKFRAME)" in windowed
     assert "style | WS_CAPTION" not in windowed
-    frameless = inspect.getsource(desktop.style_frameless)
-    assert "& ~(WS_CAPTION | WS_THICKFRAME)" in frameless and "work_area" in frameless
 
 
-def test_the_toggles_move_between_borderless_modes_only(tmp_path: Path, monkeypatch) -> None:
+def test_the_toggles_never_leave_the_frameless_presentation(tmp_path: Path, monkeypatch) -> None:
+    """Leaving Chromium fullscreen would paint Chromium's app title bar; the toggles refuse and say so."""
+
     from service import desktop
 
-    applied: list[tuple[int, str]] = []
     shell = desktop.DesktopWindow(url="http://127.0.0.1:8420/", title="ZEUS", state_root=tmp_path)
     monkeypatch.setattr(shell, "find", lambda **_: desktop.FoundWindow(4242, 1, "ZEUS", True, False))
-    monkeypatch.setattr(shell, "_apply_mode", lambda hwnd, mode: applied.append((hwnd, mode)) or True)
+    monkeypatch.setattr(shell, "_apply_mode", lambda hwnd, mode: True)
     monkeypatch.setattr(desktop, "focus", lambda hwnd: True)
-    assert shell.preferred_mode() == "maximized"
+    assert shell.preferred_mode() == "fullscreen"
+    refused = shell.toggle_fullscreen(reason="test")
+    assert refused["ok"] is False and refused["action"] == "refused" and "Vollbild" in refused["error"]
+    assert shell.toggle_maximize(reason="test")["ok"] is False
+    assert shell.preferred_mode() == "fullscreen"
+    # a stale persisted "windowed" from an older build is brought back to the one presentation
+    shell._write_mode("windowed")
     assert shell.toggle_fullscreen(reason="test")["mode"] == "fullscreen"
-    assert shell.toggle_fullscreen(reason="test")["mode"] == "maximized"
-    assert shell.toggle_maximize(reason="test")["mode"] == "windowed"
-    assert shell.toggle_maximize(reason="test")["mode"] == "maximized"
-    assert shell.preferred_mode() == "maximized"
-    assert [m for _, m in applied] == ["fullscreen", "maximized", "windowed", "maximized"]
+
+
+def test_the_ui_has_no_restore_control_but_keeps_minimize_and_close() -> None:
+    index = (Path(__file__).resolve().parent.parent / "ui" / "index.html").read_text(encoding="utf-8")
+    assert 'id="btnWinMin"' in index and 'id="btnWinClose"' in index and 'id="btnWinFull"' not in index

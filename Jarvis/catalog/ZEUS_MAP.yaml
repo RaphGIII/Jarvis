@@ -977,7 +977,7 @@ packages:
       - tests/test_ui_self_development.py
     - path: jarvis/window.py
       purpose: The interface in its own desktop window, not in the owner's browser.
-      lines: 343
+      lines: 334
       public: 7
       tests: []
   knowledge:
@@ -1948,7 +1948,7 @@ packages:
       tests: []
     - path: service/desktop.py
       purpose: The desktop window as something the core owns, shows, hides and finds again.
-      lines: 764
+      lines: 762
       public: 10
       tests:
       - tests/test_desktop_lifecycle.py
@@ -2894,7 +2894,7 @@ api_routes:
 ui_modules:
 - path: ui/app.js
   purpose: '* The client entry point: the shell of ONE product.  Subscribes to the event'
-  lines: 313
+  lines: 312
   imports:
   - core/api.js
   - core/bus.js

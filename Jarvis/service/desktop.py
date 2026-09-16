@@ -474,8 +474,6 @@ class DesktopWindow:
             return style_windowed(hwnd, size=self.size)
         if resolved == "fullscreen":
             return style_frameless(hwnd)
-        if resolved == "maximized":
-            return style_frameless(hwnd, work_area=True)
         return True
 
     # -- discovery -------------------------------------------------------
@@ -600,25 +598,26 @@ class DesktopWindow:
                 self.emit("tool", {"summary": "window hidden" + (f" ({reason})" if reason else ""), "source": "desktop"})
             return {"ok": ok, "action": "hidden", "hwnd": found.hwnd, "reason": reason}
 
-    def toggle_fullscreen(self, *, reason: str = "") -> dict[str, Any]:
-        """F11: borderless fullscreen (the whole monitor) <-> borderless maximized (the work area).
+    NO_WINDOWED_MODE = ("ZEUS läuft rahmenlos im Vollbild. Ein Fenstermodus ohne Titelleiste ist in dieser Hülle "
+                        "nicht möglich; Minimieren und Schließen stehen oben rechts.")
 
-        The chosen mode is written before styling so it survives a core restart
-        even if the window itself is left running for the next process.
-        """
+    def toggle_fullscreen(self, *, reason: str = "") -> dict[str, Any]:
+        """F11: there is one frameless presentation.  Leaving it would paint Chromium's app title bar."""
 
         with self._lock:
             current = self.preferred_mode()
-            mode = "maximized" if current == "fullscreen" else "fullscreen"
-            return self._switch_mode(mode, current, reason=reason)
+            if current != "fullscreen":
+                return self._switch_mode("fullscreen", current, reason=reason)
+            return {"ok": False, "action": "refused", "mode": current, "error": self.NO_WINDOWED_MODE, "reason": reason}
 
     def toggle_maximize(self, *, reason: str = "") -> dict[str, Any]:
-        """The custom restore/maximize control: borderless maximized <-> borderless normal-sized window."""
+        """The restore/maximize control has no frameless target in a Chromium host; it says so."""
 
         with self._lock:
             current = self.preferred_mode()
-            mode = "windowed" if current in {"maximized", "fullscreen"} else "maximized"
-            return self._switch_mode(mode, current, reason=reason)
+            if current != "fullscreen":
+                return self._switch_mode("fullscreen", current, reason=reason)
+            return {"ok": False, "action": "refused", "mode": current, "error": self.NO_WINDOWED_MODE, "reason": reason}
 
     def _switch_mode(self, mode: str, current: str, *, reason: str = "") -> dict[str, Any]:
         with self._lock:
@@ -670,12 +669,11 @@ class DesktopWindow:
             return {"ok": False, "detail": f"{Path(self.engine).name} would not start: {exc}"}
 
     def reveal(self, *, timeout: float = 45.0, reason: str = "launch") -> dict[str, Any]:
-        """Bring the off-screen window the launcher created onto the monitor -- styled first.
+        """Give the window the launcher created its identity as soon as it exists.
 
-        Order matters: identity and frame removal happen while the window is
-        still off-screen, the SetWindowPos inside the styling moves it onto the
-        monitor.  If the mode cannot be applied (no win32), the window is
-        placed as a normal window instead; it is never left off-screen.
+        The window is Chromium fullscreen from its first frame, so nothing is
+        moved or unhidden here: the taskbar identity and icon are applied, the
+        persisted mode is re-asserted (idempotent) and the window is focused.
         """
 
         started = time.perf_counter()
