@@ -45,10 +45,10 @@ export function ago(iso) {
   const t = new Date(iso).getTime();
   if (isNaN(t)) return "";
   const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 60) return `${Math.floor(s)}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+  if (s < 60) return "gerade eben";
+  if (s < 3600) return `vor ${Math.floor(s / 60)} Min.`;
+  if (s < 86400) return `vor ${Math.floor(s / 3600)} Std.`;
+  return `vor ${Math.floor(s / 86400)} Tagen`;
 }
 
 export function seconds(n) {

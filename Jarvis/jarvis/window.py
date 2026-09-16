@@ -59,6 +59,11 @@ DEFAULT_SIZE = (1280, 860)
 #: Windows still sees a normal top-level app window and Alt+Tab keeps working.
 DEFAULT_WINDOW_MODE = "fullscreen"
 
+#: Where the frameless shell's window is created: far off every monitor, so the
+#: frame Chromium insists on is never painted where the owner can see it.  The
+#: desktop shell styles the window and brings it onto the monitor.
+OFFSCREEN_POSITION = (-32000, -32000)
+
 #: Chromium engines on Windows, relative to a program-files or local-app-data
 #: root.  Edge first: it is present on every supported Windows installation,
 #: so it is the one answer that is almost always right.
@@ -206,20 +211,21 @@ def window_command(
         "--disable-renderer-backgrounding",
     ]
     # ZEUS is an operating environment, not a browser page.  The default shell
-    # is native borderless fullscreen: Chromium starts maximized, then
-    # service.desktop removes the Windows frame and sizes the same normal
-    # top-level window to the monitor.  It is deliberately not --kiosk and not
-    # Chromium's --start-fullscreen, so Alt+Tab stays an OS window-switcher.
-    # F11 toggles through /api/window and the chosen mode is persisted in the
-    # desktop state directory.  ZEUS_WINDOW_MODE remains an explicit per-device
-    # override for callers that cannot reach the persisted state.
+    # is native borderless fullscreen.  Chromium can only create a framed
+    # window, so that window is created OFF-SCREEN: service.desktop removes the
+    # Windows frame, gives it ZEUS's taskbar identity and only then moves the
+    # same normal top-level window onto the monitor.  The owner never sees a
+    # browser frame, and Alt+Tab still sees a normal application (deliberately
+    # not --kiosk and not Chromium's --start-fullscreen).  F11 toggles through
+    # /api/window and the chosen mode is persisted in the desktop state
+    # directory.  ZEUS_WINDOW_MODE remains an explicit per-device override.
     resolved_mode = normalize_window_mode(mode or os.getenv("ZEUS_WINDOW_MODE", ""))
     if resolved_mode == "kiosk":
         command.append("--kiosk")
     elif resolved_mode == "browser_fullscreen":
         command.append("--start-fullscreen")
     elif resolved_mode == "fullscreen":
-        command.append("--start-maximized")
+        command.append(f"--window-position={OFFSCREEN_POSITION[0]},{OFFSCREEN_POSITION[1]}")
     return command
 
 

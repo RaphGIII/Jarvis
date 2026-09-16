@@ -280,8 +280,32 @@ class Supervisor:
 
             launch = open_window(self.url, fallback=False)
             self.log(f"window opened at launch: {launch.describe()}" if launch.ok else f"window not opened at launch: {launch.detail}")
+            if launch.ok and launch.mode == "window":
+                self._reveal_window_early(repo)
         except Exception as exc:  # noqa: BLE001 - the window is never a reason not to boot
             self.log(f"window not opened at launch: {exc}")
+
+    def _reveal_window_early(self, repo: str) -> None:
+        """The window was created off-screen; a helper thread styles it and moves it onto the monitor.
+
+        Frame removal and the taskbar identity happen before the first visible
+        paint, so the owner sees ZEUS -- never a browser frame -- from the first
+        moment.  The core takes the same window over later (idempotent).
+        """
+
+        def run() -> None:
+            try:
+                from service.desktop import DesktopWindow
+
+                root = Path(os.environ.get("JARVIS_STATE_ROOT", "").strip() or (Path(repo) / "data" / "jarvis"))
+                icon = Path(repo) / "ui" / "zeus.ico"
+                desktop = DesktopWindow(url=self.url, title="ZEUS", state_root=root, icon=icon if icon.is_file() else None)
+                report = desktop.reveal(timeout=45.0, reason="launch")
+                self.log(f"window revealed: {report}")
+            except Exception as exc:  # noqa: BLE001 - the window is never a reason not to boot
+                self.log(f"window not revealed at launch: {exc}")
+
+        threading.Thread(target=run, daemon=True, name="zeus-window-reveal").start()
 
     def _main_loop(self) -> int:
         self.status_page.start()

@@ -123,15 +123,15 @@ async function inspect(row) {
   }
   if (row.state === "paused" || row.state === "blocked") actions.append(button("Fortsetzen", () => api("/api/mission/resume", { mission_id: row.id }), "primary"));
   views.inspect(row.title || "Mission",
-    section("Ziel", el("div", { class: "kv" }, el("span", { class: "v", text: m.goal || row.goal || "" })), kv("interpretation", m.interpretation)),
-    (m.constraints || []).length ? section("Constraints", ...m.constraints.map((c) => kv("must", c))) : null,
-    (m.acceptance_criteria || []).length ? section("Acceptance criteria", ...m.acceptance_criteria.map((c) => kv("criterion", c))) : null,
-    section("State", kv("phase", m.phase), kv("result", row.state), kv("outcome", m.outcome || "running"), kv("next action", m.next_action),
-      kv("blocker", (m.blockers || []).join("; ")), kv("owner input", m.owner_input_required), kv("attempts of this request", row.attempts),
-      kv("started", m.created_at), kv("updated", m.updated_at)),
-    tasks.length ? section("Tasks", ...tasks) : null,
-    evidence.length ? section("Evidence", ...evidence) : null,
-    detail.brief ? section("Brief", el("pre", { class: "code", text: typeof detail.brief === "string" ? detail.brief : JSON.stringify(detail.brief, null, 1) })) : null,
+    section("Ziel", el("div", { class: "kv" }, el("span", { class: "v", text: m.goal || row.goal || "" })), kv("Verständnis", m.interpretation)),
+    (m.constraints || []).length ? section("Rahmen", ...m.constraints.map((c) => kv("muss", c))) : null,
+    (m.acceptance_criteria || []).length ? section("Abnahme", ...m.acceptance_criteria.map((c) => kv("Kriterium", c))) : null,
+    section("Stand", kv("Phase", PHASE_WORD[String(m.phase || "").toUpperCase()] || m.phase), kv("Ergebnis", STATE_WORD[row.state] || row.state), kv("Ausgang", m.outcome || "läuft"), kv("Nächster Schritt", m.next_action),
+      kv("Blockiert durch", (m.blockers || []).join("; ")), kv("Braucht von dir", m.owner_input_required), kv("Anläufe", row.attempts),
+      kv("Begonnen", m.created_at), kv("Aktualisiert", m.updated_at)),
+    tasks.length ? section("Schritte", ...tasks) : null,
+    evidence.length ? section("Belege", ...evidence) : null,
+    detail.brief ? section("Auftrag", el("pre", { class: "code", text: typeof detail.brief === "string" ? detail.brief : JSON.stringify(detail.brief, null, 1) })) : null,
     history.length ? section("Verlauf", el("div", { class: "timeline" }, ...history)) : null,
     actions,
     el("details", { class: "padv" }, el("summary", { text: "Technische Details" }), kv("mission", row.id), kv("phase", m.phase), kv("outcome", m.outcome || "running")),
@@ -139,11 +139,11 @@ async function inspect(row) {
 }
 
 function inspectSelfdev(m, row) {
-  const acceptance = (m.acceptance || []).map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: "criterion" }), el("span", { class: "v", text: a.criterion })));
+  const acceptance = (m.acceptance || []).map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: "Kriterium" }), el("span", { class: "v", text: a.criterion })));
   const checks = (m.verification?.checks || []).map((c) => el("div", { class: "kv" }, el("span", { class: "k", text: c.ok ? "✓" : "✗" }),
     el("span", { class: "v", text: c.ok ? c.criterion : `${c.criterion} — ${String(c.output || "").trim().slice(0, 240)}` })));
   const isolation = (m.isolation || []).map((r) => el("div", { class: "kv" }, el("span", { class: "k", text: r.phase }),
-    el("span", { class: "v", text: r.clean ? "live tree unchanged" : `BREACH: ${r.contamination.join(", ")} — restored ${r.restored.join(", ")}` })));
+    el("span", { class: "v", text: r.clean ? "laufendes Produkt unberührt" : `Verletzung: ${r.contamination.join(", ")} – wiederhergestellt ${r.restored.join(", ")}` })));
   const events = (m.events || []).slice(-30).map((e) => el("div", { class: "tl " + (e.phase === "FAILED" ? "bad" : e.phase === "DONE" ? "ok" : "work") },
     el("span", { class: "when", text: clockOf(e.at) }), el("span", { class: "text", text: `${e.phase}: ${e.detail || ""}` }), e.error ? el("span", { class: "sub", text: e.error }) : null));
   const finished = ["DONE", "FAILED", "CANCELLED", "AWAITING_AUTHORIZATION", "AWAITING_BUILD", "WAITING"].includes(m.phase);
@@ -154,7 +154,7 @@ function inspectSelfdev(m, row) {
     const eng = m.engineering || {};
     const rng = eng.estimate_range_eur || [0, 0];
     const eur = (v) => "€" + Number(v || 0).toFixed(2);
-    actions.append(el("span", { class: "meta", text: `${eng.role || "?"} · geschätzt ${eur(rng[0])}–${eur(rng[1])} · hartes Maximum ${eur(eng.hard_max_eur)}` }));
+    actions.append(el("span", { class: "meta", text: `geschätzt ${eur(rng[0])}–${eur(rng[1])} · hartes Maximum ${eur(eng.hard_max_eur)}` }));
     actions.append(button(`Build starten (max. ${eur(eng.hard_max_eur)})`, async () => {
       if (!confirm(`Diesen Build mit ${eng.role || "dem Engineer"} starten?\n\nGeschätzt ${eur(rng[0])}–${eur(rng[1])}, hartes Maximum ${eur(eng.hard_max_eur)}.\nDas Ergebnis wird verifiziert und erst nach deinem Passwort übernommen.`)) return;
       const r = await api("/api/selfdev/build", { mission_id: m.mission_id });
@@ -182,37 +182,37 @@ function inspectSelfdev(m, row) {
   if (!finished && m.phase !== "RESTARTING") actions.append(button("Abbrechen", async () => { await api("/api/selfdev/cancel", { mission_id: m.mission_id }); }, "ghost danger"));
   if (m.outcome === "failed" && m.verification?.ok) actions.append(button("Fortsetzen (geprüfter Kandidat)", async () => { await api("/api/selfdev/resume", { mission_id: m.mission_id }); }, "primary"));
   if (m.evidence_patch) actions.append(button("Änderungen ansehen", () => showDiff(m, row)));
-  if (m.expected_revision) actions.append(button("Version", () => views.open("release")));
+  if (m.expected_revision) actions.append(button("Versionen", () => views.open("release")));
   const c = m.control || {};
   const already = (c.ALREADY_IMPLEMENTED || []).map((line) => el("div", { class: "kv" },
-    el("span", { class: "k", text: "exists" }), el("span", { class: "v", text: String(line).slice(0, 200) })));
+    el("span", { class: "k", text: "vorhanden" }), el("span", { class: "v", text: String(line).slice(0, 200) })));
   views.inspect(row.title || "Mission",
-    section("Requested modification (the owner's words)", el("div", { class: "kv" }, el("span", { class: "v", text: m.request }))),
+    section("Gewünschte Änderung (deine Worte)", el("div", { class: "kv" }, el("span", { class: "v", text: m.request }))),
     section("Auftrag",
       kv("goal", c.GOAL || m.request),
       kv("route", c.ROUTE),
-      kv("engineer", c.ENGINEER || "not chosen yet"),
+      kv("Engineer", c.ENGINEER || "noch nicht gewählt"),
       kv("lokale Bauversuche", String(c.BUILD_LOCAL_INVOCATIONS ?? m.local_attempts ?? 0)),
-      kv("current phase", c.PHASE || m.phase),
-      kv("files changed", (c.FILES_CHANGED || []).join(", ") || "none"),
-      kv("tests", (c.TESTS || []).join(", ") || "none"),
-      kv("failure reason", c.FAILURE_REASON || ""),
-      kv("candidate", c.CANDIDATE || "none"),
-      kv("awaiting owner", c.AWAITING_OWNER ? "yes — the password promotes it, nothing else does" : "no"),
-      kv("result", c.RESULT || m.outcome || "running")),
-    already.length ? section("Already implemented before this mission started", ...already) : null,
-    section("State", kv("phase", m.phase), kv("result", row.state), kv("deployment", row.deployment || "not deployed"), kv("reason", m.reason),
-      kv("attempts of this request", row.attempts), kv("started", m.started_at), kv("updated", m.updated_at),
-      kv("baseline → candidate", m.expected_revision ? `→ ${m.expected_revision.slice(0, 12)}` : ""), kv("area", m.area)),
-    m.routing ? section("Routing", kv("top level", `${m.routing.top_level} · ${m.routing.confidence}`), kv("reason", m.routing.reason)) : null,
+      kv("Phase", PHASE_WORD[String(c.PHASE || m.phase || "").toUpperCase()] || c.PHASE || m.phase),
+      kv("Geänderte Dateien", (c.FILES_CHANGED || []).join(", ") || "keine"),
+      kv("Tests", (c.TESTS || []).join(", ") || "keine"),
+      kv("Grund des Scheiterns", c.FAILURE_REASON || ""),
+      kv("Kandidat", c.CANDIDATE || "keiner"),
+      kv("Wartet auf dich", c.AWAITING_OWNER ? "ja – nur dein Passwort übernimmt die Änderung" : "nein"),
+      kv("Ergebnis", c.RESULT || m.outcome || "läuft")),
+    already.length ? section("Vor dieser Mission bereits vorhanden", ...already) : null,
+    section("Stand", kv("Phase", PHASE_WORD[String(m.phase || "").toUpperCase()] || m.phase), kv("Ergebnis", STATE_WORD[row.state] || row.state), kv("Übernahme", row.deployment || "nicht übernommen"), kv("Grund", m.reason),
+      kv("Anläufe", row.attempts), kv("Begonnen", m.started_at), kv("Aktualisiert", m.updated_at),
+      kv("Ausgangsstand → Kandidat", m.expected_revision ? `→ ${m.expected_revision.slice(0, 12)}` : ""), kv("Bereich", m.area)),
+    m.routing ? section("Einordnung", kv("Art", `${m.routing.top_level} · ${m.routing.confidence}`), kv("Grund", m.routing.reason)) : null,
     section("Ausführung", kv("lokale Bauversuche", m.local_attempts), kv("Modellaufrufe", m.model_calls), kv("Verstärkung", m.escalated ? `${m.expert?.status || "eingesetzt"} · ${m.expert?.seconds || ""}s` : "nicht eingesetzt"),
-      kv("timings", Object.entries(m.timings || {}).map(([k, v]) => `${k} ${v}s`).join(" · "))),
-    section("Files changed", kv("files", (m.changed_files || []).join("\n") || "none")),
-    acceptance.length ? section("Acceptance", ...acceptance) : null,
-    checks.length ? section("Verifier", ...checks, kv("tests", (m.verification?.tests || []).join(", "))) : null,
-    m.verification_goal ? section("Goal check", kv("verdict", typeof m.verification_goal === "string" ? m.verification_goal : JSON.stringify(m.verification_goal).slice(0, 200))) : null,
+      kv("Dauer", Object.entries(m.timings || {}).map(([k, v]) => `${k} ${v}s`).join(" · "))),
+    section("Geänderte Dateien", kv("Dateien", (m.changed_files || []).join("\n") || "keine")),
+    acceptance.length ? section("Abnahme", ...acceptance) : null,
+    checks.length ? section("Prüfung", ...checks, kv("Tests", (m.verification?.tests || []).join(", "))) : null,
+    m.verification_goal ? section("Zielprüfung", kv("Urteil", typeof m.verification_goal === "string" ? m.verification_goal : JSON.stringify(m.verification_goal).slice(0, 200))) : null,
     isolation.length ? section("Isolation", ...isolation) : null,
-    m.promotion?.promotion_id ? section("Promotion", kv("id", m.promotion.promotion_id), kv("outcome", m.promotion.outcome), kv("revision", m.promotion.promoted_revision)) : null,
+    m.promotion?.promotion_id ? section("Übernahme", kv("Kennung", m.promotion.promotion_id), kv("Ausgang", m.promotion.outcome), kv("Version", m.promotion.promoted_revision)) : null,
     section("Verlauf", el("div", { class: "timeline" }, ...events)),
     actions,
     el("details", { class: "padv" }, el("summary", { text: "Technische Details" }), kv("mission", m.mission_id), kv("row", row.id)),
@@ -225,5 +225,5 @@ async function showDiff(m, row) {
   for (const line of (r.patch || r.error || "").split("\n")) {
     node.append(el("div", { class: line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "", text: line }));
   }
-  views.inspect(`Diff ${m.mission_id}`, node, el("div", { class: "toolbar" }, button("Back", () => inspectSelfdev(m, row))));
+  views.inspect("Änderungen", node, el("div", { class: "toolbar" }, button("Zurück", () => inspectSelfdev(m, row))));
 }

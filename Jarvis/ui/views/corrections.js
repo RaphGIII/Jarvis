@@ -10,9 +10,9 @@ import { addTurn } from "./chat.js";
 
 const KIND = {
   OWNER_PREFERENCE: ["Owner preference", "blue"],
-  INTENT_ERROR: ["Owner correction", "amber"],
-  ENTITY_RESOLUTION_ERROR: ["Owner correction", "amber"],
-  PARAMETER_ERROR: ["Owner correction", "amber"],
+  INTENT_ERROR: ["Deine Korrektur", "amber"],
+  ENTITY_RESOLUTION_ERROR: ["Deine Korrektur", "amber"],
+  PARAMETER_ERROR: ["Deine Korrektur", "amber"],
   EXECUTION_FAILURE: ["Technical", "dim"],
   VERIFICATION_DEFECT: ["Technical", "dim"],
   CAPABILITY_DEFECT: ["Technical", "dim"],
@@ -24,33 +24,33 @@ export const view = {
   async mount(pane, params) {
     const data = await api("/api/corrections");
     const rows = (data.corrections || []).slice().reverse();
-    const filter = el("select", {}, el("option", { value: "", text: "all kinds" }),
+    const filter = el("select", {}, el("option", { value: "", text: "alle Arten" }),
       ...Object.keys(KIND).map((k) => el("option", { value: k, text: k.toLowerCase().replace(/_/g, " ") })));
-    const search = el("input", { placeholder: "Search corrections…" });
+    const search = el("input", { placeholder: "Korrekturen suchen …" });
     const list = el("div");
     const render = () => {
       clear(list);
       const q = search.value.toLowerCase();
       const shown = rows.filter((c) => (!filter.value || c.classification === filter.value) &&
         (!q || `${c.what_was_wrong} ${c.original_request}`.toLowerCase().includes(q)));
-      if (!shown.length) { list.append(el("div", { class: "empty", text: rows.length ? "Nothing matches." : "Noch keine Korrekturen. Every receipt carries „Korrigieren“." })); return; }
+      if (!shown.length) { list.append(el("div", { class: "empty", text: rows.length ? "Nichts passt." : "Noch keine Korrekturen. Every receipt carries „Korrigieren“." })); return; }
       for (const c of shown) list.append(card(c, () => views.open("corrections", params)));
     };
     filter.onchange = render;
     search.oninput = render;
-    pane.append(el("div", { class: "toolbar" }, search, filter, el("span", { class: "empty", style: { padding: 0 }, text: `${rows.length} learned` })));
+    pane.append(el("div", { class: "toolbar" }, search, filter, el("span", { class: "empty", style: { padding: 0 }, text: `${rows.length} gelernt` })));
     pane.append(list);
     render();
   },
 };
 
 function card(c, reload) {
-  const [label, tone] = KIND[c.classification] || ["Owner correction", "amber"];
+  const [label, tone] = KIND[c.classification] || ["Deine Korrektur", "amber"];
   const node = el("div", { class: "card click" + (c.active ? "" : " off") });
   node.append(
     el("div", { class: "title", text: c.what_was_wrong }),
     el("div", { class: "meta" }, badge(label, tone), badge(c.scope.toLowerCase().replace(/_/g, " "), "dim"),
-      el("span", { text: `${c.applied_count}× applied` }), el("span", { text: ago(c.at) }), c.active ? null : badge("disabled", "bad")),
+      el("span", { text: `${c.applied_count}× angewendet` }), el("span", { text: ago(c.at) }), c.active ? null : badge("disabled", "bad")),
   );
   node.onclick = () => inspect(c, reload);
   return node;
@@ -63,16 +63,16 @@ function inspect(c, reload) {
   const note = el("textarea", { value: c.what_was_wrong });
   views.inspect("Korrektur",
     section("What was wrong", el("div", { class: "field" }, note)),
-    section("Why it was learned", kv("request", c.original_request), kv("read as", c.parsed_intent || ""), kv("receipt", c.receipt_id || ""),
+    section("Why it was learned", kv("request", c.original_request), kv("verstanden als", c.parsed_intent || ""), kv("receipt", c.receipt_id || ""),
       kv("classification", c.classification), kv("reason", c.reason || ""), kv("learned", c.at), kv("applied", `${c.applied_count}×`)),
     section("Scope", el("div", { class: "field" }, scopeSel), kv("when", JSON.stringify(c.when || {}), "mono"), rule ? kv("rule", rule, "mono") : null),
     el("div", { class: "toolbar" },
-      button("Save", async () => {
+      button("Speichern", async () => {
         const r = await api("/api/correction/update", { correction_id: c.correction_id, changes: { what_was_wrong: note.value, scope: scopeSel.value } });
         if (r.ok) { reload(); views.closeInspector(); }
       }, "primary"),
       button(c.active ? "Disable" : "Enable", async () => { await api("/api/correction/update", { correction_id: c.correction_id, changes: { active: !c.active } }); reload(); views.closeInspector(); }),
-      button("Delete", async () => { await api("/api/correction/delete", { correction_id: c.correction_id }); reload(); views.closeInspector(); }, "ghost danger"),
+      button("Löschen", async () => { await api("/api/correction/delete", { correction_id: c.correction_id }); reload(); views.closeInspector(); }, "ghost danger"),
     ),
   );
 }
@@ -81,7 +81,7 @@ function inspect(c, reload) {
 
 export async function openDialog(receiptId) {
   const ctx = await api("/api/correction/context", { receipt_id: receiptId });
-  if (!ctx.ok) { addTurn("error", "Error", ctx.error || "no context"); return; }
+  if (!ctx.ok) { addTurn("error", "Fehler", ctx.error || "kein Kontext"); return; }
   const body = el("div", { class: "correction" });
   const rows = [
     ["Anfrage", ctx.original_request],

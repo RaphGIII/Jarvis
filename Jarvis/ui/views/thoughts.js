@@ -8,7 +8,7 @@ import { el, clear, kv, section, badge, button, ago } from "../core/dom.js";
 import { api } from "../core/api.js";
 import * as views from "../core/views.js";
 
-const FILTERS = [["", "All"], ["NEW", "New"], ["IMPORTANT", "Important"], ["SAVED", "Saved"], ["DISMISSED", "Dismissed"], ["ACTED_ON", "Acted on"]];
+const FILTERS = [["", "Alle"], ["NEW", "Neu"], ["IMPORTANT", "Important"], ["SAVED", "Saved"], ["DISMISSED", "Dismissed"], ["ACTED_ON", "Umgesetzt"]];
 const TONE = { URGENT: "bad", HIGH: "warn", MEDIUM: "blue", LOW: "dim" };
 const TYPE_TONE = { WARNING: "bad", PROJECT_RISK: "warn", INSIGHT: "blue", CONNECTION: "blue", OPTIMIZATION: "ok", REMINDER: "dim", OPPORTUNITY: "ok", FOLLOW_UP: "dim", QUESTION: "dim", IDEA: "blue" };
 
@@ -25,14 +25,14 @@ export const view = {
       clear(list);
       const rows = data.thoughts || [];
       const c = data.counts || {};
-      status.textContent = `${c.NEW || 0} new · ${c.IMPORTANT || 0} important · ${c.SAVED || 0} saved · ${c.ACTED_ON || 0} acted on · ${c.DISMISSED || 0} dismissed` + ((data.muted_types || []).length ? ` · muted: ${data.muted_types.join(", ")}` : "");
-      if (!rows.length) { list.append(el("div", { class: "empty", text: "Nothing noticed yet. ZEUS looks at missions, corrections, capability health and project activity after each finished mission and every 30 minutes." })); return; }
+      status.textContent = `${c.NEW || 0} new · ${c.IMPORTANT || 0} important · ${c.SAVED || 0} saved · ${c.ACTED_ON || 0} acted on · ${c.DISMISSED || 0} dismissed` + ((data.muted_types || []).length ? ` · stumm: ${data.muted_types.join(", ")}` : "");
+      if (!rows.length) { list.append(el("div", { class: "empty", text: "Noch nichts bemerkt. ZEUS schaut nach jeder Mission und alle 30 Minuten auf Missionen, Korrekturen, Fähigkeiten und Projekte und notiert, was ihm auffällt." })); return; }
       for (const t of rows) list.append(card(t, load));
     };
     for (const [key, label] of FILTERS) {
       tabs.append(el("button", { class: "ghost", "aria-pressed": filter === key ? "true" : "false", text: label, onClick: () => { filter = key; for (const b of tabs.querySelectorAll("button")) b.setAttribute("aria-pressed", b.textContent === label ? "true" : "false"); load(); } }));
     }
-    tabs.append(button("Think now", async () => { await api("/api/thoughts/think", { trigger: "manual" }); load(); }), status);
+    tabs.append(button("Jetzt nachdenken", async () => { await api("/api/thoughts/think", { trigger: "manual" }); load(); }), status);
     pane.append(tabs, list);
     await load();
   },
@@ -47,15 +47,15 @@ function card(t, reload) {
     el("div", { class: "kv" }, el("span", { class: "v", text: t.text })),
     el("div", { class: "kv" }, el("span", { class: "k", text: "why" }), el("span", { class: "v", text: t.why_it_matters })),
     t.suggested_action ? el("div", { class: "kv" }, el("span", { class: "k", text: "suggested" }), el("span", { class: "v", text: t.suggested_action })) : null,
-    el("details", {}, el("summary", { text: `evidence (${(t.evidence || []).length})` }),
+    el("details", {}, el("summary", { text: `Belege (${(t.evidence || []).length})` }),
       ...(t.evidence || []).map((e) => el("div", { class: "kv" }, el("span", { class: "k", text: e.kind }), el("span", { class: "v mono", text: `${e.ref} — ${e.summary}` })))),
     el("div", { class: "toolbar" },
-      button("Save to Knowledge", () => act(t, "save_knowledge", reload)),
-      (t.context && (t.context.project_id || (t.context.project_ids || []).length)) ? button("Attach to project", () => act(t, "attach_project", reload)) : null,
+      button("Ins Wissen übernehmen", () => act(t, "save_knowledge", reload)),
+      (t.context && (t.context.project_id || (t.context.project_ids || []).length)) ? button("Einem Projekt zuordnen", () => act(t, "attach_project", reload)) : null,
       button("Create mission", () => act(t, "create_mission", reload), "primary"),
       button("Tell me more", () => act(t, "tell_me_more", reload)),
       t.status !== "DISMISSED" ? button("Dismiss", () => act(t, "dismiss", reload), "ghost danger") : null,
-      button("Mute this type", () => act(t, "mute_type", reload), "ghost")));
+      button("Diese Art stumm schalten", () => act(t, "mute_type", reload), "ghost")));
   return node;
 }
 

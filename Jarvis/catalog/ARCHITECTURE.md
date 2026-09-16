@@ -29,7 +29,7 @@
 - **experts** — Optional stronger intelligence, recruited on Jarvis' terms. (8 modules, 2216 lines)
 - **gateway** — The ZEUS model gateway: one boundary between ZEUS and every model provider. (18 modules, 6069 lines)
 - **imagegen** — local image generation (3 modules, 247 lines)
-- **jarvis** — JARVIS command entry points. (13 modules, 2854 lines)
+- **jarvis** — JARVIS command entry points. (13 modules, 2860 lines)
 - **knowledge** — the knowledge graph and library (5 modules, 1985 lines)
 - **learning** — Developmental learning architecture for JARVIS. (54 modules, 2637 lines)
 - **memory** — conversation memory (1 modules, 1 lines)
@@ -40,14 +40,14 @@
 - **runtime** — Runtime services: deadlines, heartbeats, cost policy, the older runtimes. (28 modules, 7733 lines)
 - **sandbox** — sandboxing (1 modules, 1 lines)
 - **senses** — perception (1 modules, 1 lines)
-- **service** — the product service: core, HTTP API, intents, routing, self-development, isolation (43 modules, 25226 lines)
+- **service** — the product service: core, HTTP API, intents, routing, self-development, isolation (43 modules, 25289 lines)
 - **skills** — skill packaging (15 modules, 1130 lines)
 - **speech** — speech recognition, synthesis, wake word (16 modules, 4364 lines)
 - **tools** — Schach Analyse: a screen-watching chess assistant (board finder, piece recogniser, Stockfish, overlay). (15 modules, 4423 lines)
 - **training** — training data and wake-word training (16 modules, 3338 lines)
 - **ui** — (no purpose recorded) (1 modules, 1 lines)
 - **voice** — voice pipeline (1 modules, 1 lines)
-- **zeus_supervisor** — The ZEUS supervisor: the small process that is *not* ZEUS. (13 modules, 3003 lines)
+- **zeus_supervisor** — The ZEUS supervisor: the small process that is *not* ZEUS. (13 modules, 3027 lines)
 
 ## Most depended-on modules
 - `capabilities/models.py` ← 17 modules

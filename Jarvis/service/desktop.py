@@ -648,6 +648,38 @@ class DesktopWindow:
         except (OSError, ValueError) as exc:
             return {"ok": False, "detail": f"{Path(self.engine).name} would not start: {exc}"}
 
+    def reveal(self, *, timeout: float = 45.0, reason: str = "launch") -> dict[str, Any]:
+        """Bring the off-screen window the launcher created onto the monitor -- styled first.
+
+        Order matters: identity and frame removal happen while the window is
+        still off-screen, the SetWindowPos inside the styling moves it onto the
+        monitor.  If the mode cannot be applied (no win32), the window is
+        placed as a normal window instead; it is never left off-screen.
+        """
+
+        started = time.perf_counter()
+        found = self._wait_for_window(timeout=timeout)
+        if found is None:
+            return {"ok": False, "action": "reveal_timeout", "seconds": round(time.perf_counter() - started, 3), "reason": reason}
+        with self._lock:
+            self.hwnd = found.hwnd
+            self.identity = apply_identity(found.hwnd, icon=self.icon)
+            mode = self.preferred_mode()
+            applied = self._apply_mode(found.hwnd, mode)
+            if not applied:
+                applied = style_windowed(found.hwnd, size=self.size)
+            focus(found.hwnd)
+            self._write_session(action="revealed", reason=reason, seconds=round(time.perf_counter() - started, 3),
+                                mode=mode, mode_applied=applied)
+            report = {"ok": True, "action": "revealed", "hwnd": found.hwnd, "seconds": round(time.perf_counter() - started, 3),
+                      "mode": mode, "mode_applied": applied, "identity": dict(self.identity), "reason": reason}
+            if self.emit:
+                try:
+                    self.emit("tool", {"summary": f"window revealed in {report['seconds']}s ({reason})", "source": "desktop", "window": report})
+                except Exception:  # noqa: BLE001
+                    pass
+            return report
+
     def _wait_for_window(self, timeout: float) -> FoundWindow | None:
         deadline = time.perf_counter() + timeout
         while time.perf_counter() < deadline:

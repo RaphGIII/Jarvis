@@ -108,8 +108,11 @@ def test_the_command_is_an_application_window_on_its_own_profile(tmp_path: Path)
     assert any(argument.startswith("--window-size=") for argument in command)
     assert "--no-first-run" in command
     # Default: native borderless fullscreen, not Chromium kiosk/browser
-    # fullscreen.  The native restyle in service.desktop keeps Alt+Tab working.
-    assert "--start-maximized" in command
+    # fullscreen.  The window is created OFF-SCREEN so the frame Chromium
+    # paints is never seen; service.desktop styles it and moves it onto the
+    # monitor, and Alt+Tab keeps working.
+    assert "--window-position=-32000,-32000" in command
+    assert "--start-maximized" not in command
     assert "--start-fullscreen" not in command
     assert "--kiosk" not in command
 
@@ -119,6 +122,7 @@ def test_windowed_mode_keeps_a_normal_launch_vector(tmp_path: Path) -> None:
 
     assert any(argument.startswith("--window-size=") for argument in command)
     assert "--start-maximized" not in command
+    assert not any(argument.startswith("--window-position=-32000") for argument in command)
     assert "--start-fullscreen" not in command
     assert "--kiosk" not in command
 

@@ -179,8 +179,8 @@ function focusPanel(overview, graph, params) {
   const missionRow = (m) => el("div", { class: "focus-row", onClick: () => views.open("missions", { mission: m.id }) }, el("span", { class: "dot", style: { background: "#e0b04a" } }), el("span", { text: m.title || m.goal?.slice(0, 40) }));
   const thoughtRow = (t) => el("div", { class: "focus-row", onClick: () => views.open("thoughts") }, el("span", { class: "dot", style: { background: KIND_COLOUR.thought } }), el("span", { text: t.label }));
   return el("div", { class: "focus-panel" },
-    col("Today", today, projectRow), col("Blocked", blocked, (x) => (x.isMission ? missionRow(x) : projectRow(x))), col("Recently active", recent, projectRow),
-    col("Needs owner", needsOwner, missionRow), col("ZEUS suggests", suggests, thoughtRow));
+    col("Heute", today, projectRow), col("Blockiert", blocked, (x) => (x.isMission ? missionRow(x) : projectRow(x))), col("Zuletzt aktiv", recent, projectRow),
+    col("Braucht dich", needsOwner, missionRow), col("ZEUS suggests", suggests, thoughtRow));
 }
 
 /* ---- the galaxy engine -------------------------------------------------
@@ -737,11 +737,11 @@ export class Galaxy {
     const reload = () => views.open("projects", {});
     const item = (label, fn) => el("button", { text: label, onClick: async () => { this.closeMenu(); await fn(); } });
     const menu = el("div", { class: "galaxy-menu" }, el("h6", { text: p.title || n.label }),
-      item("Focus", () => this.focusText(n.label)),
-      item("Open", () => views.open("projects", { id: n.id })),
+      item("Fokus", () => this.focusText(n.label)),
+      item("Öffnen", () => views.open("projects", { id: n.id })),
       item(p.importance === "PINNED" ? "Unpin" : "Pin", async () => { await api("/api/project/update", { id: n.id, importance: p.importance === "PINNED" ? "NORMAL" : "PINNED" }); reload(); }),
-      item(n.locked ? "Release position" : "Lock position", async () => { if (n.locked) await this.release(n); else await this.lock(n, true); reload(); }),
-      item(p.hidden ? "Unhide" : "Hide", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }),
+      item(n.locked ? "Position freigeben" : "Position fixieren", async () => { if (n.locked) await this.release(n); else await this.lock(n, true); reload(); }),
+      item(p.hidden ? "Unhide" : "Ausblenden", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }),
       item("Archive", async () => { await api("/api/project/update", { id: n.id, importance: "ARCHIVED" }); reload(); }),
       el("div", { class: "sep" }), el("h6", { text: "Gewicht" }),
       el("div", { class: "row" }, ...IMPORTANCE.map((i) => el("button", { class: i === (p.importance || n.importance) ? "on" : "", text: i.toLowerCase().replace("_", " "), onClick: async () => { this.closeMenu(); await api("/api/project/update", { id: n.id, importance: i }); reload(); } }))),
@@ -803,30 +803,30 @@ async function inspect(n, graph, reload) {
   views.inspect(p.title || n.label,
     el("div", { class: "meta" }, badge(p.health?.state || "?", p.health?.state === "HEALTHY" ? "ok" : p.health?.state === "BLOCKED" ? "bad" : p.health?.state === "COMPLETE" ? "blue" : "warn"), " ", badge(p.importance || n.importance || "NORMAL", "dim"), " ", badge(p.state || detail.state || "", STATE_TONE[String(p.state).toLowerCase()] || "idle")),
     tasks.length ? el("div", { class: "bar green", style: { margin: "6px 0 10px" } }, el("i", { style: { width: `${(done / tasks.length) * 100}%` } })) : null,
-    section("Goal", kv("goal", p.goal || detail.goal), kv("owner said", meta.owner_request), kv("parent", meta.parent_title), kv("deadline", meta.deadline)),
-    section("Status", kv("progress", tasks.length ? `${done}/${tasks.length} tasks` : "no tasks"), kv("health", `${p.health?.state || "?"} — ${p.health?.reason || ""}`),
+    section("Ziel", kv("goal", p.goal || detail.goal), kv("owner said", meta.owner_request), kv("parent", meta.parent_title), kv("deadline", meta.deadline)),
+    section("Status", kv("progress", tasks.length ? `${done}/${tasks.length} Aufgaben` : "keine Aufgaben"), kv("health", `${p.health?.state || "?"} — ${p.health?.reason || ""}`),
       el("div", { class: "kv" }, el("span", { class: "k", text: "importance" }), el("span", { class: "v" }, importance)),
       kv("last activity", ago(p.updated_at || detail.updated_at)), kv("created", (detail.created_at || "").slice(0, 10))),
-    section("Now", kv("current mission", current ? current.title : (related.find((r) => r.kind === "mission" && r.state === "active") || {}).label || "—"),
+    section("Jetzt", kv("current mission", current ? current.title : (related.find((r) => r.kind === "mission" && r.state === "active") || {}).label || "—"),
       kv("blockers", blocked.length ? blocked.map((t) => t.title).join("; ") : (detail.blockers || []).map((b) => b.text).join("; ") || "none"),
-      kv("next action", next ? next.title : "—"), kv("risks", p.health?.state === "AT_RISK" ? p.health.reason : "none known")),
+      kv("nächster Schritt", next ? next.title : "—"), kv("risks", p.health?.state === "AT_RISK" ? p.health.reason : "nichts bekannt")),
     section("Connected", kv("missions", related.filter((r) => r.kind === "mission").map((r) => r.label).join("\n") || "—"),
       kv("subprojects", related.filter((r) => r.kind === "project").map((r) => r.label).join(", ") || "—"),
       kv("capabilities", related.filter((r) => r.kind === "capability").map((r) => r.label).join(", ") || "—"),
       kv("ZEUS thoughts", related.filter((r) => r.kind === "thought").map((r) => r.label).join("\n") || "—")),
-    section("Knowledge", knowledgeNodes.length ? el("div", {}, ...knowledgeNodes.slice(0, 6).map((k) => el("div", { class: "focus-row", onClick: () => views.open("knowledge", { q: k.title }) }, el("span", { class: "dot", style: { background: KIND_COLOUR.knowledge } }), el("span", { text: k.title })))) : el("div", { class: "empty", style: { padding: "2px 0" }, text: "no related notes yet" })),
+    section("Knowledge", knowledgeNodes.length ? el("div", {}, ...knowledgeNodes.slice(0, 6).map((k) => el("div", { class: "focus-row", onClick: () => views.open("knowledge", { q: k.title }) }, el("span", { class: "dot", style: { background: KIND_COLOUR.knowledge } }), el("span", { text: k.title })))) : el("div", { class: "empty", style: { padding: "2px 0" }, text: "noch keine Notizen" })),
     (detail.artifacts || []).length ? section("Documents", ...detail.artifacts.slice(-6).map((a) => kv(a.kind, a.path))) : null,
     (detail.decisions || []).length ? section("Decisions", ...detail.decisions.slice(-5).map((d) => kv((d.at || "").slice(0, 10), d.text))) : null,
     (detail.acceptance || []).length ? section("Acceptance", ...detail.acceptance.slice(0, 5).map((a) => kv(a.satisfied ? "✓" : "·", a.text))) : null,
     (p.notes || []).length ? section("ZEUS notes", ...p.notes.map((x) => kv((x.at || "").slice(0, 10), x.title || x.text))) : null,
-    section("Owner notes", note, el("div", { class: "toolbar" }, button("Add note", async () => { if (note.value.trim()) { await api("/api/project/update", { id: n.id, note: note.value }); note.value = ""; } }))),
+    section("Owner notes", note, el("div", { class: "toolbar" }, button("Notiz hinzufügen", async () => { if (note.value.trim()) { await api("/api/project/update", { id: n.id, note: note.value }); note.value = ""; } }))),
     el("div", { class: "toolbar" },
-      button("Open", () => views.open("projects", { id: n.id }), "primary"),
-      button("Focus", () => galaxy?.focusText(n.label)),
-      button(n.locked ? "Release position" : "Lock position", async () => { if (n.locked) await galaxy.release(n); else await galaxy.lock(n, true); reload(); }),
+      button("Öffnen", () => views.open("projects", { id: n.id }), "primary"),
+      button("Fokus", () => galaxy?.focusText(n.label)),
+      button(n.locked ? "Position freigeben" : "Position fixieren", async () => { if (n.locked) await galaxy.release(n); else await galaxy.lock(n, true); reload(); }),
       button(p.importance === "PINNED" ? "Unpin" : "Pin", async () => { await api("/api/project/update", { id: n.id, importance: p.importance === "PINNED" ? "NORMAL" : "PINNED" }); reload(); }),
       button("Archive", async () => { await api("/api/project/update", { id: n.id, importance: "ARCHIVED" }); reload(); }, "ghost"),
-      button(p.hidden ? "Unhide" : "Hide", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }, "ghost"),
+      button(p.hidden ? "Unhide" : "Ausblenden", async () => { await api("/api/project/update", { id: n.id, hidden: !p.hidden }); reload(); }, "ghost"),
       button("Create mission", () => chat.send(`Zeus, starte eine Mission für das Projekt „${p.title || n.label}“: ${next ? next.title : "nächster sinnvoller Schritt"}.`, "galaxy")),
       button("Ask ZEUS", () => chat.send(`Wie steht das Projekt „${p.title || n.label}“? Was blockiert es und was ist der nächste Schritt?`, "galaxy")),
       button("Local graph", () => views.open("projects", { connected: p.title || n.label }))));
@@ -849,7 +849,7 @@ async function deep(pane, id) {
     el("div", { class: "title", text: node.label || detail.goal || "" }),
     el("div", { class: "meta" }, badge(health.state, health.state === "HEALTHY" ? "ok" : health.state === "COMPLETE" ? "blue" : health.state === "BLOCKED" ? "bad" : "warn"),
       badge(node.importance || "NORMAL", "dim"), badge(detail.state || "unknown", STATE_TONE[String(detail.state).toLowerCase()] || "idle"),
-      el("span", { text: tasks.length ? `${done}/${tasks.length} tasks done` : "no tasks" }), el("span", { text: health.reason || "" })),
+      el("span", { text: tasks.length ? `${done}/${tasks.length} Aufgaben erledigt` : "keine Aufgaben" }), el("span", { text: health.reason || "" })),
     tasks.length ? el("div", { class: "bar green", style: { marginTop: "8px" } }, el("i", { style: { width: `${(done / tasks.length) * 100}%` } })) : null));
   const wrap = el("div", { class: "galaxy-wrap" });
   const canvas = el("canvas", { id: "constellation", class: "galaxy", style: { height: "36vh", minHeight: "260px" } });
@@ -860,21 +860,21 @@ async function deep(pane, id) {
   galaxy = new Galaxy(canvas, wrap, local, { onSelect: (n) => inspect(n, graph, () => views.open("projects", { id })), mode: "GALAXY" });
   galaxy.cam.z = 1.6;
   const answer = (q, a) => el("div", { class: "kv" }, el("span", { class: "k", text: q }), el("span", { class: "v", text: a }));
-  pane.append(section("At a glance",
-    answer("What are we doing", detail.goal || "—"),
-    answer("Where are we", tasks.length ? `${done} of ${tasks.length} tasks complete` : "no plan yet"),
-    answer("Happening now", active ? active.title : ((detail.steps || []).at(-1)?.summary || "nothing running")),
-    answer("Blocking us", blocked.length ? blocked.map((t) => t.title).join("; ") : "nothing"),
-    answer("Next", (tasks.find((t) => ["todo", "pending", "open", "planned"].includes(String(t.status))) || {}).title || "—")));
+  pane.append(section("Auf einen Blick",
+    answer("Worum es geht", detail.goal || "—"),
+    answer("Wo wir stehen", tasks.length ? `${done} von ${tasks.length} Aufgaben erledigt` : "noch kein Plan"),
+    answer("Gerade", active ? active.title : ((detail.steps || []).at(-1)?.summary || "nichts läuft")),
+    answer("Was blockiert", blocked.length ? blocked.map((t) => t.title).join("; ") : "nothing"),
+    answer("Als Nächstes", (tasks.find((t) => ["todo", "pending", "open", "planned"].includes(String(t.status))) || {}).title || "—")));
   if ((detail.acceptance || []).length) pane.append(section("Acceptance", ...detail.acceptance.map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: a.satisfied ? "✓" : "·" }), el("span", { class: "v", text: a.text })))));
-  if (tasks.length) pane.append(section("Tasks / dependencies", dependencyGraph(tasks)));
+  if (tasks.length) pane.append(section("Aufgaben und Abhängigkeiten", dependencyGraph(tasks)));
   if ((detail.decisions || []).length) pane.append(section("Decisions", ...detail.decisions.map((d) => el("div", { class: "kv" }, el("span", { class: "k", text: (d.at || "").slice(0, 10) }), el("span", { class: "v", text: d.text })))));
   if ((detail.artifacts || []).length) pane.append(section("Documents", ...detail.artifacts.map((a) => el("div", { class: "kv" }, el("span", { class: "k", text: a.kind }), el("span", { class: "v", text: a.path })))));
-  pane.append(section("Timeline (from Activity and the mission stores)", timelineView(timeline.events || [])));
+  pane.append(section("Verlauf", timelineView(timeline.events || [])));
   pane.append(el("div", { class: "toolbar" },
-    button("Continue this project", () => chat.send(`Continue the project: ${detail.goal}`, "galaxy"), "primary"),
-    button("Ask ZEUS about it", () => chat.send(`Wie steht das Projekt „${detail.title || detail.goal}“? Was blockiert es und was ist der nächste Schritt?`, "galaxy")),
-    button("Open graph", () => views.open("knowledge", { q: detail.goal || "" }))));
+    button("Projekt fortsetzen", () => chat.send(`Setze das Projekt fort: ${detail.goal}`, "galaxy"), "primary"),
+    button("ZEUS dazu fragen", () => chat.send(`Wie steht das Projekt „${detail.title || detail.goal}“? Was blockiert es und was ist der nächste Schritt?`, "galaxy")),
+    button("Graph öffnen", () => views.open("knowledge", { q: detail.goal || "" }))));
 }
 
 function dependencyGraph(tasks) {
@@ -883,7 +883,7 @@ function dependencyGraph(tasks) {
     const s = String(t.status);
     const cls = ["done", "complete", "completed", "accepted"].includes(s) ? "ok" : ["blocked", "failed"].includes(s) ? "bad" : ["active", "running", "working"].includes(s) ? "work" : "";
     wrap.append(el("div", { class: "tl " + cls }, el("span", { class: "when", text: s }), el("span", { class: "text", text: t.title }),
-      t.attempts ? el("span", { class: "sub", text: `${t.attempts} attempts` }) : null, cls === "bad" ? el("span", { class: "sub", text: "cannot proceed: this task is unfinished" }) : null));
+      t.attempts ? el("span", { class: "sub", text: `${t.attempts} Anläufe` }) : null, cls === "bad" ? el("span", { class: "sub", text: "kann nicht weiter: diese Aufgabe ist offen" }) : null));
   }
   return wrap;
 }
@@ -892,6 +892,6 @@ function timelineView(events) {
   const wrap = el("div", { class: "timeline" });
   const tone = (k) => k.includes("failed") ? "bad" : k.includes("promoted") || k.includes("completed") || k.includes("acquired") ? "ok" : k.includes("correction") ? "warn" : "work";
   for (const e of events.slice(-60).reverse()) wrap.append(el("div", { class: "tl " + tone(e.kind) }, el("span", { class: "when", text: (e.at || "").slice(0, 16).replace("T", " ") }), el("span", { class: "text", text: `${e.kind.replace(/_/g, " ")} — ${e.summary}` })));
-  if (!events.length) wrap.append(el("div", { class: "empty", text: "No events yet." }));
+  if (!events.length) wrap.append(el("div", { class: "empty", text: "Noch keine Ereignisse." }));
   return wrap;
 }

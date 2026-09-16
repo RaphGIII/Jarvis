@@ -42,15 +42,15 @@ export const view = {
   title: "Fortschritt",
   async mount(pane, params) {
     const toolbar = el("div", { class: "toolbar" });
-    const search = el("input", { placeholder: "Filter…", value: params.q || "" });
-    const kind = el("select", {}, el("option", { value: "", text: "all kinds" }),
+    const search = el("input", { placeholder: "Filtern …", value: params.q || "" });
+    const kind = el("select", {}, el("option", { value: "", text: "alle Arten" }),
       ...Object.entries(KINDS).map(([k, m]) => el("option", { value: k, text: m.label.toLowerCase() })));
     const grouped = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } },
       el("input", { type: "checkbox", checked: state.ui.groupActivity !== false, onChange: (e) => { setPref("groupActivity", e.target.checked); render(); } }),
-      " group by request");
+      " nach Anfrage gruppieren");
     const echo = el("label", { class: "empty", style: { padding: 0, cursor: "pointer" } },
       el("input", { type: "checkbox", checked: state.ui.echoActions, onChange: (e) => setPref("echoActions", e.target.checked) }),
-      " echo actions into the conversation");
+      " Aktionen im Chat zeigen");
     toolbar.append(search, kind, grouped, echo);
     const list = el("div", { class: "activity" });
     pane.append(toolbar, list);
@@ -60,12 +60,12 @@ export const view = {
     const render = () => {
       clear(list);
       const q = search.value.toLowerCase();
-      if (data.error) { list.append(el("div", { class: "empty", text: `The activity log could not be read: ${data.error}` })); return; }
+      if (data.error) { list.append(el("div", { class: "empty", text: "Der Fortschritt konnte gerade nicht gelesen werden." })); return; }
       const matches = (e) => (!kind.value || e.kind === kind.value) && (!q || `${e.summary} ${e.kind} ${e.receipt_id}`.toLowerCase().includes(q));
       const useGroups = state.ui.groupActivity !== false && !kind.value;
       const items = useGroups ? groups(entries).filter((g) => g.rows.some(matches)) : entries.filter(matches).map((e) => ({ head: e, rows: [e], repeats: 1 }));
       items.reverse();
-      if (!items.length) { list.append(el("div", { class: "empty", text: "Nothing recorded yet. Every request, action and verification appears here." })); return; }
+      if (!items.length) { list.append(el("div", { class: "empty", text: "Noch nichts aufgezeichnet. Jede Anfrage, Aktion und Prüfung erscheint hier." })); return; }
       let day = "";
       for (const g of items.slice(0, 400)) {
         const d = dateOf(g.head.at);
@@ -126,7 +126,7 @@ const shape = (g) => g.rows.map((r) => r.kind).join(",");
 
 function verdict(g) {
   const goal = g.rows.find((r) => r.kind === "tool" && /^goal:/.test(r.summary || ""));
-  if (goal) return /SATISFIED/.test(goal.summary) && !/NOT satisfied/.test(goal.summary) ? ["GOAL SATISFIED", "ok"] : ["GOAL NOT MET", "bad"];
+  if (goal) return /SATISFIED/.test(goal.summary) && !/NOT satisfied/.test(goal.summary) ? ["ZIEL ERREICHT", "ok"] : ["ZIEL NICHT ERREICHT", "bad"];
   if (g.rows.some((r) => r.kind === "action.failed" || r.kind === "state.error" || r.kind === "error")) return ["FAILED", "bad"];
   if (g.rows.some((r) => r.kind === "action.verified")) return ["VERIFIED", "ok"];
   if (g.rows.some((r) => r.kind === "answer")) return ["ANSWERED", "ans"];
@@ -190,7 +190,7 @@ function group(g, params) {
   body.hidden = true;
   const head = el("div", { class: "act-head expandable" },
     el("span", { class: "act-tag", text: `${headMeta.icon} ${headMeta.label}` + (g.repeats > 1 ? ` ×${g.repeats}` : "") }),
-    el("span", { class: "act-sum", text: g.head.summary || "(no detail recorded)" }),
+    el("span", { class: "act-sum", text: g.head.summary || "(keine Details)" }),
     g.head.kind === "request" ? correctionTools(g.head) : null,
     label ? el("span", { class: `act-tag ${cls}`, text: label }) : null,
     el("span", { class: "act-when", text: clockOf(g.head.at) }));
@@ -209,7 +209,7 @@ function row(entry, highlight) {
   const node = el("div", { class: `act ${meta.cls}` });
   const head = el("div", { class: "act-head" },
     el("span", { class: "act-tag", text: `${meta.icon} ${meta.label}` }),
-    el("span", { class: "act-sum", text: entry.summary || "(no detail recorded)" }),
+    el("span", { class: "act-sum", text: entry.summary || "(keine Details)" }),
     el("span", { class: "act-when", text: clockOf(entry.at) }));
   node.append(head);
   const detail = technical(entry);
@@ -237,13 +237,13 @@ function technical(entry) {
     line("action", receipt.kind);
     line("executor", receipt.executor);
     line("target", ev.path || ev.project_id || ev.title || ev.track || ev.query || ev.node_id || "");
-    line("result", receipt.verified ? "verified" : receipt.ok ? "ran, not verified" : "failed");
+    line("result", receipt.verified ? "verified" : receipt.ok ? "ausgeführt, nicht geprüft" : "failed");
     line("duration", receipt.duration_seconds !== undefined ? `${receipt.duration_seconds}s` : "");
     if (!receipt.ok) line("failure", receipt.detail);
     line("receipt", receipt.id);
     const checks = receipt.verifications || [];
     if (checks.length) {
-      body.append(el("div", { class: "act-k", text: "verification evidence", style: { marginTop: "6px" } }));
+      body.append(el("div", { class: "act-k", text: "Prüfbelege", style: { marginTop: "6px" } }));
       for (const c of checks) body.append(el("div", { class: "act-check" + (c.passed ? "" : " bad"), text: `${c.passed ? "✓" : "✗"} ${c.check}` + (c.observed ? ` — ${c.observed}` : "") }));
     } else {
       body.append(el("div", { class: "act-check bad", text: "✗ no verification was recorded for this action" }));
@@ -252,7 +252,7 @@ function technical(entry) {
   }
   if (d.voice_trace) { voiceTrace(body, d); return body; }
   if (d.understanding) {
-    line("top-level intent", d.understanding.top);
+    line("Absicht", d.understanding.top);
     line("why", d.understanding.reason);
     if (d.understanding.action) {
       line("operation", d.understanding.action.operation);
@@ -279,10 +279,10 @@ function technical(entry) {
     const r = d.capability_routing;
     line("capability route", `${r.result} → ${r.capability_id || "none"} (${r.confidence ?? "?"})`);
     line("why", r.reason);
-    line("engineer consulted", r.codex_checked ? `yes — Codex ${r.codex_state || ""}`.trim() : "no");
-    if (r.dispatch_ms !== undefined) line("resolved in", `${r.dispatch_ms} ms`);
+    line("Verstärkung", r.codex_checked ? "ja – Verstärkung".trim() : "no");
+    if (r.dispatch_ms !== undefined) line("aufgelöst in", `${r.dispatch_ms} ms`);
     for (const c of r.candidates || []) line("candidate", `${c.capability_id} ${c.confidence} · ${c.health}/${c.lifecycle} · ${c.reason}`);
-    if (r.queued) line("queued", "Codex unavailable; the request is parked, not dropped");
+    if (r.queued) line("queued", "Verstärkung nicht verfügbar; die Anfrage ist vorgemerkt");
   }
   for (const [k, v] of Object.entries(d)) {
     if (["summary", "routing", "capability_routing", "mission_id", "phase", "receipt", "text", "goal", "forbidden", "plan"].includes(k)) continue;
@@ -306,8 +306,8 @@ function voiceTrace(body, d) {
     ["rms / peak", a.rms !== undefined ? `${a.rms} / ${a.peak}` : ""], ["noise floor", a.noise_floor], ["device speech", (u.device || {}).speech_seconds ? `${u.device.speech_seconds}s` : ""],
     ["ZEUS speaking", u.speaking_overlap ? "yes" : "no"]]);
   block("STT", [["raw", u.raw_transcript], ["normalized", u.normalized_transcript], ["language", `${s.language || ""} ${s.language_probability !== undefined ? "(" + s.language_probability + ")" : ""}`],
-    ["no-speech prob.", s.no_speech_probability], ["avg logprob", s.avg_logprob], ["compression", s.compression_ratio], ["model / elapsed", s.model ? `${s.model} / ${s.elapsed}s` : ""],
-    ["replacements", ((d.normalization || {}).replacements || []).map((r) => `${r.heard} → ${r.meant}`).join(", ")], ["wake word removed", (d.segmentation || {}).removed]]);
+    ["Stille-Wahrsch.", s.no_speech_probability], ["avg logprob", s.avg_logprob], ["compression", s.compression_ratio], ["Erkennung / Dauer", s.model ? `${s.model} / ${s.elapsed}s` : ""],
+    ["replacements", ((d.normalization || {}).replacements || []).map((r) => `${r.heard} → ${r.meant}`).join(", ")], ["Wake-Wort entfernt", (d.segmentation || {}).removed]]);
   block(v.accepted ? "VERDICT · ACCEPTED" : "VERDICT · REJECTED", [["reason", v.reason], ["confidence", v.confidence !== undefined ? `${v.confidence} (${v.level})` : ""]]);
   for (const c of v.checks || []) body.append(el("div", { class: "act-check" + (c.passed ? "" : " bad"), text: `${c.passed ? "✓" : "✗"} ${c.name}` + (c.observed ? ` — ${c.observed}` : "") }));
 }
@@ -316,23 +316,23 @@ function inspect(entry) {
   const d = entry.detail || {};
   const children = [section("Event", kv("kind", entry.kind), kv("at", entry.at), kv("seq", entry.seq), kv("scope", entry.scope), kv("receipt", entry.receipt_id))];
   if (d.routing) {
-    children.push(section("Routing", kv("top level", `${d.routing.top_level} · ${d.routing.confidence}`), kv("reason", d.routing.reason),
+    children.push(section("Routing", kv("Art", `${d.routing.top_level} · ${d.routing.confidence}`), kv("reason", d.routing.reason),
       kv("operation", d.routing.reading?.operation), kv("object", d.routing.reading?.object),
       kv("self / world", `${d.routing.reading?.self_score} / ${d.routing.reading?.world_score}`),
       kv("overruled", (d.routing.conflicts || []).join("\n")), kv("corrections", (d.routing.corrections || []).join(", "))));
   }
   if (d.capability_routing) {
     const r = d.capability_routing;
-    children.push(section("Capability routing",
+    children.push(section("Fähigkeit",
       kv("goal", r.goal), kv("result", r.result), kv("capability", r.capability_id || "none"),
       kv("confidence", r.confidence), kv("reason", r.reason),
-      kv("engineer consulted", r.codex_checked ? `yes — Codex ${r.codex_state || ""}`.trim() : "no"),
-      kv("resolved in", r.dispatch_ms !== undefined ? `${r.dispatch_ms} ms` : "—"),
+      kv("Verstärkung", r.codex_checked ? "ja – Verstärkung".trim() : "no"),
+      kv("aufgelöst in", r.dispatch_ms !== undefined ? `${r.dispatch_ms} ms` : "—"),
       kv("candidates", (r.candidates || []).map((c) => `${c.capability_id} ${c.confidence} · ${c.health}/${c.lifecycle} · ${c.reason}`).join("\n") || "—")));
   }
   if (d.plan) children.push(section("Plan", kv("steps", (d.plan.steps || []).map((s) => `${s.status === "forbidden" ? "⛔ " : ""}${s.step} [${s.role || "required"}]`).join("\n")),
     kv("constraints", JSON.stringify(d.plan.constraints || {}, null, 1), "mono")));
-  if (entry.receipt_id && d.evidence) children.push(section("Evidence", kv("json", JSON.stringify(d.evidence, null, 1), "mono")));
-  if (d.mission_id) children.push(el("div", { class: "toolbar" }, button("Open mission", () => views.open("missions", { mission: d.mission_id }))));
+  if (entry.receipt_id && d.evidence) children.push(section("Belege", kv("json", JSON.stringify(d.evidence, null, 1), "mono")));
+  if (d.mission_id) children.push(el("div", { class: "toolbar" }, button("Mission öffnen", () => views.open("missions", { mission: d.mission_id }))));
   views.inspect(entry.summary ? entry.summary.slice(0, 60) : entry.kind, ...children);
 }

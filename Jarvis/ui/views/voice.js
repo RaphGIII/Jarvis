@@ -38,13 +38,13 @@ export const view = {
           badge(`MODEL: ${kind}`, kind === "OWNER" ? "ok" : kind === "SYNTHETIC" ? "warn" : "bad"), " ",
           w.listener ? badge(w.listener_match ? "LISTENER = TEST" : "LISTENER DIFFERS", w.listener_match ? "ok" : "bad") : badge("LISTENER SILENT", "warn")),
         el("div", { class: "meta" },
-          el("span", { text: `listener ${health.voice ? "ready" : "not ready"}` }),
-          el("span", { text: `recogniser ${health.recogniser ? "ready" : "not ready"}` }),
+          el("span", { text: `Zuhören ${health.voice ? "bereit" : "nicht bereit"}` }),
+          el("span", { text: `Erkennung ${health.recogniser ? "bereit" : "nicht bereit"}` }),
           el("span", { text: `effective threshold ${num(w.effective_threshold)} (${w.threshold_source || "?"})` }),
-          el("span", { text: w.last_score ? `last test score ${num(w.last_score.score, 3)} ${w.last_score.detected ? "DETECTED" : "not detected"} at ${w.last_score.at.slice(11, 19)}` : "no test yet" })),
+          el("span", { text: w.last_score ? `last test score ${num(w.last_score.score, 3)} ${w.last_score.detected ? "DETECTED" : "not detected"} at ${w.last_score.at.slice(11, 19)}` : "noch kein Test" })),
         el("div", { class: "meta" },
           ev ? el("span", { text: `positive recall ${pct(ev.positive_recall)} (${ev.positives_detected ?? "?"}/${ev.counts?.positive_usable ?? "?"}) · negative rejection ${pct(ev.negative_rejection)} (${ev.false_activations ?? "?"} false of ${ev.counts?.negative ?? "?"}) · ${ev.in_sample === false ? "held-out" : "in-sample"}${ev.stale ? " · STALE (model changed since)" : ""} · evaluated ${ev.at ? ev.at.replace("T", " ") : "?"}` })
-             : el("span", { text: "no evaluation yet — press Calibrate" }),
+             : el("span", { text: "noch keine Auswertung – Kalibrieren drücken" }),
           hold ? el("span", { text: `held-out check: recall ${pct(hold.at_effective_threshold?.recall)} · rejection ${pct(hold.at_effective_threshold?.rejection)} on ${hold.counts?.positive_usable ?? "?"}+/${hold.counts?.negative ?? "?"}− recordings the model never saw` }) : null,
           ev ? el("span", { text: `scores: positives min ${num(ev.positive_scores?.min, 3)} / median ${num(ev.positive_scores?.median, 3)} / max ${num(ev.positive_scores?.max, 3)}; negatives max ${num(ev.negative_scores?.max, 3)} · recommended threshold ${ev.recommended_threshold ?? "?"}${ev.separates === false ? " (samples do NOT separate)" : ""}` }) : null,
           ev && ev.silent_positives?.length ? el("span", { text: `silent recordings skipped: ${ev.silent_positives.join(", ")}` }) : null,
@@ -58,7 +58,7 @@ export const view = {
     const sendWake = async (rating, category, label) => {
       const last = (await api("/api/voice/wake")).last_score;
       const r = await api("/api/feedback", { kind: "wake", rating, category,
-        text: last ? `score ${Number(last.score).toFixed(3)} at ${last.at}` : "no last detection", session: last ? last.at : "" });
+        text: last ? `Wert ${Number(last.score).toFixed(3)} um ${last.at}` : "noch keine Erkennung", session: last ? last.at : "" });
       fbNote.textContent = r.ok === false ? (r.error || "nicht gespeichert") : label + (r.insight ? " · Muster erkannt → Vorschlag erstellt" : "");
     };
     wakeFb.append(
@@ -82,16 +82,16 @@ export const view = {
         "on: the listener starts within a few seconds, no restart needed. Text chat is never affected." })));
     const readers = [
       () => ["wake_word_enabled", wakeSwitch.checked],
-      field("microphone (device name or index)", "microphone"), field("speaker / output", "output"), field("voice (piper model)", "voice"),
-      field("wake threshold 0–1 (sensitivity)", "wake_sensitivity", "number", "the score „Zeus“ must reach on two consecutive frames; lower = more sensitive; empty = the model's recommendation"),
-      field("voice volume 0–1", "volume", "number", "playback of ZEUS's speech only — never touches the microphone or wake detection"),
+      field("Mikrofon (Name oder Nummer)", "microphone"), field("speaker / output", "output"), field("voice (piper model)", "voice"),
+      field("Wake-Schwelle 0–1 (Empfindlichkeit)", "wake_sensitivity", "number", "Wert, den „Zeus“ in zwei Frames nacheinander erreichen muss; niedriger = empfindlicher; leer = Empfehlung des Modells"),
+      field("voice volume 0–1", "volume", "number", "nur die Wiedergabe von ZEUS' Stimme – Mikrofon und Wake-Erkennung bleiben unberührt"),
       field("language", "language"),
     ];
     const saved = el("div", { class: "empty" });
-    pane.append(section("Settings", form, el("div", { class: "toolbar" }, button("Save", async () => {
+    pane.append(section("Settings", form, el("div", { class: "toolbar" }, button("Speichern", async () => {
       const payload = Object.fromEntries(readers.map((r) => r()).filter(([, v]) => v !== "" && !Number.isNaN(v)));
       const r = await api("/api/voice", payload);
-      if (r.ok === false) { saved.textContent = r.error || "not saved"; return; }
+      if (r.ok === false) { saved.textContent = r.error || "nicht gespeichert"; return; }
       if (typeof payload.volume === "number") playback.setVolume(payload.volume);
       const w = await api("/api/voice/wake");
       renderWake(w);
@@ -104,9 +104,9 @@ export const view = {
       meter.firstChild.style.width = "0%";
     }))));
 
-    pane.append(section("Train the wake word", wizard(wake, renderWake)));
+    pane.append(section("Wake-Wort trainieren", wizard(wake, renderWake)));
     pane.append(section("Spracherkennung trainieren (Owner-Korpus)", await corpusWizard()));
-    pane.append(section("Pronunciation (spoken form only — the written text never changes)", await pronunciation()));
+    pane.append(section("Aussprache (nur die gesprochene Form – der Text bleibt)", await pronunciation()));
   },
 };
 
@@ -230,23 +230,23 @@ async function pronunciation() {
   const data = await api("/api/voice/pronunciation");
   const preview = el("input", { placeholder: "Preview a sentence: ZEUS verwendet die GPU über GitHub.", style: { minWidth: "360px" } });
   const out = el("div", { class: "empty" });
-  const surface = el("input", { placeholder: "word as written (e.g. Spotify)" });
-  const spoken = el("input", { placeholder: "how to say it (e.g. Spottifai)" });
+  const surface = el("input", { placeholder: "Wort wie geschrieben (z. B. Spotify)" });
+  const spoken = el("input", { placeholder: "wie es gesagt wird (z. B. Spottifai)" });
   const status = el("div", { class: "empty" });
   const list = el("div");
   const render = (d) => {
     clear(list);
     const own = d.owner_entries || [];
-    list.append(el("div", { class: "meta" }, el("span", { text: `provider ${d.provider} · ${(d.entries || []).length} entries (${own.length} yours) · ${d.path}` })));
+    list.append(el("div", { class: "meta" }, el("span", { text: `${(d.entries || []).length} Einträge (${own.length} von dir)` })));
     for (const e of own) list.append(el("div", { class: "kv" }, el("span", { class: "k", text: e.surface }), el("span", { class: "v" }, `${e.spoken_as[d.provider] || e.spoken_as.generic} (${e.language})`,
-      button("Remove", async () => { await api("/api/voice/pronunciation/remove", { surface: e.surface, language: e.language }); render(await api("/api/voice/pronunciation")); }, "ghost danger"))));
+      button("Entfernen", async () => { await api("/api/voice/pronunciation/remove", { surface: e.surface, language: e.language }); render(await api("/api/voice/pronunciation")); }, "ghost danger"))));
     for (const r of (d.recent || []).slice(-5)) list.append(el("div", { class: "kv" }, el("span", { class: "k", text: "recently spoken" }), el("span", { class: "v", text: `„${r.displayed}“ → „${r.spoken}“` })));
   };
   render(data);
-  box.append(el("div", { class: "toolbar" }, preview, button("Preview", async () => { const r = await api("/api/voice/pronunciation", { text: preview.value }); out.textContent = r.preview ? `spoken as: ${r.preview.spoken}` : ""; })), out,
+  box.append(el("div", { class: "toolbar" }, preview, button("Preview", async () => { const r = await api("/api/voice/pronunciation", { text: preview.value }); out.textContent = r.preview ? `gesprochen als: ${r.preview.spoken}` : ""; })), out,
     el("div", { class: "toolbar" }, surface, spoken, button("Learn & test", async () => {
       const r = await api("/api/voice/pronunciation/set", { surface: surface.value, spoken: spoken.value });
-      status.textContent = r.ok ? `learned ${r.entry.surface} → ${r.entry.spoken_as[Object.keys(r.entry.spoken_as)[0]]}; synthesis ${r.test.tried ? (r.test.ok ? `ok (${r.test.seconds}s)` : "failed: " + (r.test.error || "")) : "not tried"}` : (r.error || "failed");
+      status.textContent = r.ok ? `learned ${r.entry.surface} → ${r.entry.spoken_as[Object.keys(r.entry.spoken_as)[0]]}; synthesis ${r.test.tried ? (r.test.ok ? `ok (${r.test.seconds}s)` : "failed: " + (r.test.error || "")) : "nicht versucht"}` : (r.error || "failed");
       if (r.test && r.test.url) new Audio(r.test.url + (location.search.includes("token") ? "" : "")).play().catch(() => {});
       render(await api("/api/voice/pronunciation"));
     }, "primary"), status), list);
@@ -257,7 +257,7 @@ function wizard(wake, renderWake) {
   const box = el("div");
   const status = el("div", { class: "empty", style: { padding: "6px 0" }, text: `${wake.positive || 0} owner recordings of „Zeus“, ${wake.negative || 0} other phrases${wake.hard_negative ? `, ${wake.hard_negative} hard negatives` : ""} on disk.` });
   const meter = el("div", { class: "bar", style: { width: "260px", margin: "6px 0" } }, el("i", { style: { width: "0%" } }));
-  const prompt = el("div", { class: "card", style: { fontSize: "18px", textAlign: "center" }, text: "Ready." });
+  const prompt = el("div", { class: "card", style: { fontSize: "18px", textAlign: "center" }, text: "Bereit." });
   const NEGATIVES = ["Wie spät ist es?", "Mach das Licht aus.", "Ich gehe jetzt einkaufen.", "Zeig mir die Nachrichten.", "Das Wetter ist heute schön.",
                      "Spiel etwas Musik.", "Ruf meine Mutter an.", "Was steht heute an?", "Erinnere mich an den Termin.", "Guten Morgen."];
   const HARD = ["Jesus", "Servus", "Zeit", "Deus", "Zeug"];
@@ -273,9 +273,9 @@ function wizard(wake, renderWake) {
       const wav = await mic.recordClip(kind === "positive" ? 2.0 : 2.6, (level) => { meter.firstChild.style.width = `${Math.round(level * 100)}%`; });
       meter.firstChild.style.width = "0%";
       const r = await postBytes(`/api/voice/wake/record?kind=${kind}`, wav, "audio/wav");
-      status.textContent = r.ok ? `${r.positive} owner recordings of „Zeus“, ${r.negative} other phrases on disk.` : (r.error || "recording failed");
+      status.textContent = r.ok ? `${r.positive} owner recordings of „Zeus“, ${r.negative} other phrases on disk.` : (r.error || "Aufnahme fehlgeschlagen");
     }
-    prompt.textContent = "Done.";
+    prompt.textContent = "Fertig.";
     running = false;
   }
   box.append(status, prompt, meter, el("div", { class: "toolbar" },
@@ -283,23 +283,23 @@ function wizard(wake, renderWake) {
     button("2 · Say 10 other phrases", () => record("negative", 10, NEGATIVES)),
     button("2b · Hard negatives (Jesus, Servus…)", () => record("hard_negative", 5, HARD)),
     button("3 · Train", async () => {
-      prompt.textContent = "Training… (several minutes)";
+      prompt.textContent = "Training läuft … (einige Minuten)";
       const r = await api("/api/voice/wake/train", {});
       if (r.ok && r.status) renderWake(r.status);
       const ev = r.status?.evaluation;
-      prompt.textContent = r.ok ? `Trained. Owner recall ${pct(ev?.positive_recall)}, rejection ${pct(ev?.negative_rejection)} at threshold ${num(r.status?.effective_threshold)} — the listener reloads it by itself.` : (r.error || "training failed");
+      prompt.textContent = r.ok ? `Trained. Owner recall ${pct(ev?.positive_recall)}, rejection ${pct(ev?.negative_rejection)} at threshold ${num(r.status?.effective_threshold)} — the listener reloads it by itself.` : (r.error || "Training fehlgeschlagen");
     }),
-    button("4 · Test detection (say Zeus)", async () => {
-      prompt.textContent = "Say „Zeus“ now…";
+    button("4 · Erkennung testen (sag Zeus)", async () => {
+      prompt.textContent = "Sag jetzt „Zeus“ …";
       const wav = await mic.recordClip(2.0, (level) => { meter.firstChild.style.width = `${Math.round(level * 100)}%`; });
       const r = await postBytes("/api/voice/wake/test", wav, "audio/wav");
-      prompt.textContent = r.ok ? `Score ${Number(r.score).toFixed(3)} — ${r.detected ? "DETECTED" : "not detected"} (threshold ${num(r.threshold)}, ${r.threshold_source})${r.silent ? " — the recording was silent" : ""}` : (r.error || "test failed");
+      prompt.textContent = r.ok ? `Score ${Number(r.score).toFixed(3)} — ${r.detected ? "DETECTED" : "not detected"} (threshold ${num(r.threshold)}, ${r.threshold_source})${r.silent ? " — the recording was silent" : ""}` : (r.error || "Test fehlgeschlagen");
       if (r.ok) renderWake(await api("/api/voice/wake"));
     }),
     button("Calibrate", async () => {
-      prompt.textContent = "Evaluating every owner recording through the detector…";
+      prompt.textContent = "Prüfe jede Aufnahme mit der Erkennung …";
       const r = await api("/api/voice/wake/evaluate", {});
-      if (!r.ok) { prompt.textContent = r.error || "evaluation failed"; return; }
+      if (!r.ok) { prompt.textContent = r.error || "Auswertung fehlgeschlagen"; return; }
       renderWake(r.status);
       const rep = r.report;
       prompt.textContent = `Recall ${pct(rep.at_effective_threshold?.recall)} / rejection ${pct(rep.at_effective_threshold?.rejection)} at ${num(rep.effective_threshold)}; recommended ${rep.recommended_threshold} — set it under Settings if you want it.`;

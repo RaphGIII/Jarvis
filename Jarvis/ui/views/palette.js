@@ -19,54 +19,54 @@ let timer = null;
 function phraseCommand(q) {
   const t = String(q || "").trim();
   let m;
-  if ((m = t.match(/^(?:focus|fokus(?:siere)?)\s+(.+)$/i))) return { type: "graph", label: `Focus ${m[1]}`, sub: "fly to it in the galaxy", run: () => views.open("projects", { focus: m[1] }) };
-  if ((m = t.match(/^(?:open|öffne)\s+(.+)$/i))) return { type: "graph", label: `Open ${m[1]}`, sub: "the project's own system", run: () => views.open("projects", { focus: m[1] }) };
-  if ((m = t.match(/^show (?:everything )?connected to\s+(.+)$/i)) || (m = t.match(/^zeige (?:alles )?(?:was )?mit\s+(.+?)\s+verbunden/i))) return { type: "graph", label: `Everything connected to ${m[1]}`, sub: "local graph", run: () => views.open("projects", { connected: m[1] }) };
-  if ((m = t.match(/^show projects using\s+(.+)$/i))) return { type: "graph", label: `Projects using ${m[1]}`, sub: "by capability", run: () => views.open("projects", { uses: m[1] }) };
-  if ((m = t.match(/(?:haven.?t touched|untouched|not touched) in (\d+) days/i))) return { type: "graph", label: `Projects untouched for ${m[1]} days`, sub: "idle projects", run: () => views.open("projects", { idle_days: m[1] }) };
-  if (/^show blocked projects$/i.test(t)) return { type: "graph", label: "Show blocked projects", run: () => views.open("projects", { filter: "blocked" }) };
-  if (/^hide archived$/i.test(t)) return { type: "graph", label: "Hide archived", run: () => views.open("projects", {}) };
+  if ((m = t.match(/^(?:focus|fokus(?:siere)?)\s+(.+)$/i))) return { type: "graph", label: `Fokus ${m[1]}`, sub: "in der Galaxie anfliegen", run: () => views.open("projects", { focus: m[1] }) };
+  if ((m = t.match(/^(?:open|öffne)\s+(.+)$/i))) return { type: "graph", label: `Öffne ${m[1]}`, sub: "das Projekt selbst", run: () => views.open("projects", { focus: m[1] }) };
+  if ((m = t.match(/^show (?:everything )?connected to\s+(.+)$/i)) || (m = t.match(/^zeige (?:alles )?(?:was )?mit\s+(.+?)\s+verbunden/i))) return { type: "graph", label: `Alles rund um ${m[1]}`, sub: "Umgebung im Graphen", run: () => views.open("projects", { connected: m[1] }) };
+  if ((m = t.match(/^show projects using\s+(.+)$/i))) return { type: "graph", label: `Projekte mit ${m[1]}`, sub: "nach Fähigkeit", run: () => views.open("projects", { uses: m[1] }) };
+  if ((m = t.match(/(?:haven.?t touched|untouched|not touched) in (\d+) days/i))) return { type: "graph", label: `Projekte seit ${m[1]} Tagen unberührt`, sub: "ruhende Projekte", run: () => views.open("projects", { idle_days: m[1] }) };
+  if (/^show blocked projects$/i.test(t)) return { type: "graph", label: "Blockierte Projekte zeigen", run: () => views.open("projects", { filter: "blocked" }) };
+  if (/^hide archived$/i.test(t)) return { type: "graph", label: "Archivierte ausblenden", run: () => views.open("projects", {}) };
   return null;
 }
 
 function commands() {
   const current = views.currentView();
   const list = [
-    { type: "view", label: "Laufende Arbeit", sub: "was ZEUS gerade tut", run: () => views.open("missions"), keys: "Ctrl+M" },
+    { type: "view", label: "Missionen", sub: "was ZEUS gerade tut", run: () => views.open("missions"), keys: "Ctrl+M" },
     { type: "view", label: "Einstellungen", sub: "Persönlichkeit, Erscheinungsbild, Leistung", run: () => views.open("settings"), keys: "Ctrl+," },
-    { type: "view", label: "Projects", sub: "constellation and deep views", run: () => views.open("projects"), keys: "Ctrl+Shift+P" },
-    { type: "view", label: "Files", sub: "the real D: universe, live", run: () => views.open("files") },
+    { type: "view", label: "Projekte", sub: "Überblick und Tiefe", run: () => views.open("projects"), keys: "Ctrl+Shift+P" },
+    { type: "view", label: "Dateien", sub: "dein Rechner, live", run: () => views.open("files") },
     { type: "view", label: "Persönlichkeit", sub: "wie ZEUS spricht und sich verhält", run: () => views.open("settings", { tab: "personality" }) },
-    { type: "view", label: "Wissen", sub: "Galaxy, Bibliothek, Bearbeiten", run: () => views.open("knowledge") },
-    { type: "view", label: "Wissen: Ebenen-Liste", sub: "Strata-Ansicht", run: () => views.open("knowledge", { mode: "list" }) },
-    { type: "view", label: "Knowledge graph (starfield overlay)", sub: "Overlay", run: () => knowledge.openGraph("") },
-    { type: "view", label: "Activity", sub: "the operation log", run: () => views.open("activity") },
-    { type: "view", label: "Korrekturen", sub: "what the owner corrected", run: () => views.open("corrections") },
-    { type: "view", label: "Capabilities", sub: "acquired capabilities", run: () => views.open("capabilities") },
-    { type: "view", label: "Diagnostics", sub: "is ZEUS healthy?", run: () => views.open("diagnostics") },
-    { type: "view", label: "Versions", sub: "known-good, releases, rollback", run: () => views.open("release") },
+    { type: "view", label: "Wissen", sub: "Übersicht, Bibliothek, Bearbeiten", run: () => views.open("knowledge") },
+    { type: "view", label: "Studium", sub: "Wissen als Ebenen", run: () => views.open("knowledge", { mode: "list" }) },
+    { type: "view", label: "Wissensgraph", sub: "als Netz", run: () => knowledge.openGraph("") },
+    { type: "view", label: "Fortschritt", sub: "was ZEUS getan und geprüft hat", run: () => views.open("activity") },
+    { type: "view", label: "Korrekturen", sub: "was du korrigiert hast", run: () => views.open("corrections") },
+    { type: "view", label: "Fähigkeiten", sub: "was ZEUS kann", run: () => views.open("capabilities") },
+    { type: "view", label: "Diagnostics", sub: "technischer Zustand (Erweitert)", run: () => views.open("diagnostics") },
+    { type: "view", label: "Versionen", sub: "Stände, Kandidaten, Rückkehr", run: () => views.open("release") },
     { type: "view", label: "Erweitert", sub: "Systembesitz, technische Diagnose", run: () => views.open("settings", { tab: "advanced" }) },
-    { type: "view", label: "Voice Studio", sub: "wake word, microphone, voice", run: () => views.open("voice") },
+    { type: "view", label: "Voice", sub: "Wake-Wort, Mikrofon, Stimme", run: () => views.open("voice") },
     { type: "action", label: "Neuer Chat", sub: "ein frisches Gespräch", run: () => window.zeus?.sidebar?.newChat?.() },
-    { type: "action", label: "Hide window", sub: "ZEUS keeps running; ZEUS.exe brings it back", run: () => api("/api/window/hide", { reason: "palette" }) },
-    { type: "action", label: "Restart ZEUS", sub: "planned restart under the supervisor", run: async () => { if (confirm("Restart ZEUS now?")) api("/api/restart", { reason: "owner (palette)" }); } },
-    { type: "action", label: "ZEUS vollständig beenden", sub: "window, voice, core, supervisor", run: async () => { if (confirm("ZEUS vollständig beenden?")) api("/api/quit", { reason: "owner (palette)" }); } },
-    { type: "action", label: state.ui.reducedMotion ? "Enable motion" : "Reduce motion", sub: "accessibility", run: () => { setPref("reducedMotion", !state.ui.reducedMotion); document.body.classList.toggle("reduced-motion", state.ui.reducedMotion); } },
-    { type: "action", label: "Build & verify a ZEUS.exe candidate", sub: "release pipeline", run: () => api("/api/release/build", { verify: true }) },
-    { type: "action", label: "Back to ZEUS", sub: "presence mode", run: () => views.close(), keys: "Esc" },
+    { type: "action", label: "Fenster ausblenden", sub: "ZEUS läuft weiter; ZEUS.exe holt es zurück", run: () => api("/api/window/hide", { reason: "palette" }) },
+    { type: "action", label: "ZEUS neu starten", sub: "geplanter Neustart", run: async () => { if (confirm("ZEUS jetzt neu starten?")) api("/api/restart", { reason: "owner (palette)" }); } },
+    { type: "action", label: "ZEUS vollständig beenden", sub: "Fenster, Stimme, Kern, alles", run: async () => { if (confirm("ZEUS vollständig beenden?")) api("/api/quit", { reason: "owner (palette)" }); } },
+    { type: "action", label: state.ui.reducedMotion ? "Bewegung einschalten" : "Bewegung reduzieren", sub: "Barrierefreiheit", run: () => { setPref("reducedMotion", !state.ui.reducedMotion); document.body.classList.toggle("reduced-motion", state.ui.reducedMotion); } },
+    { type: "action", label: "Kandidaten bauen und prüfen", sub: "Erweitert", run: () => api("/api/release/build", { verify: true }) },
+    { type: "action", label: "Zurück zu ZEUS", sub: "zum Chat", run: () => views.close(), keys: "Esc" },
   ];
   list.push(
-    { type: "graph", label: "Show blocked projects", sub: "galaxy filtered to BLOCKED", run: () => views.open("projects", { filter: "blocked" }) },
-    { type: "graph", label: "Hide archived", sub: "the default galaxy: archived and hidden projects stay out", run: () => views.open("projects", {}) },
-    { type: "graph", label: "Show everything", sub: "every project, attempt and artifact", run: () => views.open("projects", { everything: "1" }) },
-    { type: "graph", label: "Projects untouched for 30 days", sub: "idle projects only", run: () => views.open("projects", { idle_days: "30" }) },
-    { type: "graph", label: "Projects using screen capture", sub: "by capability", run: () => views.open("projects", { uses: "screen" }) },
-    { type: "view", label: "Thoughts", sub: "what ZEUS noticed on its own", run: () => views.open("thoughts") },
-    { type: "view", label: "Schach Analyse", sub: "screen chess assistant", run: () => views.open("chess") },
+    { type: "graph", label: "Blockierte Projekte", sub: "nur blockierte", run: () => views.open("projects", { filter: "blocked" }) },
+    { type: "graph", label: "Archivierte ausblenden", sub: "die normale Ansicht", run: () => views.open("projects", {}) },
+    { type: "graph", label: "Alles zeigen", sub: "jedes Projekt, jeder Anlauf", run: () => views.open("projects", { everything: "1" }) },
+    { type: "graph", label: "Projekte seit 30 Tagen unberührt", sub: "nur ruhende", run: () => views.open("projects", { idle_days: "30" }) },
+    { type: "graph", label: "Projekte mit Bildschirmaufnahme", sub: "nach Fähigkeit", run: () => views.open("projects", { uses: "screen" }) },
+    { type: "view", label: "Gedanken", sub: "was ZEUS von selbst bemerkt hat", run: () => views.open("thoughts") },
+    { type: "view", label: "Schach-Analyse", sub: "Schachhilfe am Bildschirm", run: () => views.open("chess") },
   );
   if (current?.id === "projects" && current.params?.id) {
-    list.unshift({ type: "project", label: "Ask ZEUS about this project", run: () => chat.send("What is the state of this project, what blocks it, and what is next?") });
-    list.unshift({ type: "project", label: "Continue this project", run: () => chat.send("Continue the current project.") });
+    list.unshift({ type: "project", label: "ZEUS zu diesem Projekt fragen", run: () => chat.send("Wie steht dieses Projekt, was blockiert es, und was kommt als Nächstes?") });
+    list.unshift({ type: "project", label: "Projekt fortsetzen", run: () => chat.send("Setze das aktuelle Projekt fort.") });
   }
   return list;
 }
@@ -145,7 +145,7 @@ function paint() {
     row.onclick = () => run(item);
     list.append(row);
   });
-  if (!items.length) list.append(el("div", { class: "empty", style: { padding: "12px" }, text: "Nothing matches." }));
+  if (!items.length) list.append(el("div", { class: "empty", style: { padding: "12px" }, text: "Nichts passt." }));
 }
 
 function run(item) {

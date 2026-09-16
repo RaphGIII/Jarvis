@@ -28,7 +28,7 @@ export async function toggle() {
   try {
     micStream = micStream || (await navigator.mediaDevices.getUserMedia({ audio: true }));
   } catch (err) {
-    addTurn("error", "Error", "microphone unavailable: " + err.message);
+    addTurn("error", "Fehler", "Mikrofon nicht verfügbar: " + err.message);
     return;
   }
   playback.stop();

@@ -298,7 +298,7 @@ function contextMenu(n, sx, sy) {
       item("Im Explorer öffnen", () => api("/api/fs/open", { path: libAbs(d.entry) })),
       d.entry.type === "file" && ["md", "txt"].includes(d.entry.ext) ? item("Lesen", () => inspectLibrary(d.entry)) : null,
       d.entry.type === "file" && d.entry.ext === "pdf" ? item("PDF zusammenfassen", () => summarizePdf(libAbs(d.entry))) : null,
-      item("In Wissen ingestieren", async () => { const r = await api("/api/knowledge/ingest", { path: libAbs(d.entry) }); alert(r.ok ? "ingestiert" : (r.error || "fehlgeschlagen")); }));
+      item("Ins Wissen aufnehmen", async () => { const r = await api("/api/knowledge/ingest", { path: libAbs(d.entry) }); alert(r.ok ? "ingestiert" : (r.error || "fehlgeschlagen")); }));
   }
   const menu = el("div", { class: "galaxy-menu choice" }, el("h6", { text: n.label }), ...entries.filter(Boolean));
   const off = (n.r || 8) * galaxy.cam.z + 20;
@@ -456,29 +456,29 @@ async function mountList(pane, params) {
 /* Typed writes into the one graph — unchanged, reachable from both modes. */
 function composer(reload) {
   const box = el("div");
-  const title = el("input", { placeholder: "Title", style: { minWidth: "220px" } });
+  const title = el("input", { placeholder: "Titel", style: { minWidth: "220px" } });
   const type = el("select", {}, ...["technical_finding", "note", "decision", "concept", "document", "verified_lesson", "device", "project", "idea"].map((t) => el("option", { value: t, text: t })));
-  const text = el("textarea", { placeholder: "Content", rows: 3, style: { width: "100%" } });
-  const links = el("input", { placeholder: "Concerns (comma-separated): ZEUS, Voice, Wakeword", style: { minWidth: "280px" } });
+  const text = el("textarea", { placeholder: "Inhalt", rows: 3, style: { width: "100%" } });
+  const links = el("input", { placeholder: "Betrifft (mit Komma): ZEUS, Voice, Wake-Wort", style: { minWidth: "280px" } });
   const relation = el("select", {}, ...["concerns", "applies_to", "part_of", "relates_to", "supports", "contradicts", "depends_on", "about"].map((t) => el("option", { value: t, text: t })));
   const result = el("div", { class: "empty" });
   const create = button("Create node", async () => {
     const r = await api("/api/knowledge/create", { title: title.value, text: text.value, type: type.value, links: links.value.split(",").map((l) => l.trim()).filter(Boolean).map((t) => ({ target: t, relation: relation.value })) });
-    result.textContent = r.ok ? `stored ${r.type} „${r.title}“ (${r.node_id}) · read back: ${r.read_back ? "yes" : "NO"} · searchable: ${r.searchable ? "yes" : "NO"} · relations: ${(r.relations || []).map((x) => `${x.relation}→${x.target}`).join(", ") || "none"}` : (r.error || "failed");
+    result.textContent = r.ok ? `gespeichert: ${r.type} „${r.title}“ · zurückgelesen: ${r.read_back ? "ja" : "NEIN"} · searchable: ${r.searchable ? "yes" : "NO"} · relations: ${(r.relations || []).map((x) => `${x.relation}→${x.target}`).join(", ") || "none"}` : (r.error || "failed");
     if (r.ok) { title.value = ""; text.value = ""; reload(); }
   }, "primary");
-  const src = el("input", { placeholder: "Link: source title", style: { minWidth: "180px" } });
-  const dst = el("input", { placeholder: "target title", style: { minWidth: "180px" } });
+  const src = el("input", { placeholder: "Verknüpfung: von (Titel)", style: { minWidth: "180px" } });
+  const dst = el("input", { placeholder: "nach (Titel)", style: { minWidth: "180px" } });
   const rel2 = el("select", {}, ...["concerns", "applies_to", "part_of", "relates_to", "supports", "contradicts", "depends_on"].map((t) => el("option", { value: t, text: t })));
   const link = button("Link", async () => {
     const r = await api("/api/knowledge/link", { source: src.value, target: dst.value, relation: rel2.value });
     result.textContent = r.ok ? `${r.source} —${r.relation}→ ${r.target} (${r.edge_id})` : (r.error || "failed");
     if (r.ok) reload();
   });
-  const path = el("input", { placeholder: "Ingest: file or folder path", style: { minWidth: "280px" } });
+  const path = el("input", { placeholder: "Aufnehmen: Pfad zu Datei oder Ordner", style: { minWidth: "280px" } });
   const ingest = button("Ingest document", async () => {
     const r = await api("/api/knowledge/ingest", { path: path.value });
-    result.textContent = r.ok ? `ingested: ${r.title || r.files_ingested + " file(s)"}` : (r.error || "failed");
+    result.textContent = r.ok ? `aufgenommen: ${r.title || r.files_ingested + " Datei(en)"}` : (r.error || "failed");
     if (r.ok) reload();
   });
   box.append(el("div", { class: "toolbar" }, title, type, relation), text, el("div", { class: "toolbar" }, links, create),
@@ -493,11 +493,11 @@ export async function inspectNode(node) {
   const inc = (detail.incoming || []).map((it) => link(`← ${it.edge.type}`, it.node));
   views.inspect(node.title,
     section("Node", kv("type", node.type), kv("id", node.id), kv("source", node.source || node.provenance || ""), kv("updated", node.updated_at || ""), kv("confidence", node.confidence ?? "")),
-    node.body ? section("Content", el("div", { class: "kv" }, el("span", { class: "v", text: String(node.body).slice(0, 1200) }))) : null,
-    section(`Forward links (${out.length})`, ...(out.length ? out : [el("div", { class: "empty", text: "none" })])),
-    section(`Backlinks (${inc.length})`, ...(inc.length ? inc : [el("div", { class: "empty", text: "none" })])),
+    node.body ? section("Inhalt", el("div", { class: "kv" }, el("span", { class: "v", text: String(node.body).slice(0, 1200) }))) : null,
+    section(`Verweise (${out.length})`, ...(out.length ? out : [el("div", { class: "empty", text: "keine" })])),
+    section(`Rückverweise (${inc.length})`, ...(inc.length ? inc : [el("div", { class: "empty", text: "keine" })])),
     el("div", { class: "toolbar" },
-      button("Ask ZEUS", () => chat.send(`Tell me about "${node.title}" from my knowledge graph.`), "primary"),
+      button("Ask ZEUS", () => chat.send(`Erzähl mir aus meinem Wissen etwas zu „${node.title}“.`), "primary"),
       button("Fokus in der Galaxy", () => { galaxy ? galaxy.focusText(node.title) : views.open("knowledge", { q: node.title }); }),
       button("Löschen", async () => {
         if (!confirm(`„${node.title}“ endgültig löschen?`)) return;
@@ -523,15 +523,15 @@ export async function openGraph(query = "", focusId = "") {
     window.addEventListener("resize", () => graphOverlay.resize());
     $("btnGraphClose").onclick = closeGraph;
     $("graphSearch").addEventListener("input", (e) => graphOverlay?.setFilter(e.target.value));
-    $("btnAskAbout").onclick = () => { if (graphNode) { closeGraph(); chat.send(`Tell me about "${graphNode.title}" from my knowledge graph.`); } };
-    $("btnReadAloud").onclick = () => { if (graphNode) { api("/api/voice", { enabled: true, speak_replies: true }); chat.send(`Read this note aloud: "${graphNode.title}". ${graphNode.body || ""}`.slice(0, 1500)); } };
+    $("btnAskAbout").onclick = () => { if (graphNode) { closeGraph(); chat.send(`Erzähl mir aus meinem Wissen etwas zu „${graphNode.title}“.`); } };
+    $("btnReadAloud").onclick = () => { if (graphNode) { api("/api/voice", { enabled: true, speak_replies: true }); chat.send(`Lies mir diese Notiz vor: „${graphNode.title}“. ${graphNode.body || ""}`.slice(0, 1500)); } };
     $("btnExpand").onclick = async () => { if (!graphNode) return; const data = await api("/api/knowledge/graph", { query: graphNode.title, limit: 400 }); graphOverlay.load(data); graphOverlay.focusOn(graphNode.id); };
   }
   graphOverlay.resize();
   graphOverlay.start();
   const data = await api("/api/knowledge/graph", { query, limit: 400 });
   graphOverlay.load(data);
-  $("graphCount").textContent = `${(data.nodes || []).length} nodes · ${(data.edges || []).length} links` + (data.truncated ? " (truncated)" : "");
+  $("graphCount").textContent = `${(data.nodes || []).length} Knoten · ${(data.edges || []).length} Verknüpfungen` + (data.truncated ? " (truncated)" : "");
   if (focusId) { graphOverlay.focusOn(focusId); const target = graphOverlay.byId.get(focusId); if (target) showNode(target); }
 }
 
@@ -547,7 +547,7 @@ async function showNode(node) {
   card.hidden = false;
   $("nodeType").textContent = node.type;
   $("nodeTitle").textContent = node.title;
-  $("nodeBody").textContent = node.body ? node.body.slice(0, 600) : "(no content)";
+  $("nodeBody").textContent = node.body ? node.body.slice(0, 600) : "(kein Inhalt)";
   const links = clear($("nodeLinks"));
   const detail = await api("/api/knowledge/node", { id: node.id });
   const add = (title, items, dir) => {
@@ -558,6 +558,6 @@ async function showNode(node) {
         onClick: () => { graphOverlay.focusOn(item.node.id); const t = graphOverlay.byId.get(item.node.id); if (t) showNode(t); } }));
     }
   };
-  add("Forward links", detail.outgoing || [], "out");
-  add("Backlinks", detail.incoming || [], "in");
+  add("Verweise", detail.outgoing || [], "out");
+  add("Rückverweise", detail.incoming || [], "in");
 }

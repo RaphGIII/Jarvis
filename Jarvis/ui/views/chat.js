@@ -236,7 +236,7 @@ function scrollDown() {
    checks behind a click. The verdict word comes from the receipt's own
    `verified` flag, never from any text the model wrote. */
 export function addReceipt(receipt) {
-  const verdict = receipt.verified ? "verified" : receipt.ok ? "ran, unverified" : "failed";
+  const verdict = receipt.verified ? "geprüft" : receipt.ok ? "ausgeführt, ungeprüft" : "gescheitert";
   const what = addTurn(`receipt ${receipt.verified ? "good" : "bad"}`, `${receipt.kind} · ${verdict}`,
                        receipt.detail || receipt.kind || "action");
   if (!what) return;

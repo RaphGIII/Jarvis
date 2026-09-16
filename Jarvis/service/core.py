@@ -625,14 +625,16 @@ class JarvisCore:
             return None
         record = {**verdict.to_dict(), "request_id": request_id, "text": text[:200]}
         if authorization and self.security.authorized(authorization, PROTECTED_MEMORY):
-            # granted: the primitives that write memory may run for THIS request, and the record says so
+            # granted: the memory is written HERE, directly and only -- the sentence never reaches the
+            # router, the planner, an engineering spec or a paid model.  The grant also lets the
+            # knowledge primitive accept exactly these words should a UI path re-submit them.
             grants = self._memory_grants()
             grants[text.strip()] = record
             for key in list(grants)[:-50]:
                 del grants[key]
             self.emit(EventType.TOOL, {"summary": f"geschützte Erinnerung freigegeben ({verdict.reason})",
                                        "protected_memory": {**record, "decision": "authorized"}}, scope=scope)
-            return None
+            return self._apply_protected_memory(text, verdict, scope=scope, request_id=request_id)
         self.emit(EventType.TOOL, {"summary": f"geschützte Erinnerung wartet auf dein Passwort ({verdict.reason})",
                                    "protected_memory": {**record, "decision": "held"}}, scope=scope)
         self.emit(EventType.NOTIFICATION, {"kind": "needs_auth", "scope": PROTECTED_MEMORY,
@@ -643,6 +645,35 @@ class JarvisCore:
         self._deliver(self.PROTECTED_MEMORY_HELD_DE if de else self.PROTECTED_MEMORY_HELD_EN, scope=scope, backend="policy",
                       final_state=JarvisState.WAITING, context_text="[protected memory write: awaiting the owner's password]")
         return {"ok": True, "held": True, "needs_auth": PROTECTED_MEMORY, "request_id": request_id, "accepted": text}
+
+    def _apply_protected_memory(self, text: str, verdict: Any, *, scope: str, request_id: str) -> dict[str, Any]:
+        """The one write an authorized protected memory performs: a protected note in the owner's knowledge.
+
+        Personality itself is not rewritten from a chat sentence -- that is the owner's editor under
+        Einstellungen › Persönlichkeit, behind its own gate -- so a directive is remembered as the
+        owner's wish and said so.
+        """
+
+        import re as _re
+
+        body = " ".join(str(text or "").split())
+        title = _re.sub(r"^(?:merk(?:e)?\s+dir[,:]?\s*|speicher(?:e)?[,:]?\s*|notier(?:e)?[,:]?\s*|[üu]berschreib(?:e)?[,:]?\s*|behalte?[,:]?\s*|dass\s+)+", "", body, flags=_re.I).strip(" .:") or "Erinnerung"
+        result = self.knowledge_create(f"Geschützt: {title[:70]}", body, type="note", tags=["geschützt", "owner", *verdict.subjects],
+                                       provenance="owner (Passwort-Freigabe)", metadata={"protected": True, "request_id": request_id, "reason": verdict.reason},
+                                       confidence=1.0, _granted=True)
+        de = self.language.startswith("de")
+        if not result.get("ok"):
+            self._deliver(("Die geschützte Erinnerung konnte nicht gespeichert werden." if de else "The protected memory could not be stored."),
+                          scope=scope, backend="policy", final_state=JarvisState.ERROR, context_text="[protected memory write failed]")
+            return {"ok": False, "error": result.get("error", "write failed"), "request_id": request_id}
+        note = ""
+        if "personality" in verdict.subjects or verdict.directive:
+            note = (" Meine Persönlichkeit selbst änderst du unter Einstellungen › Persönlichkeit." if de
+                    else " My personality itself is edited under Settings › Persönlichkeit.")
+        self._deliver((f"Gespeichert – geschützt, mit deiner Freigabe: „{title[:120]}“.{note}" if de
+                       else f"Stored – protected, with your authorization: “{title[:120]}”.{note}"),
+                      scope=scope, backend="policy", final_state=JarvisState.IDLE, context_text="[protected memory stored]")
+        return {"ok": True, "stored": True, "node_id": result.get("node_id"), "request_id": request_id}
 
     def _protected_memory_allowed(self, title: str, text: str, *, request: str = "", authorization: str = "") -> dict[str, Any] | None:
         """None when a memory write may happen; otherwise the needs_auth answer (and an audit line)."""

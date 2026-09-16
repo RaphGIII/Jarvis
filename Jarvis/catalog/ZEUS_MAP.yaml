@@ -977,7 +977,7 @@ packages:
       - tests/test_ui_self_development.py
     - path: jarvis/window.py
       purpose: The interface in its own desktop window, not in the owner's browser.
-      lines: 335
+      lines: 341
       public: 7
       tests: []
   knowledge:
@@ -1907,7 +1907,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8952
+      lines: 8983
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1947,7 +1947,7 @@ packages:
       tests: []
     - path: service/desktop.py
       purpose: The desktop window as something the core owns, shows, hides and finds again.
-      lines: 711
+      lines: 743
       public: 10
       tests:
       - tests/test_desktop_lifecycle.py
@@ -2692,7 +2692,7 @@ packages:
       tests: []
     - path: zeus_supervisor/supervisor.py
       purpose: 'The loop: start ZEUS, prove it is up, keep it up, undo what breaks it.'
-      lines: 822
+      lines: 846
       public: 1
       tests:
       - tests/test_desktop_lifecycle.py

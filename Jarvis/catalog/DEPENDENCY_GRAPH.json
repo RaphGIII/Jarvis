@@ -922,7 +922,8 @@
    "service/core.py"
   ],
   "service/desktop.py": [
-   "service/lifecycle.py"
+   "service/lifecycle.py",
+   "zeus_supervisor/supervisor.py"
   ],
   "service/doctor.py": [
    "service/core.py"
@@ -2359,7 +2360,8 @@
   "zeus_supervisor/relaunch.py": [],
   "zeus_supervisor/status_page.py": [],
   "zeus_supervisor/supervisor.py": [
-   "jarvis/window.py"
+   "jarvis/window.py",
+   "service/desktop.py"
   ]
  },
  "nodes": [

@@ -220,6 +220,14 @@ Live geprüft am 2026-09-09 auf einer zweiten Instanz (`python -m jarvis.serve -
 
 **Desktop.** Das Fenster war bereits rahmenlos (Caption/ThickFrame entfernt, 1920×1080); neu sind die eigenen Fenster-Steuerelemente. Offen: der Moment zwischen Chromium-Start und Rahmenentfernung (Watcher 250 ms) zeigt kurz ein gerahmtes Fenster.
 
+## Sprint 13 (2026-09-16): Abschlusskorrekturen – geschützte Erinnerung beweisbar, echtes Desktop-Fenster, deutsche Oberfläche
+
+**Geschützte Erinnerung kann nichts auslösen.** Eine geschützte Erinnerung wird in `send_message` gehalten, bevor Routing, Planer, EngineeringSpec oder ein Modell überhaupt beteiligt sind. Nach der Passwort-Freigabe wird sie *direkt* geschrieben (`_apply_protected_memory`): ein geschützter Knoten im Wissensgraph („Geschützt: …“, Provenienz „owner (Passwort-Freigabe)“), Antwort „Gespeichert – geschützt, mit deiner Freigabe: …“ – der Satz erreicht nie den Router. Persönlichkeit selbst wird nicht aus dem Chat umgeschrieben (Einstellungen › Persönlichkeit, eigenes Gate); eine Direktive wird als Wunsch gespeichert und das gesagt. Regression: `tests/test_protected_memory_gate.py` zählt vor/nach drei repräsentativen Sätzen Selfdev-Missionen, Missionen, Ledger-Einträge, Monatsausgaben, Wissensknoten und Modell-Prompts – gehalten: alles unverändert; freigegeben: genau ein Knoten je Satz, sonst nichts.
+
+**Desktop-Fenster ohne Rahmen von der ersten Sekunde.** Chromium kann nur ein gerahmtes Fenster erzeugen; deshalb wird es *außerhalb des Bildschirms* erzeugt (`--window-position=-32000,-32000` statt `--start-maximized`, `jarvis/window.py`), vom Desktop-Shell entrahmt, mit Taskbar-Identität (AppUserModelID `ZEUS.Desktop`, Icon `ui/zeus.ico`) versehen und erst dann auf den Monitor gesetzt (`DesktopWindow.reveal`, vom Supervisor direkt nach dem Start in einem Hilfsthread aufgerufen; der Kern übernimmt dasselbe Fenster später idempotent). Kann der Modus nicht angewendet werden, wird das Fenster als normales Fenster platziert – nie außerhalb gelassen. Alt+Tab, Minimieren, Schließen und F11 bleiben wie zuvor.
+
+**Sprache.** Zeitangaben („vor 3 Min.“), Missions- und Fähigkeiten-Inspektoren, Projekt-Tiefenansicht, Palette, Wissens-Editor, Fortschritt, Korrekturen, Gedanken, Schach und die sichtbaren Voice-Beschriftungen in knappem Deutsch. Unverändert: Quellcode, Erweitert › Diagnostics/Provider/Versionen, technische Provenienz.
+
 ## Was ausdrücklich noch fehlt (ehrlich)
 
 Aus P0:
