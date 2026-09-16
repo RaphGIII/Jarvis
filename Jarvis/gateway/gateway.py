@@ -185,6 +185,8 @@ class GatewayReply:
     aborted: bool = False
     #: "provider_stream" or "complete_response" -- how the text arrived.  Truthful telemetry, never a claim to the owner.
     delivery_mode: str = "complete_response"
+    #: The model that actually served when a routing provider chose one (openrouter/free); "" = ``model`` itself.
+    served_model: str = ""
 
     #: A stream that ended without the provider saying why: the answer may be whole, but nobody said so.
     STREAM_ENDED = "stream_ended_without_finish_reason"
@@ -211,6 +213,7 @@ class GatewayReply:
             "identity_rewrites": self.identity_rewrites, "decision": self.decision.to_dict(),
             "privacy": self.privacy.to_dict() if self.privacy else None, "reservation_id": self.reservation_id,
             "route_attempts": list(self.route_attempts), "final_selected_model": self.model, "completion": self.completion(),
+            "served_model": self.served_model or self.model,
         }
 
 
@@ -560,8 +563,9 @@ class ModelGateway:
         if prepared.reservation is not None:
             self.governor.release(prepared.reservation, reason=exc.status.value)
         if exc.status.is_outage and not isinstance(exc, FreeIntelligenceUnavailable):
-            self.health.note(str(getattr(exc, "provider", "") or prepared.provider.name), exc.status, detail=str(exc),
-                             retry_after_seconds=exc.retry_after_seconds, model=str(getattr(exc, "model", "") or ""))
+            failed = str(getattr(exc, "provider", "") or prepared.provider.name)
+            self.health.note(failed, exc.status, detail=str(exc), retry_after_seconds=exc.retry_after_seconds,
+                             model=str(getattr(exc, "model", "") or ""), reset_zone=self._reset_zone(failed))
         elif isinstance(exc, FreeIntelligenceUnavailable):
             # Every route of a provider failed: the provider is out, for the
             # dominant reason (a spent quota on every model is the provider's
@@ -577,7 +581,7 @@ class ModelGateway:
                 except ValueError:
                     continue
                 if dominant.is_outage:
-                    self.health.note(name, dominant, detail=str(exc)[:200])
+                    self.health.note(name, dominant, detail=str(exc)[:200], reset_zone=self._reset_zone(name))
         attempts = list(route_attempts if route_attempts is not None else (getattr(exc, "attempts", []) or []))
         self._observe(prepared.decision, prepared.binding, prepared.provider.name, goal_verified=False, failure_class=exc.status.value,
                       mode=prepared.mode, latency=time.perf_counter() - prepared.started, route_attempts=attempts,
@@ -603,7 +607,8 @@ class ModelGateway:
                               latency_seconds=time.perf_counter() - prepared.started, identity_rewrites=rewrites, privacy=prepared.privacy,
                               reservation_id=prepared.reservation.reservation_id if prepared.reservation else "", route_attempts=route_attempts,
                               finish_reason=str(getattr(reply, "finish_reason", "") or ""), truncated=truncated_by_limit(getattr(reply, "finish_reason", "")),
-                              output_budget=dict(decision.output_budget), max_output_tokens=prepared.max_out, provider_hard_limit=prepared.hard_limit)
+                              output_budget=dict(decision.output_budget), max_output_tokens=prepared.max_out, provider_hard_limit=prepared.hard_limit,
+                              served_model=str(getattr(reply, "served_model", "") or ""))
         self._remember(result)
         self._track(prepared.request.task_id, result)
         return result
@@ -847,11 +852,18 @@ class ModelGateway:
             return prepared.ticket
         return self.transport.issue(provider=provider, role=prepared.decision.role, mode=prepared.mode, cost_class=CostClass.ZERO, reservation=None)
 
+    def _reset_zone(self, provider_name: str) -> str:
+        """The zone whose midnight ends the provider's daily allowance ("" = the health module's default)."""
+
+        provider = self.config.providers.get(provider_name)
+        return str(((provider.options or {}) if provider is not None else {}).get("daily_quota_reset_zone") or "")
+
     def _note_route(self, provider_name: str, model: str, exc: GatewayError | None) -> None:
         if exc is None:
             self.health.note(provider_name, ProviderStatus.OK, model=model)
         elif exc.status.is_outage:
-            self.health.note(provider_name, exc.status, detail=str(exc), retry_after_seconds=exc.retry_after_seconds, model=model)
+            self.health.note(provider_name, exc.status, detail=str(exc), retry_after_seconds=exc.retry_after_seconds, model=model,
+                             reset_zone=self._reset_zone(provider_name))
 
     def _stream_model_pool(self, prepared: _Prepared, route_attempts: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         """Stream from the selected route; the zero-cost pool walks its routes, and a stream-layer failure
@@ -905,13 +917,15 @@ class ModelGateway:
                 shown = False
                 try:
                     got_reply = False
+                    served = ""
                     for event in adapter.stream(self.transport, ticket, provider, binding, prepared.provider_request):
                         if "text" in event:
                             shown = True
                         if "reply" in event and event["reply"] is not None:
                             got_reply = True
-                            event["reply"].model = event["reply"].model or route.model_id
+                            event["reply"].model = route.model_id
                             event["reply"].provider = provider.name
+                            served = str(getattr(event["reply"], "served_model", "") or "")
                         yield event
                     if not shown:
                         # An adapter always closes its stream with a reply event; a stream that carried no text is an empty answer
@@ -920,7 +934,8 @@ class ModelGateway:
                                            role=decision.role, provider=provider.name, model=route.model_id)
                     route_attempts.append({"provider": provider.name, "model": route.model_id, "attempt": attempt, "failure_class": "ok",
                                            "http_status": None, "retry_delay_seconds": 0.0,
-                                           "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "provider_stream"})
+                                           "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "provider_stream",
+                                           **({"served_model": served} if served else {})})
                     self._note_route(provider.name, route.model_id, None)
                     self._emit_free_pool(decision, provider.name, route_attempts, final_model=route.model_id, started=prepared.started,
                                          monetary_cost_eur=0.0, goal_verified=None)
@@ -949,10 +964,11 @@ class ModelGateway:
                             self._note_route(provider.name, route.model_id, second)
                             break
                         reply.delivery_mode, reply.provider = "complete_response", provider.name
-                        reply.model = reply.model or route.model_id
+                        reply.model = route.model_id
                         route_attempts.append({"provider": provider.name, "model": route.model_id, "attempt": attempt, "failure_class": "ok",
                                                "http_status": None, "retry_delay_seconds": 0.0, "latency_seconds": round(reply.latency_seconds, 3),
-                                               "delivery_mode": "complete_response"})
+                                               "delivery_mode": "complete_response",
+                                               **({"served_model": reply.served_model} if reply.served_model else {})})
                         self._note_route(provider.name, route.model_id, None)
                         self._emit_free_pool(decision, provider.name, route_attempts, final_model=route.model_id, started=prepared.started,
                                              monetary_cost_eur=0.0, goal_verified=None)
@@ -1053,10 +1069,11 @@ class ModelGateway:
                 try:
                     reply = route_adapter.call(self.transport, route_ticket, route_provider, route_binding, provider_request)
                     reply.provider = route_provider.name
-                    reply.model = reply.model or route.model_id
+                    reply.model = route.model_id
                     attempts.append({"provider": route_provider.name, "model": route.model_id, "attempt": attempt, "failure_class": "ok",
                                      "http_status": None, "retry_delay_seconds": 0.0,
-                                     "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "complete_response"})
+                                     "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "complete_response",
+                                     **({"served_model": reply.served_model} if getattr(reply, "served_model", "") else {})})
                     self._note_route(route_provider.name, route.model_id, None)
                     self._emit_free_pool(decision, route_provider.name, attempts, final_model=route.model_id, started=started,
                                          monetary_cost_eur=0.0, goal_verified=None)
@@ -1103,6 +1120,11 @@ class ModelGateway:
     def _is_transient_free_pool_error(self, exc: GatewayError) -> bool:
         # A daily quota does not clear in two seconds: the next pool model is
         # tried at once.  A per-minute limit or a 5xx gets the bounded retry.
+        # A limit whose own Retry-After is longer than the bounded retry would
+        # wait is not waited for here: the next route answers now, and the
+        # route's cool-down carries the provider's time.
+        if exc.retry_after_seconds and float(exc.retry_after_seconds) > FREE_POOL_MAX_DELAY_SECONDS:
+            return False
         return exc.http_status in TRANSIENT_FREE_POOL_HTTP_STATUSES and exc.status is not ProviderStatus.QUOTA_EXHAUSTED
 
     def _free_pool_retry_delay(self, attempt: int) -> float:
@@ -1220,7 +1242,7 @@ class ModelGateway:
                                 "task_class": reply.decision.task.task_class.value, "mode": reply.decision.mode.value,
                                 "offline_fallback": reply.decision.offline_fallback,
                                 "route_attempts": list(reply.route_attempts), "final_selected_model": reply.model,
-                                "goal_verified": None})
+                                "served_model": reply.served_model or reply.model, "goal_verified": None})
             del self.recent[:-100]
         self._emit("gateway.call", self.recent[-1])
 
@@ -1386,7 +1408,7 @@ class GatewayBrainProvider:
     def _note_reply(self, reply: GatewayReply) -> None:
         self.last_reply = reply
         self.last_decision = reply.decision.to_dict()
-        self.last_provenance = {"role": reply.role, "provider": reply.provider, "model": reply.model,
+        self.last_provenance = {"role": reply.role, "provider": reply.provider, "model": reply.model, "served_model": reply.served_model or reply.model,
                                 "offline_fallback": bool(reply.decision.offline_fallback), "route_attempts": list(reply.route_attempts),
                                 "actual_eur": reply.actual_eur, "estimated_eur": reply.estimated_eur, "usage": dict(reply.usage),
                                 "latency_seconds": round(reply.latency_seconds, 3), "streamed": False, **reply.completion()}

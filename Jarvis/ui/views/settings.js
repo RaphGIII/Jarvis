@@ -307,7 +307,7 @@ async function advanced(body) {
     diag.append(el("h4", { text: "Kostenlose Routen" }), routes);
     const recent = el("div", { class: "note" });
     for (const r of (status.recent || []).slice(-8).reverse()) {
-      recent.append(el("div", { text: `${new Date(r.at * 1000).toLocaleTimeString()} · ${r.role} · ${r.provider}/${r.model} · €${Number(r.actual_eur || 0).toFixed(4)} · ${Number(r.latency_seconds || 0).toFixed(1)}s` }));
+      recent.append(el("div", { text: `${new Date(r.at * 1000).toLocaleTimeString()} · ${r.role} · ${r.provider}/${r.model}${r.served_model && r.served_model !== r.model ? ` (${r.served_model})` : ""} · €${Number(r.actual_eur || 0).toFixed(4)} · ${Number(r.latency_seconds || 0).toFixed(1)}s` }));
     }
     diag.append(el("h4", { text: "Letzte Generationen" }), recent);
     body.append(diag);

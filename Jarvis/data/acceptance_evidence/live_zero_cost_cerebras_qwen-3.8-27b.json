@@ -1,0 +1,39 @@
+{
+ "provider": "cerebras",
+ "model": "qwen-3.8-27b",
+ "base_url": "https://api.cerebras.ai",
+ "at": "2026-09-16T18:00:01+0200",
+ "provider_config": {
+  "metered": false,
+  "pricing": "none",
+  "kind": "openai_compatible"
+ },
+ "spend_lines_before": 12,
+ "raw": {
+  "status": 402,
+  "seconds": 0.49,
+  "headers": {},
+  "error": "{\"message\":\"Payment required to access this resource. Visit your billing tab.\",\"type\":\"payment_required_error\",\"param\":\"quota\",\"code\":\"payment_required\"}",
+  "id": null,
+  "model_served": null,
+  "provider_served": null,
+  "usage": null,
+  "finish_reason": null,
+  "text": null
+ },
+ "zeus_stream": {
+  "chunks": 0,
+  "text": "",
+  "error": "GatewayError: quota_exhausted from cerebras (reasoning.free): HTTP 402: {\"message\":\"Payment required to access this resource. Visit your billing tab.\",\"type\":\"payment_required_error\",\"param\":\"quota\",\"code\":\"payment_required\"}",
+  "seconds": 0.28
+ },
+ "zeus_structured": {
+  "error": "GatewayError: quota_exhausted from cerebras (reasoning.free): HTTP 402: {\"message\":\"Payment required to access this resource. Visit your billing tab.\",\"type\":\"payment_required_error\",\"param\":\"quota\",\"code\":\"payment_required\"}",
+  "seconds": 0.35
+ },
+ "transport": {
+  "issued": 2,
+  "refused": []
+ },
+ "spend_lines_after": 12
+}

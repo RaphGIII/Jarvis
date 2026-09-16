@@ -247,7 +247,7 @@ def test_the_budget_reaches_the_provider_and_the_estimate(tmp_path, cfg, creds):
 def test_provider_hard_limits_are_never_exceeded(tmp_path, creds):
     document = json.loads(json.dumps(GatewayConfig.defaults().to_dict()))
     document["providers"]["gemini"]["enabled"] = True
-    document["providers"]["gemini"]["options"] = {"output_hard_limit": 1500}
+    document["providers"]["gemini"]["options"]["output_hard_limit"] = 1500  # the routes (and their priorities) stay
     from gateway.config import _parse
 
     cfg = _parse(document, source="test")

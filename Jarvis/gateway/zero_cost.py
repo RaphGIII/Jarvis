@@ -11,11 +11,13 @@ account is zero.  "Free tier" in documentation, "free" in a model name, a
 trial or a promotional credit are not evidence.  An unverified route is
 listed (so the owner sees it) and never used.
 
-Ordering: the primary vendor's models in their configured order first,
-then the independent providers, so one vendor's quota exhaustion makes the
-independent routes the ones that answer.  Routes whose provider or model
-sits in a health cool-down (a spent daily quota, a hang, a 5xx) are skipped
-without a network call.
+Ordering is the route's explicit ``priority`` (1 first) and nothing else:
+never the order providers happen to be listed in, which is alphabetical in
+the saved document.  A route without a priority, or sharing its priority
+with another route, is listed with that reason and never used -- an order
+nobody decided is not an order.  Routes whose provider or model sits in a
+health cool-down (a spent daily quota, a hang, a 5xx) are skipped without a
+network call.
 """
 
 from __future__ import annotations
@@ -43,7 +45,8 @@ class ZeroCostRoute:
     supports_structured_output: bool = True
     context_limit: int = 0
     output_limit: int = 0
-    priority: int = 0
+    #: The route's place in the pool, 1 first; None = no order was configured (never used).
+    priority: int | None = None
     note: str = ""
 
     @property
@@ -70,6 +73,14 @@ class RouteVerdict:
                 "quota_reset_in_seconds": round(self.quota_reset_in_seconds, 1)}
 
 
+def _priority(raw: Any) -> int | None:
+    """A positive integer priority, or None (a bool, a string or zero is not a decided order)."""
+
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        return None
+    return raw
+
+
 class ZeroCostRegistry:
     """Every configured zero-cost route, with the evidence behind it."""
 
@@ -85,21 +96,17 @@ class ZeroCostRegistry:
         seen: set[str] = set()
         binding: RoleBinding | None = config.binding(ZERO_COST_ROLE)
         primary = binding.provider if binding else ""
-        ordered_providers = ([primary] if primary and primary in config.providers else []) + [
-            name for name in config.providers if name != primary]
-        priority = 0
-        for name in ordered_providers:
+        for name in config.providers:
             provider: ProviderConfig = config.providers[name]
             declared = list((provider.options or {}).get("zero_cost_routes") or [])
             vendor = str((provider.options or {}).get("vendor") or name)
-            # The primary binding's model pool leads, in its configured order,
-            # even when the provider declares no routes of its own.
+            # A model in the role's pool without a declared route is listed (so the owner
+            # sees it) -- without evidence and without a priority, so it is never used.
             if name == primary and binding is not None:
                 declared_models = {str(d.get("model")) for d in declared if isinstance(d, dict)}
                 for model in binding.model_pool:
                     if model not in declared_models:
-                        declared.insert(0, {"model": model, "verified_zero_cost": False, "note": "in the role's model pool without route evidence"})
-                declared.sort(key=lambda d: (binding.model_pool.index(str(d.get("model"))) if str(d.get("model")) in binding.model_pool else 99))
+                        declared.append({"model": model, "verified_zero_cost": False, "note": "in the role's model pool without route evidence"})
             for raw in declared:
                 if not isinstance(raw, dict) or not str(raw.get("model") or "").strip():
                     continue
@@ -122,8 +129,9 @@ class ZeroCostRegistry:
                     supports_stream=bool(raw.get("supports_stream", True)),
                     supports_structured_output=bool(raw.get("supports_structured_output", True)),
                     context_limit=int(raw.get("context_limit") or 0), output_limit=int(raw.get("output_limit") or 0),
-                    priority=priority, note=str(raw.get("note") or "")))
-                priority += 1
+                    priority=_priority(raw.get("priority")), note=str(raw.get("note") or "")))
+        # the configured priority decides; routes without one are listed last, in no meaningful order
+        routes.sort(key=lambda r: (r.priority is None, r.priority or 0, r.provider_id, r.model_id))
         return routes
 
     # -- selection --------------------------------------------------------------
@@ -133,11 +141,19 @@ class ZeroCostRegistry:
         """Every route with its eligibility and the reason, in pool order."""
 
         out: list[RouteVerdict] = []
+        taken: dict[int, int] = {}
+        for route in self.routes:
+            if route.priority is not None:
+                taken[route.priority] = taken.get(route.priority, 0) + 1
         for route in self.routes:
             provider = self.config.providers.get(route.provider_id)
             reason = ""
             if provider is None:
                 reason = "provider not configured"
+            elif route.priority is None:
+                reason = "no priority configured"
+            elif taken.get(route.priority, 0) > 1:
+                reason = f"priority {route.priority} is shared with another route"
             elif not provider.enabled:
                 reason = "provider disabled"
             elif provider.secret and not credential_present(route.provider_id):

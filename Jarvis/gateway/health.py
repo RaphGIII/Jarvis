@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -106,6 +106,11 @@ def classify_http(status_code: int, body: str, *, provider_kind: str = "") -> Pr
             if any(marker in text for marker in ("perminute", "per_minute", "per minute", "generaterequestsperminute", "tokensperminute",
                                                  "retrydelay", "retry in")):
                 return ProviderStatus.RATE_LIMIT
+        # Groq ("tokens per day (TPD)", "requests per day (RPD)") and OpenRouter
+        # ("free-models-per-day") name a daily allowance: it is spent until the
+        # provider's day or window resets, not for thirty seconds.
+        if _DAILY_QUOTA.search(text):
+            return ProviderStatus.QUOTA_EXHAUSTED
         if any(marker in text for marker in ("quota", "insufficient_quota", "billing", "exceeded your current quota",
                                              "resource_exhausted", "credit")):
             return ProviderStatus.QUOTA_EXHAUSTED
@@ -123,16 +128,44 @@ def classify_http(status_code: int, body: str, *, provider_kind: str = "") -> Pr
 
 
 #: Quota wording that means "resets with the provider's day", not "in a minute".
-_DAILY_QUOTA = re.compile(r"per\s+day|per_day|perday|daily|requests_per_day|tokens_per_day|taeglich|täglich", re.I)
+_DAILY_QUOTA = re.compile(r"per[\s_-]+day|perday|daily|requests_per_day|tokens_per_day|\((?:tpd|rpd)\)|taeglich|täglich", re.I)
+
+
+def _us_pacific_offset(at: float) -> timezone:
+    """UTC-7 during US daylight time (second Sunday of March 02:00 to first Sunday of November 02:00), else UTC-8."""
+
+    year = datetime.fromtimestamp(at, timezone.utc).year
+
+    def nth_sunday(month: int, n: int) -> datetime:
+        first = datetime(year, month, 1, tzinfo=timezone.utc)
+        return first + timedelta(days=(6 - first.weekday()) % 7 + 7 * (n - 1))
+
+    start = nth_sunday(3, 2) + timedelta(hours=10)  # 02:00 PST
+    end = nth_sunday(11, 1) + timedelta(hours=9)  # 02:00 PDT
+    daylight = start <= datetime.fromtimestamp(at, timezone.utc) < end
+    return timezone(timedelta(hours=-7 if daylight else -8))
+
+
+def _zone(name: str, at: float) -> Any:
+    """A tzinfo for ``name``: the tz database when present; UTC and US Pacific also without one (Windows ships none)."""
+
+    try:
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - no tz database on this host
+        pass
+    if name.upper() in {"UTC", "ETC/UTC", "GMT"}:
+        return timezone.utc
+    if name in {"America/Los_Angeles", "US/Pacific"}:
+        return _us_pacific_offset(at)
+    return None
 
 
 def seconds_until_daily_reset(now: float | None = None, zone: str = "America/Los_Angeles") -> float:
     """Seconds until the next midnight in the provider's accounting zone (Google's free tier resets at Pacific midnight)."""
 
-    try:
-        tz = ZoneInfo(zone)
-    except Exception:  # noqa: BLE001 - no tz database: fall back to a plain day
-        return 24 * 3600.0
+    tz = _zone(zone, now if now is not None else time.time())
+    if tz is None:
+        return 24 * 3600.0  # an unknown zone without a tz database: a plain day
     current = datetime.fromtimestamp(now if now is not None else time.time(), tz)
     tomorrow = (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return max(60.0, (tomorrow - current).total_seconds())
@@ -152,13 +185,17 @@ class ProviderHealth:
     state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @staticmethod
-    def _cooldown(status: ProviderStatus, detail: str, retry_after_seconds: float | None) -> float:
+    def _cooldown(status: ProviderStatus, detail: str, retry_after_seconds: float | None, reset_zone: str = "") -> float:
         if status is ProviderStatus.RATE_LIMIT:
             return retry_after_seconds or 30.0
         if status is ProviderStatus.QUOTA_EXHAUSTED:
+            # The provider's own reset time wins; otherwise a daily allowance
+            # lasts until midnight in the provider's accounting zone.
             if retry_after_seconds:
                 return float(retry_after_seconds)
-            return seconds_until_daily_reset() if _DAILY_QUOTA.search(detail or "") else 3600.0
+            if _DAILY_QUOTA.search(detail or ""):
+                return seconds_until_daily_reset(zone=reset_zone) if reset_zone else seconds_until_daily_reset()
+            return 3600.0
         if status is ProviderStatus.PROVIDER_UNAVAILABLE:
             return retry_after_seconds or 60.0
         if status is ProviderStatus.TIMEOUT:
@@ -170,8 +207,8 @@ class ProviderHealth:
         return 0.0
 
     def note(self, provider: str, status: ProviderStatus, *, detail: str = "", retry_after_seconds: float | None = None,
-             model: str = "") -> None:
-        cooldown = self._cooldown(status, detail, retry_after_seconds)
+             model: str = "", reset_zone: str = "") -> None:
+        cooldown = self._cooldown(status, detail, retry_after_seconds, reset_zone)
         entry = {"status": status.value, "detail": detail[:300], "at": time.time(), "until": time.time() + cooldown if cooldown else 0.0}
         if model:
             self.state[f"{provider}/{model}"] = entry

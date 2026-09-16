@@ -36,6 +36,57 @@ from gateway.modes import ChatMode, CostClass
 from gateway.secrets import CredentialStore, redact
 
 
+def _duration_seconds(raw: str) -> float | None:
+    """ "23", "2.722s", "59ms", "1m26.4s", "7m12.3s", "1h2m3s" -> seconds; None when it is none of these."""
+
+    value = str(raw or "").strip().lower()
+    if not value:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", value):
+        return float(value)
+    if re.fullmatch(r"\d+(?:\.\d+)?ms", value):
+        return float(value[:-2]) / 1000.0
+    match = re.fullmatch(r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?", value)
+    if not match or not any(match.groups()):
+        return None
+    hours, minutes, seconds = (float(g) if g else 0.0 for g in match.groups())
+    return hours * 3600.0 + minutes * 60.0 + seconds
+
+
+def retry_after_from(headers: Any, body: str, *, now: float | None = None) -> float | None:
+    """When the provider says the request may be tried again, in seconds from now -- or None when it does not say.
+
+    In order: the Retry-After header; the body's own delay (Gemini "retryDelay": "23s", Groq "Please try
+    again in 7m12.3s", "retry in 23s"); the rate-limit reset headers (Groq x-ratelimit-reset-requests /
+    -tokens as durations, OpenRouter X-RateLimit-Reset as epoch milliseconds).
+    """
+
+    def header(name: str) -> str:
+        try:
+            return str(headers.get(name) or "") if headers is not None else ""
+        except Exception:  # noqa: BLE001 - a malformed header set says nothing
+            return ""
+
+    value = _duration_seconds(header("Retry-After"))
+    if value is not None:
+        return value
+    text = body or ""
+    match = (re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', text)
+             or re.search(r"(?:try again|retry) in ((?:\d+(?:\.\d+)?(?:h|ms|m|s))+)", text, re.I))
+    if match:
+        value = _duration_seconds(match.group(1))
+        if value is not None:
+            return value
+    resets = [v for v in (_duration_seconds(header("x-ratelimit-reset-requests")), _duration_seconds(header("x-ratelimit-reset-tokens")))
+              if v is not None]
+    if resets:
+        return max(resets)
+    epoch = header("X-RateLimit-Reset")
+    if re.fullmatch(r"\d{12,}", epoch.strip()):
+        return max(0.0, int(epoch.strip()) / 1000.0 - (now if now is not None else time.time()))
+    return None
+
+
 class ZeroCostViolation(RuntimeError):
     """FREE mode: a metered provider call was requested.  Nothing was sent."""
 
@@ -129,16 +180,7 @@ class Transport:
             text = ""
         text = redact(text, self.credentials)
         status_kind = classify_http(int(exc.code), text, provider_kind=provider.kind)
-        retry_after = None
-        try:
-            header = exc.headers.get("Retry-After") if exc.headers else None
-            retry_after = float(header) if header else None
-        except (TypeError, ValueError):
-            retry_after = None
-        if retry_after is None:
-            match = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', text) or re.search(r"retry in (\d+(?:\.\d+)?)s", text, re.I)
-            if match:
-                retry_after = float(match.group(1))
+        retry_after = retry_after_from(exc.headers, text)
         return GatewayError(status_kind, f"HTTP {exc.code}: {text[:500]}", role=ticket.role, provider=provider.name,
                             http_status=int(exc.code), retry_after_seconds=retry_after)
 
@@ -293,17 +335,7 @@ class Transport:
                 text = ""
             text = redact(text, self.credentials)
             status_kind = classify_http(int(exc.code), text, provider_kind=provider.kind)
-            retry_after = None
-            try:
-                header = exc.headers.get("Retry-After") if exc.headers else None
-                retry_after = float(header) if header else None
-            except (TypeError, ValueError):
-                retry_after = None
-            if retry_after is None:
-                # Gemini puts the delay in the body: "retryDelay": "23s".
-                match = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', text) or re.search(r"retry in (\d+(?:\.\d+)?)s", text, re.I)
-                if match:
-                    retry_after = float(match.group(1))
+            retry_after = retry_after_from(exc.headers, text)
             raise GatewayError(status_kind, f"HTTP {exc.code}: {text[:500]}", role=ticket.role, provider=provider.name,
                                http_status=int(exc.code), retry_after_seconds=retry_after) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:

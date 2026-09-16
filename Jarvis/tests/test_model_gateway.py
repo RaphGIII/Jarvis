@@ -264,7 +264,7 @@ def test_reasoning_free_38_503_twice_falls_back_to_37(tmp_path, cfg, creds):
 def test_reasoning_free_38_429_retries_then_falls_back(tmp_path, cfg, creds):
     rate_limited = http_error("https://generativelanguage.googleapis.com/v1beta/x", 429,
                               {"error": {"status": "RESOURCE_EXHAUSTED", "message": "per minute",
-                                         "details": [{"retryDelay": "30s"}]}})
+                                         "details": [{"retryDelay": "2s"}]}})
     net = GeminiPoolNetwork({"gemini-3.8-flash": [rate_limited, rate_limited],
                              "gemini-3.7-flash": [gemini_reply("OK from 3.7")]})
     delays: list[float] = []
@@ -274,6 +274,23 @@ def test_reasoning_free_38_429_retries_then_falls_back(tmp_path, cfg, creds):
     assert reply.model == "gemini-3.7-flash" and delays == [1.0]
     assert [a["http_status"] for a in reply.route_attempts] == [429, 429, None]
     assert sum(a["retry_delay_seconds"] for a in reply.route_attempts) <= 2.0
+
+
+def test_a_rate_limit_whose_retry_after_exceeds_the_bounded_retry_moves_on_at_once(tmp_path, cfg, creds):
+    """The provider says 30 s: waiting one second and asking again is pointless; the next model answers now."""
+
+    rate_limited = http_error("https://generativelanguage.googleapis.com/v1beta/x", 429,
+                              {"error": {"status": "RESOURCE_EXHAUSTED", "message": "per minute",
+                                         "details": [{"retryDelay": "30s"}]}})
+    net = GeminiPoolNetwork({"gemini-3.8-flash": [rate_limited, rate_limited],
+                             "gemini-3.7-flash": [gemini_reply("OK from 3.7")]})
+    delays: list[float] = []
+    gateway = make_gateway(tmp_path, cfg, creds, net, retry_sleep=delays.append)
+    reply = gateway.complete(GatewayRequest(prompt="public knowledge", facts=TaskFacts(text="public knowledge", is_question=True),
+                                            mode=ChatMode.FREE))
+    assert reply.model == "gemini-3.7-flash" and delays == []
+    assert [a["http_status"] for a in reply.route_attempts] == [429, None]
+    assert 25 < gateway.health.cooldown_remaining("gemini", model="gemini-3.8-flash") <= 30
 
 
 def test_both_reasoning_free_models_unavailable_is_typed_zero_cost_failure(tmp_path, cfg, creds):

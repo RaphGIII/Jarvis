@@ -70,12 +70,14 @@
       "monthly_cap_eur": null,
       "name": "cerebras",
       "options": {
+        "daily_quota_reset_zone": "UTC",
         "output_hard_limit": 32768,
         "vendor": "cerebras",
         "zero_cost_routes": [
           {
-            "model": "",
-            "note": "enter the strong zero-cost model the account exposes; verify zero cost first",
+            "model": "gpt-oss-120b",
+            "note": "NOT zero cost for this account: HTTP 402 Payment Required for gpt-oss-120b and qwen-3.8-27b on 2026-09-16 (data/acceptance_evidence/live_zero_cost_cerebras_*.json); provider stays disabled",
+            "priority": 6,
             "supports_stream": true,
             "supports_structured_output": true,
             "verified_at": "",
@@ -132,6 +134,7 @@
       "monthly_cap_eur": null,
       "name": "gemini",
       "options": {
+        "daily_quota_reset_zone": "America/Los_Angeles",
         "output_hard_limit": 65536,
         "vendor": "google",
         "zero_cost_routes": [
@@ -139,6 +142,7 @@
             "context_limit": 1048576,
             "model": "gemini-3.8-flash",
             "output_limit": 65536,
+            "priority": 1,
             "supports_stream": true,
             "supports_structured_output": true,
             "verified_at": "2026-09-14",
@@ -149,6 +153,7 @@
             "context_limit": 1048576,
             "model": "gemini-3.7-flash",
             "output_limit": 65536,
+            "priority": 2,
             "supports_stream": true,
             "supports_structured_output": true,
             "verified_at": "2026-09-14",
@@ -159,6 +164,7 @@
             "context_limit": 1048576,
             "model": "gemini-3.6-flash",
             "output_limit": 65536,
+            "priority": 3,
             "supports_stream": true,
             "supports_structured_output": true,
             "verified_at": "2026-09-15",
@@ -250,19 +256,21 @@
       "monthly_cap_eur": null,
       "name": "groq",
       "options": {
+        "daily_quota_reset_zone": "UTC",
         "output_hard_limit": 32768,
         "vendor": "groq",
         "zero_cost_routes": [
           {
             "context_limit": 131072,
             "model": "openai/gpt-oss-120b",
-            "note": "preferred candidate; verify zero cost for this account first",
+            "note": "first independent route after Google",
             "output_limit": 32768,
+            "priority": 4,
             "supports_stream": true,
             "supports_structured_output": true,
-            "verified_at": "",
-            "verified_by": "",
-            "verified_zero_cost": false
+            "verified_at": "2026-09-16",
+            "verified_by": "owner: Groq console Current Plan Free, price $0, pay-per-token Developer tier not active; live calls 2026-09-16 (data/acceptance_evidence/live_zero_cost_groq.json)",
+            "verified_zero_cost": true
           }
         ]
       },
@@ -340,19 +348,21 @@
       "monthly_cap_eur": null,
       "name": "openrouter",
       "options": {
+        "daily_quota_reset_zone": "UTC",
         "output_hard_limit": 16384,
         "vendor": "openrouter",
         "zero_cost_routes": [
           {
             "context_limit": 32768,
             "model": "openrouter/free",
-            "note": "dynamic free-model router; verify zero cost first",
+            "note": "dynamic free-model router: the model that served is recorded as served_model",
             "output_limit": 16384,
+            "priority": 5,
             "supports_stream": true,
             "supports_structured_output": false,
-            "verified_at": "",
-            "verified_by": "",
-            "verified_zero_cost": false
+            "verified_at": "2026-09-16",
+            "verified_by": "owner account: 0 credits, key credit limit 0, is_free_tier; live generation total_cost 0 (data/acceptance_evidence/live_zero_cost_openrouter.json)",
+            "verified_zero_cost": true
           }
         ]
       },

@@ -57,11 +57,14 @@ class ProviderReply:
     delivery_mode: str = "complete_response"
     #: The provider that answered (set by the pool when a route other than the decided provider served the request).
     provider: str = ""
+    #: The model the provider says actually served, when it differs from the configured route model (a router such as
+    #: openrouter/free picks one per request).  Diagnostics and provenance only; routing and health use ``model``.
+    served_model: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {"usage": dict(self.usage), "latency_seconds": round(self.latency_seconds, 3),
                 "finish_reason": self.finish_reason, "model": self.model, "chars": len(self.text), "delivery_mode": self.delivery_mode,
-                "provider": self.provider}
+                "provider": self.provider, "served_model": self.served_model}
 
 
 _SCHEMA_KEEP = {"type", "properties", "required", "items", "enum", "description", "nullable", "format", "minimum", "maximum",
@@ -362,7 +365,8 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
                     finish = str(choice["finish_reason"])
         usage = {"input_tokens": int(usage_raw.get("prompt_tokens", 0) or 0), "cached_input_tokens": 0,
                  "output_tokens": int(usage_raw.get("completion_tokens", 0) or 0)}
-        yield {"reply": ProviderReply(text="", usage=usage, finish_reason=finish, model=model, delivery_mode="provider_stream")}
+        yield {"reply": ProviderReply(text="", usage=usage, finish_reason=finish, model=binding.model, delivery_mode="provider_stream",
+                                      served_model=model if model != binding.model else "")}
 
     def call(self, transport: Transport, ticket: Ticket, provider: ProviderConfig, binding: RoleBinding,
              request: ProviderRequest) -> ProviderReply:
@@ -377,8 +381,10 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
         usage_raw = data.get("usage") or {}
         usage = {"input_tokens": int(usage_raw.get("prompt_tokens", 0) or 0), "cached_input_tokens": 0,
                  "output_tokens": int(usage_raw.get("completion_tokens", 0) or 0)}
+        served = str(data.get("model") or "")
         return ProviderReply(text=text, usage=usage, latency_seconds=reply.latency_seconds,
-                             finish_reason=str(choice.get("finish_reason", "")), model=binding.model)
+                             finish_reason=str(choice.get("finish_reason", "")), model=binding.model,
+                             served_model=served if served and served != binding.model else "")
 
 
 class AnthropicAdapter:

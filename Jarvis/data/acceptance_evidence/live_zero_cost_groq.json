@@ -1,0 +1,74 @@
+{
+ "provider": "groq",
+ "model": "openai/gpt-oss-120b",
+ "base_url": "https://api.groq.com/openai",
+ "at": "2026-09-16T17:59:41+0200",
+ "provider_config": {
+  "metered": false,
+  "pricing": "none",
+  "kind": "openai_compatible"
+ },
+ "spend_lines_before": 12,
+ "raw": {
+  "status": 200,
+  "seconds": 0.87,
+  "headers": {
+   "x-groq-region": "fra",
+   "x-ratelimit-limit-requests": "1000",
+   "x-ratelimit-limit-tokens": "8000",
+   "x-ratelimit-remaining-requests": "999",
+   "x-ratelimit-remaining-tokens": "7637",
+   "x-ratelimit-reset-requests": "1m26.4s",
+   "x-ratelimit-reset-tokens": "2.722s",
+   "x-request-id": "req_01m2nf3zytezj97nyx8bffrpfw"
+  },
+  "id": "chatcmpl-074486e4-ed40-4a5f-ba07-ff372edd5f67",
+  "model_served": "openai/gpt-oss-120b",
+  "provider_served": null,
+  "usage": {
+   "queue_time": 0.294606818,
+   "prompt_tokens": 98,
+   "prompt_time": 0.004143817,
+   "completion_tokens": 126,
+   "completion_time": 0.274418051,
+   "total_tokens": 224,
+   "total_time": 0.278561868,
+   "completion_tokens_details": {
+    "reasoning_tokens": 95
+   }
+  },
+  "finish_reason": "stop",
+  "text": "Weil kurzwelliges blaues Licht in der Atmosphäre stärker gestreut wird als rotes Licht."
+ },
+ "zeus_stream": {
+  "chunks": 22,
+  "text": "Weil kurzwelliges blaues Licht in der Atmosphäre stärker gestreut wird als rotes Licht.",
+  "error": null,
+  "first_chunk_s": 0.55,
+  "usage": {
+   "input_tokens": 98,
+   "cached_input_tokens": 0,
+   "output_tokens": 125
+  },
+  "finish_reason": "stop",
+  "model": "openai/gpt-oss-120b",
+  "seconds": 0.59
+ },
+ "zeus_structured": {
+  "error": null,
+  "text": "{\"antwort\":\"Ja, Wasser ist bei 20 °C flüssig.\",\"sicher\":true}",
+  "usage": {
+   "input_tokens": 202,
+   "cached_input_tokens": 0,
+   "output_tokens": 191
+  },
+  "finish_reason": "stop",
+  "valid_json": true,
+  "seconds": 0.66
+ },
+ "transport": {
+  "issued": 2,
+  "refused": []
+ },
+ "spend_lines_after": 12
+}

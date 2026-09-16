@@ -718,6 +718,7 @@ packages:
       - tests/test_semantic_composition.py
       - tests/test_streaming.py
       - tests/test_zero_cost_pool.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/budget.py
       purpose: 'The cost governor: reserve before you spend, and never past the cap.'
       lines: 299
@@ -727,7 +728,7 @@ packages:
       - tests/test_provider_stack.py
     - path: gateway/config.py
       purpose: Roles, providers, prices and caps -- read from configuration, never from code.
-      lines: 950
+      lines: 955
       public: 8
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -741,6 +742,7 @@ packages:
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
       - tests/test_zero_cost_pool.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/estimate.py
       purpose: Cost estimation before a paid request is made.
       lines: 105
@@ -749,7 +751,7 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1529
+      lines: 1551
       public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -763,9 +765,10 @@ packages:
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
       - tests/test_zero_cost_pool.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/health.py
       purpose: Telling a provider problem from a task problem.
-      lines: 223
+      lines: 260
       public: 6
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -777,6 +780,7 @@ packages:
       - tests/test_semantic_authority.py
       - tests/test_semantic_composition.py
       - tests/test_zero_cost_pool.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/intelligence_class.py
       purpose: Which class of intelligence a request needs -- decided before any provider is chosen.
       lines: 254
@@ -807,6 +811,7 @@ packages:
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
       - tests/test_zero_cost_pool.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/output_budget.py
       purpose: How long an answer may be, decided before the call -- provider-independent.
       lines: 157
@@ -828,7 +833,7 @@ packages:
       - tests/test_model_gateway.py
     - path: gateway/providers.py
       purpose: 'Provider adapters: request shape in, text and usage out.'
-      lines: 492
+      lines: 498
       public: 8
       tests:
       - tests/test_live_providers.py
@@ -868,19 +873,22 @@ packages:
       - tests/test_semantic_authority.py
       - tests/test_streaming.py
       - tests/test_zero_cost_pool.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/transport.py
       purpose: The only way a provider reaches the network -- and the FREE-mode wall.
-      lines: 320
-      public: 6
+      lines: 352
+      public: 7
       tests:
       - tests/test_free_intelligence_only.py
       - tests/test_model_gateway.py
       - tests/test_provider_stack.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/zero_cost.py
       purpose: 'The zero-cost intelligence pool: a registry of routes, not a chain of conditionals.'
-      lines: 172
+      lines: 188
       public: 3
-      tests: []
+      tests:
+      - tests/test_zero_cost_resilience.py
   imagegen:
     purpose: local image generation
     modules:
@@ -3192,4 +3200,4 @@ totals:
   packages: 33
   api_routes: 181
   ui_modules: 35
-  tests: 131
+  tests: 132

@@ -1,0 +1,168 @@
+{
+ "provider": "openrouter",
+ "model": "openrouter/free",
+ "base_url": "https://openrouter.ai/api",
+ "at": "2026-09-16T18:00:11+0200",
+ "provider_config": {
+  "metered": false,
+  "pricing": "none",
+  "kind": "openai_compatible"
+ },
+ "spend_lines_before": 12,
+ "account_before": {
+  "key": {
+   "is_management_key": false,
+   "is_provisioning_key": false,
+   "limit": 0,
+   "limit_reset": null,
+   "limit_remaining": 0,
+   "include_byok_in_limit": false,
+   "usage": 0,
+   "usage_daily": 0,
+   "usage_weekly": 0,
+   "usage_monthly": 0,
+   "byok_usage": 0,
+   "byok_usage_daily": 0,
+   "byok_usage_weekly": 0,
+   "byok_usage_monthly": 0,
+   "is_free_tier": true,
+   "expires_at": null,
+   "allowed_data_regions": [
+    "global"
+   ],
+   "free_model_daily_requests": {
+    "used": 0,
+    "limit": 50,
+    "remaining": 50
+   },
+   "rate_limit": {
+    "requests": -1,
+    "interval": "10s",
+    "note": "This field is deprecated and safe to ignore."
+   }
+  },
+  "credits": {
+   "total_credits": 0,
+   "total_usage": 0
+  }
+ },
+ "raw": {
+  "status": 200,
+  "seconds": 13.5,
+  "headers": {
+   "x-generation-id": "gen-1789574412-J4C2Q7ESg3g3ES1ey2zF"
+  },
+  "id": "gen-1789574412-J4C2Q7ESg3g3ES1ey2zF",
+  "model_served": "nex-agi/nex-n2.5-pro:free",
+  "provider_served": "Nex AGI",
+  "usage": {
+   "prompt_tokens": 37,
+   "completion_tokens": 33,
+   "total_tokens": 70,
+   "cost": 0,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0,
+    "upstream_inference_prompt_cost": 0,
+    "upstream_inference_completions_cost": 0
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 1,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "finish_reason": "stop",
+  "text": "Der Himmel ist tagsüber blau, weil die Atmosphäre das blaue Licht der Sonne stärker in alle Richtungen streut als andere sichtbare Farben."
+ },
+ "zeus_stream": {
+  "chunks": 12,
+  "text": "\n\nDer Himmel ist tagsüber blau, weil die Rayleigh-Streuung blaues Licht der Sonne stärker in der Atmosphäre streut als anderes Licht.",
+  "error": null,
+  "first_chunk_s": 13.76,
+  "usage": {
+   "input_tokens": 37,
+   "cached_input_tokens": 0,
+   "output_tokens": 349
+  },
+  "finish_reason": "stop",
+  "model": "dots-studio/dots-3-note-preview:free",
+  "seconds": 14.13
+ },
+ "zeus_structured": {
+  "error": null,
+  "text": "{\"antwort\": \"Ja, flüssig.\", \"sicher\": true}",
+  "usage": {
+   "input_tokens": 47,
+   "cached_input_tokens": 0,
+   "output_tokens": 107
+  },
+  "finish_reason": "stop",
+  "valid_json": true,
+  "seconds": 4.15
+ },
+ "transport": {
+  "issued": 2,
+  "refused": []
+ },
+ "spend_lines_after": 12,
+ "generation": {
+  "status": 200,
+  "data": {
+   "model": "nex-agi/nex-n2.5-pro-20260907:free",
+   "cancelled": false,
+   "native_tokens_prompt": 37,
+   "native_tokens_completion": 33,
+   "is_byok": false,
+   "finish_reason": "stop",
+   "usage": 0,
+   "total_cost": 0,
+   "upstream_inference_cost": 0,
+   "provider_name": "Nex AGI"
+  },
+  "error": null
+ },
+ "account_after": {
+  "key": {
+   "is_management_key": false,
+   "is_provisioning_key": false,
+   "limit": 0,
+   "limit_reset": null,
+   "limit_remaining": 0,
+   "include_byok_in_limit": false,
+   "usage": 0,
+   "usage_daily": 0,
+   "usage_weekly": 0,
+   "usage_monthly": 0,
+   "byok_usage": 0,
+   "byok_usage_daily": 0,
+   "byok_usage_weekly": 0,
+   "byok_usage_monthly": 0,
+   "is_free_tier": true,
+   "expires_at": null,
+   "allowed_data_regions": [
+    "global"
+   ],
+   "free_model_daily_requests": {
+    "used": 0,
+    "limit": 50,
+    "remaining": 50
+   },
+   "rate_limit": {
+    "requests": -1,
+    "interval": "10s",
+    "note": "This field is deprecated and safe to ignore."
+   }
+  },
+  "credits": {
+   "total_credits": 0,
+   "total_usage": 0
+  }
+ }
+}

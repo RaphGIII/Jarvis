@@ -1587,7 +1587,7 @@ modules:
       doc: The last thing each provider -- and each model -- told us, with a cool-down for outages.
       methods:
       - 'def note(self, provider: str, status: ProviderStatus, *, detail: str='''', retry_after_seconds: float | None=None,
-        model: str='''') -> None'
+        model: str='''', reset_zone: str='''') -> None'
       - 'def cooldown_remaining(self, provider: str, *, model: str='''') -> float'
       - 'def status(self, provider: str, *, model: str='''') -> ProviderStatus'
       - 'def usable(self, provider: str, *, model: str='''') -> bool'
@@ -1864,7 +1864,9 @@ modules:
         str] | None=None, auth: str=''bearer'', timeout: float | None=None, timeouts: StreamTimeouts | None=None)'
       - 'def post_json(self, ticket: Ticket, provider: ProviderConfig, url: str, body: dict[str, Any], *, headers: dict[str,
         str] | None=None, auth: str=''bearer'', timeout: float | None=None) -> HttpReply'
-    functions: []
+    functions:
+    - signature: 'def retry_after_from(headers: Any, body: str, *, now: float | None=None) -> float | None'
+      doc: When the provider says the request may be tried again, in seconds from now -- or None when it does not say.
   gateway/zero_cost.py:
     module: gateway.zero_cost
     classes:
