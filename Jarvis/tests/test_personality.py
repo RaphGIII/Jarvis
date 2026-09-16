@@ -61,7 +61,7 @@ def test_the_protected_core_carries_the_zeus_character_and_the_emotional_rule():
 
 
 def test_dials_change_the_preferences_block_only(tmp_path):
-    owner = OwnerCore(tmp_path)
+    owner = OwnerCore(tmp_path, tmp_path / "state")
     blocks = dict(owner.personality_blocks())
     assert "keep answers very short" in blocks["preferences"]  # conciseness 70 -> high
     tx = owner.propose({"personality": {"preferences": {"conciseness": 10, "humour": 90}}}, reason="t", origin="ui")
@@ -76,7 +76,7 @@ def test_dials_change_the_preferences_block_only(tmp_path):
 # --------------------------------------------------------------------------
 
 def test_the_core_is_refused_without_an_explicit_unlock(tmp_path):
-    owner = OwnerCore(tmp_path)
+    owner = OwnerCore(tmp_path, tmp_path / "state")
     with pytest.raises(PermissionError):
         owner.propose({"personality": {"core": {"character": ["cheerful"]}}}, reason="model wrote this", origin="model")
     tx = owner.propose({"personality": {"core": {"character": ["cheerful", "calm"]}}}, reason="owner", origin="ui", unlock_core=True)
@@ -87,7 +87,7 @@ def test_the_core_is_refused_without_an_explicit_unlock(tmp_path):
 
 def test_the_core_service_never_passes_unlock_from_a_non_ui_origin(tmp_path):
     core = JarvisCore(kernel=StubKernel())
-    core._owner = OwnerCore(tmp_path)
+    core._owner = OwnerCore(tmp_path, tmp_path / "state")
     # isolate the security gate too: on a machine where the real owner has
     # set a password, the un-isolated gate would answer needs_auth first and
     # this test would stop testing the origin check
@@ -107,7 +107,7 @@ def test_persona_paths_are_protected():
 
 def test_a_legacy_flat_personality_file_migrates(tmp_path):
     (tmp_path / "personality.json").write_text('{"traits": ["calm", "precise"], "humour": "none, strictly factual"}', encoding="utf-8")
-    owner = OwnerCore(tmp_path)
+    owner = OwnerCore(tmp_path, tmp_path / "state")
     p = owner.read("personality")
     assert p["core"]["character"] == ["calm", "precise"] and p["preferences"]["humour"] == 0
     assert p["core"]["emotional_language"], "defaults fill what the old file never had"
