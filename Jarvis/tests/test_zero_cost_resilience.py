@@ -11,14 +11,14 @@ import urllib.error
 import pytest
 
 from gateway.config import GatewayConfig, _parse
-from gateway.gateway import GatewayError, GatewayRequest
+from gateway.gateway import GatewayError, GatewayRefused, GatewayRequest
 from gateway.health import FreeIntelligenceUnavailable, ProviderHealth, ProviderStatus, seconds_until_daily_reset
 from gateway.modes import ChatMode
 from gateway.task import TaskFacts
 from gateway.transport import retry_after_from
 from gateway.zero_cost import ZeroCostRegistry
 from test_model_gateway import FakeNetwork, FakeResponse, LocalStub, gemini_reply, make_gateway, openai_reply
-from test_streaming import SSEResponse, gemini_chunks
+from test_streaming import SSEResponse, gemini_chunks, openai_events
 from test_zero_cost_pool import chat_completion, chat_stream, pool_creds, quota_error  # noqa: F401 - fixture
 
 GEMINI = "generativelanguage.googleapis.com"
@@ -48,6 +48,13 @@ def groq_daily_limit(*, try_again: str = "7m12.3s") -> urllib.error.HTTPError:
                                             "type": "tokens", "code": "rate_limit_exceeded"}})
 
 
+class Cut:
+    """A stream that shows ``text`` and then ends without any finish reason (Gemini under load, observed live)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
 class RouteNetwork(FakeNetwork):
     """Answers by route -- Gemini by the model in its URL, OpenAI-compatible providers by host -- as JSON or as a stream."""
 
@@ -66,7 +73,18 @@ class RouteNetwork(FakeNetwork):
         if answer is None:
             raise urllib.error.URLError(f"no route for {key}")
         streaming = "alt=sse" in request.full_url or bool(body.get("stream"))
+        if isinstance(answer, Cut):
+            if host == GEMINI:
+                blocks = ["data: " + json.dumps({"candidates": [{"content": {"parts": [{"text": answer.text}]}}]}, ensure_ascii=False)]
+                whole = {"candidates": [{"content": {"parts": [{"text": answer.text}]}}]}
+            else:
+                blocks = ["data: " + json.dumps({"model": key, "choices": [{"delta": {"content": answer.text}, "finish_reason": None}]}, ensure_ascii=False)]
+                whole = {"model": key, "choices": [{"message": {"content": answer.text}, "finish_reason": None}]}
+            return SSEResponse(blocks) if streaming else FakeResponse(whole)
         if streaming:
+            if host == OPENAI:
+                text = answer["output"][1]["content"][0]["text"]
+                return SSEResponse(openai_events([text], prompt_tokens=answer["usage"]["input_tokens"], out_tokens=answer["usage"]["output_tokens"]))
             if host == GEMINI:
                 return SSEResponse(gemini_chunks([answer["candidates"][0]["content"]["parts"][0]["text"]]))
             return SSEResponse(chat_stream([answer["choices"][0]["message"]["content"]], model=answer.get("model", "")))
@@ -343,3 +361,163 @@ def test_sensitive_content_never_reaches_a_may_train_pool_route(tmp_path, pool_c
     with pytest.raises(FreeIntelligenceUnavailable):
         gateway.complete(request)
     assert OPENROUTER not in hosts(net) and GROQ in hosts(net)
+
+
+# ---------------------------------------------------------------------------
+# AUTO: one guarded emergency answer after the whole zero-cost pool failed
+# ---------------------------------------------------------------------------
+
+def all_free_down(extra: dict | None = None) -> dict:
+    answers = {model if p == "gemini" else (GROQ if p == "groq" else OPENROUTER): route_down(p, model) for p, model in POOL}
+    return answers | (extra or {})
+
+
+def emergency_gateway(tmp_path, creds, net, *, switch: bool = True, paid_api: bool = False, ceiling: float = 0.03):
+    from runtime.cost_policy import CostPolicy
+
+    gateway = make_gateway(tmp_path, owner_pool(), creds, net, local=LocalStub(), paid_api=paid_api)
+    gateway._cost_policy = CostPolicy(allow_paid_api=paid_api, auto_emergency_paid_fallback=switch,
+                                      emergency_max_cost_per_request_eur=ceiling, source="test")
+    return gateway
+
+
+@pytest.mark.parametrize("path", ["complete", "stream"])
+def test_auto_answers_with_exactly_one_paid_call_when_every_free_route_failed(tmp_path, pool_creds, path):
+    """The owner's emergency switch is the consent for that one call; the general paid switch stays off."""
+
+    net = RouteNetwork(all_free_down({OPENAI: openai_reply("Der Citratzyklus oxidiert Acetyl-CoA.", prompt_tokens=700, out_tokens=60)}))
+    gateway = emergency_gateway(tmp_path, pool_creds, net)
+    if path == "complete":
+        reply = gateway.complete(knowledge(ChatMode.AUTO))
+        text = reply.text
+    else:
+        stream = gateway.stream(knowledge(ChatMode.AUTO))
+        text = "".join(stream)
+        reply = stream.reply
+    assert text == "Der Citratzyklus oxidiert Acetyl-CoA." and reply.provider == "openai" and reply.role == "reasoning.smart"
+    assert reply.decision.emergency is True and reply.decision.intelligence_class == "ZERO_COST"
+    assert hosts(net).count(OPENAI) == 1 and "api.anthropic.com" not in hosts(net)
+    assert 0.0 < reply.actual_eur <= 0.03 and reply.estimated_eur <= 0.03
+    assert gateway.governor.summary().open_reservations == 0
+    assert list(dict.fromkeys((a["provider"], a["model"]) for a in reply.route_attempts))[:5] == POOL, "every free route first, in order"
+
+
+def test_the_emergency_switch_off_means_no_paid_call(tmp_path, pool_creds):
+    net = RouteNetwork(all_free_down({OPENAI: openai_reply("paid")}))
+    gateway = emergency_gateway(tmp_path, pool_creds, net, switch=False, paid_api=True)
+    with pytest.raises(FreeIntelligenceUnavailable):
+        gateway.complete(knowledge(ChatMode.AUTO))
+    assert OPENAI not in hosts(net)
+
+
+def test_strict_free_never_takes_the_emergency(tmp_path, pool_creds):
+    net = RouteNetwork(all_free_down({OPENAI: openai_reply("paid")}))
+    gateway = emergency_gateway(tmp_path, pool_creds, net, switch=True, paid_api=True)
+    with pytest.raises(FreeIntelligenceUnavailable):
+        "".join(gateway.stream(knowledge(ChatMode.FREE)))
+    assert OPENAI not in hosts(net)
+
+
+def test_one_owner_request_gets_one_emergency_call_however_many_model_calls_it_makes(tmp_path, pool_creds):
+    from gateway.gateway import RequestContext, reset_context, set_context
+
+    net = RouteNetwork(all_free_down({OPENAI: openai_reply("Notfall.", prompt_tokens=300, out_tokens=40)}))
+    gateway = emergency_gateway(tmp_path, pool_creds, net)
+    token = set_context(RequestContext(mode=ChatMode.AUTO, task_id="owner-request-1"))
+    try:
+        first = gateway.complete(knowledge(ChatMode.AUTO))
+        assert first.decision.emergency is True
+        with pytest.raises((GatewayError, GatewayRefused)):
+            gateway.complete(knowledge(ChatMode.AUTO))  # a second model call of the same owner request
+    finally:
+        reset_context(token)
+    assert hosts(net).count(OPENAI) == 1
+
+
+def test_the_emergency_is_never_a_ladder_even_with_the_switch_alone(tmp_path, pool_creds):
+    net = RouteNetwork(all_free_down({OPENAI: http_error(OPENAI, 503, {"error": {"message": "down"}})}))
+    net.answers["api.anthropic.com"] = {"content": [{"type": "text", "text": "never"}]}
+    gateway = emergency_gateway(tmp_path, pool_creds, net)
+    with pytest.raises(GatewayError):
+        gateway.complete(knowledge(ChatMode.AUTO))
+    assert hosts(net).count(OPENAI) == 1 and "api.anthropic.com" not in hosts(net)
+    assert gateway.governor.summary().month == 0.0 and gateway.governor.summary().open_reservations == 0
+
+
+def test_the_emergency_ceiling_holds_without_the_paid_switch(tmp_path, pool_creds):
+    net = RouteNetwork(all_free_down({OPENAI: openai_reply("paid")}))
+    gateway = emergency_gateway(tmp_path, pool_creds, net, ceiling=0.00001)
+    with pytest.raises(FreeIntelligenceUnavailable):
+        gateway.complete(knowledge(ChatMode.AUTO))
+    assert OPENAI not in hosts(net)
+
+
+def test_the_emergency_consent_does_not_open_smart_when_paid_api_is_off(tmp_path, pool_creds):
+    """The emergency consent is scoped to the emergency: an owner-chosen SMART request still needs the paid switch."""
+
+    net = RouteNetwork({OPENAI: openai_reply("paid")})
+    gateway = emergency_gateway(tmp_path, pool_creds, net, switch=True, paid_api=False)
+    with pytest.raises(Exception):
+        gateway.complete(knowledge(ChatMode.SMART))
+    assert OPENAI not in hosts(net)
+
+
+# ---------------------------------------------------------------------------
+# a stream cut off mid-answer hands over to the next route
+# ---------------------------------------------------------------------------
+
+def test_a_stream_without_a_finish_reason_is_withdrawn_and_the_next_route_answers(tmp_path, pool_creds):
+    from gateway.gateway import StreamRestart
+
+    shown = "Photosynthese ist der biochemische Prozess, bei dem Pflanzen, Al"
+    net = RouteNetwork({"gemini-3.8-flash": Cut(shown), "gemini-3.7-flash": route_answer("gemini", "gemini-3.7-flash")})
+    gateway = make_gateway(tmp_path, owner_pool(), pool_creds, net, local=LocalStub())
+    stream = gateway.stream(knowledge())
+    pieces = list(stream)
+    restarts = [i for i, piece in enumerate(pieces) if isinstance(piece, StreamRestart)]
+    assert len(restarts) == 1 and "".join(pieces[restarts[0] + 1:]) == "Antwort von Route gemini/gemini-3.7-flash."
+    reply = stream.reply
+    assert reply.text == "Antwort von Route gemini/gemini-3.7-flash." and reply.model == "gemini-3.7-flash" and reply.complete
+    assert [(a["model"], a["failure_class"]) for a in reply.route_attempts] == [("gemini-3.8-flash", "incomplete_stream"), ("gemini-3.7-flash", "ok")]
+    assert reply.route_attempts[0]["shown_chars"] == len(shown)
+
+
+def test_a_cut_stream_on_groq_hands_over_to_openrouter(tmp_path, pool_creds):
+    from gateway.gateway import StreamRestart
+
+    answers = {m: quota_error() for p, m in POOL if p == "gemini"} | {GROQ: Cut("Wetter ist kurz"), OPENROUTER: route_answer("openrouter", "openrouter/free")}
+    net = RouteNetwork(answers)
+    gateway = make_gateway(tmp_path, owner_pool(), pool_creds, net, local=LocalStub())
+    stream = gateway.stream(knowledge())
+    pieces = list(stream)
+    assert sum(isinstance(piece, StreamRestart) for piece in pieces) == 1
+    assert stream.reply.provider == "openrouter" and stream.reply.text == "Antwort von Route openrouter/openrouter/free."
+
+
+def test_a_completion_without_a_finish_reason_hands_over_too(tmp_path, pool_creds):
+    net = RouteNetwork({"gemini-3.8-flash": Cut("halb"), "gemini-3.7-flash": route_answer("gemini", "gemini-3.7-flash")})
+    reply = make_gateway(tmp_path, owner_pool(), pool_creds, net, local=LocalStub()).complete(knowledge())
+    assert reply.model == "gemini-3.7-flash" and reply.text == "Antwort von Route gemini/gemini-3.7-flash."
+
+
+def test_in_auto_a_cut_last_free_route_is_withdrawn_and_the_emergency_answers(tmp_path, pool_creds):
+    from gateway.gateway import StreamRestart
+
+    answers = all_free_down({OPENROUTER: Cut("Der Citrat"), OPENAI: openai_reply("Der Citratzyklus oxidiert Acetyl-CoA.", prompt_tokens=600, out_tokens=50)})
+    net = RouteNetwork(answers)
+    gateway = emergency_gateway(tmp_path, pool_creds, net)
+    stream = gateway.stream(knowledge(ChatMode.AUTO))
+    pieces = list(stream)
+    last = max(i for i, piece in enumerate(pieces) if isinstance(piece, StreamRestart))
+    assert "".join(pieces[last + 1:]) == "Der Citratzyklus oxidiert Acetyl-CoA." and stream.reply.decision.emergency is True
+    assert hosts(net).count(OPENAI) == 1
+
+
+def test_in_free_a_cut_last_route_keeps_its_text_as_incomplete(tmp_path, pool_creds):
+    from gateway.gateway import StreamRestart
+
+    gateway = make_gateway(tmp_path, owner_pool(), pool_creds, RouteNetwork(all_free_down({OPENROUTER: Cut("Der Citrat")})), local=LocalStub())
+    stream = gateway.stream(knowledge(ChatMode.FREE))
+    pieces = list(stream)
+    assert not any(isinstance(piece, StreamRestart) for piece in pieces) and "".join(pieces) == "Der Citrat"
+    assert stream.reply.complete is False and stream.reply.finish_reason == "stream_ended_without_finish_reason"

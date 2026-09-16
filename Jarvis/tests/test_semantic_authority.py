@@ -190,8 +190,11 @@ def test_a_stream_that_stalls_mid_answer_is_stored_incomplete_not_blamed_on_the_
     events = ask(core, "Erkläre mir die kompetitive Enzymhemmung.", wait=30)
     message = next(e.payload for e in events if e.type is EventType.MESSAGE)
     assert message["text"] == "Bei der kompetitiven Hemmung", message["text"]
-    assert message["backend"] == "gemini/gemini-3.8-flash" and "lokale KI" not in message["text"], message["backend"]
-    assert message["meta"]["provenance"]["model"] == "gemini-3.8-flash" and message["meta"]["provenance"]["interrupted"] == "timeout"
+    # Every pool model stalls the same way: 3.8 and 3.7 are withdrawn and handed over (the owner's rule: a cut-off
+    # stream is not an answer while another route can still answer); the last route's text is what remains.
+    assert message["backend"] == "gemini/gemini-3.6-flash" and "lokale KI" not in message["text"], message["backend"]
+    assert message["meta"]["provenance"]["model"] == "gemini-3.6-flash" and message["meta"]["provenance"]["interrupted"] == "timeout"
+    assert sum(1 for e in events if e.type is EventType.TOKEN and e.payload.get("reset")) == 2
     completion = message["meta"]["completion"]
     assert completion["complete"] is False and completion["finish_reason"] == "stream_interrupted:timeout" and completion["aborted"] is False
     assert local.calls == [] and kernel.gateway.health.status("gemini") is ProviderStatus.TIMEOUT

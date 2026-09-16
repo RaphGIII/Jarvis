@@ -204,11 +204,13 @@ class ModelRouter:
 
     def candidates(self, task: TaskVector, mode: ChatMode, privacy: PrivacyDecision | None, *, prompt: str,
                    system: str = "", expected_output_tokens: int = 512, task_id: str = "",
-                   only_role: str = "") -> list[Candidate]:
+                   only_role: str = "", emergency: bool = False) -> list[Candidate]:
         policy = policy_for(mode)
         families = self._families_for(task, mode)
         out: list[Candidate] = []
-        paid_allowed = bool(self._paid_allowed())
+        # The one AUTO emergency call is consented to by the owner's emergency switch (checked by the gateway
+        # before it asks); every other gate -- mode, price, budget wall, credentials, privacy -- still applies.
+        paid_allowed = bool(self._paid_allowed()) or bool(emergency)
         for role, binding in self.config.roles.items():
             if only_role and role != only_role:
                 continue
@@ -264,7 +266,7 @@ class ModelRouter:
 
     def decide(self, task: TaskVector, mode: ChatMode | str, privacy: PrivacyDecision | None = None, *, prompt: str,
                system: str = "", expected_output_tokens: int = 512, task_id: str = "", only_role: str = "",
-               apply_overrides: bool = True, intelligence_class: ClassDecision | None = None) -> RouteDecision:
+               apply_overrides: bool = True, intelligence_class: ClassDecision | None = None, emergency: bool = False) -> RouteDecision:
         """Route.  With ``apply_overrides=False`` the hard rules only annotate the
         decision: the caller has already decided that a model is to be consulted
         (interpretation, summary) and only asks which one.
@@ -296,7 +298,8 @@ class ModelRouter:
                     return decision
 
         candidates = self.candidates(task, mode, privacy, prompt=prompt, system=system,
-                                     expected_output_tokens=expected_output_tokens, task_id=task_id, only_role=only_role)
+                                     expected_output_tokens=expected_output_tokens, task_id=task_id, only_role=only_role,
+                                     emergency=emergency and bool(only_role))
         if intelligence_class is not None and not only_role:
             candidates = self._restrict_to_class(candidates, intelligence_class, mode, decision)
         decision.candidates = candidates

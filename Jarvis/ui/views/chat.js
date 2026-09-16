@@ -51,7 +51,7 @@ export function init(deps) {
     }
     $("app").classList.add("conversing");
   });
-  bus.on("token", (p) => { if (!p._replay) appendToken(p.text || ""); });
+  bus.on("token", (p) => { if (p._replay) return; if (p.reset) resetStreaming(); else appendToken(p.text || ""); });
   bus.on("message", (p) => finishStreaming(p.text || "", p));
   bus.on("transcript", () => { /* the verdict follows as a user_message, or not at all */ });
   bus.on("error", (p) => {
@@ -133,6 +133,15 @@ function appendToken(text) {
     streaming.append(el("span", { class: "cursor" }));
     scrollDown();
   });
+}
+
+/* The answer starts again (the route that was streaming stopped mid-answer and another one answers):
+   the text shown so far is withdrawn, the turn stays, the new answer streams into it. */
+function resetStreaming() {
+  if (!streaming) return;
+  streamText = "";
+  streaming.innerHTML = "";
+  streaming.append(el("span", { class: "cursor" }));
 }
 
 function finishStreaming(finalText, payload) {

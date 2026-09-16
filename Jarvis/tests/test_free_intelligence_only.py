@@ -12,6 +12,8 @@ a streamed answer has a connect, first-token, idle and total bound.
 
 from __future__ import annotations
 
+import io
+
 import json
 import time
 from types import SimpleNamespace
@@ -275,18 +277,53 @@ def test_a_first_token_stall_is_bounded_and_the_pool_moves_to_the_next_model(tmp
     assert local.calls == [] and time.perf_counter() - started < 10.0
 
 
-def test_an_inter_chunk_stall_is_bounded_and_the_shown_text_is_kept_as_incomplete(tmp_path):
-    net = PhasedNetwork({"gemini-3.8-flash": timed(["Bei der kompetitiven ", "Hemmung ", "konkurriert"], [1.0, 2.0, 40.0])})
+def test_an_inter_chunk_stall_is_bounded_and_the_next_route_answers_the_whole_question(tmp_path):
+    """The owner's rule (2026-09-16): a stream cut off mid-answer is not an answer.  The shown text is withdrawn, the next
+    route answers, and the stored message is that one coherent answer -- no "Weiter" for the owner to press."""
+
+    net = PhasedNetwork({"gemini-3.8-flash": timed(["Bei der kompetitiven ", "Hemmung ", "konkurriert"], [1.0, 2.0, 40.0]),
+                         "gemini-3.7-flash": timed(["Kompetitive Hemmung: ", "Inhibitor und Substrat konkurrieren um das aktive Zentrum."], [1.0, 1.0])})
     core, kernel, local, executed = make_world(tmp_path, net)
     kernel.gateway._retry_sleep = lambda _delay: None  # noqa: SLF001
     core.set_chat_mode("FREE")
     events = ask(core, QUESTION, wait=30)
     message = next(e.payload for e in events if e.type is EventType.MESSAGE)
-    assert message["text"] == "Bei der kompetitiven Hemmung" and message["backend"] == "gemini/gemini-3.8-flash"
-    assert message["meta"]["completion"]["complete"] is False and message["meta"]["completion"]["finish_reason"] == "stream_interrupted:timeout"
+    assert message["text"] == "Kompetitive Hemmung: Inhibitor und Substrat konkurrieren um das aktive Zentrum."
+    assert message["meta"]["completion"]["complete"] is True
     stream = net.served["gemini-3.8-flash"][0]
-    assert stream.sock.timeouts == [INTERACTIVE_STREAM_TIMEOUTS.first_token, INTERACTIVE_STREAM_TIMEOUTS.idle, INTERACTIVE_STREAM_TIMEOUTS.idle]
-    assert "gemini-3.7-flash" not in net.served, "text was already shown: no silent switch to another model"
+    assert stream.sock.timeouts == [INTERACTIVE_STREAM_TIMEOUTS.first_token, INTERACTIVE_STREAM_TIMEOUTS.idle, INTERACTIVE_STREAM_TIMEOUTS.idle],         "the stall is still bounded by the idle limit"
+    tokens = [e.payload for e in events if e.type is EventType.TOKEN]
+    resets = [i for i, t in enumerate(tokens) if t.get("reset")]
+    assert len(resets) == 1 and "".join(t.get("text", "") for t in tokens[resets[0] + 1:]) == message["text"],         "the withdrawn text is followed by exactly the stored answer"
+    assert "Bei der kompetitiven" not in message["text"] and "gemini" not in message["text"].lower()
+    attempts = message["meta"]["provenance"]["route_attempts"]
+    assert [(a["model"], a["failure_class"]) for a in attempts] == [("gemini-3.8-flash", "incomplete_stream"), ("gemini-3.7-flash", "ok")]
+    assert attempts[0]["shown_chars"] > 0
+    assert local.calls == []
+
+
+def test_on_the_last_route_a_stalled_stream_keeps_its_shown_text_as_incomplete(tmp_path):
+    """When nothing else could answer (FREE, the last pool route), withdrawing the text would leave the owner with nothing."""
+
+    import urllib.error
+
+    class LastRoute(PhasedNetwork):
+        def __call__(self, request, timeout=None):
+            if "gemini-3.6-flash" not in request.full_url and "alt=sse" in request.full_url:
+                self.requests.append({"url": request.full_url, "headers": {}, "body": {}, "timeout": timeout})
+                raise urllib.error.HTTPError(request.full_url, 429, "quota", hdrs=None,
+                                             fp=io.BytesIO(b'{"error": {"message": "requests per day"}}'))
+            return super().__call__(request, timeout)
+
+    net = LastRoute({"gemini-3.6-flash": timed(["Bei der kompetitiven ", "Hemmung ", "konkurriert"], [1.0, 2.0, 40.0])})
+    core, kernel, local, executed = make_world(tmp_path, net)
+    kernel.gateway._retry_sleep = lambda _delay: None  # noqa: SLF001
+    core.set_chat_mode("FREE")
+    events = ask(core, QUESTION, wait=40)
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    assert message["text"] == "Bei der kompetitiven Hemmung" and message["backend"] == "gemini/gemini-3.6-flash"
+    assert message["meta"]["completion"]["complete"] is False and message["meta"]["completion"]["finish_reason"] == "stream_interrupted:timeout"
+    assert not any(e.payload.get("reset") for e in events if e.type is EventType.TOKEN)
     assert local.calls == []
 
 
@@ -353,3 +390,33 @@ def test_smart_and_deep_routes_and_long_generation_bounds_are_unchanged(tmp_path
                                                timeouts=StreamTimeouts(connect=3.0, first_token=4.0, idle=5.0, total=6.0)))
     assert explicit.timeouts.to_dict() == {"connect": 3.0, "first_token": 4.0, "idle": 5.0, "total": 6.0}
     assert INTERACTIVE_STREAM_TIMEOUTS.to_dict() == {"connect": 10.0, "first_token": 20.0, "idle": 20.0, "total": 150.0}
+
+
+def test_auto_with_every_free_route_down_answers_as_zeus_with_one_emergency_call(tmp_path):
+    """The owner's rule (2026-09-16): in AUTO ZEUS answers.  After the whole zero-cost pool failed, exactly one guarded SMART
+    call -- consented by the "Automatische Notfallantwort" switch alone, the general paid switch off -- and the owner reads an
+    ordinary answer: no provider, no quota, no status code, no word about a fallback."""
+
+    import re
+
+    from test_streaming import SSENetwork, openai_events
+    from test_zero_cost_pool import quota_error
+
+    net = SSENetwork()
+    net.responses[GEMINI] = quota_error()
+    net.streams[OPENAI] = openai_events(["Der Citratzyklus oxidiert Acetyl-CoA zu CO2. ", "Dabei entstehen NADH und FADH2 für die Atmungskette."],
+                                        prompt_tokens=900, out_tokens=40)
+    core, kernel, local, executed = make_world(tmp_path, net)
+    spending = kernel.config_root / "owner" / "spending.json"
+    spending.write_text(json.dumps({"paid_api": False, "auto_emergency_paid_fallback": True, "emergency_max_cost_per_request_eur": 0.03}), encoding="utf-8")
+    core.set_chat_mode("AUTO")
+    events = ask(core, "Erkläre mir in zwei Sätzen die Funktion des Citratzyklus.", wait=30)
+    message = next(e.payload for e in events if e.type is EventType.MESSAGE)
+    assert message["text"] == "Der Citratzyklus oxidiert Acetyl-CoA zu CO2. Dabei entstehen NADH und FADH2 für die Atmungskette."
+    leak = re.compile(r"gemini|groq|openrouter|openai|google|provider|anbieter|kostenlos|quota|kontingent|ausgelastet|notfall|429|503|fallback", re.I)
+    assert not leak.search(message["text"])
+    paid = [r for r in net.requests if OPENAI in r["url"]]
+    assert len(paid) == 1, "exactly one paid call"
+    provenance = message["meta"]["provenance"]
+    assert provenance["provider"] == "openai" and 0.0 < provenance["actual_eur"] <= 0.03
+    assert local.calls == []

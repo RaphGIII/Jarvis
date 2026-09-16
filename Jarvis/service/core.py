@@ -4942,12 +4942,23 @@ class JarvisCore:
                 would hear as speech that does not match the text on screen.
                 """
 
+                from gateway.gateway import StreamRestart
                 from runtime.receipts import supporting
                 from service.claims import find_claim
 
+                nonlocal normalizer
                 for raw_chunk in stream:
                     if self._stop_applies():
                         return
+                    if isinstance(raw_chunk, StreamRestart):
+                        # The route that was streaming stopped mid-answer and the next one answers from the start:
+                        # what was shown is withdrawn -- on screen and in the record -- so the stored message is
+                        # one coherent answer, not two stitched together.  Nothing names the route that stopped.
+                        collected.clear()
+                        supported.clear()
+                        normalizer = StreamNormalizer()
+                        self.emit(EventType.TOKEN, {"text": "", "reset": True}, scope=scope)
+                        continue
                     chunk = normalizer.feed(raw_chunk)
                     if not chunk:
                         continue
@@ -5042,7 +5053,7 @@ class JarvisCore:
                                   context_text=f"[answer interrupted by the provider ({who['interrupted']}); stored incomplete]")
                     return
                 message = (self._free_unavailable_message() if outage["status"] == "FREE_INTELLIGENCE_UNAVAILABLE"
-                           else self._semantic_unavailable_message("", str(outage.get("question") or "")))
+                           else self._semantic_unavailable_message(""))
                 self._deliver(message, scope=scope, backend="intelligence", final_state=JarvisState.WAITING, meta=meta,
                               context_text=f"[{outage['status'].lower()}: {outage.get('failure_class') or 'outage'}; no answer generated]")
                 return

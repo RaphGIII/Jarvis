@@ -243,8 +243,8 @@ async function performance(body) {
   const changes = {};
   body.append(card("Bezahlte Intelligenz",
     row("Bezahlte Intelligenz erlauben", toggle(Boolean(spending.paid_api), (on) => { changes.paid_api = on; }), "Ohne diese Freigabe bleibt ZEUS vollständig kostenlos."),
-    row("Notfall-Antwort im Automatik-Modus", toggle(Boolean(spending.auto_emergency_paid_fallback), (on) => { changes.auto_emergency_paid_fallback = on; }),
-        "Wenn jede kostenlose Intelligenz ausfällt, darf ZEUS genau eine bezahlte Antwort holen – nie mehrere."),
+    row("Automatische Notfallantwort", toggle(Boolean(spending.auto_emergency_paid_fallback), (on) => { changes.auto_emergency_paid_fallback = on; }),
+        "Nur wenn alle kostenlosen Routen ausfallen; maximal ein kostenpflichtiger Aufruf."),
     row("Obergrenze pro Notfall-Antwort", el("input", { type: "number", step: "0.01", min: "0", value: spending.emergency_max_cost_per_request_eur ?? emergency.ceiling_eur ?? 0.03,
         onChange: (e) => { changes.emergency_max_cost_per_request_eur = Number(e.target.value); } }), "in Euro"),
   ));

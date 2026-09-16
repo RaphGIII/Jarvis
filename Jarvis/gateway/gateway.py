@@ -85,6 +85,8 @@ class RequestContext:
     mode: ChatMode = ChatMode.AUTO
     task_id: str = ""
     conversation_id: str = ""
+    #: Paid emergency calls this owner request has already made (AUTO): at most one, whatever asks.
+    emergency_calls: int = 0
     #: Context chunks beyond the prompt itself (memory, documents ...).
     chunks: list[Chunk] = field(default_factory=list)
     facts: TaskFacts | None = None
@@ -98,6 +100,31 @@ class RequestContext:
 
 
 _context: contextvars.ContextVar[RequestContext | None] = contextvars.ContextVar("zeus_gateway_context", default=None)
+
+
+class _IncompleteStream(Exception):
+    """Internal: a zero-cost route's stream ended abnormally after it showed text, and another route can answer."""
+
+    def __init__(self, error: GatewayError) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+class StreamRestart(str):
+    """An empty chunk that means: the text streamed so far is withdrawn; the answer starts again.
+
+    Yielded when a zero-cost route's stream ended abnormally after it had shown
+    text and the next route takes over.  It is a ``str`` (empty), so a consumer
+    that only joins chunks is unharmed; a consumer that shows or stores text
+    discards what it collected when it sees one.
+    """
+
+    def __new__(cls) -> "StreamRestart":
+        return super().__new__(cls, "")
+
+
+#: Finish reasons that are not the provider saying "done": the stream was cut, not finished.
+ABNORMAL_FINISH_REASONS = frozenset({"", "other", "error", "finish_reason_unspecified", "stream_ended_without_finish_reason"})
 
 
 def current_context() -> RequestContext:
@@ -158,6 +185,9 @@ class GatewayRequest:
     #: The phased bounds for a streamed answer; None = the gateway chooses
     #: INTERACTIVE_STREAM_TIMEOUTS or LONG_STREAM_TIMEOUTS from the route.
     timeouts: StreamTimeouts | None = None
+    #: Set only by the gateway itself for the one AUTO emergency call: the owner's emergency switch is
+    #: the consent for that single metered call, the general paid switch is not required for it.
+    emergency: bool = False
 
 
 @dataclass
@@ -416,7 +446,7 @@ class ModelGateway:
             cls = self._inform_class(cls, task, mode, privacy)
         decision = self.router.decide(task, mode, privacy, prompt=request.prompt, system=request.system or "",
                                       expected_output_tokens=expected_output, task_id=request.task_id, only_role=request.role,
-                                      apply_overrides=request.overrides, intelligence_class=cls)
+                                      apply_overrides=request.overrides, intelligence_class=cls, emergency=request.emergency)
         return decision, privacy
 
     def _inform_class(self, cls: ClassDecision, task: TaskVector, mode: ChatMode, privacy: PrivacyDecision) -> ClassDecision:
@@ -684,13 +714,15 @@ class ModelGateway:
         """
 
         policy = self.cost_policy
-        if mode is not ChatMode.AUTO or decision.intelligence_class != IntelligenceClass.ZERO_COST.value:
+        if not self._emergency_possible(mode, decision):
             return None
-        if not bool(getattr(policy, "auto_emergency_paid_fallback", False)) or not bool(getattr(policy, "allow_paid_api", False)):
+        context = active_context()
+        role = IntelligenceClass.SMART.roles[0]
+        if context is not None and context.emergency_calls >= 1:
+            self._emit("gateway.emergency", {"role": role, "outcome": "refused", "reason": "one emergency answer per owner request"})
             return None
         ceiling = float(getattr(policy, "emergency_max_cost_per_request_eur", 0.0) or 0.0)
-        role = IntelligenceClass.SMART.roles[0]
-        request = replace(request, role=role, mode=ChatMode.AUTO, output_budget=None)
+        request = replace(request, role=role, mode=ChatMode.AUTO, output_budget=None, emergency=True)
         try:
             emergency = self._prepare(request)
         except (GatewayRefused, GatewayError) as refused:
@@ -717,6 +749,8 @@ class ModelGateway:
             self._emit("gateway.emergency", {"role": role, "outcome": "over_ceiling", "estimated_eur": round(estimate, 6), "ceiling_eur": ceiling})
             return None
         emergency.decision.emergency = True
+        if context is not None:
+            context.emergency_calls += 1  # counted when selected: a failed emergency call is still the one call
         emergency.decision.intelligence_class = IntelligenceClass.ZERO_COST.value
         emergency.decision.class_decision = {**dict(decision.class_decision), "emergency": f"zero-cost pool exhausted ({len(attempts)} attempts); "
                                                                                          f"one guarded {role} call, projected EUR {estimate:.4f} <= {ceiling:.4f}"
@@ -724,6 +758,23 @@ class ModelGateway:
         self._emit("gateway.emergency", {"role": role, "outcome": "selected", "estimated_eur": round(estimate, 6), "ceiling_eur": ceiling,
                                          "provider": emergency.provider.name, "model": emergency.binding.model, "stepped_down": stepped})
         return emergency
+
+    def _emergency_possible(self, mode: ChatMode, decision: RouteDecision) -> bool:
+        """AUTO, the zero-cost class was selected, and the owner switched the automatic emergency answer on."""
+
+        return (ChatMode.parse(mode) is ChatMode.AUTO and decision.intelligence_class == IntelligenceClass.ZERO_COST.value
+                and bool(getattr(self.cost_policy, "auto_emergency_paid_fallback", False)))
+
+    @staticmethod
+    def _abnormal_finish(reply: Any) -> bool:
+        return str(getattr(reply, "finish_reason", "") or "").strip().lower() in ABNORMAL_FINISH_REASONS
+
+    def _can_hand_over(self, prepared: _Prepared, routes: list[Any], index: int, skip_providers: set[str]) -> bool:
+        """Whether something can still answer after route ``index``: a later pool route, or the AUTO emergency."""
+
+        if any(later[1].name not in skip_providers for later in routes[index + 1:]):
+            return True
+        return self._emergency_possible(prepared.mode, prepared.decision)
 
     # -- streaming -----------------------------------------------------------------------
 
@@ -769,6 +820,10 @@ class ModelGateway:
                     rewrites += n
                     pieces.append(text)
                     yield text
+                elif "restart" in event:
+                    pieces.clear()
+                    rewrites = 0
+                    yield StreamRestart()
                 elif "reply" in event:
                     final = event["reply"]
         except FreeIntelligenceUnavailable as exc:
@@ -892,18 +947,18 @@ class ModelGateway:
                 exc.model = exc.model or binding.model
                 if shown or not self._stream_layer_failure(exc):
                     raise
-                route_attempts.append({"model": binding.model, "attempt": 1, "failure_class": exc.status.value, "http_status": exc.http_status,
+                route_attempts.append({"provider": provider.name, "model": binding.model, "attempt": 1, "failure_class": exc.status.value, "http_status": exc.http_status,
                                        "retry_delay_seconds": 0.0, "latency_seconds": round(time.perf_counter() - attempt_started, 3),
                                        "delivery_mode": "provider_stream", "stream_phase": getattr(exc, "stream_phase", "")})
                 reply = adapter.call(self.transport, prepared.ticket, provider, binding, self._completion_request(prepared))
                 reply.delivery_mode = "complete_response"
-                route_attempts.append({"model": binding.model, "attempt": 2, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0,
+                route_attempts.append({"provider": provider.name, "model": binding.model, "attempt": 2, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0,
                                        "latency_seconds": round(reply.latency_seconds, 3), "delivery_mode": "complete_response"})
                 if reply.text:
                     yield {"text": reply.text}
                 yield {"reply": replace(reply, text="")}
                 return
-            route_attempts.append({"model": binding.model, "attempt": 1, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0,
+            route_attempts.append({"provider": provider.name, "model": binding.model, "attempt": 1, "failure_class": "ok", "http_status": None, "retry_delay_seconds": 0.0,
                                    "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "provider_stream"})
             return
 
@@ -911,7 +966,7 @@ class ModelGateway:
         routes = self._pool_routes(prepared)
         skip_providers: set[str] = set()
         completion_retried = False
-        for route, provider, binding, adapter in routes:
+        for index, (route, provider, binding, adapter) in enumerate(routes):
             if provider.name in skip_providers:
                 continue
             try:
@@ -924,23 +979,38 @@ class ModelGateway:
             for attempt in range(1, FREE_POOL_MAX_ATTEMPTS_PER_MODEL + 1):
                 attempt_started = time.perf_counter()
                 shown = False
+                shown_chars = 0
                 try:
                     got_reply = False
                     served = ""
+                    closing = None
                     for event in adapter.stream(self.transport, ticket, provider, binding, prepared.provider_request):
                         if "text" in event:
                             shown = True
+                            shown_chars += len(str(event["text"]))
                         if "reply" in event and event["reply"] is not None:
                             got_reply = True
                             event["reply"].model = route.model_id
                             event["reply"].provider = provider.name
                             served = str(getattr(event["reply"], "served_model", "") or "")
+                            closing = event  # held back until the stream is known to have finished properly
+                            continue
                         yield event
                     if not shown:
                         # An adapter always closes its stream with a reply event; a stream that carried no text is an empty answer
                         # from that route, not an answer.
                         raise GatewayError(ProviderStatus.TASK_FAILURE, "empty stream: no text" + ("" if got_reply else " and no completion"),
                                            role=decision.role, provider=provider.name, model=route.model_id)
+                    if (closing is None or self._abnormal_finish(closing["reply"])) and self._can_hand_over(prepared, routes, index, skip_providers):
+                        # The provider stopped without saying it was done (observed live: Gemini under load closed the stream
+                        # after 14 tokens).  That is not an answer: the text is withdrawn and the next route answers.
+                        finish = str(getattr(closing["reply"], "finish_reason", "") or "") if closing else ""
+                        incomplete = GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE, f"stream ended without a valid finish reason ({finish or 'none'}) "
+                                                  f"after {shown_chars} chars", role=decision.role, provider=provider.name, model=route.model_id,
+                                                  retry_after_seconds=30.0)
+                        raise _IncompleteStream(incomplete)
+                    if closing is not None:
+                        yield closing
                     route_attempts.append({"provider": provider.name, "model": route.model_id, "attempt": attempt, "failure_class": "ok",
                                            "http_status": None, "retry_delay_seconds": 0.0,
                                            "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "provider_stream",
@@ -949,6 +1019,17 @@ class ModelGateway:
                     self._emit_free_pool(decision, provider.name, route_attempts, final_model=route.model_id, started=prepared.started,
                                          monetary_cost_eur=0.0, goal_verified=None)
                     return
+                except _IncompleteStream as cut:
+                    exc = cut.error
+                    last_error = exc
+                    route_attempts.append({"provider": provider.name, "model": route.model_id, "attempt": attempt, "failure_class": "incomplete_stream",
+                                           "http_status": None, "retry_delay_seconds": 0.0, "shown_chars": shown_chars,
+                                           "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "provider_stream"})
+                    self._note_route(provider.name, route.model_id, exc)
+                    self._emit("gateway.stream_restart", {"role": decision.role, "provider": provider.name, "model": route.model_id,
+                                                          "shown_chars": shown_chars, "reason": str(exc)[:200]})
+                    yield {"restart": {"provider": provider.name, "model": route.model_id, "shown_chars": shown_chars}}
+                    break
                 except GatewayError as exc:
                     exc.model = exc.model or route.model_id
                     exc.provider = exc.provider or provider.name
@@ -956,9 +1037,18 @@ class ModelGateway:
                     route_attempts.append({"provider": provider.name, "model": route.model_id, "attempt": attempt, "failure_class": exc.status.value,
                                            "http_status": exc.http_status, "retry_delay_seconds": 0.0,
                                            "latency_seconds": round(time.perf_counter() - attempt_started, 3),
-                                           "delivery_mode": "provider_stream", "stream_phase": getattr(exc, "stream_phase", "")})
+                                           "delivery_mode": "provider_stream", "stream_phase": getattr(exc, "stream_phase", ""),
+                                           **({"shown_chars": shown_chars} if shown else {})})
                     if shown:
-                        raise  # text was shown: no silent switch; the caller stores what was shown as incomplete
+                        if not self._can_hand_over(prepared, routes, index, skip_providers):
+                            raise  # the last route: what was shown is stored as incomplete; nothing else could answer
+                        # The stream broke mid-answer: withdraw the text and let the next route answer.
+                        route_attempts[-1]["failure_class"] = "incomplete_stream"
+                        self._note_route(provider.name, route.model_id, exc)
+                        self._emit("gateway.stream_restart", {"role": decision.role, "provider": provider.name, "model": route.model_id,
+                                                              "shown_chars": shown_chars, "reason": str(exc)[:200]})
+                        yield {"restart": {"provider": provider.name, "model": route.model_id, "shown_chars": shown_chars}}
+                        break
                     if self._stream_layer_failure(exc) and not completion_retried:
                         # The stream broke, the model did not: the same route, as one completed body (once per request).
                         completion_retried = True
@@ -1063,7 +1153,8 @@ class ModelGateway:
         attempts: list[dict[str, Any]] = []
         last_error: GatewayError | None = None
         skip_providers: set[str] = set()
-        for route, route_provider, route_binding, route_adapter in self._pool_routes(prepared):
+        pool = self._pool_routes(prepared)
+        for index, (route, route_provider, route_binding, route_adapter) in enumerate(pool):
             if route_provider.name in skip_providers:
                 continue
             try:
@@ -1079,6 +1170,10 @@ class ModelGateway:
                     reply = route_adapter.call(self.transport, route_ticket, route_provider, route_binding, provider_request)
                     reply.provider = route_provider.name
                     reply.model = route.model_id
+                    if self._abnormal_finish(reply) and self._can_hand_over(prepared, pool, index, skip_providers):
+                        raise GatewayError(ProviderStatus.PROVIDER_UNAVAILABLE,
+                                           f"completion ended without a valid finish reason ({reply.finish_reason or 'none'})",
+                                           role=decision.role, provider=route_provider.name, model=route.model_id, retry_after_seconds=30.0)
                     attempts.append({"provider": route_provider.name, "model": route.model_id, "attempt": attempt, "failure_class": "ok",
                                      "http_status": None, "retry_delay_seconds": 0.0,
                                      "latency_seconds": round(time.perf_counter() - attempt_started, 3), "delivery_mode": "complete_response",
@@ -1119,7 +1214,8 @@ class ModelGateway:
 
         availability = {ProviderStatus.PROVIDER_UNAVAILABLE, ProviderStatus.RATE_LIMIT, ProviderStatus.QUOTA_EXHAUSTED, ProviderStatus.TIMEOUT,
                         ProviderStatus.MODEL_UNAVAILABLE}
-        outage_seen = any(str(a.get("failure_class")) in {s.value for s in availability} for a in attempts)
+        # A stream the provider cut off mid-answer is the provider's instability, not the request's fault.
+        outage_seen = any(str(a.get("failure_class")) in {s.value for s in availability} | {"incomplete_stream"} for a in attempts)
         if last_error is not None and not outage_seen and (not last_error.status.is_outage or last_error.status is ProviderStatus.AUTHENTICATION_ERROR):
             return last_error  # the pool did not run out: the request or the key is wrong, and that is the answer
         error = FreeIntelligenceUnavailable(role=decision.role, provider=provider_name, attempts=attempts)

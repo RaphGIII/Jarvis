@@ -1512,6 +1512,11 @@ modules:
     - name: RequestContext
       doc: Per-request facts the conversation loop knows and the callers deep down do not.
       methods: []
+    - name: StreamRestart
+      bases:
+      - str
+      doc: 'An empty chunk that means: the text streamed so far is withdrawn; the answer starts again.'
+      methods: []
     - name: GatewayRequest
       methods: []
     - name: GatewayReply
@@ -1785,10 +1790,10 @@ modules:
     - name: ModelRouter
       methods:
       - 'def candidates(self, task: TaskVector, mode: ChatMode, privacy: PrivacyDecision | None, *, prompt: str, system: str='''',
-        expected_output_tokens: int=512, task_id: str='''', only_role: str='''') -> list[Candidate]'
+        expected_output_tokens: int=512, task_id: str='''', only_role: str='''', emergency: bool=False) -> list[Candidate]'
       - 'def decide(self, task: TaskVector, mode: ChatMode | str, privacy: PrivacyDecision | None=None, *, prompt: str, system:
         str='''', expected_output_tokens: int=512, task_id: str='''', only_role: str='''', apply_overrides: bool=True, intelligence_class:
-        ClassDecision | None=None) -> RouteDecision'
+        ClassDecision | None=None, emergency: bool=False) -> RouteDecision'
     functions:
     - signature: 'def thinking_level_for(task: TaskVector, mode: ChatMode | None=None) -> str'
       doc: FAST / NORMAL / DEEP from the task; MAX only in DEEP mode for the hardest tasks.
