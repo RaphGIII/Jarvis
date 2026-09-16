@@ -190,7 +190,8 @@ function wireShell() {
   $("btnWorkspaceClose").onclick = () => views.close();
   $("btnSearch").onclick = () => palette.open();
   // the app window's own controls: only inside the desktop shell (Chromium app mode), never in a browser tab
-  const standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  // Chromium fullscreen reports display-mode: fullscreen, an --app window standalone; both are the desktop shell
+  const standalone = window.matchMedia && (window.matchMedia("(display-mode: standalone)").matches || window.matchMedia("(display-mode: fullscreen)").matches);
   if (standalone) {
     $("winctl").hidden = false;
     $("btnWinMin").onclick = () => api("/api/window", { action: "minimize", reason: "owner" });
