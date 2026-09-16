@@ -1,0 +1,249 @@
+{
+ "at": "2026-09-16T20:12:53+0200",
+ "spend_lines_before": 12,
+ "openrouter_before": {
+  "key": {
+   "limit": 0,
+   "limit_remaining": 0,
+   "usage": 0,
+   "usage_daily": 0,
+   "is_free_tier": true,
+   "free_model_daily_requests": {
+    "used": 3,
+    "limit": 50,
+    "remaining": 47
+   }
+  },
+  "credits": {
+   "total_credits": 0,
+   "total_usage": 0
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "A gemini unavailable",
+   "blocked": [
+    "generativelanguage.googleapis.com"
+   ],
+   "question": "Warum ist der Himmel tagsüber blau?",
+   "answered_by": "groq/openai/gpt-oss-120b",
+   "served_model": "openai/gpt-oss-120b",
+   "intelligence_class": "ZERO_COST",
+   "emergency": false,
+   "actual_eur": 0.0,
+   "complete": true,
+   "tokens": 228,
+   "first_token_s": 5.08,
+   "message_s": 5.59,
+   "stored_equals_stream": true,
+   "route_attempts": [
+    [
+     "gemini",
+     "gemini-3.8-flash",
+     "provider_unavailable",
+     ""
+    ],
+    [
+     "gemini",
+     "gemini-3.7-flash",
+     "provider_unavailable",
+     ""
+    ],
+    [
+     "gemini",
+     "gemini-3.6-flash",
+     "provider_unavailable",
+     ""
+    ],
+    [
+     "groq",
+     "openai/gpt-oss-120b",
+     "ok",
+     ""
+    ]
+   ],
+   "proxy": [
+    "huggingface.co:tunnel",
+    "generativelanguage.googleapis.com:blocked",
+    "generativelanguage.googleapis.com:blocked",
+    "generativelanguage.googleapis.com:blocked",
+    "api.groq.com:tunnel"
+   ],
+   "tools": [
+    "routed: conversation (high) -> conversation",
+    "understood: conversation"
+   ],
+   "chat_leaks": [],
+   "answer": "Der Himmel erscheint tagsüber blau, weil das Sonnenlicht in der Erdatmosphäre **Rayleigh‑Streuung** erfährt.\n\n* **Wellenlängenabhängigkeit** – Die Streuungsintensität ist proportional zu 1/λ⁴. Kürzere Wellenlängen (blau ≈ 450 nm, violett ≈ 400 nm) werden also viel stärker gestreut als längere (rot ≈ 650 nm).\n* **Warum nicht violett?** – Das menschliche Auge ist weniger empfindlich für Violett, und ein Teil des violetten Lichts wird von der oberen Atmosphäre absorbiert. Das Ergebnis ist ein überwiegend blaues Bild.\n* **Sonnenstand** – Bei tiefem Sonnenstand (Morgen/Abend) legt das Licht einen längeren Weg durch die Luft zurück; das blaue Licht wird stärker gestreut und das rote Licht dominiert, weshalb wir dann rot/orange sehen.\n\nKurz: Kurzwelliges Licht wird in der Luft stärker gestreut, das Auge nimmt das gestreute Blau wahr."
+  },
+  {
+   "scenario": "B gemini unavailable, cooling down",
+   "blocked": [
+    "generativelanguage.googleapis.com"
+   ],
+   "question": "Wie funktioniert ein Regenbogen?",
+   "answered_by": "groq/openai/gpt-oss-120b",
+   "served_model": "openai/gpt-oss-120b",
+   "intelligence_class": "ZERO_COST",
+   "emergency": false,
+   "actual_eur": 0.0,
+   "complete": true,
+   "tokens": 470,
+   "first_token_s": 2.11,
+   "message_s": 2.92,
+   "stored_equals_stream": true,
+   "route_attempts": [
+    [
+     "groq",
+     "openai/gpt-oss-120b",
+     "ok",
+     ""
+    ]
+   ],
+   "proxy": [
+    "api.groq.com:tunnel"
+   ],
+   "tools": [
+    "routed: conversation (high) -> conversation",
+    "understood: conversation"
+   ],
+   "chat_leaks": [],
+   "answer": "Ein Regenbogen entsteht durch **Brechung**, **Reflexion** und **Dispersion** von Sonnenlicht in unzähligen, kugelförmigen Wassertropfen in der Atmosphäre.\n\n1. **Eintreten des Lichts** – Das Sonnenlicht trifft auf einen Tropfen und wird an der Luft‑Wasser‑Grenze nach dem Snell‑Gesetz gebrochen. Dabei wird das weiße Licht in seine Spektralfarben zerlegt (Dispersion), weil der Brechungsindex n von Wasser von der Wellenlänge abhängt (n ≈ 1,33 für rotes Licht, ≈ 1,34 für blaues).\n\n2. **Innere Reflexion** – Das gebrochene Licht wird an der Rückseite des Tropfens reflektiert. Für den **primären Regenbogen** ist das eine einfache Reflexion; beim **sekundären Regenbogen** erfolgt eine zweite Reflexion, wodurch das Licht stärker abgelenkt und das Farbspektrum umgekehrt wird.\n\n3. **Austritt** – Das Licht tritt erneut aus dem Tropfen aus, wird ein zweites Mal gebrochen und verlässt den Tropfen in einem charakteristischen Winkel zum einfallenden Sonnenlicht.  \n   * Primärer Regenbogen: ca. **42 °** zum Sonnenlicht (rot außen, violett innen).  \n   * Sekundärer Regenbogen: ca. **51 °** (farblich umgekehrt, schwächer, weil Licht zweimal reflektiert wird).\n\n4. **Kollektiver Effekt** – Jeder Tropfen leitet das Licht nur in einem engen Winkel weiter, aber die Atmosphäre enthält Millionen Tropfen mit allen möglichen Positionen. Das Ergebnis ist ein **Kreis** (oder Bogen, wenn der Boden ihn abschneidet) aus Licht, dessen Farben durch die Winkelabhängigkeit der Dispersion getrennt sind.\n\n**Kurzfassung:** Sonnenlicht → Brechung (Dispersion) → innere Reflexion → zweite Brechung → Austritt im 42°‑ bzw. 51°‑Winkel → farbiger Bogen.  \n\nFalls du eine Visualisierung oder eine Simulation brauchst, sag Bescheid – ich kann ein kurzes Diagramm generieren."
+  },
+  {
+   "scenario": "C gemini + groq unavailable",
+   "blocked": [
+    "generativelanguage.googleapis.com",
+    "api.groq.com"
+   ],
+   "question": "Was ist der Unterschied zwischen Wetter und Klima?",
+   "answered_by": "openrouter/openrouter/free",
+   "served_model": "nex-agi/nex-n2.5-pro:free",
+   "intelligence_class": "ZERO_COST",
+   "emergency": false,
+   "actual_eur": 0.0,
+   "complete": true,
+   "tokens": 89,
+   "first_token_s": 3.65,
+   "message_s": 5.28,
+   "stored_equals_stream": true,
+   "route_attempts": [
+    [
+     "groq",
+     "openai/gpt-oss-120b",
+     "provider_unavailable",
+     ""
+    ],
+    [
+     "openrouter",
+     "openrouter/free",
+     "ok",
+     "nex-agi/nex-n2.5-pro:free"
+    ]
+   ],
+   "proxy": [
+    "api.groq.com:blocked",
+    "openrouter.ai:tunnel"
+   ],
+   "tools": [
+    "routed: conversation (high) -> conversation",
+    "understood: conversation"
+   ],
+   "chat_leaks": [],
+   "answer": "**Wetter** ist der kurzfristige Zustand der Atmosphäre an einem Ort: Temperatur, Regen, Wind und Bewölkung über Stunden bis Tage.\n\n**Klima** beschreibt das durchschnittliche Wetter und seine Schwankungen über lange Zeiträume, typischerweise mindestens **30 Jahre**.\n\nKurz: Ein einzelner kalter Tag ist Wetter; die wiederkehrende Verteilung solcher Tage über Jahrzehnte ist Klima."
+  },
+  {
+   "scenario": "D gemini + groq unavailable, cooling down",
+   "blocked": [
+    "generativelanguage.googleapis.com",
+    "api.groq.com"
+   ],
+   "question": "Warum schwimmt Eis auf Wasser?",
+   "answered_by": "openrouter/openrouter/free",
+   "served_model": "inclusionai/ling-3.0-flash-fin:free",
+   "intelligence_class": "ZERO_COST",
+   "emergency": false,
+   "actual_eur": 0.0,
+   "complete": true,
+   "tokens": 138,
+   "first_token_s": 2.27,
+   "message_s": 3.12,
+   "stored_equals_stream": true,
+   "route_attempts": [
+    [
+     "openrouter",
+     "openrouter/free",
+     "ok",
+     "inclusionai/ling-3.0-flash-fin:free"
+    ]
+   ],
+   "proxy": [
+    "openrouter.ai:tunnel"
+   ],
+   "tools": [
+    "routed: conversation (high) -> conversation",
+    "understood: conversation"
+   ],
+   "chat_leaks": [],
+   "answer": "Eis schwimmt auf Wasser, weil es **weniger dicht** ist als flüssiges Wasser – eine ungewöhnliche Eigenschaft, die die meisten Substanzen nicht haben.\n\n**Ursache: Wasserstoffbrückenbindungen**\n\nIm festen Zustand (Eis) ordnen sich die Wassermoleküle in einer **hexagonalen Kristallstruktur** an, die durch Wasserstoffbrücken stabilisiert wird. Diese Struktur hält die Moleküle **weiter auseinander** als im flüssigen Zustand, wo sie dichter gepackt sind.\n\n* Dichte von Eis: ≈ **0,917 g/cm³**\n* Dichte von Wasser (bei 4 °C): ≈ **1,000 g/cm³**\n\n**Archimedes' Prinzip** besagt: Ein Körper, der leichter ist als die Flüssigkeit, die er verdrängt, schwimmt. Da Eis leichter ist als die verdrängte Wassermenge, bleibt es an der Oberfläche.\n\n**Warum das ökologisch wichtig ist:** Wäre Eis dichter als Wasser, würden Seen und Ozeane von **unten nach oben** zufrieren – mit verheerenden Folgen für das aquatische Leben. Die schwimmende Eisschicht wirkt stattdessen als Isolator und schützt das Wasser darunter."
+  },
+  {
+   "scenario": "E0 every route unavailable or cooling down (gemini 7 s, groq 21 s left; openrouter blocked)",
+   "blocked": [
+    "api.groq.com",
+    "openrouter.ai"
+   ],
+   "answered_by": "None/None",
+   "intelligence_class": null,
+   "actual_eur": null,
+   "emergency": null,
+   "complete": null,
+   "route_attempts": [],
+   "answer": "Die kostenlose KI ist gerade ausgelastet. Du kannst es erneut versuchen oder für diese Anfrage SMART verwenden."
+  },
+  {
+   "scenario": "E groq + openrouter unavailable (gemini the only reachable route)",
+   "blocked": [
+    "api.groq.com",
+    "openrouter.ai"
+   ],
+   "answered_by": "gemini/gemini-3.8-flash",
+   "intelligence_class": "ZERO_COST",
+   "actual_eur": 0.0,
+   "emergency": false,
+   "complete": false,
+   "tokens": 2,
+   "message_s": 18.26,
+   "route_attempts": [
+    [
+     "gemini",
+     "gemini-3.8-flash",
+     "ok"
+    ]
+   ],
+   "proxy": [
+    "generativelanguage.googleapis.com:tunnel"
+   ],
+   "answer": "Photosynthese ist der biochemische Prozess, bei dem Pflanzen, Al"
+  }
+ ],
+ "spend_lines_after": 12,
+ "openrouter_after": {
+  "key": {
+   "limit": 0,
+   "limit_remaining": 0,
+   "usage": 0,
+   "usage_daily": 0,
+   "is_free_tier": true,
+   "free_model_daily_requests": {
+    "used": 3,
+    "limit": 50,
+    "remaining": 47
+   }
+  },
+  "credits": {
+   "total_credits": 0,
+   "total_usage": 0
+  }
+ }
+}
