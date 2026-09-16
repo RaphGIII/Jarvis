@@ -1456,7 +1456,7 @@ packages:
       - tests/test_persona_and_datasets.py
     - path: persona/rules.py
       purpose: 'Owner personality rules: the structured, editable layer beside the protected core identity.'
-      lines: 234
+      lines: 299
       public: 9
       tests:
       - tests/test_personality_rules.py

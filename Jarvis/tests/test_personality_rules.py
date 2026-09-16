@@ -47,7 +47,10 @@ def test_rule_model_classifies_normalises_and_merges():
     assert classify_category("Sprich mit mir immer locker.") == "communication_style"
     assert classify_category("Antworte bei Medizinfragen immer mit klinischer Relevanz.") == "domain_preference"
     facing = owner_text("Merke dir, dass du auch mein Freund bist und mir zuhörst und Rat gibst.")
-    assert facing.startswith("ZEUS ist auch Raphaels Freund") and "zuhört" in facing and "Rat gibt" in facing
+    assert facing == "ZEUS ist auch Raphaels Freund, hört Raphael zu und gibt Rat.", facing
+    assert owner_text("Merke dir, dass du mein Freund und Berater bist.") == "ZEUS ist Raphaels Freund und Berater."
+    assert owner_text("Merke dir, dass du für mich da bist.") == "ZEUS ist für Raphael da."
+    assert owner_text("Merke dir, dass du nie ohne Rückfrage Dateien löschst.") == "ZEUS löscht nie ohne Rückfrage Dateien."
     assert owner_text("Sprich mit mir immer locker und per du.") == "ZEUS spricht mit Raphael immer locker und per du."
     assert owner_text("Wenn ich lerne, halte dich kurz.") == "Wenn Raphael lernt, hält ZEUS sich kurz."
     assert owner_text("Erinnere mich abends an meine Medikamente.") == "ZEUS erinnert Raphael abends an Raphaels Medikamente."
@@ -143,3 +146,32 @@ def test_owner_ui_preferences_persist_on_the_server(tmp_path):
     assert core.ui_preference_set("ui.show_spend", False)["ok"]
     assert core.ui_preferences()["preferences"]["ui.show_spend"] is False
     assert core.ui_preference_set("ui.nonsense", 1)["ok"] is False
+
+
+def test_the_follow_up_question_reaches_the_model_carrying_the_stored_rule(tmp_path, isolated_owner):
+    """No canned answer: 'Was bist du noch?' goes to the model, and what the model receives holds the rule."""
+
+    from test_actionability import Provider
+
+    class Recording(Provider):
+        def __init__(self):
+            super().__init__()
+            self.systems = []
+
+        def generate_stream(self, prompt, **kw):
+            self.systems.append(kw.get("system", ""))
+            self.prompts.append(prompt)
+            yield "Auch dein Freund."
+
+    rec = Recording()
+    core, _ = make(tmp_path, provider=rec)
+    core.security.setup("korrektes-passwort-1")
+    minted = core.security.unlock("korrektes-passwort-1", "PROTECTED_MEMORY")
+    stored, _ = drain(core, "Merke dir, dass du auch mein Freund bist und mir zuhörst und Rat gibst.",
+                      meta={"authorization": minted["authorization"], "source": "text"})
+    assert stored.get("rule_id") and rec.prompts == []
+    _, events = drain(core, "Was bist du noch?", wait=20.0)
+    answers = [e.payload for e in events if e.type is EventType.MESSAGE]
+    assert answers and answers[-1]["text"] == "Auch dein Freund.", answers
+    carried = "\n".join(rec.systems + rec.prompts)
+    assert "ist auch Raphaels Freund, hört Raphael zu und gibt Rat." in carried and any("Owner rules" in s for s in rec.systems), carried[:2000]

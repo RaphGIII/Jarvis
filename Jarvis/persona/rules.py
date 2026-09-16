@@ -115,6 +115,69 @@ def _imperatives_to_third_person(text: str, assistant: str) -> str:
     return re.sub(r"(^|,\s*)([A-Za-zÄÖÜäöüß]+)(\s+dich\b)?", sub, text, count=2)
 
 
+_SECOND_PERSON = {"bist": "ist", "hast": "hat", "wirst": "wird", "kannst": "kann", "sollst": "soll", "darfst": "darf", "musst": "muss",
+                  "willst": "will", "gibst": "gibt", "nimmst": "nimmt", "sprichst": "spricht", "hältst": "hält", "weißt": "weiß", "hilfst": "hilft",
+                  "siehst": "sieht", "liest": "liest", "isst": "isst", "vergisst": "vergisst", "lässt": "lässt", "rätst": "rät", "magst": "mag"}
+#: Separable verbs whose prefix goes to the end of a main clause: "mir zuhörst" -> "hört Raphael zu".
+_SEPARABLE = {"zu": {"hörst", "hoerst"}, "auf": {"passt", "munterst"}, "an": {"rufst", "spornst", "treibst"}, "bei": {"stehst", "bringst"},
+              "mit": {"denkst", "fühlst", "hilfst"}, "vor": {"schlägst", "bereitest", "liest"}, "da": {"bist"}, "ein": {"greifst"},
+              "nach": {"fragst", "hakst"}, "zurück": {"hältst"}}
+_NOT_VERBS = {"fast", "sonst", "selbst", "erst", "zuerst", "meist", "fest", "lust", "angst", "kunst", "dienst", "herbst", "rest", "test", "jetzt",
+              "zuletzt", "trost", "gast", "last", "post", "brust", "frust", "geist", "ernst", "arzt", "satz", "platz", "schutz", "netz", "gesetz"}
+
+
+def _third_person_verb(word: str) -> tuple[str, str] | None:
+    """(third-person verb, separated prefix) for a second-person verb at the end of a subordinate clause, else None."""
+
+    low = word.lower()
+    if low in _NOT_VERBS or len(low) < 4:
+        return None
+    for prefix, rests in _SEPARABLE.items():
+        if low.startswith(prefix) and low[len(prefix):] in rests:
+            third = _third_person_verb(low[len(prefix):])
+            return (third[0], prefix) if third else None
+    if low in _SECOND_PERSON:
+        return _SECOND_PERSON[low], ""
+    if low.endswith(("test", "dest")) and len(low) > 5:
+        return low[:-3] + "et", ""
+    if low.endswith(("sst", "ßt", "tzt", "zt")):
+        return low, ""
+    if low.endswith("st"):
+        return low[:-2] + "t", ""
+    return None
+
+
+def _dass_clause_as_main_clause(body: str, *, assistant: str) -> str | None:
+    """"du auch mein Freund bist und mir zuhörst und Rat gibst" -> "ZEUS ist auch mein Freund, hört mir zu und gibt Rat".
+
+    The verbs of a "dass du ..." clause stand last in each coordinated part; a fact about ZEUS puts them
+    second.  Parts end at a verb followed by "und", a comma or the end.  None when the shape does not hold.
+    """
+
+    words = body.rstrip(" .!?").split()
+    if len(words) < 2 or words[0].lower() != "du":
+        return None
+    parts: list[tuple[str, str, list[str]]] = []
+    current: list[str] = []
+    for i, raw in enumerate(words[1:], start=1):
+        token = raw.rstrip(",")
+        comma = raw.endswith(",")
+        nxt = words[i + 1].lower() if i + 1 < len(words) else ""
+        if token.lower() == "und" and not current:
+            continue
+        verb = _third_person_verb(token)
+        if verb and (comma or nxt in {"und", ""}):
+            parts.append((verb[0], verb[1], current))
+            current = []
+            continue
+        current.append(token)
+    if current or not parts:
+        return None
+    phrases = [" ".join(x for x in [verb, *rest, prefix] if x) for verb, prefix, rest in parts]
+    joined = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " und " + phrases[-1]
+    return f"{assistant} {joined}"
+
+
 def owner_text(text: str, *, assistant: str = "ZEUS", creator: str = "Raphael") -> str:
     """The rule in the owner's words, turned into the third person so it reads as a fact about ZEUS.
 
@@ -124,6 +187,8 @@ def owner_text(text: str, *, assistant: str = "ZEUS", creator: str = "Raphael") 
     body = strip_save_prefix(text)
     if not body:
         return ""
+    if re.search(r"\bdass\s+du\b", str(text or ""), re.I):
+        body = _dass_clause_as_main_clause(body, assistant=assistant) or body
     out = re.sub(r"\bper\s+du\b", "per __perdu__", body, flags=re.I)
     out = _imperatives_to_third_person(out, assistant)
     swaps = [
