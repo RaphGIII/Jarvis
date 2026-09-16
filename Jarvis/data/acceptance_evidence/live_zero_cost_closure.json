@@ -1,0 +1,336 @@
+{
+ "candidate": "14b9f2bdd91a-20260916T191948Z-610d76",
+ "method": "local CONNECT fault proxy (blocked hosts refused with 503; cut: connection dropped mid-response); TLS end to end",
+ "auto_all_free_down": {
+  "mode": "AUTO",
+  "request_id": "closure-auto-emergency",
+  "accepted": true,
+  "tokens": 58,
+  "token_resets": 0,
+  "withdrawn_text": "",
+  "message_after_post_s": 6.31,
+  "stored_equals_stream_after_reset": true,
+  "messages_in_window": 1,
+  "backend": "openai/gpt-5.6-terra",
+  "provenance": {
+   "role": "reasoning.smart",
+   "provider": "openai",
+   "model": "gpt-5.6-terra",
+   "served_model": "gpt-5.6-terra",
+   "offline_fallback": false,
+   "route_attempts": [
+    {
+     "provider": "gemini",
+     "model": "gemini-3.8-flash",
+     "attempt": 1,
+     "failure_class": "provider_unavailable",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 0.099,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "connect"
+    },
+    {
+     "provider": "gemini",
+     "model": "gemini-3.7-flash",
+     "attempt": 1,
+     "failure_class": "provider_unavailable",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 0.007,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "connect"
+    },
+    {
+     "provider": "gemini",
+     "model": "gemini-3.6-flash",
+     "attempt": 1,
+     "failure_class": "provider_unavailable",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 0.009,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "connect"
+    },
+    {
+     "provider": "groq",
+     "model": "openai/gpt-oss-120b",
+     "attempt": 1,
+     "failure_class": "provider_unavailable",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 0.007,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "connect"
+    },
+    {
+     "provider": "openrouter",
+     "model": "openrouter/free",
+     "attempt": 1,
+     "failure_class": "provider_unavailable",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 0.007,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "connect"
+    },
+    {
+     "provider": "openai",
+     "model": "gpt-5.6-terra",
+     "attempt": 1,
+     "failure_class": "ok",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 4.369,
+     "delivery_mode": "provider_stream"
+    }
+   ],
+   "actual_eur": 0.00448,
+   "estimated_eur": 0.024056,
+   "usage": {
+    "input_tokens": 720,
+    "cached_input_tokens": 0,
+    "output_tokens": 80,
+    "reasoning_tokens": 16
+   },
+   "latency_seconds": 4.372,
+   "streamed": true,
+   "finish_reason": "completed",
+   "truncated": false,
+   "complete": true,
+   "output_tokens": 80,
+   "configured_output_budget": 1000,
+   "output_budget": {
+    "level": "brief",
+    "tokens": 1000,
+    "reason": "default for a conversational answer; reduced by the cost governor",
+    "requested_level": "normal",
+    "reduced": true,
+    "signals": {
+     "task_class": "knowledge",
+     "reduced_by": "cost governor"
+    }
+   },
+   "provider_hard_limit": 128000,
+   "aborted": false,
+   "delivery_mode": "provider_stream",
+   "intelligence_class": "ZERO_COST",
+   "emergency": true
+  },
+  "completion": {
+   "finish_reason": "completed",
+   "truncated": false,
+   "complete": true,
+   "output_tokens": 80,
+   "configured_output_budget": 1000,
+   "output_budget": {
+    "level": "brief",
+    "tokens": 1000,
+    "reason": "default for a conversational answer; reduced by the cost governor",
+    "requested_level": "normal",
+    "reduced": true,
+    "signals": {
+     "task_class": "knowledge",
+     "reduced_by": "cost governor"
+    }
+   },
+   "provider_hard_limit": 128000,
+   "aborted": false,
+   "delivery_mode": "provider_stream",
+   "intelligence_class": "ZERO_COST",
+   "emergency": true
+  },
+  "answer": "Der Citratzyklus baut Acetyl-CoA zu CO₂ ab und erzeugt dabei NADH, FADH₂ sowie etwas GTP/ATP. Die energiereichen Elektronenträger versorgen anschließend die Atmungskette, wo der Großteil des ATP entsteht.",
+  "tools": [
+   "routed: conversation (high) -> conversation",
+   "understood: conversation"
+  ]
+ },
+ "free_incomplete_stream_handover": {
+  "mode": "FREE",
+  "request_id": "closure-cut-1",
+  "accepted": true,
+  "tokens": 63,
+  "token_resets": 1,
+  "withdrawn_text": "Die Photosynthese ist der zentrale biochemische Prozess autotropher Organismen, bei dem Lichtenergie in chemische Energie umgewandelt wird. Aus energiearmen anorganischen Stoffen – Wasser ($H_2O$) und Kohlenstoffdioxid ($CO_2$) – entstehen energiereiche Kohlenhydrate (Glukose) und molekularer Sauerstoff ($O_2$). Der Prozess findet in den Chloroplasten statt und gliedert sich in zwei eng gekoppelte Teilreaktionen: die Lichtreaktion (Primärreaktion) in den Thylakoidmembranen und die Dunkelreaktion (Sekundärreaktion bzw. Calvin-Zyklus) im Stroma.\n\n### 1. Die Lichtreaktion (Thylakoidmembran)\nZiel dieser Phase ist es, Sonnenlicht einzufangen und in kurzfristig nutzbare chemische Energie ($ATP$) sowie Reduktionsäquivalente ($NADPH + H^+$) umzuwandeln.\n\n* **Absorption und Anregung:** Lichtquanten (Photonen) treffen auf Antennenkomplexe in den Photosystemen II und I ($PS\\ II$ / $P680$ und $PS\\ I$ / $P700$). Das zentrale Chlorophyll-a-Molekül wird in einen angeregten Zustand versetzt und gibt energiereiche Elektronen ab.\n* **Fotolyse des Wassers:** Die Elektronenlücke im Photosystem II wird durch die Spaltung von Wasser geschlossen:\n  $$2\\,H_2O \\rightarrow O_2 + 4\\,H^+ + 4\\,e^-$$\n  Hierbei entsteht der molekulare Sauerstoff, der letztlich an die Umwelt abgegeben wird.\n* **Elektronentransportkette:** Die Elektronen durchlaufen eine Kette von Redoxsystemen (Plastochinon, Cytochrom-$b_6f$-Komplex, Plastocyanin) bis zum Photosystem I. Entlang dieses Gefälles werden Protonen ($H^+$) aus dem Stroma in das Thylakoidlumen gepumpt, wodurch ein elektrochemischer Protonengradient entsteht.\n* **Photophosphorylierung und NADPH-Bildung:** Der Protonengradient treibt die $ATP$-Synthase an, die $ADP$ und anorganisches Phosphat zu $ATP$ verknüpft (Chemiosmose). Am Ende der Kette überträgt das Enzym Ferredoxin-$NADP^+$-Reduktase die Elektronen auf $NADP^+$, wodurch $NADPH + H^+$ entsteht.\n\n### 2. Die Dunkelreaktion / Calvin-Zyklus (Stroma)\nDie Dunkelreaktion benötigt kein Licht direkt, ist aber auf die Produkte der Primärreaktion angewiesen. Sie fixiert anorganischen Kohlenstoff in organischer Form und läuft in drei Hauptphasen ab:\n\n* **Kohlenstoff-Fixierung:** Das Schlüsselenzym **RuBisCO** (Ribulose-1,5-bisphosphat-Carboxylase/-Oxygenase) bindet $CO_2$ an den $C_5$-Körper Ribulose-1,5-bisphosphat. Das instabile $C_6$-Zwischenprodukt zerfällt sofort in zwei Moleküle 3-Phosphoglycerat",
+  "message_after_post_s": 30.19,
+  "stored_equals_stream_after_reset": true,
+  "messages_in_window": 1,
+  "backend": "gemini/gemini-3.6-flash",
+  "provenance": {
+   "role": "reasoning.free",
+   "provider": "gemini",
+   "model": "gemini-3.6-flash",
+   "served_model": "gemini-3.6-flash",
+   "offline_fallback": false,
+   "route_attempts": [
+    {
+     "provider": "gemini",
+     "model": "gemini-3.8-flash",
+     "attempt": 1,
+     "failure_class": "incomplete_stream",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 3.953,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "idle",
+     "shown_chars": 2400
+    },
+    {
+     "provider": "gemini",
+     "model": "gemini-3.7-flash",
+     "attempt": 1,
+     "failure_class": "provider_unavailable",
+     "http_status": 503,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 2.928,
+     "delivery_mode": "provider_stream",
+     "stream_phase": ""
+    },
+    {
+     "provider": "gemini",
+     "model": "gemini-3.7-flash",
+     "attempt": 2,
+     "failure_class": "timeout",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 10.149,
+     "delivery_mode": "provider_stream",
+     "stream_phase": "connect"
+    },
+    {
+     "provider": "gemini",
+     "model": "gemini-3.6-flash",
+     "attempt": 1,
+     "failure_class": "ok",
+     "http_status": null,
+     "retry_delay_seconds": 0.0,
+     "latency_seconds": 11.298,
+     "delivery_mode": "provider_stream"
+    }
+   ],
+   "actual_eur": 0.0,
+   "estimated_eur": 0.0,
+   "usage": {
+    "input_tokens": 701,
+    "cached_input_tokens": 0,
+    "output_tokens": 1772
+   },
+   "latency_seconds": 29.476,
+   "streamed": true,
+   "finish_reason": "STOP",
+   "truncated": false,
+   "complete": true,
+   "output_tokens": 1772,
+   "configured_output_budget": 8000,
+   "output_budget": {
+    "level": "detailed",
+    "tokens": 8000,
+    "reason": "the owner asked for detail",
+    "requested_level": "detailed",
+    "reduced": false,
+    "signals": {
+     "task_class": "knowledge",
+     "owner_words": "detailed"
+    }
+   },
+   "provider_hard_limit": 65536,
+   "aborted": false,
+   "delivery_mode": "provider_stream",
+   "intelligence_class": "ZERO_COST",
+   "emergency": false
+  },
+  "completion": {
+   "finish_reason": "STOP",
+   "truncated": false,
+   "complete": true,
+   "output_tokens": 1772,
+   "configured_output_budget": 8000,
+   "output_budget": {
+    "level": "detailed",
+    "tokens": 8000,
+    "reason": "the owner asked for detail",
+    "requested_level": "detailed",
+    "reduced": false,
+    "signals": {
+     "task_class": "knowledge",
+     "owner_words": "detailed"
+    }
+   },
+   "provider_hard_limit": 65536,
+   "aborted": false,
+   "delivery_mode": "provider_stream",
+   "intelligence_class": "ZERO_COST",
+   "emergency": false
+  },
+  "answer": "Die Photosynthese ist der zentrale biochemische Prozess, durch den Pflanzen, Algen und manche Bakterien Lichtenergie in chemisch gebundene Energie umwandeln. Der Gesamtvorgang findet in den Chloroplasten statt und unterteilt sich in zwei eng miteinander gekoppelte Teilreaktionen: die **lichtabhängige Reaktion** (Primärreaktion) und die **lichtunabhängige Reaktion** (Calvin-Zyklus oder Sekundärreaktion).\n\n### 1. Die lichtabhängige Reaktion (Primärreaktion)\nDiese Phase findet an den Thylakoidmembranen der Chloroplasten statt und benötigt direktes Sonnenlicht. \n\n* **Lichtabsorption und Fotolyse:** Pigmente (hauptsächlich Chlorophyll $a$ und $b$) in den Fotosystemen II und I absorbieren Photonen. Die dadurch gewonnene Energie hebt Elektronen auf ein höheres Energieniveau. Um den Elektronenmangel im Fotosystem II auszugleichen, wird Wasser gespalten (Fotolyse):\n  $$2\\,H_2O \\rightarrow O_2 + 4\\,H^+ + 4\\,e^-$$\n  Der dabei entstehende Sauerstoff ($O_2$) ist ein Nebenprodukt und wird an die Atmosphäre abgegeben.\n* **Elektronentransport und ATP-Synthese:** Die angeregten Elektronen wandern über eine Redoxkette (Elektronentransportkette) durch die Membran. Dieser Elektronenfluss gepaart mit der Ansammlung von Protonen im Thylakoidinnenraum erzeugt einen Protonengradienten. Die Protonen strömen durch das Enzym ATP-Synthase zurück ins Stroma, wodurch **ATP** (Adenosintriphosphat) generiert wird (Fotophosphorylierung).\n* **NADPH-Bildung:** Am Ende der Transportkette übernimmt das Coenzym $NADP^+$ die Elektronen und Protonen und wird zu **$NADPH + H^+$** reduziert.\n\n### 2. Die lichtunabhängige Reaktion (Calvin-Zyklus)\nDiese Phase findet im Stroma (der Matrix) der Chloroplasten statt und benötigt kein direktes Licht, ist jedoch auf die Produkte der Lichtreaktion (ATP und $NADPH + H^+$) angewiesen.\n\n* **Fixierung von $CO_2$:** Das Enzym **RuBisCO** (Ribulose-1,5-bisphosphat-carboxylase/-oxygenase) bindet anorganisches Kohlenstoffdioxid ($CO_2$) aus der Luft an einen C5-Körper (Ribulose-1,5-bisphosphat).\n* **Reduktion:** Unter Verbrauchs der Energie aus ATP und der Reduktionsäquivalente aus NADPH wird das fixierte Zwischenprodukt zu Glycerinaldehyd-3-phosphat (G3P), einem C3-Zucker, reduziert.\n* **Glucosebildung und Regeneration:** Aus zwei Molekülen G3P kann schlussendlich Glucose ($C_6H_{12}O_6$) synthetisiert werden, die als Baustoff oder Stärke-Speicher dient. Der Großteil des G3P verbleibt jedoch im Zyklus, um unter ATP-Verbrauch den $CO_2$-Akzeptor Ribulose-1,5-bisphosphat wiederzuregenerieren.\n\n### Gesamtfazit\nDie Bruttoreaktionsgleichung bringt den Stoffumsatz auf den Punkt:\n$$6\\,CO_2 + 6\\,H_2O \\xrightarrow{\\text{Lichtenergie}} C_6H_{12}O_6 + 6\\,O_2$$\n\nDie Photosynthese bildet damit die primäre energetische Grundlage für nahezu alle terrestrischen und aquatischen Ökosysteme sowie für die oxische Atmosphäre der Erde.",
+  "tools": [
+   "routed: conversation (high) -> conversation",
+   "understood: conversation"
+  ]
+ },
+ "proxy_log": [
+  {
+   "host": "huggingface.co",
+   "action": "tunnel",
+   "at": "2026-09-16T21:21:58"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "blocked",
+   "at": "2026-09-16T21:22:11"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "blocked",
+   "at": "2026-09-16T21:22:11"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "blocked",
+   "at": "2026-09-16T21:22:11"
+  },
+  {
+   "host": "api.groq.com",
+   "action": "blocked",
+   "at": "2026-09-16T21:22:11"
+  },
+  {
+   "host": "openrouter.ai",
+   "action": "blocked",
+   "at": "2026-09-16T21:22:11"
+  },
+  {
+   "host": "api.openai.com",
+   "action": "tunnel",
+   "at": "2026-09-16T21:22:11"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "tunnel-cut",
+   "at": "2026-09-16T21:23:20"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "cut",
+   "response_bytes_forwarded": 14435,
+   "response_started_after_s": 3.25,
+   "at": "2026-09-16T21:23:24"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "tunnel",
+   "at": "2026-09-16T21:23:24"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "tunnel",
+   "at": "2026-09-16T21:23:28"
+  },
+  {
+   "host": "generativelanguage.googleapis.com",
+   "action": "tunnel",
+   "at": "2026-09-16T21:23:39"
+  }
+ ]
+}
