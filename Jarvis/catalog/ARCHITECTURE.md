@@ -27,7 +27,7 @@
 - **environments** — Controlled environments for JARVIS learning. (9 modules, 1010 lines)
 - **evaluator** — evaluation of generated skills (1 modules, 1 lines)
 - **experts** — Optional stronger intelligence, recruited on Jarvis' terms. (8 modules, 2216 lines)
-- **gateway** — The ZEUS model gateway: one boundary between ZEUS and every model provider. (18 modules, 6187 lines)
+- **gateway** — The ZEUS model gateway: one boundary between ZEUS and every model provider. (18 modules, 6201 lines)
 - **imagegen** — local image generation (3 modules, 247 lines)
 - **jarvis** — JARVIS command entry points. (13 modules, 2853 lines)
 - **knowledge** — the knowledge graph and library (5 modules, 1985 lines)

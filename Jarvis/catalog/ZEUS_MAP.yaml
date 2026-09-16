@@ -751,7 +751,7 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1551
+      lines: 1560
       public: 11
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -831,6 +831,7 @@ packages:
       public: 6
       tests:
       - tests/test_model_gateway.py
+      - tests/test_zero_cost_resilience.py
     - path: gateway/providers.py
       purpose: 'Provider adapters: request shape in, text and usage out.'
       lines: 498
@@ -839,7 +840,7 @@ packages:
       - tests/test_live_providers.py
     - path: gateway/router.py
       purpose: Choosing the route before anything runs.
-      lines: 381
+      lines: 386
       public: 6
       tests:
       - tests/test_model_gateway.py

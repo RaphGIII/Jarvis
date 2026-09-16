@@ -287,3 +287,59 @@ def test_openrouter_records_the_model_that_actually_served(tmp_path, pool_creds,
     assert reply.to_dict()["served_model"] == "nex-agi/nex-n2.5-pro:free"
     assert gateway.health.status("openrouter", model="openrouter/free") is ProviderStatus.OK
     assert "openrouter/nex-agi/nex-n2.5-pro:free" not in gateway.health.state, "health is kept for the configured route, not the served model"
+
+
+# ---------------------------------------------------------------------------
+# a provider-wide outage of the bound provider does not close the pool
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("survivor", [("groq", "openai/gpt-oss-120b"), ("openrouter", "openrouter/free")], ids=["groq", "openrouter"])
+def test_gemini_in_a_provider_wide_cool_down_still_leaves_the_pool_answering(tmp_path, pool_creds, survivor):
+    """Found live: Gemini unreachable put the provider in a 60 s cool-down; the next FREE question was refused at planning
+    ("provider gemini: provider_unavailable") while Groq and OpenRouter were healthy.  The pool decides the role's availability."""
+
+    tunnel_refused = urllib.error.URLError(OSError("Tunnel connection failed: 503 Service Unavailable"))
+    answers: dict[str, object] = {m: tunnel_refused for p, m in POOL if p == "gemini"} | {OPENAI: openai_reply("paid")}
+    answers[GROQ] = route_answer("groq", "openai/gpt-oss-120b") if survivor[0] == "groq" else tunnel_refused
+    answers[OPENROUTER] = route_answer("openrouter", "openrouter/free")
+    net = RouteNetwork(answers)
+    gateway = make_gateway(tmp_path, owner_pool(), pool_creds, net, local=LocalStub())
+    first = gateway.stream(knowledge())
+    "".join(first)
+    assert (first.reply.provider, first.reply.model) == survivor
+    assert not gateway.health.usable("gemini"), "Gemini is in its provider-wide cool-down now"
+    calls_before = len(net.requests)
+    second = gateway.stream(knowledge())
+    text = "".join(second)
+    assert (second.reply.provider, second.reply.model) == survivor and text.startswith("Antwort von Route")
+    assert second.reply.actual_eur == 0.0 and second.reply.decision.intelligence_class == "ZERO_COST"
+    assert GEMINI not in hosts(net)[calls_before:], "the cooling provider is skipped without a network call"
+    assert OPENAI not in hosts(net) and gateway.governor.summary().month == 0.0
+
+
+def test_with_the_whole_pool_cooling_down_free_is_refused_before_any_call(tmp_path, pool_creds):
+    net = RouteNetwork({OPENAI: openai_reply("paid")})
+    gateway = make_gateway(tmp_path, owner_pool(), pool_creds, net, local=LocalStub())
+    for name in ("gemini", "groq", "openrouter"):
+        gateway.health.note(name, ProviderStatus.PROVIDER_UNAVAILABLE)
+    decision, _ = gateway.plan(knowledge())
+    assert decision.kind.value == "refused" and "provider gemini" in decision.reason
+    with pytest.raises(Exception):
+        "".join(gateway.stream(knowledge()))
+    assert net.requests == []
+
+
+def test_sensitive_content_never_reaches_a_may_train_pool_route(tmp_path, pool_creds):
+    from gateway.privacy import Chunk, Sensitivity
+
+    document = json.loads(json.dumps(owner_pool().to_dict()))
+    document["providers"]["gemini"]["may_train_on_requests"] = False  # the bound provider would accept it; OpenRouter may train
+    config = _parse(document, source="test")
+    answers = {m: quota_error() for p, m in POOL if p == "gemini"} | {GROQ: route_down("groq", ""), OPENROUTER: route_answer("openrouter", "openrouter/free")}
+    net = RouteNetwork(answers)
+    gateway = make_gateway(tmp_path, config, pool_creds, net, local=LocalStub())
+    request = knowledge()
+    request.chunks = [Chunk(text="Kontostand und Befund", source="owner_message", sensitivity=Sensitivity.PRIVATE)]
+    with pytest.raises(FreeIntelligenceUnavailable):
+        gateway.complete(request)
+    assert OPENROUTER not in hosts(net) and GROQ in hosts(net)

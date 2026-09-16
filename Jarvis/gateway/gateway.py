@@ -348,11 +348,18 @@ class ModelGateway:
                 return False
             return self.credentials.has(provider.secret) if provider.secret else True
 
+        def pool_available(role: str) -> bool | None:
+            # Only the zero-cost role has a route pool; its availability is the pool's, not its bound provider's.
+            if role != ZERO_COST_ROLE:
+                return None
+            return bool(self.zero_cost.eligible(health=self.health, credential_present=self._credential_present))
+
         return ModelRouter(config, self.reliability, self.governor, self.health,
                            credential_present=credential_present,
                            local_available=self._local_available,
                            paid_allowed=lambda: bool(self.cost_policy.allow_paid_api),
-                           subscription_available=self._subscription_available)
+                           subscription_available=self._subscription_available,
+                           pool_available=pool_available)
 
     @property
     def cost_policy(self) -> Any:
@@ -843,6 +850,8 @@ class ModelGateway:
             price = provider.price_for(route.model_id)
             if provider.metered and (price is None or price.metered):
                 continue  # never: a metered route is not a zero-cost route, whatever the registry says
+            if provider.may_train_on_requests and prepared.privacy is not None and not prepared.privacy.free_lane_allowed:
+                continue  # sensitive content never reaches a provider that may train on it, whichever route the role is bound to
             binding = replace(prepared.binding, provider=route.provider_id, model=route.model_id, models=(route.model_id,))
             out.append((route, provider, binding, adapter_for(provider.kind)))
         return out

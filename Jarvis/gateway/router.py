@@ -172,6 +172,7 @@ class ModelRouter:
         local_available=None,
         paid_allowed=None,
         subscription_available=None,
+        pool_available=None,
     ) -> None:
         self.config = config
         self.reliability = reliability
@@ -185,6 +186,10 @@ class ModelRouter:
         self._paid_allowed = paid_allowed or (lambda: False)
         #: provider name -> bool; whether a subscription engineer (Codex) is READY.
         self._subscription_available = subscription_available or (lambda name: False)
+        #: role -> bool | None; for a role served by a route pool (the zero-cost pool), whether any of its routes
+        #: is healthy and eligible right now; None for a role without a pool.  A pooled role is not unavailable
+        #: because the provider it is bound to is in a cool-down: the pool's other routes answer.
+        self._pool_available = pool_available or (lambda role: None)
 
     # -- candidates -----------------------------------------------------------
 
@@ -240,7 +245,7 @@ class ModelRouter:
                 candidate.eligible, candidate.reason = False, f"no credential for {provider.name}"
             elif binding.family is RoleFamily.LOCAL and not self._local_available(role):
                 candidate.eligible, candidate.reason = False, "local model not available"
-            elif not self.health.usable(provider.name):
+            elif not self.health.usable(provider.name) and not self._pool_available(role):
                 candidate.eligible, candidate.reason = False, f"provider {provider.name}: {self.health.status(provider.name).value}"
             elif provider.may_train_on_requests and privacy is not None and not privacy.free_lane_allowed:
                 candidate.eligible, candidate.reason = False, "sensitive request: may-train provider forbidden"
