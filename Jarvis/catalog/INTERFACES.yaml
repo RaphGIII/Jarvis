@@ -4115,6 +4115,7 @@ modules:
       - 'def minimize(self, *, reason: str='''') -> dict[str, Any]'
       - 'def hide(self, *, reason: str='''') -> dict[str, Any]'
       - 'def toggle_fullscreen(self, *, reason: str='''') -> dict[str, Any]'
+      - 'def toggle_maximize(self, *, reason: str='''') -> dict[str, Any]'
       - 'def close(self, *, reason: str='''') -> dict[str, Any]'
       - 'def reveal(self, *, timeout: float=45.0, reason: str=''launch'') -> dict[str, Any]'
       - 'def start_watcher(self, interval: float=0.25) -> None'
@@ -4125,10 +4126,10 @@ modules:
     - signature: 'def find_windows_of(pids: set[int], *, class_prefix: str=''Chrome_WidgetWin'', min_width: int=400) -> list[FoundWindow]'
       doc: Top-level main windows of the given processes, whatever their title says.
     - signature: 'def focus(hwnd: int) -> bool'
-    - signature: 'def style_frameless(hwnd: int) -> bool'
-      doc: Native borderless fullscreen, without browser fullscreen or kiosk.
+    - signature: 'def style_frameless(hwnd: int, *, work_area: bool=False) -> bool'
+      doc: Native borderless window over the monitor (fullscreen) or its work area (maximized).
     - signature: 'def style_windowed(hwnd: int, *, size: tuple[int, int]=DEFAULT_SIZE) -> bool'
-      doc: Restore a framed, resizable window for the F11 windowed mode.
+      doc: A normal-sized window, centred on the work area -- still borderless.
     - signature: 'def minimize_window(hwnd: int) -> bool'
       doc: Minimize to the taskbar -- works on fullscreen windows too.
     - signature: 'def hide_window(hwnd: int) -> bool'

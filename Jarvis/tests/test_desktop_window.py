@@ -221,3 +221,49 @@ def test_an_engine_that_will_not_start_is_reported_not_raised(monkeypatch: pytes
 
     assert launch.mode == "browser"
     assert "access denied" in launch.detail
+
+
+# --------------------------------------------------------------------------
+# Borderless in every mode
+# --------------------------------------------------------------------------
+
+def test_the_default_mode_is_borderless_maximized_and_starts_off_screen(tmp_path: Path) -> None:
+    assert window.DEFAULT_WINDOW_MODE == "maximized"
+    assert window.normalize_window_mode("") == "maximized"
+    assert window.normalize_window_mode("maximized") == "maximized"
+    assert window.normalize_window_mode("fullscreen") == "fullscreen"
+    assert window.normalize_window_mode("windowed") == "windowed"
+    for mode in ("maximized", "fullscreen"):
+        command = window.window_command("msedge.exe", "http://127.0.0.1:8420/", profile_dir=tmp_path, mode=mode)
+        assert "--window-position=-32000,-32000" in command and "--start-maximized" not in command
+
+
+def test_no_mode_restores_the_native_frame() -> None:
+    """style_windowed used to OR WS_CAPTION | WS_THICKFRAME back in -- the title bar the owner saw."""
+
+    import inspect
+
+    from service import desktop
+
+    windowed = inspect.getsource(desktop.style_windowed)
+    assert "& ~(WS_CAPTION | WS_THICKFRAME)" in windowed
+    assert "style | WS_CAPTION" not in windowed
+    frameless = inspect.getsource(desktop.style_frameless)
+    assert "& ~(WS_CAPTION | WS_THICKFRAME)" in frameless and "work_area" in frameless
+
+
+def test_the_toggles_move_between_borderless_modes_only(tmp_path: Path, monkeypatch) -> None:
+    from service import desktop
+
+    applied: list[tuple[int, str]] = []
+    shell = desktop.DesktopWindow(url="http://127.0.0.1:8420/", title="ZEUS", state_root=tmp_path)
+    monkeypatch.setattr(shell, "find", lambda **_: desktop.FoundWindow(4242, 1, "ZEUS", True, False))
+    monkeypatch.setattr(shell, "_apply_mode", lambda hwnd, mode: applied.append((hwnd, mode)) or True)
+    monkeypatch.setattr(desktop, "focus", lambda hwnd: True)
+    assert shell.preferred_mode() == "maximized"
+    assert shell.toggle_fullscreen(reason="test")["mode"] == "fullscreen"
+    assert shell.toggle_fullscreen(reason="test")["mode"] == "maximized"
+    assert shell.toggle_maximize(reason="test")["mode"] == "windowed"
+    assert shell.toggle_maximize(reason="test")["mode"] == "maximized"
+    assert shell.preferred_mode() == "maximized"
+    assert [m for _, m in applied] == ["fullscreen", "maximized", "windowed", "maximized"]

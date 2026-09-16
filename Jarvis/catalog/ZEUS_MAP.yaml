@@ -977,7 +977,7 @@ packages:
       - tests/test_ui_self_development.py
     - path: jarvis/window.py
       purpose: The interface in its own desktop window, not in the owner's browser.
-      lines: 341
+      lines: 343
       public: 7
       tests: []
   knowledge:
@@ -1800,6 +1800,7 @@ packages:
       - tests/test_composition_planner.py
       - tests/test_corrections.py
       - tests/test_desktop_lifecycle.py
+      - tests/test_desktop_window.py
       - tests/test_devices.py
       - tests/test_engineering_router.py
       - tests/test_engineering_router_gateway.py
@@ -1947,7 +1948,7 @@ packages:
       tests: []
     - path: service/desktop.py
       purpose: The desktop window as something the core owns, shows, hides and finds again.
-      lines: 743
+      lines: 764
       public: 10
       tests:
       - tests/test_desktop_lifecycle.py
@@ -2062,7 +2063,7 @@ packages:
       - tests/test_basics_sprint.py
     - path: service/lifecycle.py
       purpose: 'Readiness, restart and shutdown: the core''s side of the supervisor contract.'
-      lines: 377
+      lines: 379
       public: 1
       tests:
       - tests/test_desktop_lifecycle.py

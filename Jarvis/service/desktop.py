@@ -217,13 +217,14 @@ def _monitor_rect(hwnd: int, *, work_area: bool = False) -> tuple[int, int, int,
     return 0, 0, int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
 
 
-def style_frameless(hwnd: int) -> bool:
-    """Native borderless fullscreen, without browser fullscreen or kiosk.
+def style_frameless(hwnd: int, *, work_area: bool = False) -> bool:
+    """Native borderless window over the monitor (fullscreen) or its work area (maximized).
 
     Removes only the visible frame (WS_CAPTION | WS_THICKFRAME), then sizes the
-    same normal top-level Chromium app window to the monitor.  It is not made
-    topmost and no owner/tool-window style is set, so Alt+Tab continues to see
-    it as a normal application.
+    same normal top-level Chromium app window to the monitor -- or, with
+    ``work_area``, to the area beside the taskbar.  It is not made topmost and
+    no owner/tool-window style is set, so Alt+Tab continues to see it as a
+    normal application.
     """
 
     if sys.platform != "win32" or not hwnd:
@@ -246,7 +247,7 @@ def style_frameless(hwnd: int) -> bool:
         user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
         if user32.IsIconic(hwnd):
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE first
-        left, top, right, bottom = _monitor_rect(hwnd)
+        left, top, right, bottom = _monitor_rect(hwnd, work_area=work_area)
         style = user32.GetWindowLongW(hwnd, GWL_STYLE)
         user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_THICKFRAME))
         user32.SetWindowPos(
@@ -259,7 +260,12 @@ def style_frameless(hwnd: int) -> bool:
 
 
 def style_windowed(hwnd: int, *, size: tuple[int, int] = DEFAULT_SIZE) -> bool:
-    """Restore a framed, resizable window for the F11 windowed mode."""
+    """A normal-sized window, centred on the work area -- still borderless.
+
+    ZEUS never shows a native title bar: the frame stays removed in every mode,
+    and the system menu / minimize / maximize bits stay set so the taskbar,
+    Alt+Tab and Win+Down keep treating it as an ordinary application window.
+    """
 
     if sys.platform != "win32" or not hwnd:
         return False
@@ -291,7 +297,8 @@ def style_windowed(hwnd: int, *, size: tuple[int, int] = DEFAULT_SIZE) -> bool:
         else:
             user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
         style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-        user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+        style = (style & ~(WS_CAPTION | WS_THICKFRAME)) | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+        user32.SetWindowLongW(hwnd, GWL_STYLE, style)
         user32.SetWindowPos(hwnd, 0, x, y, width, height, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_SHOWWINDOW)
         return True
     except Exception:  # noqa: BLE001 - styling is cosmetic; never break the launch
@@ -467,6 +474,8 @@ class DesktopWindow:
             return style_windowed(hwnd, size=self.size)
         if resolved == "fullscreen":
             return style_frameless(hwnd)
+        if resolved == "maximized":
+            return style_frameless(hwnd, work_area=True)
         return True
 
     # -- discovery -------------------------------------------------------
@@ -592,7 +601,7 @@ class DesktopWindow:
             return {"ok": ok, "action": "hidden", "hwnd": found.hwnd, "reason": reason}
 
     def toggle_fullscreen(self, *, reason: str = "") -> dict[str, Any]:
-        """F11: switch between native borderless fullscreen and windowed mode.
+        """F11: borderless fullscreen (the whole monitor) <-> borderless maximized (the work area).
 
         The chosen mode is written before styling so it survives a core restart
         even if the window itself is left running for the next process.
@@ -600,7 +609,19 @@ class DesktopWindow:
 
         with self._lock:
             current = self.preferred_mode()
-            mode = "windowed" if current == "fullscreen" else "fullscreen"
+            mode = "maximized" if current == "fullscreen" else "fullscreen"
+            return self._switch_mode(mode, current, reason=reason)
+
+    def toggle_maximize(self, *, reason: str = "") -> dict[str, Any]:
+        """The custom restore/maximize control: borderless maximized <-> borderless normal-sized window."""
+
+        with self._lock:
+            current = self.preferred_mode()
+            mode = "windowed" if current in {"maximized", "fullscreen"} else "maximized"
+            return self._switch_mode(mode, current, reason=reason)
+
+    def _switch_mode(self, mode: str, current: str, *, reason: str = "") -> dict[str, Any]:
+        with self._lock:
             self._write_mode(mode)
             found = self.find()
             if found is None:

@@ -57,7 +57,7 @@ DEFAULT_SIZE = (1280, 860)
 #: The shell starts borderless fullscreen unless the owner has toggled it.
 #: This is a native window mode, not Chromium's kiosk/browser fullscreen, so
 #: Windows still sees a normal top-level app window and Alt+Tab keeps working.
-DEFAULT_WINDOW_MODE = "fullscreen"
+DEFAULT_WINDOW_MODE = "maximized"
 
 #: Where the frameless shell's window is created: far off every monitor, so the
 #: frame Chromium insists on is never painted where the owner can see it.  The
@@ -106,7 +106,9 @@ def normalize_window_mode(value: str) -> str:
         return "kiosk"
     if text in {"browser_fullscreen", "immersive", "chromium_fullscreen"}:
         return "browser_fullscreen"
-    if text in {"maximized", "maximised", "borderless", "borderless_fullscreen", "full", "vollbild", ""}:
+    if text in {"maximized", "maximised", "borderless", "borderless_maximized", ""}:
+        return "maximized"
+    if text in {"fullscreen", "borderless_fullscreen", "full", "vollbild"}:
         return "fullscreen"
     if text == "fullscreen":
         return "fullscreen"
@@ -224,7 +226,7 @@ def window_command(
         command.append("--kiosk")
     elif resolved_mode == "browser_fullscreen":
         command.append("--start-fullscreen")
-    elif resolved_mode == "fullscreen":
+    elif resolved_mode in {"fullscreen", "maximized"}:
         command.append(f"--window-position={OFFSCREEN_POSITION[0]},{OFFSCREEN_POSITION[1]}")
     return command
 
