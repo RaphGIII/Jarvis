@@ -729,6 +729,10 @@
    "jarvis/cli.py",
    "service/core.py"
   ],
+  "persona/rules.py": [
+   "persona/contract.py",
+   "service/core.py"
+  ],
   "persona/smalltalk.py": [
    "service/core.py"
   ],
@@ -1800,12 +1804,14 @@
   "persona/contract.py": [
    "core/identity.py",
    "gateway/estimate.py",
-   "owner/core.py"
+   "owner/core.py",
+   "persona/rules.py"
   ],
   "persona/language.py": [],
   "persona/profiles.py": [
    "core/identity.py"
   ],
+  "persona/rules.py": [],
   "persona/smalltalk.py": [],
   "projects/__init__.py": [],
   "projects/acceptance_guard.py": [],
@@ -2001,6 +2007,7 @@
    "persona/contract.py",
    "persona/language.py",
    "persona/profiles.py",
+   "persona/rules.py",
    "persona/smalltalk.py",
    "projects/engine.py",
    "research/agent.py",
@@ -2540,6 +2547,7 @@
   "persona/contract.py",
   "persona/language.py",
   "persona/profiles.py",
+  "persona/rules.py",
   "persona/smalltalk.py",
   "projects/__init__.py",
   "projects/acceptance_guard.py",

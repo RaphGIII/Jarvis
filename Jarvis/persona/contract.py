@@ -136,10 +136,18 @@ def compile_contract(*, assistant: str, product: str, creator: str, personality:
     response_bits = [text for key, table in _RESPONSE.items() for text in [table.get(str(response.get(key, "auto")), "")] if text]
     answers = ("Answers: " + "; ".join(response_bits) + ".") if response_bits else ""
 
-    owner_rules = [str(r.get("text", "")).strip() for r in sorted((r for r in rules if isinstance(r, dict) and r.get("enabled", True)),
-                                                                  key=lambda r: int(r.get("order", 0) or 0)) if str(r.get("text", "")).strip()]
-    owner_rules += [str(r).strip() for r in (scoped_rules or []) if str(r).strip()]
-    rules_block = ("Owner rules:\n" + "\n".join(f"- {r}" for r in owner_rules)) if owner_rules else ""
+    # The owner's rules, grouped by what they govern.  Every provider receives the same block.
+    from persona.rules import grouped
+
+    labels = {"identity": "identity", "relationship": f"relationship to {who}", "communication_style": "communication style", "behaviour": "behaviour",
+              "response_preference": "response preferences", "domain_preference": "domain preferences", "boundary": "boundaries", "situational": "situational rules"}
+    lines: list[str] = []
+    for category, items in grouped([r for r in rules if isinstance(r, dict) and r.get("enabled", True)]).items():
+        texts = [str(r.get("text", "")).strip() for r in items if str(r.get("text", "")).strip()]
+        if texts:
+            lines.append(f"{labels.get(category, category)}: " + " ".join(texts))
+    lines += [str(r).strip() for r in (scoped_rules or []) if str(r).strip()]
+    rules_block = ("Owner rules (they hold in every answer, whichever engine computes it):\n" + "\n".join(f"- {line}" for line in lines)) if lines else ""
 
     blocks = {"identity": identity, "character": character, "invariants": invariants, "preferences": style, "answers": answers,
               "rules": rules_block}

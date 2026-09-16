@@ -109,27 +109,27 @@ def test_default_start_applies_native_borderless_fullscreen(tmp_path, win):
     assert json.loads(dw.session_path.read_text())["mode"] == "fullscreen"
 
 
-def test_f11_toggle_persists_across_a_restarted_desktop_manager(tmp_path, win):
+def test_f11_refuses_the_windowed_mode_and_fullscreen_survives_a_restart(tmp_path, win):
+    """There is one frameless presentation (5a80e25): F11 says so instead of painting Chromium's title bar,
+    and a restarted desktop manager comes back fullscreen."""
+
     dw = _window(tmp_path, win)
     dw.show(reason="startup")
 
-    windowed = dw.toggle_fullscreen(reason="f11")
+    refused = dw.toggle_fullscreen(reason="f11")
 
-    assert windowed["mode"] == "windowed" and windowed["from"] == "fullscreen"
-    assert win.modes[-1] == ("windowed", dw.hwnd)
-    assert json.loads(dw.settings_path.read_text())["mode"] == "windowed"
+    assert refused["ok"] is False and refused["action"] == "refused" and refused["mode"] == "fullscreen"
+    assert refused["error"] == dw.NO_WINDOWED_MODE
+    assert win.modes[-1] == ("fullscreen", dw.hwnd)
+    assert dw.preferred_mode() == "fullscreen"
 
     restarted = _window(tmp_path, win)
     shown = restarted.show(reason="restart")
 
-    assert shown["action"] == "focused" and shown["mode"] == "windowed"
+    assert shown["action"] == "focused" and shown["mode"] == "fullscreen"
     assert win.launches == 1
-    assert win.modes[-1] == ("windowed", restarted.hwnd)
-
-    fullscreen = restarted.toggle_fullscreen(reason="f11")
-
-    assert fullscreen["mode"] == "fullscreen" and fullscreen["from"] == "windowed"
-    assert json.loads(restarted.settings_path.read_text())["mode"] == "fullscreen"
+    assert win.modes[-1] == ("fullscreen", restarted.hwnd)
+    assert restarted.toggle_fullscreen(reason="f11")["action"] == "refused"
 
 
 def test_lifecycle_exposes_the_f11_window_mode_toggle(tmp_path, win):
@@ -140,7 +140,7 @@ def test_lifecycle_exposes_the_f11_window_mode_toggle(tmp_path, win):
 
     result = life.window("f11", reason="keyboard")
 
-    assert result["action"] == "toggled" and result["mode"] == "windowed"
+    assert result["action"] == "refused" and result["mode"] == "fullscreen" and result["error"] == life.desktop.NO_WINDOWED_MODE
 
 
 def test_hide_keeps_the_process_and_show_restores_it(tmp_path, win):

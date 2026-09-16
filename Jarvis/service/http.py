@@ -403,6 +403,8 @@ class JarvisHTTPServer:
             "/api/jobs/cancel": lambda body: {"ok": self.core.jobs.cancel(str(body.get("job_id", "")))},
             # owner creation defaults (folders + naming templates)
             "/api/defaults": lambda _: {"ok": True, "defaults": self.core.defaults.all()},
+            "/api/ui/preferences": lambda _: self.core.ui_preferences(),
+            "/api/ui/preferences/set": lambda body: self.core.ui_preference_set(str(body.get("key", "")), body.get("value")),
             "/api/defaults/set": lambda body: {"ok": True, "defaults": self.core.defaults.set(
                 str(body.get("key", "")), str(body.get("value", "")))},
             # the conversation archive: recent chats with summaries

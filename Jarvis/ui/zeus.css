@@ -498,3 +498,10 @@ body.reduced-motion .thinking i { animation: none; opacity: .6; }
 .view-failed .vf-title { font-size: 16px; color: var(--zeus-text-primary); }
 .view-failed .vf-sub { font-size: 13px; color: var(--zeus-text-muted); line-height: 1.55; }
 .view-failed .toolbar { justify-content: center; margin-top: 6px; }
+
+/* ---- Persönlichkeit: rules by what they govern ---- */
+.rule-cat { margin: 12px 0 4px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--zeus-text-tertiary); }
+.rule-cat:first-child { margin-top: 0; }
+.rule-cat-sel { background: var(--zeus-bg); border: 1px solid var(--zeus-border-soft); border-radius: 8px; color: var(--zeus-text-muted); font-size: 12px; padding: 4px 6px; max-width: 170px; flex: none; }
+.rule.protected { border-color: var(--zeus-champagne-24); }
+.rule-lock { color: var(--zeus-champagne-deep); font-size: 9px; padding: 0 6px; }

@@ -11,6 +11,7 @@ packages:
       - tests/test_action_receipts.py
       - tests/test_owner_core.py
       - tests/test_personality.py
+      - tests/test_personality_rules.py
     - path: conftest.py
       purpose: Repository-wide pytest configuration.
       lines: 50
@@ -1379,6 +1380,7 @@ packages:
       - tests/test_identity_firewall.py
       - tests/test_owner_core.py
       - tests/test_personality.py
+      - tests/test_personality_rules.py
       - tests/test_protected_memory.py
       - tests/test_security_gate.py
       - tests/test_selfdev_candidate_integrity.py
@@ -1391,6 +1393,7 @@ packages:
       - tests/test_identity_firewall.py
       - tests/test_owner_core.py
       - tests/test_personality.py
+      - tests/test_personality_rules.py
       - tests/test_selfdev_promotion_gate.py
     - path: owner/protected.py
       purpose: Paths no generated change may touch.
@@ -1401,7 +1404,7 @@ packages:
       - tests/test_personality.py
     - path: owner/protected_memory.py
       purpose: 'Which memory writes are protected: ZEUS''s personality, its creator and owner, and the owner''s own person.'
-      lines: 121
+      lines: 130
       public: 3
       tests:
       - tests/test_protected_memory.py
@@ -1429,13 +1432,15 @@ packages:
       - tests/test_language_and_persona.py
       - tests/test_persona_and_datasets.py
       - tests/test_personality.py
+      - tests/test_personality_rules.py
       - tests/test_vendor_leak_scan.py
     - path: persona/contract.py
       purpose: 'The compact PersonalityContract: who ZEUS is and how the owner wants it to speak, in a few hundred characters.'
-      lines: 166
+      lines: 174
       public: 4
       tests:
       - tests/test_identity_firewall.py
+      - tests/test_personality_rules.py
     - path: persona/language.py
       purpose: Working out what language the user is speaking, without asking a model.
       lines: 172
@@ -1449,6 +1454,12 @@ packages:
       tests:
       - tests/test_action_receipts.py
       - tests/test_persona_and_datasets.py
+    - path: persona/rules.py
+      purpose: 'Owner personality rules: the structured, editable layer beside the protected core identity.'
+      lines: 234
+      public: 9
+      tests:
+      - tests/test_personality_rules.py
     - path: persona/smalltalk.py
       purpose: Small talk, answered as Zeus rather than as a system description.
       lines: 189
@@ -1456,6 +1467,7 @@ packages:
       tests:
       - tests/test_identity_firewall.py
       - tests/test_personality.py
+      - tests/test_personality_rules.py
       - tests/test_vendor_leak_scan.py
   projects:
     purpose: the project engine and store
@@ -1823,6 +1835,7 @@ packages:
       - tests/test_model_gateway.py
       - tests/test_music.py
       - tests/test_personality.py
+      - tests/test_personality_rules.py
       - tests/test_pronunciation.py
       - tests/test_protected_memory_gate.py
       - tests/test_replan_semantic_equivalence.py
@@ -1908,7 +1921,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 8983
+      lines: 9070
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -1986,6 +1999,7 @@ packages:
       - tests/test_identity_firewall.py
       - tests/test_intelligence_flow.py
       - tests/test_intelligence_routing.py
+      - tests/test_personality_rules.py
       - tests/test_pronunciation.py
       - tests/test_protected_memory_gate.py
       - tests/test_selfdev.py
@@ -2006,7 +2020,7 @@ packages:
       - tests/test_filesystem.py
     - path: service/http.py
       purpose: The local HTTP + Server-Sent Events interface to Jarvis Core.
-      lines: 833
+      lines: 835
       public: 1
       tests:
       - tests/test_action_receipts.py
@@ -2876,6 +2890,8 @@ api_routes:
 - /api/tv/discover
 - /api/tv/pair
 - /api/tv/status
+- /api/ui/preferences
+- /api/ui/preferences/set
 - /api/voice
 - /api/voice/interrupt
 - /api/voice/pronunciation
@@ -2894,7 +2910,7 @@ api_routes:
 ui_modules:
 - path: ui/app.js
   purpose: '* The client entry point: the shell of ONE product.  Subscribes to the event'
-  lines: 312
+  lines: 318
   imports:
   - core/api.js
   - core/bus.js
@@ -3133,7 +3149,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/settings.js
   purpose: 'Settings: Allgemein · Persönlichkeit · Erscheinungsbild · Leistung & Kosten'
-  lines: 316
+  lines: 328
   imports:
   - core/api.js
   - core/authgate.js
@@ -3172,8 +3188,8 @@ ui_modules:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 334
+  modules: 335
   packages: 33
-  api_routes: 179
+  api_routes: 181
   ui_modules: 35
-  tests: 130
+  tests: 131

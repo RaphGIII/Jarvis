@@ -2855,6 +2855,28 @@ modules:
     functions:
     - signature: def builtin_personas() -> dict[str, Persona]
       doc: 'A deliberately short list: enough to prove the architecture works.'
+  persona/rules.py:
+    module: persona.rules
+    classes: []
+    functions:
+    - signature: 'def strip_save_prefix(text: str) -> str'
+    - signature: 'def classify_category(text: str) -> str'
+      doc: The first matching category in priority order (boundaries and situations before the rest).
+    - signature: 'def normalize_meaning(text: str) -> str'
+      doc: A stable, order-independent token form of what the rule says.
+    - signature: 'def owner_text(text: str, *, assistant: str=''ZEUS'', creator: str=''Raphael'') -> str'
+      doc: The rule in the owner's words, turned into the third person so it reads as a fact about ZEUS.
+    - signature: 'def make_rule(text: str, *, category: str='''', source: str=''OWNER_UI'', protected: bool=False, assistant:
+        str=''ZEUS'', creator: str=''Raphael'', source_text: str='''', enabled: bool=True) -> dict[str, Any]'
+    - signature: 'def normalize_rule(raw: Any, *, index: int=0, assistant: str=''ZEUS'', creator: str=''Raphael'') -> dict[str,
+        Any] | None'
+      doc: A rule as the editor or an older document hands it in, completed to the full shape (fields kept when present).
+    - signature: 'def similarity(a: str, b: str) -> float'
+    - signature: 'def merge_rule(rules: list[dict[str, Any]], new: dict[str, Any], *, threshold: float=0.6) -> tuple[list[dict[str,
+        Any]], dict[str, Any], str]'
+      doc: Add ``new`` to ``rules`` -- or, when a rule of the same category means the same, update that one.
+    - signature: 'def grouped(rules: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]'
+      doc: Rules by category, in category order, enabled or not.
   persona/smalltalk.py:
     module: persona.smalltalk
     classes: []
@@ -3875,6 +3897,10 @@ modules:
       - def history(self) -> list[ConversationTurn]
       - 'def send_message(self, text: str, *, scope: str='''', meta: dict[str, Any] | None=None, request_id: str='''') ->
         dict[str, Any]'
+      - def ui_preferences(self) -> dict[str, Any]
+      - 'def ui_preference_set(self, key: str, value: Any) -> dict[str, Any]'
+      - 'def personality_rule_add(self, text: str, *, category: str='''', source: str=''OWNER_CHAT'', protected: bool=False,
+        request_id: str='''') -> dict[str, Any]'
       - 'def library_note(self, folder: str, title: str, text: str, *, authorization: str='''') -> dict[str, Any]'
       - 'def set_chat_mode(self, mode: Any, *, announce: bool=True) -> dict[str, Any]'
       - def system_context(self) -> Any

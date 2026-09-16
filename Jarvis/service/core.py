@@ -658,22 +658,87 @@ class JarvisCore:
 
         body = " ".join(str(text or "").split())
         title = _re.sub(r"^(?:merk(?:e)?\s+dir[,:]?\s*|speicher(?:e)?[,:]?\s*|notier(?:e)?[,:]?\s*|[üu]berschreib(?:e)?[,:]?\s*|behalte?[,:]?\s*|dass\s+)+", "", body, flags=_re.I).strip(" .:") or "Erinnerung"
+        de = self.language.startswith("de")
+        # A sentence about how ZEUS relates to the owner or how it should behave is a personality rule, not
+        # a note: it lands in the owner's rule store, appears under Persönlichkeit and enters the next
+        # contract.  A fact about the owner stays a protected note; a directive that renames ZEUS or its
+        # creator is remembered as the owner's wish (the core identity is not rewritten from chat).
+        subjects = list(verdict.subjects)
+        if not verdict.directive and ("relationship" in subjects or ("personality" in subjects and "owner person" not in subjects)):
+            stored = self.personality_rule_add(text, source="OWNER_CHAT", protected=True, request_id=request_id)
+            if stored.get("ok"):
+                rule = stored["rule"]
+                from persona.rules import CATEGORY_LABELS
+
+                label = CATEGORY_LABELS.get(rule["category"], rule["category"])
+                self._deliver((f"Gemerkt – als Regel unter Persönlichkeit ({label}): „{rule['text']}“" + (" Aktualisiert." if stored.get("how") == "updated" else "") if de
+                               else f"Remembered – as a personality rule ({rule['category']}): “{rule['text']}”"),
+                              scope=scope, backend="policy", final_state=JarvisState.IDLE, context_text="[protected personality rule stored]")
+                return {"ok": True, "stored": True, "rule_id": rule["id"], "how": stored.get("how"), "request_id": request_id}
+            self._deliver(("Die Regel konnte nicht gespeichert werden." if de else "The rule could not be stored."), scope=scope, backend="policy",
+                          final_state=JarvisState.ERROR, context_text="[protected personality rule failed]")
+            return {"ok": False, "error": stored.get("error", "rule write failed"), "request_id": request_id}
         result = self.knowledge_create(f"Geschützt: {title[:70]}", body, type="note", tags=["geschützt", "owner", *verdict.subjects],
                                        provenance="owner (Passwort-Freigabe)", metadata={"protected": True, "request_id": request_id, "reason": verdict.reason},
                                        confidence=1.0, _granted=True)
-        de = self.language.startswith("de")
         if not result.get("ok"):
             self._deliver(("Die geschützte Erinnerung konnte nicht gespeichert werden." if de else "The protected memory could not be stored."),
                           scope=scope, backend="policy", final_state=JarvisState.ERROR, context_text="[protected memory write failed]")
             return {"ok": False, "error": result.get("error", "write failed"), "request_id": request_id}
         note = ""
-        if "personality" in verdict.subjects or verdict.directive:
-            note = (" Meine Persönlichkeit selbst änderst du unter Einstellungen › Persönlichkeit." if de
-                    else " My personality itself is edited under Settings › Persönlichkeit.")
+        if verdict.directive:
+            note = (" Mein Name und mein Erbauer bleiben geschützt; Regeln zu Verhalten und Beziehung landen unter Persönlichkeit." if de
+                    else " My name and my creator stay protected; behaviour and relationship rules live under Persönlichkeit.")
         self._deliver((f"Gespeichert – geschützt, mit deiner Freigabe: „{title[:120]}“.{note}" if de
                        else f"Stored – protected, with your authorization: “{title[:120]}”.{note}"),
                       scope=scope, backend="policy", final_state=JarvisState.IDLE, context_text="[protected memory stored]")
         return {"ok": True, "stored": True, "node_id": result.get("node_id"), "request_id": request_id}
+
+    UI_PREFERENCE_KEYS = {"ui.show_spend": bool}
+
+    def ui_preferences(self) -> dict[str, Any]:
+        """Owner-level interface preferences that hold across reloads, profiles and restarts."""
+
+        return {"ok": True, "preferences": {key: self.preferences.get(key, True if kind is bool else None) for key, kind in self.UI_PREFERENCE_KEYS.items()}}
+
+    def ui_preference_set(self, key: str, value: Any) -> dict[str, Any]:
+        kind = self.UI_PREFERENCE_KEYS.get(str(key))
+        if kind is None:
+            return {"ok": False, "error": f"unknown preference {key!r}"}
+        clean = bool(value) if kind is bool else value
+        self.preferences.set(str(key), clean)
+        self.emit(EventType.TOOL, {"summary": f"preference {key} = {clean}", "source": "preferences"}, scope="")
+        return {"ok": True, "key": key, "value": clean}
+
+    def personality_rule_add(self, text: str, *, category: str = "", source: str = "OWNER_CHAT", protected: bool = False,
+                             request_id: str = "") -> dict[str, Any]:
+        """One owner rule into the personality document: classified, merged with an equivalent rule, versioned, audited."""
+
+        from persona.contract import _CACHE
+        from persona.rules import make_rule, merge_rule, normalize_rule
+
+        identity = self.identity
+        rule = make_rule(text, category=category, source=source, protected=protected, assistant=str(getattr(identity, "assistant_name", "ZEUS") or "ZEUS"),
+                         creator=str(getattr(identity, "creator", "Raphael") or "Raphael"), source_text=text)
+        if not rule.get("text"):
+            return {"ok": False, "error": "empty rule"}
+        current = self.owner.read("personality")
+        existing = [r for r in (normalize_rule(raw, index=i) for i, raw in enumerate(current.get("rules") or [])) if r]
+        rules, stored, how = merge_rule(existing, rule)
+        for index, r in enumerate(rules):
+            r["order"] = index
+        clean = {"rules": rules, "revision": int(current.get("revision", 0) or 0) + 1, "updated_at": _now(), "source": source}
+        try:
+            transaction = self.owner.propose({"personality": clean}, reason=f"personality rule {how} ({source})", origin="ui" if source == "OWNER_UI" else "chat")
+            record = self.owner.approve(transaction.transaction_id, approved_by="owner")
+        except PermissionError as exc:
+            return {"ok": False, "error": str(exc), "protected": True}
+        _CACHE.clear()
+        self.emit(EventType.TOOL, {"summary": f"personality rule {how}: {stored['text'][:80]}", "source": "personality",
+                                   "personality_rule": {"id": stored["id"], "category": stored["category"], "how": how, "source": source,
+                                                        "request_id": request_id, "version": stored.get("version")},
+                                   "audit_id": record.get("audit_id")}, scope="")
+        return {"ok": True, "rule": stored, "how": how, "audit_id": record.get("audit_id"), "revision": clean["revision"]}
 
     def _protected_memory_allowed(self, title: str, text: str, *, request: str = "", authorization: str = "") -> dict[str, Any] | None:
         """None when a memory write may happen; otherwise the needs_auth answer (and an audit line)."""
@@ -7295,8 +7360,12 @@ class JarvisCore:
                      "origin": h.get("origin"), "diff": [d for d in (h.get("diff") or []) if d.get("document") == "personality"][:12]}
                     for h in self.owner.history(limit=200)
                     if any(d.get("document") == "personality" for d in (h.get("diff") or [])) or "personality" in (h.get("restored") or [])]
+        from persona.rules import CATEGORIES, CATEGORY_LABELS, normalize_rule
+
+        rules_full = [r for r in (normalize_rule(raw, index=i) for i, raw in enumerate(doc.get("rules") or [])) if r]
         return {"ok": True, "owner": doc.get("owner", {}), "response": doc.get("response", {}), "preferences": doc.get("preferences", {}),
-                "rules": doc.get("rules", []), "core": doc.get("core", {}), "revision": int(doc.get("revision", 0) or 0),
+                "rules": rules_full, "categories": [{"id": c, "label": CATEGORY_LABELS[c]} for c in CATEGORIES],
+                "core": doc.get("core", {}), "revision": int(doc.get("revision", 0) or 0),
                 "updated_at": doc.get("updated_at", ""), "source": doc.get("source", ""), "hash": contract.hash,
                 "protected": {"core_identity": {"assistant_name": self.identity.assistant_name, "product_name": self.identity.product_name,
                                                 "creator": getattr(self.identity, "creator", "Raphael")},
@@ -7338,16 +7407,35 @@ class JarvisCore:
         if refused:
             return {"ok": False, "error": f"protected or unknown keys: {', '.join(refused)}", "protected": True}
         clean: dict[str, Any] = {}
+        current = self.owner.read("personality")
         for key, value in changes.items():
             if key == "rules":
-                rules = []
-                for index, raw in enumerate(value if isinstance(value, list) else []):
-                    text = str((raw.get("text") if isinstance(raw, dict) else raw) or "").strip()[:400]
-                    if not text:
+                from persona.rules import normalize_rule
+
+                before = {str(r.get("id")): r for r in (current.get("rules") or []) if isinstance(r, dict)}
+                rules = [r for r in (normalize_rule(raw, index=i) for i, raw in enumerate(value if isinstance(value, list) else [])) if r]
+                for r in rules:
+                    old = before.get(r["id"])
+                    if old is None:
+                        # a rule the editor adds is the owner's, unprotected, from the UI
+                        r.update({"protected": False, "source": "OWNER_UI", "version": 1, "created_at": _now(), "updated_at": _now()})
                         continue
-                    rid = str(raw.get("id") if isinstance(raw, dict) and raw.get("id") else f"rule_{uuid.uuid4().hex[:8]}")
-                    enabled = bool(raw.get("enabled", True)) if isinstance(raw, dict) else True
-                    rules.append({"id": rid, "text": text, "enabled": enabled, "order": index})
+                    # provenance and protection are the store's, not the editor's, to decide
+                    r.update({"protected": bool(old.get("protected", False)), "source": str(old.get("source") or "OWNER_UI"),
+                              "created_at": str(old.get("created_at") or r["created_at"]), "source_text": str(old.get("source_text") or r["source_text"])})
+                    if old.get("text") != r["text"] or bool(old.get("enabled", True)) != r["enabled"] or old.get("category") != r["category"]:
+                        r["updated_at"] = _now()
+                        r["version"] = int(old.get("version", 1) or 1) + 1
+                # a protected rule (one the owner confirmed with the password) is removed, disabled or
+                # rewritten only with the same authority
+                after = {r["id"]: r for r in rules}
+                touched = [r for rid, r in before.items() if r.get("protected")
+                           and (rid not in after or after[rid]["text"] != r.get("text") or after[rid]["enabled"] != bool(r.get("enabled", True)))]
+                if touched and self.security.configured:
+                    denied = self.require_auth(authorization, "PERSONALITY_EDIT")
+                    if denied is not None:
+                        denied["error"] = "Geschützte Regeln änderst oder entfernst du nur mit deinem Passwort."
+                        return denied
                 clean["rules"] = rules
             elif key == "preferences":
                 prefs = {}
@@ -7362,7 +7450,6 @@ class JarvisCore:
                 clean["preferences"] = prefs
             else:
                 clean[key] = {str(k): (str(v)[:120] if not isinstance(v, bool) else v) for k, v in (value or {}).items()} if isinstance(value, dict) else {}
-        current = self.owner.read("personality")
         clean["revision"] = int(current.get("revision", 0) or 0) + 1
         clean["updated_at"] = _now()
         clean["source"] = "OWNER_UI"

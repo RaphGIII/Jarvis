@@ -141,32 +141,44 @@ async function personality(body) {
   }
   body.append(resp);
 
-  // custom rules
-  const rules = card("Eigene Regeln", el("div", { class: "note", text: "Dauerhafte Regeln in deinen Worten. Sie gelten bei jeder Antwort, egal welche Intelligenz rechnet." }));
+  // the owner's rules, by what they govern
+  const CATS = (p.categories || []).length ? p.categories : [["identity", "Identität"], ["relationship", "Beziehung zu Raphael"], ["communication_style", "Kommunikationsstil"], ["behaviour", "Verhalten"], ["response_preference", "Antwortpräferenzen"], ["domain_preference", "Fachliche Präferenzen"], ["boundary", "Grenzen"], ["situational", "Situative Regeln"]].map(([id, label]) => ({ id, label }));
+  const rules = card("Deine Regeln", el("div", { class: "note", text: "Dauerhafte Regeln in deinen Worten – im Chat mit Passwort gemerkt oder hier angelegt. Sie gelten bei jeder Antwort, egal welche Intelligenz rechnet. Geschützte Regeln (●) änderst oder entfernst du nur mit deinem Passwort." }));
   const list = el("div", { class: "rules" });
   const renderRules = () => {
     clear(list);
-    changes.rules.forEach((r, i) => {
-      const item = el("div", { class: "rule" + (r.enabled === false ? " off" : "") });
-      const txt = el("input", { class: "txt", value: r.text, onChange: (e) => { r.text = e.target.value; refreshPreview(); } });
-      const tools = el("div", { class: "tools" },
-        el("button", { title: r.enabled === false ? "Aktivieren" : "Deaktivieren", text: r.enabled === false ? "○" : "●", onClick: () => { r.enabled = r.enabled === false; renderRules(); refreshPreview(); } }),
-        el("button", { title: "Nach oben", text: "↑", disabled: i === 0, onClick: () => { changes.rules.splice(i - 1, 0, changes.rules.splice(i, 1)[0]); renderRules(); refreshPreview(); } }),
-        el("button", { title: "Nach unten", text: "↓", disabled: i === changes.rules.length - 1, onClick: () => { changes.rules.splice(i + 1, 0, changes.rules.splice(i, 1)[0]); renderRules(); refreshPreview(); } }),
-        el("button", { title: "Löschen", text: "✕", onClick: () => { changes.rules.splice(i, 1); renderRules(); refreshPreview(); } }));
-      item.append(el("span", { class: "ico", text: "›" }), txt, tools);
-      list.append(item);
-    });
-    if (!changes.rules.length) list.append(el("div", { class: "note", text: "Noch keine eigenen Regeln." }));
+    const byCat = new Map();
+    changes.rules.forEach((r, i) => { const c = r.category || "behaviour"; if (!byCat.has(c)) byCat.set(c, []); byCat.get(c).push([r, i]); });
+    for (const cat of CATS) {
+      const items = byCat.get(cat.id);
+      if (!items) continue;
+      list.append(el("div", { class: "rule-cat", text: cat.label }));
+      for (const [r, i] of items) {
+        const item = el("div", { class: "rule" + (r.enabled === false ? " off" : "") + (r.protected ? " protected" : "") });
+        const txt = el("input", { class: "txt", value: r.text, title: r.source_text && r.source_text !== r.text ? `Aus deinen Worten: „${r.source_text}“` : "", onChange: (e) => { r.text = e.target.value; refreshPreview(); } });
+        const catSel = el("select", { class: "rule-cat-sel", title: "Bereich", onChange: (e) => { r.category = e.target.value; renderRules(); refreshPreview(); } },
+          ...CATS.map((c) => el("option", { value: c.id, text: c.label, selected: c.id === (r.category || "behaviour") })));
+        const tools = el("div", { class: "tools" },
+          r.protected ? el("span", { class: "rule-lock", title: "Mit Passwort gemerkt", text: "●" }) : null,
+          el("button", { title: r.enabled === false ? "Aktivieren" : "Deaktivieren", text: r.enabled === false ? "○" : "◉", onClick: () => { r.enabled = r.enabled === false; renderRules(); refreshPreview(); } }),
+          el("button", { title: "Nach oben", text: "↑", disabled: i === 0, onClick: () => { changes.rules.splice(i - 1, 0, changes.rules.splice(i, 1)[0]); renderRules(); refreshPreview(); } }),
+          el("button", { title: "Nach unten", text: "↓", disabled: i === changes.rules.length - 1, onClick: () => { changes.rules.splice(i + 1, 0, changes.rules.splice(i, 1)[0]); renderRules(); refreshPreview(); } }),
+          el("button", { title: "Entfernen", text: "✕", onClick: () => { changes.rules.splice(i, 1); renderRules(); refreshPreview(); } }));
+        item.append(catSel, txt, tools);
+        list.append(item);
+      }
+    }
+    if (!changes.rules.length) list.append(el("div", { class: "note", text: "Noch keine eigenen Regeln. Sag es ZEUS im Chat („Merke dir, dass …“) oder lege eine hier an." }));
   };
   renderRules();
+  const addCat = el("select", { class: "rule-cat-sel", title: "Bereich" }, ...CATS.map((c) => el("option", { value: c.id, text: c.label, selected: c.id === "behaviour" })));
   const add = el("input", { placeholder: "Neue Regel, z. B. „Bei Programmierung kurz und lösungsorientiert.“" });
   const addBtn = el("button", { class: "btn", text: "Hinzufügen", onClick: () => {
-    const text = add.value.trim(); if (!text) return; changes.rules.push({ text, enabled: true }); add.value = ""; renderRules(); refreshPreview(); } });
+    const text = add.value.trim(); if (!text) return; changes.rules.push({ text, enabled: true, category: addCat.value, source: "OWNER_UI" }); add.value = ""; renderRules(); refreshPreview(); } });
   add.addEventListener("keydown", (e) => { if (e.key === "Enter") addBtn.click(); });
   const search = el("input", { placeholder: "Regeln durchsuchen …", onInput: (e) => {
     const q = e.target.value.toLowerCase(); for (const item of list.children) item.hidden = q && !(item.querySelector("input")?.value || "").toLowerCase().includes(q); } });
-  rules.append(el("div", { class: "rule-add" }, search), list, el("div", { class: "rule-add" }, add, addBtn));
+  rules.append(el("div", { class: "rule-add" }, search), list, el("div", { class: "rule-add" }, addCat, add, addBtn));
   body.append(rules);
 
   // the protected core, shown as what it is
@@ -187,7 +199,7 @@ async function personality(body) {
   }
   if (!(p.versions || []).length) versions.append(el("div", { class: "note", text: "Noch keine Änderungen." }));
   body.append(card("Versionen", versions));
-  body.append(saveBar(() => api("/api/personality/save", { changes, reason: "Persönlichkeit bearbeitet" }), "personality"));
+  body.append(saveBar(() => authgate.withAuth("PERSONALITY_EDIT", (authorization) => api("/api/personality/save", { changes, reason: "Persönlichkeit bearbeitet", authorization })), "personality"));
 }
 
 function saveBar(save, tab) {
@@ -225,7 +237,7 @@ async function performance(body) {
   const spending = (owner && owner.documents && owner.documents.spending) || {};
   body.append(card("Diesen Monat",
     row("Ausgaben", el("span", { text: `€${Number(spend.month || 0).toFixed(2)} von €${Number(spend.monthly_hard_cap || 0).toFixed(2)}` }), "Hartes Monatslimit; darüber hinaus wird nichts ausgegeben."),
-    row("Ausgaben im Chat anzeigen", toggle(state.ui.showSpend !== false, (on) => { setPref("showSpend", on); }), "Aus: unter dem Eingabefeld erscheint keine Zahl mehr – und sie ändert sich auch nicht."),
+    row("Ausgaben im Chat anzeigen", toggle(state.ui.showSpend !== false, (on) => { setPref("showSpend", on); api("/api/ui/preferences/set", { key: "ui.show_spend", value: on }); }), "Aus: unter dem Eingabefeld erscheint keine Zahl mehr – auch nach einem Neustart nicht. Unter Erweitert bleiben die Ausgaben sichtbar."),
     row("Standard-Leistung", seg(LEVELS.map(([id, label]) => [id, label]), status?.mode || "AUTO", async (v) => { await api("/api/gateway/mode", { mode: v }); })),
   ));
   const changes = {};

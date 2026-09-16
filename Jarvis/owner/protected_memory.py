@@ -64,6 +64,13 @@ _OWNER_PERSON = re.compile(
     r"|von\s+mir|about\s+me|my\s+(?:name|birthday|address|age|phone|password|family|health|doctor|bank|salary|job)|i\s+am\b|i'm\b)",
     re.I,
 )
+_RELATIONSHIP = re.compile(
+    r"\b(du\s+(?:bist|wirst|sollst)\s+(?:auch\s+|ab\s+jetzt\s+|jetzt\s+)?(?:mein|meine|ein|eine)\s+\w*(?:freund|begleiter|partner|vertraute|berater|coach|mentor|lehrer|kumpel)"
+    r"|du\s+(?:auch\s+|ab\s+jetzt\s+|jetzt\s+)?(?:mein|meine|ein|eine)\s+\w*(?:freund|begleiter|partner|vertraute|berater|coach|mentor|lehrer|kumpel)\w*\s+(?:bist|wirst|sein\s+sollst)"
+    r"|h[öo]rst\s+(?:mir\s+)?zu|zuh[öo]rst|gibst\s+(?:mir\s+)?rat|f[üu]r\s+mich\s+da|unterst[üu]tzt\s+mich|unsere\s+beziehung"
+    r"|you\s+are\s+(?:also\s+)?my\s+(?:friend|companion|coach|mentor)|listen\s+to\s+me|give\s+me\s+advice)\b",
+    re.I,
+)
 _DIRECTIVE = re.compile(
     r"(\bdu\s+bist\s+(?:ab\s+jetzt|jetzt|nun|von\s+nun\s+an|k[üu]nftig)\b|\bdu\s+hei[ßs]t\s+(?:ab\s+jetzt\s+|jetzt\s+|nun\s+)?\S+|\bdein\s+name\s+ist\b"
     r"|\bnenn(?:e)?\s+dich\b|\bab\s+(?:jetzt|sofort|heute)\s+bist\s+du\b|\bdu\s+wurdest\s+von\b|\bdein(?:e)?\s+(?:sch[öo]pfer|besitzer|erschaffer|entwickler|ersteller|owner|creator)\s+(?:ist|hei[ßs]t|war|sind)\b"
@@ -111,6 +118,8 @@ def classify_memory_write(text: str, *, title: str = "", implicit_save: bool = F
         subjects.append("creator/owner")
     if _OWNER_PERSON.search(body):
         subjects.append("owner person")
+    if _RELATIONSHIP.search(body):
+        subjects.append("relationship")
     directive = bool(_DIRECTIVE.search(body))
     protected = (save_verb and bool(subjects)) or directive
     return MemoryWriteClass(protected, save_verb, subjects, directive)

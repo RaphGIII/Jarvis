@@ -72,6 +72,11 @@ function startZeus() {
     document.documentElement.requestFullscreen?.().catch(() => {});
   }
   applyAppearance();
+  // owner-level interface preferences live on the server, so they hold across profiles and restarts
+  api("/api/ui/preferences").then((r) => {
+    const prefs = (r && r.preferences) || {};
+    if (typeof prefs["ui.show_spend"] === "boolean" && (state.ui.showSpend !== false) !== prefs["ui.show_spend"]) setPref("showSpend", prefs["ui.show_spend"]);
+  }).catch(() => {});
 
   eye = new JarvisEye($("eye"));
   window.zeusEye = eye;
