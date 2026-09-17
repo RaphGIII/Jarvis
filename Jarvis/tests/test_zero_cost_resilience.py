@@ -521,3 +521,19 @@ def test_in_free_a_cut_last_route_keeps_its_text_as_incomplete(tmp_path, pool_cr
     pieces = list(stream)
     assert not any(isinstance(piece, StreamRestart) for piece in pieces) and "".join(pieces) == "Der Citrat"
     assert stream.reply.complete is False and stream.reply.finish_reason == "stream_ended_without_finish_reason"
+
+
+def test_a_failed_pool_never_blocks_a_provider_longer_than_its_models_own_reset(tmp_path, pool_creds):
+    """Every free route failing also marks each provider as out.  That mark once lasted a flat hour,
+    so a daily allowance spent at 23:10 UTC stayed closed until 00:10 -- the models' own entries
+    (reset at the provider's midnight) must bound it.  Observed in the suite on 2026-09-16 23:06 UTC."""
+
+    spent = http_error(OPENROUTER, 429, {"error": {"message": "Rate limit exceeded: free-models-per-day.", "code": 429}})
+    answers = {m: quota_error() for p, m in POOL if p == "gemini"} | {GROQ: route_down("groq", ""), OPENROUTER: spent}
+    gateway = make_gateway(tmp_path, owner_pool(), pool_creds, RouteNetwork(answers), local=LocalStub())
+    with pytest.raises(FreeIntelligenceUnavailable):
+        gateway.complete(knowledge())
+    state = gateway.health.state
+    assert state["openrouter"]["until"] <= state["openrouter/openrouter/free"]["until"] + 1
+    for model in [m for p, m in POOL if p == "gemini"]:
+        assert state["gemini"]["until"] <= state[f"gemini/{model}"]["until"] + 1

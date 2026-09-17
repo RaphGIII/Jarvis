@@ -618,7 +618,14 @@ class ModelGateway:
                 except ValueError:
                     continue
                 if dominant.is_outage:
-                    self.health.note(name, dominant, detail=str(exc)[:200], reset_zone=self._reset_zone(name))
+                    # The models already carry their exact reset (a daily quota ends at the provider's
+                    # midnight); the provider as a whole is out no longer than the soonest of them.
+                    now = time.time()
+                    own = [float((self.health.state.get(f"{name}/{attempt.get('model')}") or {}).get("until") or 0.0) - now
+                           for attempt in exc.attempts
+                           if str(attempt.get("provider") or prepared.provider.name) == name and attempt.get("model")]
+                    soonest = min((left for left in own if left > 0), default=None)
+                    self.health.note(name, dominant, detail=str(exc)[:200], retry_after_seconds=soonest, reset_zone=self._reset_zone(name))
         attempts = list(route_attempts if route_attempts is not None else (getattr(exc, "attempts", []) or []))
         self._observe(prepared.decision, prepared.binding, prepared.provider.name, goal_verified=False, failure_class=exc.status.value,
                       mode=prepared.mode, latency=time.perf_counter() - prepared.started, route_attempts=attempts,
