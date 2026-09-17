@@ -115,10 +115,10 @@ def correction(claim: Claim, *, language: str = "") -> str:
     german = language.startswith("de")
     if german:
         return (
-            "Ich habe darauf geantwortet, als waere die Aktion ausgefuehrt worden -- das war sie nicht. "
-            "Es wurde nichts ausgefuehrt und es gibt keinen Beleg (Receipt) fuer diesen Schritt. "
+            "Ich habe darauf geantwortet, als wäre die Aktion ausgeführt worden -- das war sie nicht. "
+            "Es wurde nichts ausgeführt und es gibt keinen Beleg (Receipt) für diesen Schritt. "
             "Formuliere die Anfrage bitte als konkrete Aktion (zum Beispiel: "
-            "\"Erstelle die Datei X mit dem Inhalt Y\"), dann fuehre ich sie wirklich aus und zeige den Beleg."
+            "\"Erstelle die Datei X mit dem Inhalt Y\"), dann führe ich sie wirklich aus und zeige den Beleg."
         )
     return (
         "I answered as though that had been carried out. It was not. "

@@ -44,6 +44,8 @@ REQUIRED_IDS = (
     "sidebar", "topbar", "workPill", "workPanel", "workspacePane", "workspaceTitle", "inspector", "inspectorBody", "palette", "paletteInput", "readiness",
     # the ZEUS performance control in the composer (no provider, no model, no mode chips)
     "perf",
+    # the environment, the conversation's own places, the task surfaces
+    "scene", "surfaces", "homeActions", "homeGreeting", "chatEmpty", "btnAttach", "attachInput", "btnHistory",
 )
 
 #: Files the page cannot render without.  app.js is an ES module and imports
@@ -55,6 +57,10 @@ REQUIRED_ASSETS = (
     "views/chat.js", "views/activity.js", "views/projects.js", "views/missions.js", "views/knowledge.js", "views/settings.js",
     "views/corrections.js", "views/diagnostics.js", "views/owner.js", "views/release.js", "views/capabilities.js",
     "views/voice.js", "views/palette.js", "voice/mic.js", "voice/playback.js",
+    # the environment, ZEUS's presence, Home and Chat, the task surfaces
+    "core/presence.js", "core/scene.js", "core/history.js", "core/home.js", "core/surfaces.js", "core/sources.js", "core/drawer.js", "core/textmarks.js", "core/pagerender.js", "core/indexing.js", "core/starfield.js",
+    # Studium, memory, automations
+    "views/study.js", "views/study_viewer.js", "views/study_galaxy.js", "views/memory.js", "views/automations.js",
 )
 
 #: Names the page depends on existing in its scripts.
@@ -62,7 +68,7 @@ REQUIRED_ASSETS = (
 REQUIRED_TAIL = {"app.js": "startZeus();"}
 
 REQUIRED_SYMBOLS = {
-    "orb.js": ("ZeusOrb",),
+    "orb.js": ("ZeusOrb", "ZeusPresence"),
     "app.js": ("startZeus",),
 }
 

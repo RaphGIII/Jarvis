@@ -1,7 +1,8 @@
 /*
  * The client entry point: the shell of ONE product.  Subscribes to the event
- * stream, keeps the shared state, drives the orb, registers the views and
- * builds the sidebar, the performance control and the work surface.
+ * stream, keeps the shared state, paints the environment, hands every state to
+ * ZEUS's presence, registers the views and builds the navigation, Home and
+ * Chat, the task surfaces, the performance control and the work surface.
  *
  * All state comes from the server.  The UI never guesses what ZEUS is doing
  * -- it renders the state event and nothing else -- and it never names the
@@ -16,6 +17,12 @@ import { state, set, setPref, category } from "./core/state.js";
 import * as views from "./core/views.js";
 import * as sidebar from "./core/sidebar.js";
 import * as worksurface from "./core/worksurface.js";
+import * as history from "./core/history.js";
+import * as home from "./core/home.js";
+import * as surfaces from "./core/surfaces.js";
+import * as presence from "./core/presence.js";
+import * as scene from "./core/scene.js";
+import * as drawer from "./core/drawer.js";
 
 import * as chat from "./views/chat.js";
 import * as activity from "./views/activity.js";
@@ -33,6 +40,9 @@ import * as voiceStudio from "./views/voice.js";
 import * as chessTool from "./views/chess.js";
 import * as thoughts from "./views/thoughts.js";
 import * as calendar from "./views/calendar.js";
+import * as study from "./views/study.js";
+import * as memory from "./views/memory.js";
+import * as automations from "./views/automations.js";
 import * as settings from "./views/settings.js";
 import * as palette from "./views/palette.js";
 import * as mic from "./voice/mic.js";
@@ -43,8 +53,8 @@ let stream = null;
 let lastSeq = 0;
 let reconnectDelay = 500;
 
-const VIEW_MODULES = [missions, projects, files, knowledge, calendar, personality, activity, corrections, diagnostics, owner, release,
-                      capabilities, voiceStudio, chessTool, thoughts, settings];
+const VIEW_MODULES = [study, missions, projects, files, knowledge, memory, calendar, automations, personality, activity, corrections, diagnostics,
+                      owner, release, capabilities, voiceStudio, chessTool, thoughts, settings];
 
 /* ------------------------------------------------------------------ */
 /* appearance: dark / light / system, glass, motion                    */
@@ -78,8 +88,10 @@ function startZeus() {
     if (typeof prefs["ui.show_spend"] === "boolean" && (state.ui.showSpend !== false) !== prefs["ui.show_spend"]) setPref("showSpend", prefs["ui.show_spend"]);
   }).catch(() => {});
 
-  eye = new JarvisEye($("eye"));
+  scene.mount($("scene"));
+  eye = new ZeusPresence($("eye"));
   window.zeusEye = eye;
+  presence.attach(eye, bus);
   eye.start();
   if (window.ResizeObserver) new ResizeObserver(() => eye.resize()).observe($("eye"));
   else window.addEventListener("resize", () => eye.resize());
@@ -87,8 +99,9 @@ function startZeus() {
   for (const mod of VIEW_MODULES) views.register(mod.view);
   chat.init({ eye });
   sidebar.init({ chat, toast });
+  home.init({ chat });
+  surfaces.init();
   worksurface.init({ toast });
-  bus.on("jobs:active", (n) => eye?.setBackgroundWork?.(Number(n) || 0));
   mic.init({ eye });
   playback.init({ eye });
   palette.init();
@@ -140,6 +153,12 @@ function connect() {
 bus.on("notification", (payload) => {
   if (payload._replay) return;
   if (payload.kind === "open_view" && payload.view) { views.open(payload.view, payload.params || {}); return; }
+  if (payload.kind === "study_view" && payload.params && !document.querySelector(".viewer")) {
+    // "Mach größer" typed in the chat: the chat closed the viewer, so the place opens again at the new size
+    const command = payload.command || {};
+    views.open("study", { ...payload.params, ...(command.fit ? { fit: "1" } : { zoom: String(payload.level || 1) }) });
+    return;
+  }
   if (payload.kind === "needs_auth" && payload.scope) {
     import("./core/authgate.js").then(async (authgate) => {
       const token = await authgate.ensureAuth(payload.scope, { reason: payload.text });
@@ -169,16 +188,11 @@ const STATE_WORDS = {
 bus.on("state", (payload) => {
   const name = payload.state || "idle";
   set("eye", payload);
-  eye.setState(name);
   const label = $("stateLabel");
   label.textContent = STATE_WORDS[name] || name;
   label.dataset.cat = category(name);
   label.dataset.state = name;
   $("detail").textContent = payload.detail || "";
-});
-
-bus.on("speech", (payload) => {
-  if (typeof payload.energy === "number") eye.setEnergy(payload.energy);
 });
 
 export function toast(text, tone = "") {
@@ -203,26 +217,36 @@ function wireShell() {
     $("btnWinClose").onclick = () => api("/api/window", { action: "close", reason: "owner" });
   }
   $("btnProfile").onclick = () => views.open("settings", {});
-  $("btnPlus").onclick = () => palette.open();
+  $("btnHistory").onclick = () => history.toggle();
+  api("/api/diagnostics").then((d) => {
+    const who = d && d.identity && (d.identity.creator || d.identity.owner_name);
+    if (!who) return;
+    window.OWNER_NAME = String(who);
+    $("btnProfile").textContent = String(who).slice(0, 1).toUpperCase();
+    home.refreshActions();
+    home.greet();
+  }).catch(() => {});
   $("btnInspectorClose").onclick = () => views.closeInspector();
-  $("btnSidebar").onclick = () => {
-    const narrow = window.innerWidth <= 980;
-    if (narrow) $("app").classList.toggle("sidebar-open");
-    else { const collapsed = $("app").classList.toggle("sidebar-collapsed"); setPref("sidebarCollapsed", collapsed); }
-  };
   if (state.ui.sidebarCollapsed) $("app").classList.add("sidebar-collapsed");
+  const nav = drawer.createDrawer({ app: $("app"), sidebar: $("sidebar"), scrim: $("sidebarScrim"), toggle: $("btnSidebar"), main: $("main"),
+                                    onCollapse: (collapsed) => setPref("sidebarCollapsed", collapsed) });
+  window.zeusDrawer = nav;
   bus.on("view:open", ({ id }) => {
     const view = views.get(id);
     $("topTitle").textContent = view ? view.title : "";
     $("btnWorkspaceClose").hidden = false;
-    if (window.innerWidth <= 980) $("app").classList.remove("sidebar-open");
+    $("btnHistory").hidden = true;   // the conversation archive belongs to Chat, not to a workspace
+    nav.close();
   });
   bus.on("view:close", () => {
-    $("topTitle").textContent = $("app").classList.contains("conversing") ? "Chat" : (window.PRODUCT_NAME || "ZEUS");
+    $("topTitle").textContent = $("app").classList.contains("conversing") ? "Chat" : "";
     $("btnWorkspaceClose").hidden = true;
+    $("btnHistory").hidden = !$("app").classList.contains("conversing");
   });
+  bus.on("mode:changed", () => nav.close());
 
   document.addEventListener("keydown", (e) => {
+    if (nav.onKeydown(e)) return;
     const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
     if (e.key === "F11") {
       e.preventDefault(); e.stopPropagation();
@@ -237,6 +261,7 @@ function wireShell() {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); sidebar.newChat(); return; }
     if (e.key === "Escape") {
       if (palette.isOpen()) { palette.close(); return; }
+      if (history.isOpen()) { history.close(); return; }
       if ($("panel").classList.contains("open")) { $("panel").classList.remove("open"); return; }
       if ($("graphView").classList.contains("open")) { knowledge.closeGraph(); return; }
       if (views.inspectorIsOpen()) { views.closeInspector(); return; }

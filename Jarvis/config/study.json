@@ -1,0 +1,13 @@
+{
+  "embeddings": {
+    "provider": "onnx",
+    "model": "multilingual-e5-base",
+    "model_dir": "D:\\JarvisLocal\\embeddings\\multilingual-e5-base",
+    "source": "https://huggingface.co/Xenova/multilingual-e5-base (onnx/model_quantized.onnx, tokenizer.json) -- intfloat/multilingual-e5-base, MIT",
+    "pooling": "mean",
+    "query_prefix": "query: ",
+    "passage_prefix": "passage: ",
+    "threads": 4,
+    "allow_external": false
+  }
+}

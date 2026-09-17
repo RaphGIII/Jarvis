@@ -4,15 +4,16 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="google" content="notranslate" />
+<meta name="color-scheme" content="dark" />
 <title>__PRODUCT_NAME__</title>
-<!-- The shell (tokens, sidebar, sphere, chat, composer, settings) and the
-     view styles are two sheets on purpose: the shell can change its whole
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23101110'/%3E%3Cpath d='M5 17c5-6 9 4 14-2s6-3 8-2' stroke='%23c8b084' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<!-- The shell (tokens, navigation, environment, presence, conversation, composer)
+     and the view styles are two sheets on purpose: the shell can change its whole
      look without touching how a graph or a calendar is drawn. -->
 <link rel="stylesheet" href="zeus.css" />
 <link rel="stylesheet" href="views.css" />
 <style>
   body.tv { cursor: none; }
-  body.tv #eye { width: 62vh !important; }
   body.tv footer.compose { display: none; }
 </style>
 </head>
@@ -22,9 +23,9 @@
      Present in the markup from the first byte, dissolved by app.js on
      INTERACTIVE_READY. -->
 <div id="bootVeil">
-  <div class="bv-orb"></div>
+  <div class="bv-orb" aria-hidden="true"></div>
   <div class="bv-brand">__PRODUCT_NAME__</div>
-  <div class="bv-phase" id="bvPhase">ZEUS WIRD VERBUNDEN</div>
+  <div class="bv-phase" id="bvPhase" role="status">ZEUS WIRD VERBUNDEN</div>
   <ul class="bv-systems">
     <li data-k="core">Kern</li>
     <li data-k="ai">Intelligenz</li>
@@ -32,47 +33,48 @@
   </ul>
 </div>
 
-<div id="app">
-  <!-- The persistent sidebar: built by core/sidebar.js -->
+<a class="skip" href="#input">Zur Eingabe springen</a>
+
+<div id="app" data-mode="home">
+  <!-- The persistent navigation: built by core/sidebar.js -->
   <aside id="sidebar" aria-label="Navigation"></aside>
 
   <div id="main">
+    <!-- The environment: dark water at night, painted once by core/scene.js -->
+    <canvas id="scene" aria-hidden="true"></canvas>
+
     <header id="topbar">
-      <button id="btnSidebar" class="tb-btn" title="Seitenleiste">
-        <span class="i"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3" /><path d="M9.5 5v14" /></svg></span>
+      <button id="btnSidebar" class="tb-btn" aria-label="Navigation ein- oder ausblenden" title="Navigation" aria-controls="sidebar" aria-expanded="true">
+        <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 7h15M4.5 12h15M4.5 17h9" /></svg></span>
       </button>
-      <div id="topTitle">__PRODUCT_NAME__</div>
-      <button id="btnWorkspaceClose" hidden title="Zurück zum Chat (Esc)">Zurück</button>
+      <div id="topTitle"></div>
+      <button id="btnHistory" class="tb-text" data-history-toggle hidden aria-label="Verlauf der Gespräche">Verlauf</button>
+      <button id="btnWorkspaceClose" hidden title="Zurück (Esc)">Zurück</button>
       <span class="spacer"></span>
-      <button id="btnSearch" class="tb-btn" title="Suchen und ausführen (Ctrl+K)">
-        <span class="i"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg></span>
+      <button id="btnSearch" class="tb-btn" aria-label="Suchen und ausführen (Strg+K)" title="Suchen und ausführen (Strg+K)">
+        <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg></span>
       </button>
-      <button id="workPill" title="Was ZEUS gerade tut">
-        <span class="i"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6H21" /></svg></span>
+      <button id="workPill" aria-label="Was ZEUS gerade tut">
         <span class="dot"></span><span class="txt">Bereit</span><span class="n"></span>
       </button>
-      <span class="pill" id="connPill">verbinden</span>
-      <button id="btnProfile" class="avatar" title="Einstellungen">R</button>
+      <span class="pill" id="connPill" role="status" aria-label="Verbindung">verbinden</span>
+      <button id="btnProfile" class="avatar" aria-label="Einstellungen">R</button>
       <span class="winctl" id="winctl" hidden>
-        <button id="btnWinMin" title="Minimieren"><span class="i"><svg viewBox="0 0 24 24"><path d="M6 12h12" /></svg></span></button>
-        <button id="btnWinClose" title="ZEUS schließen"><span class="i"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17" /></svg></span></button>
+        <button id="btnWinMin" aria-label="Minimieren"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 12h12" /></svg></span></button>
+        <button id="btnWinClose" aria-label="ZEUS schließen"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17" /></svg></span></button>
       </span>
     </header>
 
     <main class="presence">
       <div id="stage">
-        <div id="orbWrap"><canvas id="eye" width="476" height="340"></canvas></div>
-        <div class="hero">
-          <div class="hero-brand">ZEUS</div>
-          <div class="hero-sub">Dein persönliches KI-System</div>
-          <div class="hero-rule"></div>
-          <div class="hero-motto">Wissen. Klarheit. Fortschritt.</div>
-        </div>
-        <div id="stateLabel" data-state="offline" data-cat="blue">offline</div>
+        <div id="orbWrap"><canvas id="eye" width="720" height="128" role="img" aria-label="ZEUS"></canvas></div>
+        <h1 id="homeGreeting" class="home-greeting"></h1>
+        <div id="stateLabel" data-state="offline" data-cat="blue" role="status" aria-live="polite">offline</div>
         <div id="detail"></div>
         <div id="readiness"><span data-stage="UI_READY"></span><span data-stage="CORE_READY"></span><span data-stage="AI_READY" class="ai"></span><span data-stage="VOICE_READY"></span></div>
       </div>
-      <div id="log"></div>
+      <div id="chatEmpty" class="chat-empty" hidden></div>
+      <div id="log" role="log" aria-live="polite" aria-label="Gespräch"></div>
     </main>
 
     <main class="workspace">
@@ -84,41 +86,49 @@
         <div id="workspacePane"></div>
       </section>
       <aside class="inspector" id="inspector">
-        <header><strong id="inspectorTitle">Details</strong><button id="btnInspectorClose" title="Schließen">×</button></header>
+        <header><strong id="inspectorTitle">Details</strong><button id="btnInspectorClose" aria-label="Schließen">×</button></header>
         <div id="inspectorBody"></div>
       </aside>
     </main>
 
     <footer class="compose">
-      <div class="composer edge-light">
-        <button class="icon-btn" id="btnPlus" title="Aktionen (Ctrl+K)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+      <div id="surfaces" class="surfaces"></div>
+      <div class="composer">
+        <button class="icon-btn" id="btnAttach" aria-label="Datei hinzufügen" title="Datei hinzufügen – Studienmaterial wird durchsuchbar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 11.5 12.2 19.3a4.8 4.8 0 0 1-6.8-6.8l8-8a3.2 3.2 0 0 1 4.5 4.5l-8 8a1.6 1.6 0 0 1-2.3-2.3l7.3-7.3" />
+          </svg>
         </button>
-        <textarea id="input" rows="1" placeholder="Wie kann ich dir helfen, Raphael …" autofocus></textarea>
+        <input type="file" id="attachInput" multiple hidden accept=".pdf,.docx,.pptx,.md,.markdown,.txt,.png,.jpg,.jpeg,.webp,.tif,.tiff" />
+        <textarea id="input" rows="1" placeholder="Frag ZEUS – oder sag, was zu tun ist …" aria-label="Nachricht an ZEUS" autofocus></textarea>
         <div class="compose-tools">
           <div id="perf" class="perf"></div>
-          <button class="icon-btn" id="btnMic" title="Spracheingabe">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <button class="icon-btn" id="btnMic" aria-label="Sprechen" title="Sprechen">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
               <rect x="9" y="2.5" width="6" height="11.5" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0" /><path d="M12 17.5v3.5" />
             </svg>
           </button>
-          <button class="icon-btn" id="btnSend" title="Senden">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <button class="icon-btn" id="btnSend" aria-label="Senden" title="Senden">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />
             </svg>
           </button>
         </div>
       </div>
+      <nav id="homeActions" class="home-actions" aria-label="Vorschläge"></nav>
       <div class="compose-foot"><span id="perfSpend" class="perf-spend"></span><span id="perfEstimate" class="perf-est" hidden></span></div>
     </footer>
   </div>
 </div>
 
+<!-- On a narrow window the navigation is a drawer over the content; this veil closes it. -->
+<div id="sidebarScrim" hidden></div>
+
 <div id="workPanel" class="glass-strong" hidden></div>
 
 <div id="palette">
-  <div class="box">
-    <input id="paletteInput" placeholder="Fragen, öffnen, suchen, ausführen …" autocomplete="off" spellcheck="false" />
+  <div class="box" role="dialog" aria-label="Suchen und ausführen">
+    <input id="paletteInput" placeholder="Fragen, öffnen, suchen, ausführen …" autocomplete="off" spellcheck="false" aria-label="Suchen und ausführen" />
     <div id="paletteList"></div>
     <div id="paletteFoot"><span>↑↓ wählen</span><span>↵ ausführen</span><span>Esc schließen</span></div>
   </div>
@@ -126,7 +136,7 @@
 
 <div id="graphView">
   <div class="graph-bar">
-    <input id="graphSearch" placeholder="Wissensgraph durchsuchen …" autocomplete="off" />
+    <input id="graphSearch" placeholder="Wissensgraph durchsuchen …" autocomplete="off" aria-label="Wissensgraph durchsuchen" />
     <span class="graph-count" id="graphCount"></span>
     <button class="ghost" id="btnGraphClose">Zurück</button>
   </div>
@@ -149,7 +159,7 @@
   <div id="panelBody"></div>
 </div>
 
-<div id="toasts"></div>
+<div id="toasts" role="status" aria-live="polite"></div>
 
 <script src="orb.js"></script>
 <script src="graph.js"></script>

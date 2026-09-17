@@ -11,10 +11,12 @@
 .act-edit .chip { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-soft); background: transparent; color: var(--dim); cursor: pointer; }
 .act-corrected { color: var(--green); font-size: 12px; margin-left: 6px; }
 /* response feedback: restrained, under each answer */
-.fb { margin-top: 6px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; opacity: .35; transition: opacity .15s; font-size: 12px; }
-.turn:hover .fb, .fb:focus-within { opacity: .9; }
-.fb-btn { text-decoration: none; color: var(--dim); padding: 1px 5px; border-radius: 6px; font-size: 12px; }
-.fb-btn:hover { background: var(--zeus-champagne-08); color: var(--text); }
+.fb { margin-top: 8px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; opacity: 0; transition: opacity .2s; font-size: 12px; }
+.turn:hover .fb, .fb:focus-within, #log .turn.jarvis:last-child .fb { opacity: .7; }
+.fb-btn { text-decoration: none; color: var(--zeus-text-tertiary); padding: 3px 6px; border-radius: 6px; font-size: 12px; display: inline-grid; place-items: center; }
+.fb-btn:hover, .fb-btn:focus-visible { background: rgba(235, 231, 221, .05); color: var(--text); }
+.fb-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.fb-icon.down svg { transform: rotate(180deg); }
 .fb-korr { font-size: 11px; letter-spacing: .05em; }
 .fb-flash { font-size: 10.5px; color: var(--green); letter-spacing: .08em; margin-left: 6px; }
 .fb-pop { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 5px; padding: 8px; margin-top: 4px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--zeus-surface); }

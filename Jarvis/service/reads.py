@@ -51,8 +51,8 @@ def _cannot_acquire(core: Any, german: bool) -> str:
     """
 
     head = (
-        "Ich kann mir ueber den Chat keine neue Faehigkeit beibringen -- dafuer gibt es "
-        "die Capability-Akquise, und sie laeuft nicht aus einer Unterhaltung heraus. "
+        "Ich kann mir über den Chat keine neue Fähigkeit beibringen -- dafür gibt es "
+        "die Capability-Akquise, und sie läuft nicht aus einer Unterhaltung heraus. "
         "Nichts wurde gestartet.\n\n"
         if german
         else "I cannot acquire a new capability from a chat turn. That runs through the "
@@ -78,11 +78,11 @@ def _developer(core: Any, german: bool) -> str:
         projects = []
     phases = "UNDERSTAND -> INVESTIGATE -> BUILD_LOCAL -> VERIFY -> ESCALATE -> PROMOTE"
     head = (
-        "Als Entwickler arbeite ich an mir selbst ueber eine feste Kette:\n\n"
+        "Als Entwickler arbeite ich an mir selbst über eine feste Kette:\n\n"
         f"  {phases}\n\n"
-        "Jede Aenderung entsteht in einem eigenen Worktree, wird durch die "
-        "Akzeptanzkommandos gepruft und erst danach promotet. Ohne bestandene "
-        "Pruefung wird nichts uebernommen.\n\n"
+        "Jede Änderung entsteht in einem eigenen Worktree, wird durch die "
+        "Akzeptanzkommandos geprüft und erst danach promotet. Ohne bestandene "
+        "Prüfung wird nichts übernommen.\n\n"
         f"Im Speicher: {len(missions)} Self-Development-Mission(en), "
         f"{len(projects)} Projekt(e).\n\n"
         if german
@@ -130,8 +130,8 @@ def _capabilities(core: Any, german: bool) -> str:
     if not active and not disabled:
         return (
             "In der Capability-Registry ist nichts eingetragen -- keine verifizierten "
-            f"Faehigkeiten. Registry: {report.get('path', '')}\n\n"
-            "Was ich ohne Registry-Eintrag ausfuehren kann, ist fest verdrahtet: "
+            f"Fähigkeiten. Registry: {report.get('path', '')}\n\n"
+            "Was ich ohne Registry-Eintrag ausführen kann, ist fest verdrahtet: "
             "Datei schreiben, Datei lesen, Projekt anlegen. Jede davon liefert einen Beleg."
             if german
             else "The capability registry is empty -- there are no verified capabilities. "
@@ -142,7 +142,7 @@ def _capabilities(core: Any, german: bool) -> str:
 
     lines = [
         (
-            f"{len(active)} aktive, {len(disabled)} deaktivierte Eintraege in der Registry "
+            f"{len(active)} aktive, {len(disabled)} deaktivierte Einträge in der Registry "
             f"({report.get('path', '')}):"
             if german
             else f"{len(active)} active and {len(disabled)} disabled entries in the registry "

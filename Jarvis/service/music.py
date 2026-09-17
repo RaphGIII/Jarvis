@@ -129,6 +129,7 @@ _PLAY_SUFFIX = re.compile(
 )
 #: German separable-verb particles stranded at the end: "spiel mir was ... vor".
 _PARTICLE = re.compile(r"\s+\b(vor|an|ab|auf)\b\s*\.?\s*$", re.I)
+_BARE_PROVIDER = re.compile(r"^(spotify|deezer|apple\s*music|youtube(\s*music)?|itunes)$", re.I)
 _FILLER = re.compile(r"\b(das\s+lied|den\s+song|die\s+nummer|the\s+song|the\s+track)\b", re.I)
 
 #: Words that carry no identifying information about a track. A query made only
@@ -277,6 +278,9 @@ def extract_query(text: str) -> str:
     stripped = re.sub(r"\b(von|by)\b", " ", stripped, flags=re.I)
     stripped = stripped.strip(" .,!?;:’'\"")
     stripped = re.sub(r"\s+", " ", stripped)
+    # "Spiele Spotify." names the player, not a title: routing, like "auf Spotify".
+    if _BARE_PROVIDER.match(stripped):
+        return ""
 
     # Drop leading filler words one at a time, so "mir was von den Beatles"
     # becomes "Beatles" rather than being kept whole or thrown away.
@@ -634,10 +638,11 @@ class MusicService:
         checks: list[Verification] = []
         checks.append(
             Verification(
-                check="a media session exists",
+                check="Eine Mediensitzung ist vorhanden",
                 passed=bool(after.ok),
                 observed=after.describe(),
-                expected="a player registered with Windows",
+                expected="ein bei Windows angemeldeter Player",
+                key="media_session_exists",
             )
         )
         if not after.ok:
@@ -646,29 +651,32 @@ class MusicService:
         if self.provider == "spotify":
             checks.append(
                 Verification(
-                    check="the player is Spotify",
+                    check="Der Player ist Spotify",
                     passed=after.is_spotify,
-                    observed=after.app or "unknown",
+                    observed=after.app or "unbekannt",
                     expected="Spotify",
+                    key="player_is_spotify",
                 )
             )
 
         if request.action in {"play", "resume", "next", "previous"}:
             checks.append(
                 Verification(
-                    check="Windows reports playback running",
+                    check="Windows meldet laufende Wiedergabe",
                     passed=after.playing,
                     observed=after.status,
                     expected="Playing",
+                    key="playback_running",
                 )
             )
         elif request.action == "pause":
             checks.append(
                 Verification(
-                    check="Windows reports playback paused",
+                    check="Windows meldet pausierte Wiedergabe",
                     passed=after.paused,
                     observed=after.status,
                     expected="Paused",
+                    key="playback_paused",
                 )
             )
 
@@ -682,23 +690,31 @@ class MusicService:
             resolved_artist = str(output.get("artist") or (output.get("now_playing") or {}).get("artist") or "")
             if resolved_title:
                 checks.append(Verification(
-                    check="the resolved track is playing",
+                    check="Der aufgelöste Titel läuft",
                     passed=self._covers(resolved_title, after.title)
-                    and (not resolved_artist or self._covers(resolved_artist, after.artist)),
-                    observed=f"resolved to {resolved_title} - {resolved_artist}; playing {after.title} - {after.artist}",
+                    and (not resolved_artist or self._covers_any_artist(resolved_artist, after.artist)),
+                    observed=f"aufgelöst zu {resolved_title} - {resolved_artist}; es läuft {after.title} - {after.artist}",
                     expected=f"{resolved_title} - {resolved_artist}",
+                    key="resolved_track_playing",
                 ))
             checks.append(self._track_matches(request.query, after, kind=getattr(request, "kind", "any"), artist=getattr(request, "artist", "")))
         if request.action in {"next", "previous"}:
             checks.append(
                 Verification(
-                    check="the track changed",
+                    check="Der Titel hat gewechselt",
                     passed=bool(before.ok and after.title and after.title != before.title),
                     observed=f"{before.title!r} -> {after.title!r}",
-                    expected="a different track",
+                    expected="ein anderer Titel",
+                    key="track_changed",
                 )
             )
         return checks
+
+    @classmethod
+    def _covers_any_artist(cls, resolved: str, have_text: str) -> bool:
+        """A track by "Shakira, Ed Sheeran, Beéle" is by Shakira: Windows reports only the first artist."""
+        names = [name for name in re.split(r"\s*(?:,|&|\bfeat\.?|\bft\.?|\bx\b|\bund\b|\band\b)\s*", resolved) if name.strip()]
+        return any(cls._covers(name, have_text) for name in names or [resolved])
 
     @staticmethod
     def _covers(wanted_text: str, have_text: str) -> bool:
@@ -728,7 +744,8 @@ class MusicService:
 
         wanted = tokens(query)
         if not wanted:
-            return Verification("the requested music is playing", False, observed="no query to compare", expected="a name")
+            return Verification("Die angefragte Musik läuft", False, observed="kein Suchbegriff zum Vergleichen",
+                                expected="ein Name", key="requested_music_playing")
         title_tokens, artist_tokens = tokens(after.title or ""), tokens(after.artist or "")
         artist_wanted = tokens(artist) if artist else set()
         observed = f"{after.title} - {after.artist}"
@@ -740,28 +757,32 @@ class MusicService:
         if kind == "artist" or kind == "top_track":
             name = artist_wanted or wanted
             passed = most(name, artist_tokens)
-            return Verification(check="the requested artist is playing", passed=passed,
-                                observed=f"{observed} (artist tokens {sorted(artist_tokens)} vs {sorted(name)})", expected=f"artist {artist or query}")
+            return Verification(check="Der angefragte Interpret läuft", passed=passed,
+                                observed=f"{observed} (Interpret-Wörter {sorted(artist_tokens)} gegen {sorted(name)})",
+                                expected=f"Interpret {artist or query}", key="requested_artist_playing")
         if kind == "track" and artist_wanted:
             # an explicitly named artist ("Titel von X") is checked strictly
             title_ok = most(wanted - artist_wanted or wanted, title_tokens)
             artist_ok = most(artist_wanted, artist_tokens)
-            return Verification(check="the requested track is playing", passed=title_ok and artist_ok,
-                                observed=f"{observed} (title {'ok' if title_ok else 'differs'}, artist {'ok' if artist_ok else 'differs'})",
-                                expected=f"{query} by {artist}")
+            return Verification(check="Der angefragte Titel läuft", passed=title_ok and artist_ok,
+                                observed=f"{observed} (Titel {'passt' if title_ok else 'weicht ab'}, Interpret {'passt' if artist_ok else 'weicht ab'})",
+                                expected=f"{query} von {artist}", key="requested_track_playing")
         if kind == "track":
             # no explicit artist: the words may name the artist as well as the
             # title ("Rammstein ohne mich"), so both fields may satisfy them
             passed = most(wanted, title_tokens | artist_tokens)
-            return Verification(check="the requested track is playing", passed=passed,
-                                observed=f"{observed} (matched {sorted(wanted & (title_tokens | artist_tokens))} of {sorted(wanted)} in title or artist)",
-                                expected=query)
+            return Verification(check="Der angefragte Titel läuft", passed=passed,
+                                observed=f"{observed} ({sorted(wanted & (title_tokens | artist_tokens))} von {sorted(wanted)} in Titel oder Interpret gefunden)",
+                                expected=query, key="requested_track_playing")
         if kind in {"album", "playlist"}:
             passed = most(wanted, title_tokens | artist_tokens)
-            return Verification(check=f"the requested {kind} is playing", passed=passed, observed=observed, expected=query)
+            label = "Das angefragte Album läuft" if kind == "album" else "Die angefragte Playlist läuft"
+            return Verification(check=label, passed=passed, observed=observed, expected=query,
+                                key=f"requested_{kind}_playing")
         passed = most(wanted, title_tokens | artist_tokens)
-        return Verification(check="the requested track is playing", passed=passed,
-                            observed=f"{observed} (matched {sorted(wanted & (title_tokens | artist_tokens))} of {sorted(wanted)} in title or artist)", expected=query)
+        return Verification(check="Der angefragte Titel läuft", passed=passed,
+                            observed=f"{observed} ({sorted(wanted & (title_tokens | artist_tokens))} von {sorted(wanted)} in Titel oder Interpret gefunden)",
+                            expected=query, key="requested_track_playing")
 
     def _headline(self, request: MusicRequest, after: Any, ok: bool) -> str:
         track = f"{after.title} - {after.artist}".strip(" -")
@@ -1114,20 +1135,29 @@ def compose(outcome: MusicOutcome, *, language: str = "") -> str:
         if kind == "pause":
             head = f"Pausiert: {track}" if german else f"Paused: {track}"
         elif kind == "current":
-            head = (f"Es laeuft: {track}" if german else f"Now playing: {track}")
+            head = (f"Es läuft: {track}" if german else f"Now playing: {track}")
         else:
-            head = (f"Laeuft jetzt: {track}" if german else f"Now playing: {track}")
+            head = (f"Läuft jetzt: {track}" if german else f"Now playing: {track}")
         head += f"  ({evidence.get('app', '')})"
     elif outcome.requirement is not None:
         head = receipt.detail
     elif outcome.gap:
         head = receipt.detail
     else:
-        head = (f"Fehlgeschlagen. {receipt.detail}" if german else f"That failed. {receipt.detail}")
+        # the receipt's detail is the machine's English headline; a German reply says it in German
+        head = ((f"Das hat nicht geklappt – Windows meldet danach: {track}." if track else "Das hat nicht geklappt – Windows meldet keine Änderung.")
+                if german else f"That failed. {receipt.detail}")
 
     lines = [head]
     if receipt.verifications:
         lines += ["", ("Belege:" if german else "Evidence:")]
-        lines += [f"  - {line}" for line in receipt.evidence_lines()]
+        if german:
+            lines += [
+                f"  - {item.check}: {'ok' if item.passed else 'fehlgeschlagen'}"
+                + (f" ({item.observed[:120]})" if item.observed else "")
+                for item in receipt.verifications
+            ]
+        else:
+            lines += [f"  - {line}" for line in receipt.evidence_lines()]
     lines += ["", f"receipt {receipt.id}"]
     return "\n".join(lines)

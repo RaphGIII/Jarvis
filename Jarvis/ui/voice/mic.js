@@ -48,6 +48,8 @@ export async function toggle() {
   };
   recorder.start();
   btn.classList.add("recording");
+  // the ribbon listens while the owner speaks; the server's state takes over when the words arrive
+  eye?.setState("listening");
   meterInto(micStream);
 }
 

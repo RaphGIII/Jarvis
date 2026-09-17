@@ -34,7 +34,12 @@ export function init({ toast }) {
   toastFn = toast;
   $("workPill").onclick = toggle;
   bus.on("job", onJob);
-  bus.on("progress", () => refreshMissions());
+  bus.on("progress", (p) => {
+    if (p && p.source === "study") return;   // Studium draws its own import progress
+    const id = p && (p.mission_id || p.mission || p.id);
+    if (id && !p._replay) lastProgress.set(String(id), Date.now());
+    refreshMissions();
+  });
   bus.on("notification", (p) => {
     if (p._replay) return;
     if (p.kind === "image" && p.file) toastFn?.(p.text || "Bild fertig.", "note");
@@ -78,8 +83,19 @@ function activeJobs() {
 function doneJobs() {
   return [...jobs.values()].filter((j) => ["COMPLETED", "FAILED", "CANCELLED"].includes(j.state)).sort((a, b) => (b.finished_at || 0) - (a.finished_at || 0)).slice(0, 5);
 }
+/* A mission counts as work in progress when it started recently or reported progress in this session.  A mission
+   that has sat in a phase for days is not "working": it stays in Missionen, but it does not keep the top bar busy. */
+const LIVE_WINDOW_MS = 6 * 3600 * 1000;
+const lastProgress = new Map();
+export function missionIsLive(mission, now = Date.now(), progressAt = 0) {
+  if (!mission || mission.finished || ["completed", "failed", "cancelled"].includes(mission.state)) return false;
+  if (progressAt && now - progressAt < LIVE_WINDOW_MS) return true;
+  const raw = mission.started;
+  const started = typeof raw === "number" ? raw * (raw < 1e12 ? 1000 : 1) : Date.parse(raw || "");
+  return Number.isFinite(started) && now - started < LIVE_WINDOW_MS;
+}
 function activeMissions() {
-  return missions.filter((m) => !m.finished && !["completed", "failed", "cancelled"].includes(m.state));
+  return missions.filter((m) => missionIsLive(m, Date.now(), lastProgress.get(m.id) || 0) || (m.owner_input_required && !m.finished));
 }
 
 function render() {

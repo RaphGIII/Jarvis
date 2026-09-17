@@ -3996,6 +3996,13 @@ modules:
       - def calendar(self) -> Any
       - def aliases(self) -> Any
       - def semantic(self) -> Any
+      - def study(self) -> Any
+      - def study_actions(self) -> Any
+      - 'def study_connect(self, path: str, *, provider: str=''folder'', label: str='''') -> dict[str, Any]'
+      - 'def study_scan(self, source_id: str, *, zeus_files: bool=False) -> dict[str, Any]'
+      - def media_state(self) -> dict[str, Any]
+      - 'def media_control(self, action: str) -> dict[str, Any]'
+      - def study_goodnotes(self) -> dict[str, Any]
       - def library(self) -> Any
       - def observer(self) -> Any
       - def security(self) -> Any
@@ -4374,8 +4381,8 @@ modules:
     - signature: 'def parse_knowledge_operation(text: str) -> ActionIntent | None'
     - signature: 'def parse_correction(text: str) -> ActionIntent | None'
     - signature: 'def is_self_repair_request(text: str) -> bool'
-    - signature: 'def understand(text: str, *, route: Any=None, project_titles: Iterable[str]=(), capability_names: Iterable[str]=())
-        -> Understanding'
+    - signature: 'def understand(text: str, *, route: Any=None, project_titles: Iterable[str]=(), capability_names: Iterable[str]=(),
+        study_available: bool=False, study_probe: Any=None, study_context: bool=False) -> Understanding'
       doc: One TopIntent, and a typed ActionIntent where the operation is deterministic.
     - signature: 'def clarification_for(intent: ActionIntent, *, language: str=''de'') -> str'
   service/isolation.py:
@@ -4687,6 +4694,28 @@ modules:
         -> StateSnapshot'
       - 'def busy_with(self, state: JarvisState, detail: str='''', **extra: Any) -> ''_StateContext'''
     functions: []
+  service/study_actions.py:
+    module: service.study_actions
+    classes:
+    - name: StudyActions
+      methods:
+      - def context(self) -> dict[str, Any]
+      - def has_context(self) -> bool
+      - 'def set_focus(self, document_id: str, unit: int, *, selection: str='''', topic: str='''', source: str=''viewer'',
+        **viewer: Any) -> dict[str, Any]'
+      - 'def run(self, action: Any, text: str, scope: str) -> None'
+      - 'def run_in_context(self, text: str, context: dict[str, Any], scope: str) -> None'
+    functions:
+    - signature: 'def compact(result: dict[str, Any]) -> dict[str, Any]'
+      doc: A result as the conversation and the interface carry it.
+    - signature: 'def view_params(source: dict[str, Any]) -> dict[str, str]'
+      doc: 'The Studium viewer''s address for a source: document, unit, the phrase marked first, every other phrase, where
+        the hit is.'
+    - signature: 'def dominant(results: list[dict[str, Any]]) -> bool'
+      doc: 'One place clearly answers: the only one, or clearly ahead of the best place in another document.'
+    - signature: 'def place_word(source: dict[str, Any]) -> str'
+      doc: '"Handschriftlicher Treffer" / "Möglicher handschriftlicher Treffer" / "Möglicher Treffer" -- or nothing for printed
+        text.'
   service/system_context.py:
     module: service.system_context
     classes:
@@ -5219,6 +5248,537 @@ modules:
     functions:
     - signature: 'def handle(request: dict[str, Any]) -> dict[str, Any]'
     - signature: def main() -> int
+  study/embed_worker.py:
+    module: study.embed_worker
+    classes: []
+    functions:
+    - signature: def main() -> int
+  study/embeddings.py:
+    module: study.embeddings
+    classes:
+    - name: EmbeddingProvider
+      bases:
+      - Protocol
+      methods:
+      - def available(self) -> bool
+      - 'def embed_passages(self, texts: list[str]) -> np.ndarray'
+      - 'def embed_query(self, text: str) -> np.ndarray'
+      - def status(self) -> dict[str, Any]
+      - def close(self) -> None
+    - name: NoEmbeddings
+      doc: 'Semantic search switched off (or refused): search is keyword and fragment matching only.'
+      methods:
+      - def available(self) -> bool
+      - 'def embed_passages(self, texts: list[str]) -> np.ndarray'
+      - 'def embed_query(self, text: str) -> np.ndarray'
+      - def status(self) -> dict[str, Any]
+      - def close(self) -> None
+    - name: OnnxEmbeddings
+      doc: 'A local ONNX model (default: multilingual-e5-base, int8) in a low-priority worker process.'
+      methods:
+      - def available(self) -> bool
+      - 'def embed_passages(self, texts: list[str]) -> np.ndarray'
+      - 'def embed_query(self, text: str) -> np.ndarray'
+      - def status(self) -> dict[str, Any]
+      - def close(self) -> None
+    - name: OllamaEmbeddings
+      doc: An embedding model served by Ollama (``/api/embed``).  Local only when the URL is this machine.
+      methods:
+      - def available(self) -> bool
+      - 'def embed_passages(self, texts: list[str]) -> np.ndarray'
+      - 'def embed_query(self, text: str) -> np.ndarray'
+      - def status(self) -> dict[str, Any]
+      - def close(self) -> None
+    - name: VectorMatrix
+      doc: All vectors of one provider id, held in memory for a brute-force cosine search (a semester is a few thousand chunks).
+      methods:
+      - 'def top(self, query: np.ndarray, k: int=40, *, allowed: set[int] | None=None) -> list[tuple[int, float]]'
+      - 'def similarity_of(self, rowids: list[int], query: np.ndarray) -> dict[int, float]'
+    functions:
+    - signature: 'def load_config(path: str | Path | None=None) -> dict[str, Any]'
+      doc: '``config/study.json`` → ``embeddings``, over the defaults; ``ZEUS_EMBEDDINGS`` = ``none`` switches semantic search
+        off.'
+    - signature: 'def create_provider(config: dict[str, Any] | None=None) -> EmbeddingProvider'
+      doc: The configured provider -- or none, with the reason, when it would send material off this machine without permission.
+    - signature: 'def passage_text(chunk_text: str, *, title: str='''', heading: str='''') -> str'
+      doc: 'What a chunk is embedded as: where it stands (document, heading) and what it says.'
+  study/figures.py:
+    module: study.figures
+    classes: []
+    functions:
+    - signature: 'def caption_kind(caption: str) -> str'
+    - signature: 'def caption_lines(text: str) -> list[str]'
+      doc: Lines of ``text`` that are captions, in reading order.
+    - signature: 'def image_placements(page: Any, reader: Any=None) -> list[dict[str, Any]]'
+      doc: 'Every image painted on ``page``: ``{"rect": (x0, y0, x1, y1) user space, "name", "inline"}``.'
+    - signature: 'def image_regions(page: Any, reader: Any=None) -> list[dict[str, Any]]'
+      doc: 'Image regions of a page as fractions: ``{"kind": "figure"|"scan", "box"}``, icons dropped, tiles merged.'
+    - signature: 'def text_lines(page: Any) -> list[dict[str, Any]]'
+      doc: The page's text as lines with estimated boxes (fractions, y from the top), via pypdf's text visitor.
+    - signature: 'def attach_captions(regions: list[dict[str, Any]], captions: list[dict[str, Any]], lines: list[dict[str,
+        Any]] | None=None) -> list[dict[str, Any]]'
+      doc: Figures from image regions and caption lines (``{"text", "box" | None}``), numbered top to bottom.
+    - signature: 'def figure_text(figure: dict[str, Any], unit_text: str) -> str'
+      doc: 'The searchable text of a figure: its caption, the lines around it, a little text after the caption.'
+    - signature: 'def page_figures(page: Any, number: int, *, reader: Any=None, text: str | None=None, locate: Locate | None=None)
+        -> list[dict[str, Any]]'
+      doc: 'Figures of one PDF page.  ``text``: the page text when already extracted (gates the positional text pass).'
+    - signature: 'def pdf_figures(pdf_path: str | Path, *, locate: Locate | None=None) -> dict[int, list[dict[str, Any]]]'
+      doc: 'Per 1-based page: the figures of a PDF.  Pages without figures are left out.  Never raises.'
+    - signature: 'def image_count(figures: list[dict[str, Any]]) -> int'
+      doc: How many real pictures (not scans, not caption-only objects) a unit shows.
+    - signature: 'def slide_figures(geometry: dict[str, Any] | None) -> list[dict[str, Any]]'
+      doc: 'Figures of one slide from ``slide_geometry(...)[n]`` (``{"size", "shapes"}``): pictures, captioned by the nearest
+        text shape.'
+    - signature: 'def figure_chunks(unit: Any) -> list[dict[str, Any]]'
+      doc: One index chunk per figure of a unit, shaped like ``study.index.chunk_unit`` plus ``figure_index``, ``box``, ``kind``.
+  study/galaxy.py:
+    module: study.galaxy
+    classes: []
+    functions:
+    - signature: 'def centroids(rowids: Iterable[int], vectors: Any, document_of: dict[int, str]) -> dict[str, Any]'
+      doc: 'The mean of each document''s chunk vectors, normalised: one vector per document.'
+    - signature: 'def build(documents: Iterable[dict[str, Any]], *, vectors_by_doc: dict[str, Any] | None=None, index_states:
+        dict[str, str] | None=None, limit_edges_per_node: int=3, semantic_threshold: float | None=None) -> dict[str, Any]'
+  study/goodnotes.py:
+    module: study.goodnotes
+    classes:
+    - name: GoodNotesSourceAdapter
+      doc: 'Everything GoodNotes-specific: detection, native inspection, folder discovery, export help.'
+      methods:
+      - 'def is_goodnotes_pdf(self, metadata: dict[str, Any] | None) -> bool'
+      - 'def notebook_name(path: str | Path) -> str'
+      - 'def image_metadata(self, path: Path) -> dict[str, str]'
+      - 'def detect(self, path: str | Path, *, metadata: dict[str, Any] | None=None) -> dict[str, Any] | None'
+      - 'def inspect_native(self, path: str | Path, *, max_members: int | None=None, max_uncompressed_bytes: int | None=None,
+        max_file_bytes: int | None=None) -> dict[str, Any]'
+      - 'def extract_attachment(self, path: str | Path, member: str, *, max_bytes: int=512 * 1024 ** 2) -> Path | None'
+      - 'def cloud_roots(self, *, include_drives: bool=True) -> list[dict[str, Any]]'
+      - 'def discover_folders(self, *, roots: list[Path | dict[str, Any]] | None=None, max_depth: int=4, max_dirs: int=20000,
+        include_drives: bool=True) -> list[dict[str, Any]]'
+      - 'def native_files(folder: str | Path, *, limit: int=500) -> list[str]'
+      - def export_help() -> dict[str, Any]
+      - def status(self) -> dict[str, Any]
+    functions:
+    - signature: 'def is_goodnotes_pdf(metadata: dict[str, Any]) -> bool'
+    - signature: 'def notebook_name(path: str | Path) -> str'
+    - signature: 'def detect(path: str | Path, *, metadata: dict[str, Any] | None=None) -> dict[str, Any] | None'
+    - signature: 'def inspect_native(path: str | Path, **limits: Any) -> dict[str, Any]'
+    - signature: def cloud_roots() -> list[Path]
+    - signature: 'def discover_folders(**options: Any) -> list[dict[str, Any]]'
+    - signature: 'def discover(*, max_depth: int=3) -> list[dict[str, Any]]'
+      doc: Folders under the synced cloud roots whose name says GoodNotes, with how many PDFs and native files they hold.
+    - signature: 'def native_files(folder: str | Path, *, limit: int=500) -> list[str]'
+    - signature: def export_help() -> dict[str, Any]
+    - signature: def status() -> dict[str, Any]
+  study/handwriting_worker.py:
+    module: study.handwriting_worker
+    classes: []
+    functions:
+    - signature: def main() -> int
+  study/highlight.py:
+    module: study.highlight
+    classes: []
+    functions:
+    - signature: 'def merge_line_rects(rects: list[list[float]]) -> list[list[float]]'
+      doc: Runs on the same text line that touch or nearly touch become one rectangle.
+    - signature: 'def overlap(a: list[float], b: list[float]) -> float'
+      doc: 'Intersection over the smaller rectangle''s area: 1.0 when one lies inside the other.'
+    - signature: 'def arrange(matches: list[dict[str, Any]], *, at: int | None=None) -> list[dict[str, Any]]'
+      doc: Matches ``[{"phrase", "start", "rects"}]`` in reading order, rectangles merged per line, duplicates dropped, one
+        primary.
+  study/index.py:
+    module: study.index
+    classes:
+    - name: StudyIndex
+      methods:
+      - def close(self) -> None
+      - 'def upsert(self, meta: dict[str, Any], doc: NormalizedDocument) -> int'
+      - 'def delete(self, doc_id: str) -> bool'
+      - 'def set_categories(self, doc_id: str, changes: dict[str, str]) -> dict[str, Any] | None'
+      - 'def set_flags(self, doc_id: str, changes: dict[str, Any]) -> None'
+      - 'def touch_opened(self, doc_id: str) -> None'
+      - 'def document(self, doc_id: str) -> dict[str, Any] | None'
+      - 'def documents(self, *, limit: int=500, order: str=''recent'') -> list[dict[str, Any]]'
+      - 'def find_by_hash(self, content_hash: str) -> dict[str, Any] | None'
+      - 'def unit(self, doc_id: str, number: int) -> dict[str, Any] | None'
+      - 'def units(self, doc_id: str) -> list[dict[str, Any]]'
+      - 'def chunks(self, rowids: list[int]) -> dict[int, dict[str, Any]]'
+      - 'def match_word(self, query: str, limit: int=120) -> list[tuple[int, float]]'
+      - 'def match_trigram(self, query: str, limit: int=120) -> list[tuple[int, float]]'
+      - def stats(self) -> dict[str, Any]
+      - 'def unembedded(self, model: str) -> list[dict[str, Any]]'
+      - 'def recognised_chunks(self, *, limit: int=4000, document_id: str='''') -> list[tuple[int, str]]'
+      - 'def chunks_of(self, doc_id: str) -> list[dict[str, Any]]'
+      - 'def store_vectors(self, doc_id: str, model: str, rowids: list[int], vectors: Any, *, complete: bool) -> int'
+      - 'def vectors(self, model: str) -> tuple[list[int], Any]'
+      - 'def embedding_stats(self, model: str) -> dict[str, Any]'
+      - 'def cached_vectors(self, model: str, hashes: list[str]) -> dict[str, Any]'
+      - 'def cache_vectors(self, model: str, items: list[tuple[str, Any]]) -> None'
+      - 'def save_job(self, job: dict[str, Any]) -> None'
+      - 'def job(self, job_id: str) -> dict[str, Any] | None'
+      - 'def jobs(self, *, states: tuple[str, ...] | None=None, since: float=0.0, limit: int=200) -> list[dict[str, Any]]'
+      - 'def prune_jobs(self, *, older_than: float) -> None'
+      - 'def figures(self, doc_id: str, unit: int | None=None) -> list[dict[str, Any]]'
+      - 'def upsert_source(self, source: dict[str, Any]) -> None'
+      - def sources(self) -> list[dict[str, Any]]
+      - 'def remove_source(self, source_id: str) -> bool'
+      - 'def expansion(self, key: str) -> list[str] | None'
+      - 'def remember_expansion(self, key: str, terms: list[str]) -> None'
+    functions:
+    - signature: 'def chunk_unit(unit: Unit) -> list[dict[str, Any]]'
+      doc: The searchable pieces of a unit, each with its exact location.
+  study/indexer.py:
+    module: study.indexer
+    classes:
+    - name: Cancelled
+      bases:
+      - Exception
+      methods: []
+    - name: JobProgress
+      doc: 'What the pipeline tells its job: counters and phase.  Persists and announces at a calm rate.'
+      methods:
+      - 'def phase(self, name: str, **counters: Any) -> None'
+      - 'def update(self, *, force: bool=False, **counters: Any) -> None'
+      - def should_stop(self) -> bool
+    - name: Indexer
+      methods:
+      - 'def new_job(self, *, kind: str, name: str, path: str='''', provider: str=''upload'', source_id: str='''', root: str='''',
+        fingerprint: str='''', document_id: str='''', source_type: str='''') -> dict[str, Any]'
+      - 'def enqueue(self, job: dict[str, Any]) -> dict[str, Any]'
+      - 'def finish(self, job: dict[str, Any], state: str, *, phase: str | None=None, reason: str='''', error: str='''') ->
+        dict[str, Any]'
+      - 'def cancel(self, job_id: str) -> dict[str, Any]'
+      - 'def cancel_requested(self, job_id: str) -> bool'
+      - 'def fraction(self, job: dict[str, Any]) -> float'
+      - def embedding_planned(self) -> bool
+      - 'def announce(self, job: dict[str, Any]) -> None'
+      - def start(self) -> None
+      - def wake(self) -> None
+      - def run_next(self) -> bool
+      - 'def run_pending(self, *, limit: int=1000) -> int'
+      - 'def run(self, job: dict[str, Any]) -> dict[str, Any]'
+      - 'def summary(self, *, recent_seconds: float=20.0) -> dict[str, Any]'
+    functions:
+    - signature: 'def job_fraction(job: dict[str, Any], *, embedding_planned: bool=False) -> float'
+      doc: 'How far a job is, 0..1, from its counters: each kind of work weighs what it costs, only work the document has
+        counts.'
+    - signature: 'def fingerprint_file(path: str | Path) -> str'
+  study/intents.py:
+    module: study.intents
+    classes: []
+    functions:
+    - signature: 'def parse_study_operation(text: str, *, has_material: bool=True, probe: Callable[[str], bool] | None=None,
+        has_context: bool=False) -> ActionIntent | None'
+      doc: The typed study action for a sentence, or None when it is not a study command.
+  study/model.py:
+    module: study.model
+    classes:
+    - name: Location
+      doc: Where a piece of text lives.  Only the fields the format really knows are set.
+      methods:
+      - def label(self) -> str
+      - def to_dict(self) -> dict[str, Any]
+    - name: Block
+      doc: A paragraph, heading or text run with its location inside its unit.
+      methods: []
+    - name: Unit
+      doc: 'What the viewer opens: a page, a slide, a section.'
+      methods: []
+    - name: NormalizedDocument
+      methods:
+      - def text_units(self) -> int
+    functions: []
+  study/ocr.py:
+    module: study.ocr
+    classes: []
+    functions:
+    - signature: def tesseract_path() -> str
+    - signature: def available() -> bool
+    - signature: def program_tessdata_dir() -> Path | None
+    - signature: def tessdata_dir() -> Path | None
+      doc: 'Where languages live and get installed: ZEUS_TESSDATA_DIR, else D:\JarvisLocal\tessdata, else the program''s folder.'
+    - signature: def active_tessdata_dir() -> Path | None
+      doc: 'The folder Tesseract actually reads: the user folder once it holds models, the program''s folder until then.'
+    - signature: def languages() -> set[str]
+      doc: The languages Tesseract can load right now (from the active tessdata folder); cached until an install.
+    - signature: def invalidate_languages() -> None
+    - signature: 'def detect_language(text: str) -> str'
+      doc: '"de", "en" or "" (too little to tell): stop words plus umlauts, no dependency.'
+    - signature: 'def choose_languages(sample: str='''') -> str'
+      doc: 'The Tesseract ``lang`` string: German unless the sample is clearly English; only installed languages.'
+    - signature: 'def image_text(path: str | Path, *, languages: str | None=None, sample: str='''') -> str'
+      doc: Text read from an image file; "" when OCR is unavailable or reads nothing.
+    - signature: 'def words_from_data(data: dict[str, list[Any]], width: float, height: float) -> tuple[str, list[dict[str,
+        Any]]]'
+      doc: Text + word boxes from ``image_to_data`` output (Output.DICT).
+    - signature: 'def image_words(path: str | Path, *, languages: str | None=None, sample: str='''') -> dict[str, Any]'
+      doc: '``{"text", "words": [{"text", "start", "end", "box": [x, y, w, h] as fractions}], "languages"}``.'
+    - signature: 'def align_words(ocr_words: dict[str, Any], text: str) -> dict[str, Any]'
+      doc: The same words with offsets recomputed against ``text`` (when a later cleanup changed the text).
+    - signature: 'def phrase_boxes(ocr_words: dict[str, Any], phrases: list[str]) -> list[dict[str, Any]]'
+      doc: Every occurrence of every phrase as rectangles, one per text line the occurrence spans.
+    - signature: 'def ensure_language(lang: str=''deu'', *, download: bool=True) -> dict[str, Any]'
+      doc: 'Install ``lang`` into the user tessdata folder (no admin rights): eng/osd copied, the model downloaded.'
+    - signature: def status() -> dict[str, object]
+    - signature: def handwriting_status() -> dict[str, object]
+      doc: 'The handwriting engine: ``{"available", "model", "reason", ...}`` -- never starts the model.'
+    - signature: 'def read_page(path: str | Path, **kwargs: Any) -> dict[str, Any]'
+      doc: Printed + handwriting OCR of one page image with blocks, roles and confidences (see ``study.ocr_engines.read_page``).
+  study/ocr_engines.py:
+    module: study.ocr_engines
+    classes:
+    - name: OcrWord
+      methods: []
+    - name: OcrLine
+      methods: []
+    - name: OcrBlock
+      methods:
+      - def to_dict(self) -> dict[str, Any]
+    - name: PrintedTextOCR
+      doc: Tesseract with word confidences, as a cancellable low-priority child process.
+      methods:
+      - def available(self) -> bool
+      - def reason(self) -> str
+      - 'def data(self, gray: np.ndarray, *, languages: str, psm: int=3, timeout: float=120.0, should_stop: ShouldStop=None)
+        -> dict[str, list[Any]] | None'
+      - 'def read(self, prepared: Any, *, languages: str, timeout: float=120.0, should_stop: ShouldStop=None) -> list[OcrLine]
+        | None'
+    - name: HandwritingOCR
+      doc: TrOCR line recognition in a low-priority worker process; lazy, bounded, cancellable.
+      methods:
+      - 'def model_for(self, language: str) -> Path'
+      - def reason(self) -> str
+      - def available(self) -> bool
+      - def status(self) -> dict[str, Any]
+      - def cache_tag(self) -> str
+      - def close(self) -> None
+      - 'def recognize(self, crops: list[np.ndarray], *, language: str=''deu'', deadline: float | None=None, should_stop:
+        ShouldStop=None) -> list[tuple[str, float] | None]'
+    functions:
+    - signature: 'def parse_tsv(raw: str) -> dict[str, list[Any]]'
+      doc: Tesseract ``tsv`` output as the ``image_to_data`` DICT layout.
+    - signature: 'def lines_from_data(data: dict[str, list[Any]], prepared: Any) -> list[OcrLine]'
+      doc: Tesseract words grouped to lines (in Tesseract's reading order), boxes mapped to the original image.
+    - signature: 'def segment_lines(gray: np.ndarray, *, text_height: float=0.0) -> tuple[list[list[float]], list[list[float]]]'
+      doc: '(text line boxes, diagram boxes) in pixels of ``gray``: blobs of ink grouped into lines, long lines split at gaps.'
+    - signature: def handwriting_engine() -> HandwritingOCR
+    - signature: def printed_engine() -> PrintedTextOCR
+    - signature: def any_available() -> bool
+    - signature: 'def cache_tag(languages: str='''', hint: str=''auto'') -> str'
+      doc: 'Part of a cache key: results made by an older engine, other languages or without the handwriting model differ.'
+    - signature: 'def plausibility(text: str) -> float'
+      doc: '0..1: how much a reading looks like words rather than symbol soup (tokens with letters and vowels).'
+    - signature: 'def read_page(image_path: str | Path | np.ndarray, *, hint: str=''auto'', languages: str | None=None, sample:
+        str='''', should_stop: ShouldStop=None, budget_seconds: float=150.0, printed: PrintedTextOCR | None=None, handwriting:
+        HandwritingOCR | None=None, prepare_options: dict[str, Any] | None=None) -> dict[str, Any]'
+      doc: 'Read one page image.  ``hint``: "auto", "printed", "handwriting", or "goodnotes" (auto, leaning to handwriting).'
+    - signature: def status() -> dict[str, Any]
+    - signature: 'def page_hash(image_path: str | Path, tag: str) -> str'
+      doc: 'sha1 of the image bytes plus the engine tag: the same page read by the same engine is never read twice.'
+    - signature: 'def read_page_cached(image_path: str | Path, *, cache_root: Path | None, hint: str=''auto'', languages:
+        str | None=None, sample: str='''', should_stop: ShouldStop=None, budget_seconds: float=150.0) -> tuple[dict[str, Any],
+        bool]'
+      doc: (result, cache hit).  ``cache_root / "by_hash" / <sha1>.json`` is shared by all documents; cancelled readings are
+    - signature: 'def unit_blocks(result: dict[str, Any], text: str) -> list[Any]'
+      doc: '``study.model.Block`` objects for a unit whose text is ``text`` (the cleaned page text of ``result``).'
+    - signature: 'def variant_text(result: dict[str, Any]) -> str'
+      doc: The alternative readings as one extra searchable passage ("" when there are none).
+  study/parsers.py:
+    module: study.parsers
+    classes: []
+    functions:
+    - signature: 'def source_type_for(path: str | Path) -> str'
+    - signature: 'def parse_pdf(path: Path, *, engine: Any=None) -> NormalizedDocument'
+      doc: Pages with their text (Qt's engine when available, else pypdf), page sizes, image counts and metadata.
+    - signature: 'def ocr_pdf_pages(doc: NormalizedDocument, path: Path, *, engine: Any, cache_dir: Path, cache_root: Path
+        | None=None, ocr_progress: Callable[[int, int], None] | None=None, should_stop: Callable[[], bool] | None=None) ->
+        int'
+      doc: 'Pages without a text layer (scans, handwriting): rendered and read by OCR (printed + handwriting engines).'
+    - signature: 'def parse_docx(path: Path, **_: Any) -> NormalizedDocument'
+      doc: 'Sections by heading, paragraphs numbered through the document.  No page numbers: Word has none without layout.'
+    - signature: 'def parse_pptx(path: Path, **_: Any) -> NormalizedDocument'
+      doc: Slides in presentation order, each with its title, body text and speaker notes.
+    - signature: 'def parse_markdown(path: Path, **_: Any) -> NormalizedDocument'
+    - signature: 'def parse_text(path: Path, **_: Any) -> NormalizedDocument'
+    - signature: 'def parse_image(path: Path, *, cache_dir: Path | None=None, cache_root: Path | None=None, ocr_progress:
+        Callable[[int, int], None] | None=None, should_stop: Callable[[], bool] | None=None, **_: Any) -> NormalizedDocument'
+      doc: 'A photo of notes or a scan (PNG, JPEG, WebP, ...): one unit, read by the printed + handwriting OCR engines.'
+    - signature: 'def parse(path: str | Path, *, engine: Any=None) -> NormalizedDocument'
+  study/pdf_engine.py:
+    module: study.pdf_engine
+    classes:
+    - name: PdfEngine
+      methods:
+      - 'def call(self, request: dict[str, Any]) -> dict[str, Any]'
+      - def available(self) -> bool
+      - def close(self) -> None
+      - 'def info(self, path: str | Path) -> dict[str, Any]'
+      - 'def texts(self, path: str | Path) -> list[str] | None'
+      - 'def render(self, path: str | Path, page: int, out: str | Path, *, width: int=1400, clip: list[float] | None=None)
+        -> dict[str, Any]'
+      - 'def locate(self, path: str | Path, page: int, phrases: list[str]) -> dict[str, Any]'
+    functions:
+    - signature: def engine() -> PdfEngine
+  study/pdf_worker.py:
+    module: study.pdf_worker
+    classes: []
+    functions:
+    - signature: def main() -> int
+  study/preprocess.py:
+    module: study.preprocess
+    classes:
+    - name: Prepared
+      doc: The OCR working copy and how it relates to the original image.
+      methods:
+      - def size(self) -> tuple[int, int]
+      - 'def to_original_points(self, points: np.ndarray) -> np.ndarray'
+      - 'def to_original_box(self, box: list[float] | tuple[float, ...]) -> list[float]'
+      - 'def from_original_box(self, fraction_box: list[float]) -> list[float]'
+    functions:
+    - signature: 'def load_image(source: str | Path | np.ndarray) -> np.ndarray'
+      doc: 'An RGB or grayscale uint8 array: files through Pillow (Unicode paths, WebP, EXIF orientation), arrays copied.'
+    - signature: 'def to_gray(image: np.ndarray) -> np.ndarray'
+    - signature: 'def to_rgb(image: np.ndarray) -> np.ndarray'
+    - signature: 'def flatten_illumination(gray: np.ndarray) -> np.ndarray'
+      doc: 'Divide by a blurred background estimate: a shadow across a photographed page becomes an even white.'
+    - signature: 'def normalize_contrast(gray: np.ndarray, *, clip: float=2.0, grid: int=8) -> np.ndarray'
+      doc: 'CLAHE: faint pencil and grey ink get contrast without blowing out the paper.'
+    - signature: 'def denoise(gray: np.ndarray, *, strength: int=1) -> np.ndarray'
+      doc: 'Light denoising that keeps thin strokes: median 3 for sensor/JPEG speckle, NL-means only when asked (slow).'
+    - signature: 'def adaptive_threshold(gray: np.ndarray, *, block: int=31, offset: int=12) -> np.ndarray'
+      doc: 'Black ink on white by local mean.  Optional: Tesseract binarises itself; use this for analysis and bad lighting.'
+    - signature: 'def ink_mask(gray: np.ndarray) -> np.ndarray'
+      doc: 'uint8 mask (255 = ink) robust to uneven light: adaptive threshold on the flattened page, specks removed.'
+    - signature: 'def rule_lines_mask(binary: np.ndarray) -> np.ndarray'
+      doc: uint8 mask of ruled / squared paper lines and table rules inside a binary image (255 = dark).
+    - signature: 'def remove_rule_lines(mask: np.ndarray) -> np.ndarray'
+      doc: Ink mask without horizontal/vertical rules (lined or squared paper, table borders).
+    - signature: 'def erase_rule_lines(flat: np.ndarray) -> tuple[np.ndarray, int]'
+      doc: (copy with ruled / squared paper lines painted white, number of rule pixels / 1000 rounded up; 0 = none found).
+    - signature: 'def text_height(gray: np.ndarray) -> float'
+      doc: Typical height (px) of letter-sized connected components; 0 when the page has no readable ink.
+    - signature: 'def rotate(image: np.ndarray, angle: float) -> tuple[np.ndarray, np.ndarray]'
+      doc: Rotate counter-clockwise by ``angle`` degrees on an expanded white canvas; returns (image, 3x3 matrix).
+    - signature: 'def rotate90(image: np.ndarray, degrees: int) -> tuple[np.ndarray, np.ndarray]'
+      doc: Exact rotation by 0/90/180/270 degrees clockwise; returns (image, 3x3 matrix).
+    - signature: 'def resize(image: np.ndarray, factor: float) -> tuple[np.ndarray, np.ndarray]'
+    - signature: 'def estimate_skew(gray: np.ndarray, *, max_angle: float=MAX_SKEW) -> float'
+      doc: Small-angle skew in degrees (positive = text rises to the right, rotate by this to correct); 0.0 when unsure.
+    - signature: 'def deskew(image: np.ndarray, *, max_angle: float=MAX_SKEW) -> tuple[np.ndarray, np.ndarray, float]'
+    - signature: 'def orientation_osd(gray: np.ndarray, *, min_confidence: float=3.0) -> tuple[int, float] | None'
+      doc: (clockwise degrees to rotate so text reads upright, confidence) from Tesseract OSD; None when unavailable/unsure.
+    - signature: 'def orientation_heuristic(gray: np.ndarray) -> tuple[int, float]'
+      doc: '0 or 90 with a ratio: text lines make row profiles much spikier than column profiles.  Cannot tell 90 from 270.'
+    - signature: 'def detect_orientation(gray: np.ndarray, *, use_osd: bool=True) -> tuple[int, str]'
+      doc: (clockwise degrees, how) -- "osd", "heuristic" or "none".
+    - signature: 'def find_page_quad(image: np.ndarray) -> tuple[np.ndarray | None, float]'
+      doc: The dominant page quadrilateral of a photographed page (TL, TR, BR, BL in pixels) and a confidence 0..1.
+    - signature: 'def warp_page(image: np.ndarray, quad: np.ndarray) -> tuple[np.ndarray, np.ndarray]'
+      doc: The page quadrilateral warped to an upright rectangle; returns (image, 3x3 homography).
+    - signature: 'def content_box(gray: np.ndarray, *, pad: int=16) -> tuple[int, int, int, int]'
+      doc: (x0, y0, x1, y1) of the inked area with padding; the whole image when nothing is inked.
+    - signature: 'def crop_margins(image: np.ndarray, *, pad: int=16) -> tuple[np.ndarray, tuple[int, int], np.ndarray]'
+      doc: (cropped copy, (dx, dy) offset of the crop in the input, 3x3 matrix).
+    - signature: 'def scale_factor(shape: tuple[int, ...], median_text_height: float) -> float'
+      doc: Upscale small text towards TARGET_TEXT_HEIGHT, downscale huge photos; 1.0 when the size is already sensible.
+    - signature: 'def prepare(source: str | Path | np.ndarray, *, orientation: bool=True, use_osd: bool=True, perspective:
+        bool=True, deskew_page: bool=True, crop: bool=True, scale: bool=True, enhance: bool=True, denoise_strength: int=1,
+        binarize: bool=False, erase_rules: bool=True, perspective_confidence: float=0.6) -> Prepared'
+      doc: Load (never modifying the source) and prepare a page for OCR; ``Prepared`` maps boxes back to the original.
+  study/retrieval.py:
+    module: study.retrieval
+    classes:
+    - name: Query
+      methods: []
+    functions:
+    - signature: 'def fold(text: str) -> str'
+      doc: Lower case, diacritics removed, every run of non-alphanumerics one space.
+    - signature: 'def fold_with_index(text: str) -> tuple[str, list[int]]'
+      doc: '``fold`` plus, for every folded character, the index of the original character it came from.'
+    - signature: 'def read_query(text: str) -> Query'
+    - signature: 'def highlight_phrases(unit_text: str, query: Query, focus: str, *, limit: int=6) -> list[str]'
+      doc: 'Every phrase worth marking on the page: the focus first, then the topic''s own words as they are written there.'
+    - signature: 'def search(index: StudyIndex, text: str, *, limit: int=8, expansions: list[str] | None=None, document_id:
+        str='''', filters: dict[str, Any] | None=None, per_document: int=3, semantic: list[tuple[int, float]] | None=None,
+        semantic_median: float | None=None, similarity_for: Callable[[list[int]], dict[int, float]] | None=None) -> dict[str,
+        Any]'
+      doc: Ranked sources for a natural-language question, grouped by document.
+  study/service.py:
+    module: study.service
+    classes:
+    - name: StudyService
+      methods:
+      - 'def import_path(self, path: str | Path, *, provider: str=''upload'', source_id: str='''', copy: bool=False, root:
+        str | Path | None=None, wait: bool=True) -> dict[str, Any]'
+      - 'def run_job(self, job: dict[str, Any], progress: Any) -> dict[str, Any]'
+      - 'def import_bytes(self, name: str, data: bytes, *, provider: str=''upload'', wait: bool=True) -> dict[str, Any]'
+      - 'def job_finished(self, job: dict[str, Any]) -> None'
+      - def indexing(self) -> dict[str, Any]
+      - def index_states(self) -> dict[str, str]
+      - def embeddings(self) -> Any
+      - 'def embed_pending(self, *, limit_documents: int | None=None) -> dict[str, Any]'
+      - def backfill_embedding_jobs(self) -> int
+      - def schedule_embedding(self) -> None
+      - 'def connect_folder(self, path: str | Path, *, provider: str=''folder'', label: str='''') -> dict[str, Any]'
+      - 'def scan_source(self, source_id: str, *, background: bool | None=None) -> dict[str, Any]'
+      - 'def start_watching(self, *, interval: float=120.0) -> None'
+      - def import_zeus_files(self) -> dict[str, Any]
+      - 'def remove_source(self, source_id: str, *, forget_documents: bool=False) -> dict[str, Any]'
+      - 'def expansions_for(self, topic: str) -> list[str]'
+      - 'def search(self, query: str, *, limit: int=8, document_id: str='''', filters: dict[str, Any] | None=None, expand:
+        bool=True, semantic: bool=True) -> dict[str, Any]'
+      - 'def documents(self, *, limit: int=200, order: str=''recent'') -> list[dict[str, Any]]'
+      - 'def document(self, doc_id: str) -> dict[str, Any]'
+      - 'def viewer_kind(self, doc: dict[str, Any]) -> str'
+      - 'def unit(self, doc_id: str, number: int) -> dict[str, Any]'
+      - 'def sections(self, doc_id: str, *, max_chars: int=2000000) -> dict[str, Any]'
+      - 'def page_image(self, doc_id: str, page: int, *, width: int=1400) -> Path | None'
+      - 'def render_page(self, doc_id: str, page: int, *, width: int=1400, clip: list[float] | None=None, session: str='''',
+        seq: int=0, priority: int=0) -> dict[str, Any]'
+      - 'def slide_state(self, doc: dict[str, Any]) -> dict[str, Any]'
+      - 'def slide_image(self, doc: dict[str, Any], number: int) -> Path | None'
+      - 'def render_slides_now(self, doc_id: str) -> dict[str, Any]'
+      - 'def schedule_slides(self, doc_id: str) -> None'
+      - 'def locate(self, doc_id: str, page: int, phrases: list[str], *, at: int | None=None) -> dict[str, Any]'
+      - 'def original(self, doc_id: str) -> Path | None'
+      - 'def set_categories(self, doc_id: str, changes: dict[str, str]) -> dict[str, Any]'
+      - 'def delete(self, doc_id: str, *, delete_file: bool=False) -> dict[str, Any]'
+      - 'def context(self, doc_id: str, unit_number: int, *, selection: str='''', max_chars: int=9000) -> dict[str, Any]'
+      - def status(self) -> dict[str, Any]
+      - def galaxy(self) -> dict[str, Any]
+    functions: []
+  study/slides.py:
+    module: study.slides
+    classes: []
+    functions:
+    - signature: 'def slide_order(archive: zipfile.ZipFile) -> list[str]'
+      doc: Slide part names in presentation order (the same numbering the parser uses).
+    - signature: 'def slide_size(archive: zipfile.ZipFile) -> tuple[int, int] | None'
+    - signature: 'def shape_entries(archive: zipfile.ZipFile, slide_part: str, slide: ET.Element, size: tuple[int, int] |
+        None, inheritance: _Inheritance | None=None) -> list[tuple[ET.Element, dict[str, Any]]]'
+      doc: Every text shape and picture of a parsed slide, in document order, with its box.
+    - signature: 'def slide_geometry(path: str | Path) -> dict[int, dict[str, Any]]'
+      doc: 'Per 1-based slide number: the slide size in EMU and every shape with its box as fractions of the slide.'
+    - signature: def available() -> bool
+      doc: 'Windows with PowerPoint''s COM server registered.  Cheap: a registry lookup, cached.'
+    - signature: def powerpoint_pids() -> set[int] | None
+      doc: PIDs of running POWERPNT.EXE processes; None when the process list cannot be read.
+    - signature: 'def render_slides(path: str | Path, out_dir: str | Path, *, width: int=1600, timeout: float=120.0, _pids:
+        Callable[[], set[int] | None] | None=None) -> dict[str, Any]'
+      doc: Every slide as ``out_dir/slide_{n}.png`` through PowerPoint, with all Office safety rules applied.
+    - signature: def visible_window_pids() -> set[int]
+      doc: 'Processes that own a visible top-level window: an Office process the owner is looking at.'
+  study/taxonomy.py:
+    module: study.taxonomy
+    classes: []
+    functions:
+    - signature: 'def subject_of(text: str) -> str'
+    - signature: 'def semester_of(text: str) -> str'
+    - signature: 'def topic_of(text: str) -> str'
+    - signature: 'def infer(path: str | Path, *, title: str='''', sample: str='''', root: str | Path | None=None) -> dict[str,
+        Any]'
+      doc: 'A proposal: {course, subject, semester, module, topic}.  Empty strings where nothing points anywhere.'
   tools/audio_probe.py:
     module: tools.audio_probe
     classes:

@@ -1,344 +1,275 @@
-/* The ZEUS core: a procedural black hole.
+/* ZEUS presence: a ribbon of light, not an object.
 
-   A perfectly black event horizon, a thin photon ring around it, a luminous
-   accretion band of ivory light passing in front of the horizon and, lensed
-   over the top and under the bottom, the far side of that same band -- the
-   look of a massive object bending light, drawn from scratch as geometry and
-   gradients.  No asset, no texture, no particles.
+   A handful of fine, translucent strands move together like one piece of silk
+   drifting in slow air.  No sphere, no eye, no symbol.  The ribbon is quiet
+   when nothing happens and says what ZEUS is doing through how it moves:
 
-   Everything is driven by a small parameter set eased every frame (delta
-   time), so states flow into each other:
+     idle        almost still: a low, slow drift
+     listening   the strands open with the voice (microphone energy)
+     thinking    a more complex fold, slow pulses travelling along it
+     speaking    the amplitude follows the audio that is playing
+     executing   a directional pulse passes through, again and again
+     success     one soft bright pulse travels once
+     error       one muted warm pulse -- never a flash
 
-     idle          slow flow along the band, low light
-     listening / thinking      faster flow, brighter halo
-     speaking / working        stronger, wider band
-     streaming answer          the band's edge breathes with the output
-                               (an activity envelope: attack, release)
-     error                     a warm shift, slower
-     offline                   almost still, very dim
+   Every JarvisState maps onto one of these (STATES below; the table's keys
+   are the server's states, exactly).  Parameters are eased every frame, so
+   one state flows into the next.  The loop runs at display rate while the
+   window is focused, slower when it is not, not at all when hidden; with
+   reduced motion the ribbon is drawn still and changes only when the state
+   does.
 
    API kept for the shell: setState / setEnergy / setActivity / noteOutput /
    setAudioFrequencyData / setBackgroundWork / setThemeShift / setIntensity /
-   pulseOnce / start / stop / resize.  Registered as window.JarvisEye,
-   window.ZeusOrb and window.ZeusSphere. */
+   pulseOnce / start / stop / resize.  Registered as window.ZeusPresence,
+   window.ZeusOrb and window.JarvisEye. */
 
 const STATES = {
-  idle:         { flow: 0.55, light: 0.62, band: 1.00, halo: 0.55, warmth: 0, energy: 0.10, wave: 0.020 },
-  listening:    { flow: 0.85, light: 0.74, band: 1.04, halo: 0.68, warmth: 0, energy: 0.22, wave: 0.030 },
-  transcribing: { flow: 0.95, light: 0.76, band: 1.05, halo: 0.70, warmth: 0, energy: 0.26, wave: 0.034 },
-  thinking:     { flow: 1.35, light: 0.86, band: 1.08, halo: 0.86, warmth: 0, energy: 0.40, wave: 0.048 },
-  speaking:     { flow: 1.15, light: 0.92, band: 1.14, halo: 0.88, warmth: 0, energy: 0.50, wave: 0.060 },
-  waiting:      { flow: 0.50, light: 0.64, band: 1.00, halo: 0.58, warmth: 0, energy: 0.12, wave: 0.022 },
-  working:      { flow: 1.20, light: 0.90, band: 1.12, halo: 0.90, warmth: 0, energy: 0.48, wave: 0.050 },
-  verifying:    { flow: 1.05, light: 0.86, band: 1.08, halo: 0.86, warmth: 0, energy: 0.42, wave: 0.044 },
-  coding:       { flow: 1.20, light: 0.90, band: 1.12, halo: 0.90, warmth: 0, energy: 0.48, wave: 0.050 },
-  researching:  { flow: 1.10, light: 0.88, band: 1.10, halo: 0.88, warmth: 0, energy: 0.45, wave: 0.046 },
-  error:        { flow: 0.35, light: 0.55, band: 0.98, halo: 0.50, warmth: 1, energy: 0.15, wave: 0.016 },
-  offline:      { flow: 0.12, light: 0.30, band: 0.94, halo: 0.25, warmth: 0, energy: 0.03, wave: 0.006 },
+  idle:         { mode: "idle",      amp: 0.16, speed: 0.10, fold: 0.00, light: 0.62, travel: 0.0 },
+  listening:    { mode: "listening", amp: 0.22, speed: 0.18, fold: 0.10, light: 0.78, travel: 0.0 },
+  transcribing: { mode: "listening", amp: 0.20, speed: 0.20, fold: 0.18, light: 0.76, travel: 0.0 },
+  thinking:     { mode: "thinking",  amp: 0.26, speed: 0.22, fold: 0.55, light: 0.82, travel: 0.35 },
+  speaking:     { mode: "speaking",  amp: 0.30, speed: 0.24, fold: 0.25, light: 0.90, travel: 0.0 },
+  waiting:      { mode: "idle",      amp: 0.15, speed: 0.09, fold: 0.00, light: 0.60, travel: 0.0 },
+  working:      { mode: "executing", amp: 0.24, speed: 0.20, fold: 0.30, light: 0.84, travel: 1.0 },
+  verifying:    { mode: "executing", amp: 0.22, speed: 0.18, fold: 0.25, light: 0.80, travel: 0.7 },
+  coding:       { mode: "executing", amp: 0.24, speed: 0.20, fold: 0.30, light: 0.84, travel: 1.0 },
+  researching:  { mode: "executing", amp: 0.24, speed: 0.20, fold: 0.35, light: 0.84, travel: 0.9 },
+  error:        { mode: "error",     amp: 0.14, speed: 0.08, fold: 0.05, light: 0.52, travel: 0.0 },
+  offline:      { mode: "offline",   amp: 0.06, speed: 0.03, fold: 0.00, light: 0.26, travel: 0.0 },
 };
-const SUCCESS_STATES = new Set(["idle", "waiting"]);
-const WORK_STATES = new Set(["working", "verifying", "coding", "researching"]);
+const EXECUTING = new Set(["working", "verifying", "coding", "researching"]);
+const SETTLED = new Set(["idle", "waiting"]);
 
-// the light: ivory and champagne, graphite for what lies behind, a warm shift on failure
-const IVORY = [247, 240, 226];
-const CHAMPAGNE = [226, 206, 170];
-const DEEP = [196, 176, 138];
-const GRAPHITE = [120, 116, 108];
-const WARM = [222, 156, 118];
+const GOLD = [206, 184, 138];
+const IVORY = [236, 230, 216];
+const OLIVE = [150, 160, 128];
+const EMBER = [196, 132, 112];
 
 const TAU = Math.PI * 2;
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
 
-class ZeusOrb {
+class ZeusPresence {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.state = "offline";
     this.target = { ...STATES.offline };
     this.now = { ...STATES.offline };
+    this.energy = 0;          // eased external energy (mic, speech)
+    this.external = 0;
     this.inflow = 0;
     this.rate = 0;
-    this.activity = 0;
-    this.external = 0;
     this.audio = null;
-    this.audioLevel = 0;
     this.work = 0;
-    this.hueShift = 0;
     this.intensity = 1;
     this.t = 0;
-    this.pulse = 0;
+    this.pulses = [];         // {x, speed, strength, warm}
+    this.nextTravel = 0;
     this.running = false;
     this.last = 0;
-    this.quality = 1;
-    this.frameCost = 0;
-    this.w = 0; this.h = 0; this.u = 0;
+    this.lastDraw = 0;
+    this.focused = document.hasFocus ? document.hasFocus() : true;
+    this.dirty = true;
+    this.w = 0; this.h = 0;
+    window.addEventListener("focus", () => { this.focused = true; });
+    window.addEventListener("blur", () => { this.focused = false; });
     this.resize();
   }
 
-  // ---- api -----------------------------------------------------------
+  // ---- api ---------------------------------------------------------------
   setState(name) {
     const prev = this.state;
     this.state = STATES[name] ? name : "idle";
     this.target = { ...STATES[this.state] };
-    if (WORK_STATES.has(prev) && SUCCESS_STATES.has(this.state)) this.pulse = 1;
+    this.dirty = true;
+    if (EXECUTING.has(prev) && SETTLED.has(this.state)) this.pulseOnce("success");
+    if (this.state === "error" && prev !== "error") this.pulseOnce("error");
+    if (EXECUTING.has(this.state) && !EXECUTING.has(prev)) this.pulseOnce("executing");
   }
-  setEnergy(value) { this.external = Math.max(this.external * 0.5, clamp01(value)); }
-  setActivity(level) { this.external = clamp01(level); }
+  setEnergy(value) { this.external = Math.max(this.external * 0.6, clamp01(value)); this.dirty = true; }
+  setActivity(level) { this.external = clamp01(level); this.dirty = true; }
   noteOutput(chars) { this.inflow += Math.max(0, Number(chars) || 0); }
   setAudioFrequencyData(bins) { this.audio = bins && bins.length ? bins : null; }
   setBackgroundWork(count) { this.work = Math.max(0, Number(count) || 0); }
-  setThemeShift(degrees) { this.hueShift = Number(degrees) || 0; }
-  setIntensity(value) { this.intensity = Math.max(0, Math.min(1.6, Number(value) || 0)); }
-  pulseOnce() { this.pulse = 1; }
+  setThemeShift() { /* the ribbon keeps one palette */ }
+  setIntensity(value) { this.intensity = Math.max(0, Math.min(1.6, Number(value) || 0)); this.dirty = true; }
+  /* kind: success | error | executing */
+  pulseOnce(kind = "success") {
+    // reduced motion: nothing travels along the ribbon; the state itself (colour, stillness) carries the outcome
+    if (this.reduced()) { this.dirty = true; return; }
+    const strength = kind === "success" ? 1 : kind === "error" ? 0.8 : 0.65;
+    this.pulses.push({ x: -0.15, speed: kind === "executing" ? 0.55 : 0.42, strength, warm: kind === "error" });
+    if (this.pulses.length > 4) this.pulses.shift();
+    this.dirty = true;
+  }
+  get mode() { return this.target.mode; }
 
-  /* Sharp at every scale: the CSS box is rounded to whole pixels and the backing store matches it
-     times the real device pixel ratio, so nothing is resampled. */
   resize() {
     const rect = this.canvas.getBoundingClientRect();
-    const w = Math.max(48, Math.round(rect.width || this.canvas.width || 420));
-    const h = Math.max(34, Math.round(rect.height || w / 1.4));
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const w = Math.max(80, Math.round(rect.width || this.canvas.width || 640));
+    const h = Math.max(40, Math.round(rect.height || w / 6));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     this.w = w; this.h = h;
     this.canvas.width = Math.round(w * dpr);
     this.canvas.height = Math.round(h * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // the unit: the black hole fits the height, the band fits the width
-    this.u = Math.min(h / 2.15, w / 3.05);
+    this.dirty = true;
+  }
+
+  reduced() {
+    return document.body.classList.contains("reduced-motion") || this.intensity === 0
+      || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }
 
   start() {
     if (this.running) return;
     this.running = true;
-    const loop = (t) => {
+    const loop = (time) => {
       if (!this.running) return;
-      const dt = Math.min(0.05, (t - (this.last || t)) / 1000) || 0.016;
-      this.last = t;
-      const started = performance.now();
-      this.step(dt);
-      if (!document.hidden) this.draw();
-      this.frameCost = this.frameCost * 0.9 + (performance.now() - started) * 0.1;
-      if (this.frameCost > 8 && this.quality > 0.5) this.quality -= 0.05;
-      else if (this.frameCost < 3.5 && this.quality < 1) this.quality += 0.02;
       requestAnimationFrame(loop);
+      if (document.hidden) { this.last = time; return; }
+      const reduced = this.reduced();
+      // frame budget: display rate when focused, ~20 fps behind other windows, redraw-on-change when motion is reduced
+      const interval = reduced ? 250 : this.focused ? 0 : 50;
+      if (time - this.lastDraw < interval) return;
+      const dt = Math.min(0.05, (time - (this.last || time)) / 1000) || 0.016;
+      this.last = time;
+      this.step(dt, reduced);
+      if (reduced && !this.dirty && !this.pulses.length) return;
+      this.lastDraw = time;
+      this.draw(reduced);
+      this.dirty = false;
     };
     requestAnimationFrame(loop);
   }
   stop() { this.running = false; }
 
-  // ---- motion --------------------------------------------------------
-  reduced() { return document.body.classList.contains("reduced-motion") || this.intensity === 0; }
-
-  step(dt) {
-    const k = 1 - Math.exp(-dt * 2.6);
-    for (const key of Object.keys(this.target)) this.now[key] += (this.target[key] - this.now[key]) * k;
+  // ---- motion --------------------------------------------------------------
+  step(dt, reduced) {
+    // with reduced motion there is no easing to watch: the ribbon takes the new state at once
+    const k = reduced ? 1 : 1 - Math.exp(-dt * 2.2);
+    for (const key of ["amp", "speed", "fold", "light", "travel"]) this.now[key] += (this.target[key] - this.now[key]) * k;
+    this.now.mode = this.target.mode;
     const perSecond = this.inflow / Math.max(dt, 0.001);
     this.inflow = 0;
-    const rateK = perSecond > this.rate ? 1 - Math.exp(-dt * 8) : 1 - Math.exp(-dt * 1.6);
-    this.rate += (perSecond - this.rate) * rateK;
+    this.rate += (perSecond - this.rate) * (1 - Math.exp(-dt * (perSecond > this.rate ? 6 : 1.5)));
     let audio = 0;
     if (this.audio) {
       let sum = 0;
       const n = Math.min(this.audio.length, 48);
       for (let i = 0; i < n; i++) sum += this.audio[i];
-      audio = clamp01((sum / n) / 160);
+      audio = clamp01(sum / n / 150);
     }
-    this.audioLevel += (audio - this.audioLevel) * (1 - Math.exp(-dt * 10));
-    const target = Math.max(clamp01(this.rate / 110), this.external, this.audioLevel);
-    const actK = target > this.activity ? 1 - Math.exp(-dt * 6) : 1 - Math.exp(-dt * 2.2);
-    this.activity += (target - this.activity) * actK;
-    this.external *= Math.exp(-dt * 1.2);
-    const motion = this.reduced() ? 0.12 : this.intensity;
-    this.t += dt * (0.35 + this.now.flow * 0.9 + this.activity * 1.4) * motion;
-    if (this.pulse > 0) this.pulse = Math.max(0, this.pulse - dt / 0.75);
+    const target = Math.max(this.external, audio, clamp01(this.rate / 140) * 0.6);
+    this.energy += (target - this.energy) * (1 - Math.exp(-dt * (target > this.energy ? 9 : 2.4)));
+    this.external *= Math.exp(-dt * 1.6);
+    if (!reduced) this.t += dt * (0.25 + this.now.speed * 2.2 + this.energy * 0.8) * this.intensity;
+    // executing: a pulse passes through at a steady interval
+    if (this.now.travel > 0.5 && !reduced) {
+      this.nextTravel -= dt;
+      if (this.nextTravel <= 0) { this.pulseOnce("executing"); this.nextTravel = 2.4; }
+    } else if (this.now.mode === "thinking" && !reduced) {
+      this.nextTravel -= dt;
+      if (this.nextTravel <= 0) { this.pulses.push({ x: -0.1, speed: 0.22, strength: 0.35, warm: false }); this.nextTravel = 3.6; }
+    }
+    for (const p of this.pulses) p.x += dt * p.speed * (reduced ? 4 : 1);
+    this.pulses = this.pulses.filter((p) => p.x < 1.2);
   }
 
-  /* the band's edge: a slow drift, and with activity an equalizer-like breath along the ring */
-  edge(theta, amp, complexity) {
+  /* the displacement of one strand at x in [0,1] */
+  strand(x, index, count, amp, fold) {
     const t = this.t;
-    const a = Math.sin(theta * 3 + t * 1.3) * 0.5 + Math.sin(theta * 5 - t * 2.1 + 0.7) * 0.32 * complexity + Math.sin(theta * 9 + t * 3.4) * 0.18 * complexity;
-    let audio = 0;
-    if (this.audio) {
-      const i = Math.min(this.audio.length - 1, Math.floor(((theta / TAU) % 1) * Math.min(this.audio.length, 40)));
-      audio = (this.audio[i] / 255) * 0.9;
+    const s = index / Math.max(1, count - 1) - 0.5;          // -0.5 .. 0.5 across the ribbon
+    const envelope = Math.pow(Math.sin(Math.PI * x), 1.35);    // tapered ends
+    let y = Math.sin(x * 5.2 + t * 0.9 + s * 0.9) * 0.55
+          + Math.sin(x * 2.3 - t * 0.55 + s * 2.1) * 0.35
+          + Math.sin(x * 9.1 + t * 1.3 + s * 3.4) * 0.18 * fold
+          + Math.sin(x * 14.0 - t * 1.9 + s * 5.2) * 0.10 * fold;
+    y += s * (0.55 + 0.35 * Math.sin(x * 3.1 + t * 0.4));     // the ribbon's width, breathing
+    for (const p of this.pulses) {
+      const d = (x - p.x) / 0.07;
+      y += Math.exp(-d * d) * 0.45 * p.strength * Math.sin(s * 3 + 1.2);
     }
-    return amp * (a + audio);
+    return y * envelope * amp;
   }
 
-  /* one half of the accretion band (front: below the centre, back: above), as a closed path */
-  bandPath(ctx, cx, cy, ai, bi, ao, bo, front, amp, complexity, tilt) {
-    const steps = this.quality > 0.7 ? 96 : 56;
-    const from = front ? 0 : Math.PI, to = front ? Math.PI : TAU;
-    const ct = Math.cos(tilt), st = Math.sin(tilt);
-    const pt = (a, b, th, lift) => {
-      const x0 = Math.cos(th) * a, y0 = Math.sin(th) * b - lift;
-      return [cx + x0 * ct - y0 * st, cy + x0 * st + y0 * ct];
-    };
-    ctx.beginPath();
-    for (let i = 0; i <= steps; i++) {
-      const th = from + (to - from) * (i / steps);
-      const e = 1 + this.edge(th, amp, complexity);
-      const [x, y] = pt(ao * e, bo * e, th, 0);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  draw(reduced) {
+    const ctx = this.ctx;
+    const { w, h } = this;
+    const p = this.now;
+    ctx.clearRect(0, 0, w, h);
+    const energy = reduced ? this.energy * 0.5 : this.energy;
+    const amp = (p.amp + energy * 0.34 + Math.min(0.06, this.work * 0.02)) * h * 0.95;
+    const fold = Math.min(1, p.fold + energy * 0.4);
+    const light = clamp01(p.light + energy * 0.25);
+    const warmPulse = this.pulses.find((q) => q.warm);
+    const count = 9;
+    const steps = Math.max(60, Math.min(180, Math.round(w / 5)));
+    const cy = h / 2;
+    const base = p.mode === "error" || warmPulse ? mix(GOLD, EMBER, warmPulse ? 0.5 : 0.35) : GOLD;
+    for (let i = 0; i < count; i++) {
+      const s = i / (count - 1);
+      const edge = 1 - Math.abs(s - 0.5) * 1.6;                 // inner strands brighter
+      const colour = mix(mix(base, IVORY, 0.35 + 0.35 * edge), OLIVE, 0.18 * (1 - edge));
+      // gradient along the ribbon: fades in and out at the ends, brighter where a pulse is
+      const grad = ctx.createLinearGradient(0, 0, w, 0);
+      const stops = [0, 0.18, 0.5, 0.82, 1];
+      for (const at of stops) {
+        let alpha = Math.sin(Math.PI * at) * (0.10 + 0.22 * edge) * light;
+        for (const q of this.pulses) {
+          const d = (at - q.x) / 0.16;
+          alpha += Math.exp(-d * d) * 0.35 * q.strength * edge;
+        }
+        grad.addColorStop(at, rgba(q_colour(colour, at, this.pulses), alpha));
+      }
+      ctx.beginPath();
+      for (let k = 0; k <= steps; k++) {
+        const x = k / steps;
+        const y = cy + this.strand(x, i, count, amp, fold);
+        if (k === 0) ctx.moveTo(x * w, y); else ctx.lineTo(x * w, y);
+      }
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 0.8 + 0.7 * edge;
+      ctx.stroke();
     }
-    for (let i = steps; i >= 0; i--) {
-      const th = from + (to - from) * (i / steps);
-      const [x, y] = pt(ai, bi, th, 0);
-      ctx.lineTo(x, y);
+    // a faint veil of light between the strands: the silk itself
+    ctx.beginPath();
+    for (let k = 0; k <= steps; k++) {
+      const x = k / steps;
+      const y = cy + this.strand(x, 0, count, amp, fold);
+      if (k === 0) ctx.moveTo(x * w, y); else ctx.lineTo(x * w, y);
+    }
+    for (let k = steps; k >= 0; k--) {
+      const x = k / steps;
+      ctx.lineTo(x * w, cy + this.strand(x, count - 1, count, amp, fold));
     }
     ctx.closePath();
-  }
-
-  draw() {
-    const ctx = this.ctx;
-    const { w, h, u } = this;
-    const cx = Math.round(w / 2), cy = Math.round(h / 2) + Math.round(u * 0.04);
-    const p = this.now;
-    const reduced = this.reduced();
-    const activity = reduced ? this.activity * 0.4 : this.activity;
-    const energy = clamp01(p.energy + activity * 0.5 + Math.min(0.2, this.work * 0.07));
-    const warm = clamp01(p.warmth);
-    const ivory = mix(IVORY, WARM, warm * 0.55);
-    const champagne = mix(CHAMPAGNE, WARM, warm * 0.7);
-    const deep = mix(DEEP, WARM, warm * 0.6);
-    const light = clamp01(p.light + activity * 0.25);
-    const halo = clamp01(p.halo + activity * 0.2);
-    const amp = p.wave + activity * 0.075;
-    const complexity = Math.min(1, 0.35 + activity * 0.65);
-    const tilt = -0.075;
-    // geometry
-    const rh = u * 0.60;                       // the horizon
-    const ai = u * 0.70, bi = u * 0.155;       // inner edge of the band
-    const ao = u * 1.44 * p.band, bo = u * 0.36 * p.band;
-    ctx.clearRect(0, 0, w, h);
-
-    // ambient: the object warms the space around it, barely
-    const amb = ctx.createRadialGradient(cx, cy, rh * 0.8, cx, cy, u * 1.7);
-    amb.addColorStop(0, rgba(champagne, 0.07 * light + energy * 0.03));
-    amb.addColorStop(0.55, rgba(champagne, 0.02 * light));
-    amb.addColorStop(1, rgba(champagne, 0));
-    ctx.fillStyle = amb;
-    ctx.fillRect(0, 0, w, h);
-
-    // ---- behind the horizon: the far side of the band, and the lensed halo over the top
-    ctx.save();
-    // back half of the band (fainter, graphite into champagne), flowing
-    this.bandPath(ctx, cx, cy, ai, bi, ao * 0.96, bo * 0.92, false, amp * 0.7, complexity, tilt);
-    let g = ctx.createLinearGradient(cx - ao, 0, cx + ao, 0);
-    g.addColorStop(0, rgba(deep, 0.50 * light));
-    g.addColorStop(0.5, rgba(GRAPHITE, 0.26 * light));
-    g.addColorStop(1, rgba(deep, 0.18 * light));
-    ctx.fillStyle = g;
+    const veil = ctx.createLinearGradient(0, 0, w, 0);
+    veil.addColorStop(0, rgba(base, 0));
+    veil.addColorStop(0.5, rgba(base, 0.05 * light));
+    veil.addColorStop(1, rgba(base, 0));
+    ctx.fillStyle = veil;
     ctx.fill();
-    // the lensed far side: a thin bright arc over the top of the horizon and a fainter one below
-    // drawn as short segments so the light fades out towards the ends and pulses along the arc
-    const lens = rh * 1.30;
-    const lensArc = (r, from, to, width, peak) => {
-      const n = 28;
-      for (let i = 0; i < n; i++) {
-        const a0 = from + (to - from) * (i / n), a1 = from + (to - from) * ((i + 1.15) / n);
-        const f = i / (n - 1);
-        const fade = Math.sin(f * Math.PI);
-        const travel = 0.75 + 0.25 * Math.sin(f * 9 - this.t * 1.7);
-        ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1);
-        ctx.lineWidth = width * (0.6 + 0.4 * fade); ctx.strokeStyle = rgba(ivory, peak * fade * travel); ctx.lineCap = "butt"; ctx.stroke();
-      }
-    };
-    lensArc(lens, Math.PI * 1.06, Math.PI * 1.94, u * 0.052, halo * 0.62);
-    g = ctx.createRadialGradient(cx, cy, lens - u * 0.05, cx, cy, lens + u * 0.16);
-    g.addColorStop(0, rgba(champagne, 0.16 * halo)); g.addColorStop(1, rgba(champagne, 0));
-    ctx.beginPath(); ctx.arc(cx, cy, lens + u * 0.16, Math.PI, TAU); ctx.lineTo(cx - lens, cy); ctx.fillStyle = g; ctx.fill();
-    lensArc(lens * 0.97, Math.PI * 0.14, Math.PI * 0.86, u * 0.030, halo * 0.24);
-    ctx.restore();
-
-    // ---- the photon ring: the thin, brightest circle, alive with light travelling along it
-    const ring = rh * 1.045;
-    const segs = this.quality > 0.7 ? 96 : 48;
-    for (let i = 0; i < segs; i++) {
-      const a0 = (i / segs) * TAU, a1 = ((i + 1.2) / segs) * TAU;
-      const th = (a0 + a1) / 2;
-      const travel = 0.5 + 0.5 * Math.sin(th * 2 - this.t * 2.2) * Math.sin(th * 5 + this.t * 1.1);
-      const doppler = 0.66 + 0.34 * Math.cos(th - Math.PI * 0.92);   // brightest where the light comes toward us
-      const alpha = light * (0.62 + 0.36 * travel) * doppler;
-      ctx.beginPath(); ctx.arc(cx, cy, ring, a0, a1 + 0.02);
-      ctx.lineWidth = u * 0.020 + travel * u * 0.008 + energy * u * 0.006;
-      ctx.strokeStyle = rgba(ivory, alpha);
-      ctx.lineCap = "butt";
-      ctx.stroke();
-    }
-    // its soft glow outward
-    g = ctx.createRadialGradient(cx, cy, ring, cx, cy, ring + u * 0.22);
-    g.addColorStop(0, rgba(champagne, 0.28 * light));
-    g.addColorStop(1, rgba(champagne, 0));
-    ctx.beginPath(); ctx.arc(cx, cy, ring + u * 0.22, 0, TAU);
-    ctx.fillStyle = g; ctx.fill();
-
-    // ---- the horizon: perfectly black, razor edged
-    ctx.beginPath(); ctx.arc(cx, cy, rh, 0, TAU);
-    ctx.fillStyle = "#000000"; ctx.fill();
-    // the inner edge of the horizon catches nothing; a hair of graphite marks where light stops
-    ctx.beginPath(); ctx.arc(cx, cy, rh, 0, TAU);
-    ctx.lineWidth = 1; ctx.strokeStyle = rgba(GRAPHITE, 0.35 * light); ctx.stroke();
-
-    // ---- in front of the horizon: the near side of the band, the brightest matter
-    ctx.save();
-    this.bandPath(ctx, cx, cy, ai, bi, ao, bo, true, amp, complexity, tilt);
-    ctx.clip();
-    // brightness: strongest at the inner edge, decaying outward (radial), beamed to the left (linear)
-    g = ctx.createRadialGradient(cx, cy, ai * 0.9, cx, cy, ao);
-    g.addColorStop(0, rgba(ivory, 0.98 * light));
-    g.addColorStop(0.22, rgba(champagne, 0.82 * light));
-    g.addColorStop(0.62, rgba(deep, 0.42 * light));
-    g.addColorStop(1, rgba(deep, 0.06 * light));
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-    g = ctx.createLinearGradient(cx - ao, 0, cx + ao, 0);
-    g.addColorStop(0, rgba(ivory, 0.35 * light));
-    g.addColorStop(0.45, rgba(ivory, 0));
-    g.addColorStop(1, "rgba(0,0,0,.45)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-    // flowing structure: fine elliptical traces moving along the band
-    if (!reduced || true) {
-      const traces = this.quality > 0.7 ? 9 : 5;
-      ctx.lineCap = "round";
-      for (let i = 0; i < traces; i++) {
-        const f = (i + 0.5) / traces;
-        const a = ai + (ao - ai) * f, b = bi + (bo - bi) * f;
-        const phase = this.t * (1.6 + f * 0.9) + i * 1.9;
-        const parts = 14;
-        for (let s = 0; s < parts; s++) {
-          const th0 = (s / parts) * Math.PI, th1 = ((s + 0.7) / parts) * Math.PI;
-          const shimmer = 0.5 + 0.5 * Math.sin(th0 * 4 + phase);
-          if (shimmer < 0.35) continue;
-          ctx.beginPath();
-          ctx.ellipse(cx, cy, a, b, tilt, th0, th1);
-          ctx.lineWidth = 0.9 + (1 - f) * 0.9;
-          ctx.strokeStyle = rgba(ivory, (0.10 + 0.32 * shimmer) * light * (1 - f * 0.55));
-          ctx.stroke();
-        }
-      }
-    }
-    ctx.restore();
-    // a crisp light edge where the band meets the horizon
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, rh, 0, TAU); ctx.clip();
-    ctx.beginPath(); ctx.ellipse(cx, cy, ai, bi, tilt, 0, Math.PI);
-    ctx.lineWidth = 1.2; ctx.strokeStyle = rgba(ivory, 0.55 * light); ctx.stroke();
-    ctx.restore();
-
-    // ---- success: one quiet outward pulse of the photon ring
-    if (this.pulse > 0) {
-      const k = 1 - this.pulse;
-      ctx.beginPath(); ctx.arc(cx, cy, ring * (1 + k * 0.22), 0, TAU);
-      ctx.strokeStyle = rgba(ivory, 0.5 * this.pulse);
-      ctx.lineWidth = 1 + 1.6 * this.pulse;
-      ctx.stroke();
-    }
   }
 }
 
+/* A pulse warms or brightens the colour where it passes. */
+function q_colour(colour, at, pulses) {
+  let out = colour;
+  for (const p of pulses) {
+    const d = Math.abs(at - p.x);
+    if (d < 0.2) out = mix(out, p.warm ? EMBER : IVORY, (1 - d / 0.2) * 0.6 * p.strength);
+  }
+  return out;
+}
+
+/* the older names the shell and saved themes still use */
+const ZeusOrb = ZeusPresence;
+
+window.ZeusPresence = ZeusPresence;
 window.JarvisEye = ZeusOrb;
 window.ZeusOrb = ZeusOrb;
 window.ZeusSphere = ZeusOrb;

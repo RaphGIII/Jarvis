@@ -233,7 +233,8 @@ def test_the_page_is_branded_at_serve_time(server):
         page = response.read().decode()
 
     assert "<title>ZEUS</title>" in page
-    assert 'class="bv-brand">ZEUS<' in page and 'id="topTitle">ZEUS<' in page
+    # The boot veil carries the name; the top bar stays empty on Home and names the open view.
+    assert 'class="bv-brand">ZEUS<' in page and 'id="topTitle"></div>' in page
     assert 'window.ASSISTANT_NAME = "Zeus"' in page
 
 

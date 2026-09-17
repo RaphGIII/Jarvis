@@ -1033,7 +1033,15 @@ class JarvisCore:
             titles = [str(p.get("title") or "") for p in self.owner_projects()]
         except Exception:  # noqa: BLE001
             titles = []
-        understanding = understand(text, route=route, project_titles=titles, capability_names=names)
+        study_context = self._last_user_meta().get("study_context")
+        if isinstance(study_context, dict) and study_context.get("document_id"):
+            self.emit(EventType.TOOL, {"summary": "study: question about the open page", "source": "study", "study_context": study_context}, scope=scope)
+            self.study_actions.run_in_context(text, study_context, scope)
+            return
+        study_available = self._study_available()
+        understanding = understand(text, route=route, project_titles=titles, capability_names=names, study_available=study_available,
+                                   study_probe=self._study_probe if study_available else None,
+                                   study_context=study_available and self.study_actions.has_context())
         self.emit(EventType.TOOL, {"summary": f"understood: {understanding.top.value}" + (f" -> {understanding.action.operation}" if understanding.action else ""),
                                    "understanding": understanding.to_dict(), "source": "intents", "text": text[:160]}, scope=scope)
         if self._handle_pending_confirmation(text, scope):
@@ -1383,6 +1391,9 @@ class JarvisCore:
 
     def _answer_by_system_control(self, action: Any, text: str, scope: str) -> None:
         de = self.language.startswith("de")
+        if getattr(action, "object_type", "") == "study":
+            self.study_actions.run(action, text, scope)
+            return
         if action.operation == "system.stop":
             self.stop_current(reason="owner")
             self.state.set(JarvisState.IDLE)
@@ -1502,7 +1513,7 @@ class JarvisCore:
             return
         if action.operation == "system.open_view":
             self.emit(EventType.NOTIFICATION, {"kind": "open_view", "view": action.target, "params": {}, "text": ""}, scope=scope)
-            names = {"projects": "Projekte", "missions": "Mission Control", "activity": "Activity", "knowledge": "Knowledge", "corrections": "Korrekturen",
+            names = {"study": "Studium", "projects": "Projekte", "missions": "Mission Control", "activity": "Activity", "knowledge": "Knowledge", "corrections": "Korrekturen",
                      "diagnostics": "Diagnose", "owner": "Einstellungen", "voice": "Voice Studio", "thoughts": "Gedanken", "capabilities": "Fähigkeiten", "release": "Release"}
             label = names.get(action.target, action.target)
             self._deliver((f"{label} ist offen." if de else f"{label} is open."), scope=scope, backend="ui", context_text=f"[opened view {action.target}]")
@@ -4882,12 +4893,14 @@ class JarvisCore:
         return small_talk_answer(text, language=self.language or "de", active_missions=int(missions), uptime_seconds=uptime,
                                  humour=int(prefs.get("humour", 40) or 0), warmth=int(prefs.get("warmth", 50) or 0))
 
-    def _answer_conversationally(self, text: str, scope: str) -> None:
+    def _answer_conversationally(self, text: str, scope: str, *, study: dict[str, Any] | None = None) -> None:
+        """The model answers.  ``study`` (instruction, material, sources) makes the owner's study material the source of the answer."""
+
         from brain.tiers import ModelTier
 
         if self._hold_for_gpu(text, scope):
             return
-        quick = self._small_talk(text)
+        quick = None if study else self._small_talk(text)
         if quick:
             self.state.set(JarvisState.THINKING, detail=text[:120], scope=scope)
             # Zeus's own words, spoken like any other answer.
@@ -4919,7 +4932,7 @@ class JarvisCore:
             # nothing else -- the provider's default engineering preamble
             # ("Your job is to: 1. Understand the user's goal ...") stays out
             # of ordinary conversation, where it read as a robot's job sheet.
-            system, user = self._compose_messages(text)
+            system, user = self._compose_messages(text, study=study)
             try:
                 from gateway.gateway import active_context
 
@@ -5121,6 +5134,8 @@ class JarvisCore:
             pass
         if identity_rewrites:
             reply_meta["identity_rewrites"] = identity_rewrites
+        if study and study.get("sources"):
+            reply_meta["study_sources"] = list(study["sources"])[:6]
         if provenance:
             reply_meta["provenance"] = provenance
             if "finish_reason" in provenance:
@@ -5237,10 +5252,10 @@ class JarvisCore:
                 return
         yield provider.generate(prompt)
 
-    def _compose_messages(self, text: str) -> tuple[str, str]:
+    def _compose_messages(self, text: str, *, study: dict[str, Any] | None = None) -> tuple[str, str]:
         """(system, user): the personality/identity block and the transcript + the owner's words."""
 
-        full = self._compose_prompt(text)
+        full = self._compose_prompt(text, study=study)
         marker = "\n\nRecent conversation:\n"
         if marker in full:
             head, tail = full.split(marker, 1)
@@ -5251,7 +5266,7 @@ class JarvisCore:
             return head, "user: " + tail
         return "", full
 
-    def _compose_prompt(self, text: str) -> str:
+    def _compose_prompt(self, text: str, *, study: dict[str, Any] | None = None) -> str:
         """Wrap the user's words in the persona and recent context.
 
         The persona is stated as identity rather than as a costume instruction
@@ -5300,6 +5315,10 @@ class JarvisCore:
             "eine Aktion nötig ist, sage kurz, dass du sie ausführen kannst. "
             "Bei Faktenfragen zu seltenen oder unbekannten Begriffen: NICHT raten und keine Definition "
             "erfinden — sag ehrlich, dass du unsicher bist, und biete an, im Internet nachzusehen.")
+        if study and study.get("material"):
+            # Studium: the owner's own material is the source of this answer, and nothing else is.
+            guidance.append(f"{study.get('instruction') or 'Nutze ausschließlich das folgende Material.'}\n\n"
+                            f"MATERIAL AUS DEN UNTERLAGEN DES BESITZERS:\n{study['material']}")
         recent = self.history[-8:]
         transcript = "\n".join(f"{turn.role}: {turn.for_prompt()}" for turn in recent[:-1])
         from config import conversation_prompt
@@ -7064,6 +7083,130 @@ class JarvisCore:
 
             self._semantic = SemanticPlanner()
         return self._semantic
+
+    @property
+    def study(self) -> Any:
+        """Studium: the owner's study material -- its own index, its own namespace, apart from memory and the graph."""
+
+        if getattr(self, "_study", None) is None:
+            from core.kernel import DEFAULT_STATE_ROOT
+            from study.pdf_engine import engine
+            from study.service import StudyService
+
+            state_root = Path(self.kernel.state_root)
+            try:
+                production = state_root.resolve() == DEFAULT_STATE_ROOT.resolve()
+            except OSError:
+                production = False
+            # In the product, added material lands in the owner's visible library; anywhere else (tests) beside the state.
+            store = self.library.root / "Studium" / "Material" if production else state_root / "study" / "material"
+
+            def emit(kind: str, payload: dict[str, Any]) -> None:
+                if kind == "study.progress":
+                    # what an import is doing right now: the Studium view draws it; no chat line, no summary to echo
+                    self.emit(EventType.PROGRESS, {"source": "study", "study": {"event": kind, **payload}})
+                    return
+                title = str(payload.get("title") or "")
+                self.emit(EventType.TOOL, {"summary": f"Studium: {title} indexiert ({payload.get('chunks', 0)} Abschnitte)", "source": "study",
+                                           "study": {"event": kind, **payload}})
+
+            # Semantic embeddings and slide images are real local work: the product does it in the background with the
+            # configured local model; anywhere else (tests) the service stays keyword-only unless a test gives it a provider.
+            self._study = StudyService(state_root / "study", store, engine=engine(), library_root=self.library.root if production else None,
+                                       expander=self._study_expander, emit=emit, embeddings=None if production else False,
+                                       slide_renderer=None if production else False, background=production)
+        return self._study
+
+    @property
+    def study_actions(self) -> Any:
+        if getattr(self, "_study_actions", None) is None:
+            from service.study_actions import StudyActions
+
+            self._study_actions = StudyActions(self)
+        return self._study_actions
+
+    def study_connect(self, path: str, *, provider: str = "folder", label: str = "") -> dict[str, Any]:
+        """Connect a folder (or a GoodNotes backup folder) and index it in the background."""
+
+        connected = self.study.connect_folder(path, provider=provider if provider in {"folder", "goodnotes", "zeus_files"} else "folder", label=label)
+        if connected.get("ok"):
+            self.study_scan(connected["source"]["id"])
+        return connected
+
+    def study_scan(self, source_id: str, *, zeus_files: bool = False) -> dict[str, Any]:
+        """Scan a connected source (or the ZEUS library) off the request thread; progress arrives as study events."""
+
+        if zeus_files and self.study.library_root is None:
+            return {"ok": False, "error": "Keine ZEUS-Bibliothek verbunden"}
+
+        def work() -> None:
+            report = self.study.import_zeus_files() if zeus_files else self.study.scan_source(source_id)
+            self.emit(EventType.TOOL, {"summary": f"Studium: {report.get('indexed', 0)} neu indexiert, {report.get('unchanged', 0)} unverändert, "
+                                                  f"{report.get('failed', 0)} nicht lesbar", "source": "study", "study": {"event": "scan", **report}})
+
+        threading.Thread(target=work, daemon=True, name="study-scan").start()
+        return {"ok": True, "started": True}
+
+    def media_state(self) -> dict[str, Any]:
+        """What Windows says is playing (the playback surface reads this)."""
+
+        from tools import media_session
+
+        state = media_session.read()
+        return {"ok": bool(state.ok), **state.to_dict(), "playing": state.playing}
+
+    def media_control(self, action: str) -> dict[str, Any]:
+        """One transport command from the playback surface; the answer is the state afterwards, not "accepted"."""
+
+        from tools import media_session
+
+        if action not in {"play", "pause", "next", "previous"}:
+            return {"ok": False, "error": f"unsupported action: {action}"}
+        state = media_session.control(action)
+        self.emit(EventType.TOOL, {"summary": f"media.{action} from the playback surface", "source": "media", "media": state.to_dict()})
+        return {"ok": bool(state.ok), **state.to_dict(), "playing": state.playing}
+
+    def study_goodnotes(self) -> dict[str, Any]:
+        from study import goodnotes
+
+        return {"ok": True, **goodnotes.status()}
+
+    def _study_available(self) -> bool:
+        try:
+            return bool(self.study.index.stats()["documents"])
+        except Exception:  # noqa: BLE001 - a broken index never blocks the conversation
+            return False
+
+    def _study_probe(self, topic: str) -> bool:
+        """Does the owner's own study library literally contain this subject?  Keyword search only: local, fast, no model."""
+
+        try:
+            found = self.study.search(topic, limit=1, expand=False, semantic=False)
+        except Exception:  # noqa: BLE001
+            return False
+        results = found.get("results") or []
+        if not results:
+            return False
+        best = results[0]["best"]
+        return bool(best.get("exact")) or (float(best.get("coverage") or 0) >= 0.99 and best.get("match") != "semantic")
+
+    def _study_expander(self, topic: str) -> list[str]:
+        """Synonyms and closely related technical terms for a study topic, from the zero-cost pool only (never paid)."""
+
+        import json as _json
+
+        from gateway.gateway import GatewayRequest
+        from gateway.modes import ChatMode
+        from gateway.task import TaskFacts
+
+        schema = {"type": "object", "properties": {"terms": {"type": "array", "items": {"type": "string"}}}, "required": ["terms"]}
+        prompt = (f"Studienthema: „{topic}“. Nenne bis zu 6 Fachbegriffe, Synonyme oder lateinische/englische Bezeichnungen, unter denen "
+                  "genau dieses Thema in Vorlesungsskripten und Lehrbüchern stehen kann. Nur Begriffe, keine Erklärungen. JSON {\"terms\": [...]}")
+        reply = self.model_gateway.complete(GatewayRequest(prompt=prompt, mode=ChatMode.FREE, schema=schema, max_output_tokens=200, temperature=0.0,
+                                                           facts=TaskFacts(text=topic, is_question=True), overrides=False,
+                                                           allow_offline_fallback=False, timeout_seconds=8.0))
+        terms = _json.loads(reply.text or "{}").get("terms") or []
+        return [str(t) for t in terms if isinstance(t, str)][:6]
 
     @property
     def library(self) -> Any:

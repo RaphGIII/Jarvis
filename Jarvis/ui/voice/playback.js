@@ -8,6 +8,8 @@ const queue = [];
 let playing = false;
 let current = null;
 let eye = null;
+let audioCtx = null;
+let meterRaf = 0;
 /* TTS playback volume (0..1). This is the ONLY place the owner's "voice
    volume" setting acts: on the <audio> element that plays ZEUS's speech. */
 let volume = 1;
@@ -50,14 +52,38 @@ async function drain() {
   eye?.setEnergy(0);
 }
 
+/* The ribbon follows the voice: the level of the audio actually playing, frame by frame. */
+function meter(audio) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaElementSource(audio);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    analyser.connect(audioCtx.destination);
+    const buffer = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      if (current !== audio) return;
+      analyser.getByteTimeDomainData(buffer);
+      let sum = 0;
+      for (const v of buffer) { const d = (v - 128) / 128; sum += d * d; }
+      eye?.setEnergy(Math.min(1, Math.sqrt(sum / buffer.length) * 3.2));
+      meterRaf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {
+    eye?.setEnergy(0.5);   // no analyser (an old engine): a steady level instead
+  }
+}
+
 function playOne(url) {
   return new Promise((resolve, reject) => {
     const audio = new Audio(audioUrl(url));
     audio.volume = volume;
     current = audio;
-    audio.onended = resolve;
-    audio.onerror = reject;
-    audio.onplay = () => eye?.setEnergy(0.55);
+    audio.onended = () => { cancelAnimationFrame(meterRaf); resolve(); };
+    audio.onerror = (err) => { cancelAnimationFrame(meterRaf); reject(err); };
+    audio.onplay = () => meter(audio);
     audio.play().catch(reject);
   });
 }

@@ -137,7 +137,7 @@ def builtin_personas() -> dict[str, Persona]:
             name="default_de",
             description="The default persona, always answering in German.",
             character="Du bist {assistant}.",
-            style="natuerlich, knapp; technisch wenn die Frage technisch ist",
+            style="natürlich, knapp; technisch wenn die Frage technisch ist",
             language="German",
         ),
     }

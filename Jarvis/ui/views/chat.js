@@ -13,7 +13,7 @@
    - nothing is shown for a transcript before the gate accepted it. */
 
 import { $, el, clear } from "../core/dom.js";
-import { api } from "../core/api.js";
+import { api, postBytes } from "../core/api.js";
 import * as bus from "../core/bus.js";
 import { state } from "../core/state.js";
 import * as views from "../core/views.js";
@@ -21,6 +21,7 @@ import * as corrections from "./corrections.js";
 import * as playback from "../voice/playback.js";
 import * as performance from "../core/performance.js";
 import { render as renderMarkdown, renderPartial } from "../core/markdown.js";
+import { sourceList } from "../core/sources.js";
 
 let streaming = null;
 let streamText = "";
@@ -39,7 +40,7 @@ export function init(deps) {
       addTurn("insight" + (p._replay ? " history" : ""), "Thought", p.text, p);
       return;
     }
-    const who = meta.source === "microphone" || meta.source === "ui_mic" ? "Du · 🎙" : meta.source === "correction_rerun" ? "Du · korrigiert" : "Du";
+    const who = meta.source === "microphone" || meta.source === "ui_mic" ? "Du · gesprochen" : meta.source === "correction_rerun" ? "Du · korrigiert" : "Du";
     const what = addTurn("user" + (p._replay ? " history" : ""), who, p.text, p);
     if (pending && !p._replay) { $("log").append(pending); scrollDown(); }
     if (what && meta.wake_word) what.append(el("span", { class: "wake-tag", text: ` ${meta.wake_word} · ${Number(meta.wake_score).toFixed(2)}` }));
@@ -49,7 +50,7 @@ export function init(deps) {
     if (what && meta.raw_transcript && meta.normalized && meta.raw_transcript !== meta.normalized && (meta.replacements || []).length) {
       what.append(el("div", { class: "heard", text: `gehört: „${meta.raw_transcript}“` }));
     }
-    $("app").classList.add("conversing");
+    enterChat(p);
   });
   bus.on("token", (p) => { if (p._replay) return; if (p.reset) resetStreaming(); else appendToken(p.text || ""); });
   bus.on("message", (p) => finishStreaming(p.text || "", p));
@@ -144,8 +145,18 @@ function resetStreaming() {
   streaming.append(el("span", { class: "cursor" }));
 }
 
+/* An action answer ends with its evidence and receipt id.  When the receipt card for that id is
+   already in the conversation, the sentence stays and the repeated evidence goes: it is one click away. */
+export function withoutReceiptTail(text, hasReceipt) {
+  const match = /\n\s*\n(?:Belege|Evidence):\n[\s\S]*?\n\s*\nreceipt (rcpt_\w+)\s*$/.exec(text || "")
+    || /\n\s*\nreceipt (rcpt_\w+)\s*$/.exec(text || "");
+  if (!match || !hasReceipt(match[1])) return text;
+  return text.slice(0, match.index).trimEnd();
+}
+
 function finishStreaming(finalText, payload) {
   clearPending();
+  finalText = withoutReceiptTail(finalText, (id) => Boolean(document.querySelector(`#log [data-receipt="${id}"]`)));
   const meta = (payload && payload.meta) || {};
   if (meta.source === "zeus_thought") {
     if (streaming) { streaming.parentElement?.remove(); streaming = null; }
@@ -158,11 +169,19 @@ function finishStreaming(finalText, payload) {
   if (what) {
     what.classList.add("md");
     what.innerHTML = renderMarkdown(finalText);   // the exact completed answer, rendered once
+    if (Array.isArray(meta.study_sources) && meta.study_sources.length) what.append(sourceList(meta.study_sources));
   }
   if (what && meta.completion && (meta.completion.truncated || meta.completion.complete === false) && !meta.completion.aborted) attachContinue(what, meta.completion);
   if (what && !(payload && payload._replay)) attachFeedback(what, payload || {});
-  $("app").classList.add("conversing");
+  enterChat(payload);
   scrollDown();
+}
+
+/* Something is happening in the conversation now: the window turns to Chat.  Replayed history
+   never does -- ZEUS opens on a calm Home, and the past is one click away under Chat. */
+function enterChat(payload) {
+  if (payload && payload._replay) return;
+  if (!$("app").classList.contains("conversing")) bus.emit("mode:chat", {});
 }
 
 /* A ceiling-truncated answer says so and offers to go on in the same conversation.
@@ -195,8 +214,10 @@ function attachFeedback(what, payload) {
   const requestId = meta.request_id || "";
   const row = el("div", { class: "fb" });
   const flash = (text) => { const n = el("span", { class: "fb-flash", text }); row.append(n); setTimeout(() => n.remove(), 2500); };
-  const up = el("a", { href: "#", class: "fb-btn", title: "Gute Antwort", text: "👍" });
-  const down = el("a", { href: "#", class: "fb-btn", title: "Antwort bewerten", text: "👎" });
+  // thin line icons in the shell's one stroke weight -- emoji would be the loudest thing on the page
+  const thumb = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 10.5v9h-3v-9zM7.5 10.5 11 4.2c1.3-.1 2.2.9 2 2.2l-.6 3.4h5.3c1.2 0 2 1.1 1.7 2.2l-1.6 5.8c-.2.8-1 1.4-1.8 1.4H7.5"/></svg>';
+  const up = el("a", { href: "#", class: "fb-btn fb-icon", title: "Gute Antwort", "aria-label": "Gute Antwort", html: thumb });
+  const down = el("a", { href: "#", class: "fb-btn fb-icon down", title: "Antwort bewerten", "aria-label": "Antwort bewerten", html: thumb });
   const korr = el("a", { href: "#", class: "fb-btn fb-korr", text: "Korrigieren" });
   up.onclick = async (ev) => {
     ev.preventDefault();
@@ -249,6 +270,7 @@ export function addReceipt(receipt) {
   const what = addTurn(`receipt ${receipt.verified ? "good" : "bad"}`, `${receipt.kind} · ${verdict}`,
                        receipt.detail || receipt.kind || "action");
   if (!what) return;
+  what.parentElement.dataset.receipt = receipt.id;
   const checks = el("div", { class: "checks" });
   checks.hidden = receipt.verified;
   for (const check of receipt.verifications || []) {
@@ -280,11 +302,12 @@ export function send(text, source = "text", extra = {}) {
   const clean = (text || "").trim();
   if (!clean) return;
   document.querySelector(".turn.interim")?.remove();
-  if (views.isWorkspace()) views.close();
+  if (views.isWorkspace() && !extra.stayInView) views.close();
   showPending();
   // One id per press: a retried POST cannot become a second request.
   const body = { text: clean, source, request_id: requestId(), mode: extra.mode || performance.currentMode() };
   if (extra.authorization) body.authorization = extra.authorization;
+  if (extra.study_context) body.study_context = extra.study_context;
   return api("/api/message", body);
 }
 
@@ -296,7 +319,7 @@ function showPending() {
   pending = el("div", { class: "turn jarvis pending" }, el("div", { class: "who", text: window.ASSISTANT_NAME || "ZEUS" }),
     el("div", { class: "what" }, el("span", { class: "thinking" }, el("i"), el("i"), el("i")), el("span", { class: "thinking-word", text: "denkt" })));
   $("log").append(pending);
-  $("app").classList.add("conversing");
+  enterChat(null);
   scrollDown();
 }
 export function clearPending() {
@@ -313,8 +336,35 @@ export function focusComposer(prefill) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+/* A file given to ZEUS in the composer: study material goes into Studium, indexed, one click from its pages. */
+const STUDY_TYPES = /\.(pdf|docx|pptx|md|markdown|txt|png|jpe?g|webp|tiff?)$/i;
+
+export async function attachFiles(files) {
+  for (const file of files) {
+    if (!STUDY_TYPES.test(file.name)) {
+      addTurn("note", "", `„${file.name}“ kann ZEUS noch nicht aufnehmen – Studium liest PDF, Word, PowerPoint, Markdown, Text und Bilder.`);
+      continue;
+    }
+    const note = addTurn("note", "", `„${file.name}“ wird ins Studium aufgenommen …`);
+    const result = await postBytes(`/api/study/upload?name=${encodeURIComponent(file.name)}`, await file.arrayBuffer());
+    if (!note) continue;
+    if (!result || result.ok === false) { note.textContent = `„${file.name}“ konnte nicht aufgenommen werden: ${result?.error || "unbekannter Fehler"}`; continue; }
+    const doc = result.document || {};
+    const units = doc.units || 0;
+    const where = doc.source_type === "pptx" ? `${units} Folien` : doc.source_type === "pdf" || doc.source_type === "image" ? `${units} Seiten` : `${units} Abschnitte`;
+    note.textContent = result.duplicate ? `„${doc.filename || file.name}“ ist schon im Studium.` : `„${doc.filename || file.name}“ ist im Studium – ${where} durchsuchbar.`;
+    note.append(" ", el("a", { href: "#", text: "Öffnen", onClick: (e) => { e.preventDefault(); views.open("study", { doc: doc.id, unit: "1" }); } }));
+    bus.emit("study:changed", {});
+  }
+}
+
 function wireComposer() {
   const input = $("input");
+  const picker = $("attachInput");
+  if (picker) {
+    $("btnAttach").onclick = () => picker.click();
+    picker.onchange = () => { const files = [...picker.files]; picker.value = ""; if (files.length) attachFiles(files); };
+  }
   const submit = () => {
     const text = input.value;
     input.value = "";

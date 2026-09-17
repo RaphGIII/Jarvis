@@ -499,7 +499,7 @@ def compose(receipt: Receipt, *, language: str = "") -> str:
         lines.append(_headline_ok(receipt, german))
     elif receipt.ok:
         lines.append(
-            "Ausgefuehrt, aber nicht verifiziert -- ich behandle das nicht als Erfolg."
+            "Ausgeführt, aber nicht verifiziert -- ich behandle das nicht als Erfolg."
             if german
             else "Executed, but not verified -- I am not treating that as success."
         )
@@ -523,7 +523,7 @@ def _headline_ok(receipt: Receipt, german: bool) -> str:
     if receipt.kind == "file.write":
         path = evidence.get("path", "")
         return (
-            f"Datei geschrieben und anschliessend unabhaengig zurueckgelesen: {path}"
+            f"Datei geschrieben und anschließend unabhängig zurückgelesen: {path}"
             if german
             else f"File written, then independently read back: {path}"
         )

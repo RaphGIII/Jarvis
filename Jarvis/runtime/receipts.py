@@ -67,14 +67,21 @@ class Verification:
     observed: str = ""
     #: What would have counted as correct.
     expected: str = ""
+    #: A stable machine identifier for the check. ``check`` is the sentence
+    #: the owner reads (German, and free to be reworded); code and tests that
+    #: need to recognise a particular check compare ``key`` instead.
+    key: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "check": self.check,
             "passed": self.passed,
             "observed": self.observed[:600],
             "expected": self.expected[:600],
         }
+        if self.key:
+            data["key"] = self.key
+        return data
 
     def describe(self) -> str:
         mark = "ok" if self.passed else "FAILED"
@@ -151,6 +158,7 @@ class Receipt:
                     passed=bool(item.get("passed", False)),
                     observed=str(item.get("observed", "")),
                     expected=str(item.get("expected", "")),
+                    key=str(item.get("key", "")),
                 )
                 for item in (data.get("verifications") or [])
                 if isinstance(item, dict)

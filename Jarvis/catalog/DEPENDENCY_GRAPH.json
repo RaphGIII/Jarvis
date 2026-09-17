@@ -945,6 +945,7 @@
    "service/http.py",
    "service/lifecycle.py",
    "service/selfdev.py",
+   "service/study_actions.py",
    "service/voice.py"
   ],
   "service/filesystem.py": [
@@ -965,7 +966,8 @@
   ],
   "service/intents.py": [
    "service/core.py",
-   "service/project_ops.py"
+   "service/project_ops.py",
+   "study/intents.py"
   ],
   "service/isolation.py": [
    "service/core.py",
@@ -1018,7 +1020,11 @@
   "service/state.py": [
    "service/core.py",
    "service/selfdev.py",
+   "service/study_actions.py",
    "service/voice.py"
+  ],
+  "service/study_actions.py": [
+   "service/core.py"
   ],
   "service/system_context.py": [
    "service/core.py"
@@ -1107,8 +1113,67 @@
    "speech/wake_training.py"
   ],
   "speech/worker.py": [],
+  "study/__init__.py": [
+   "service/core.py",
+   "study/ocr.py",
+   "study/ocr_engines.py",
+   "study/parsers.py",
+   "study/preprocess.py",
+   "study/service.py"
+  ],
+  "study/embed_worker.py": [],
+  "study/embeddings.py": [
+   "study/service.py"
+  ],
+  "study/figures.py": [
+   "study/index.py"
+  ],
+  "study/galaxy.py": [],
+  "study/goodnotes.py": [],
+  "study/handwriting_worker.py": [],
+  "study/highlight.py": [
+   "study/service.py"
+  ],
+  "study/index.py": [
+   "study/indexer.py",
+   "study/retrieval.py",
+   "study/service.py"
+  ],
+  "study/indexer.py": [
+   "study/service.py"
+  ],
+  "study/intents.py": [
+   "service/intents.py",
+   "service/study_actions.py"
+  ],
+  "study/model.py": [
+   "service/study_actions.py",
+   "study/index.py",
+   "study/ocr_engines.py",
+   "study/parsers.py",
+   "study/retrieval.py",
+   "study/service.py"
+  ],
+  "study/ocr.py": [],
+  "study/ocr_engines.py": [],
+  "study/parsers.py": [],
+  "study/pdf_engine.py": [
+   "service/core.py"
+  ],
+  "study/pdf_worker.py": [],
+  "study/preprocess.py": [],
+  "study/retrieval.py": [
+   "study/intents.py"
+  ],
+  "study/service.py": [
+   "service/core.py",
+   "study/indexer.py"
+  ],
+  "study/slides.py": [],
+  "study/taxonomy.py": [],
   "tools/__init__.py": [
    "jarvis/measure_pipeline.py",
+   "service/core.py",
    "service/music.py"
   ],
   "tools/audio_probe.py": [],
@@ -2056,6 +2121,7 @@
    "service/selfdev.py",
    "service/semantic.py",
    "service/state.py",
+   "service/study_actions.py",
    "service/system_context.py",
    "service/tv.py",
    "service/voice.py",
@@ -2069,6 +2135,10 @@
    "speech/utterance.py",
    "speech/wake_segment.py",
    "speech/wake_zeus.py",
+   "study/__init__.py",
+   "study/pdf_engine.py",
+   "study/service.py",
+   "tools/__init__.py",
    "tools/chess_analysis/engine.py",
    "tools/chess_analysis/recognize.py"
   ],
@@ -2108,7 +2178,8 @@
    "service/routing.py"
   ],
   "service/intents.py": [
-   "service/imagegen.py"
+   "service/imagegen.py",
+   "study/intents.py"
   ],
   "service/isolation.py": [],
   "service/jobs.py": [],
@@ -2158,6 +2229,12 @@
    "brain/json_utils.py"
   ],
   "service/state.py": [],
+  "service/study_actions.py": [
+   "service/events.py",
+   "service/state.py",
+   "study/intents.py",
+   "study/model.py"
+  ],
   "service/system_context.py": [],
   "service/tv.py": [],
   "service/voice.py": [
@@ -2240,6 +2317,57 @@
   ],
   "speech/wake_zeus.py": [],
   "speech/worker.py": [],
+  "study/__init__.py": [],
+  "study/embed_worker.py": [],
+  "study/embeddings.py": [],
+  "study/figures.py": [],
+  "study/galaxy.py": [],
+  "study/goodnotes.py": [],
+  "study/handwriting_worker.py": [],
+  "study/highlight.py": [],
+  "study/index.py": [
+   "study/figures.py",
+   "study/model.py"
+  ],
+  "study/indexer.py": [
+   "study/index.py",
+   "study/service.py"
+  ],
+  "study/intents.py": [
+   "service/intents.py",
+   "study/retrieval.py"
+  ],
+  "study/model.py": [],
+  "study/ocr.py": [
+   "study/__init__.py"
+  ],
+  "study/ocr_engines.py": [
+   "study/__init__.py",
+   "study/model.py"
+  ],
+  "study/parsers.py": [
+   "study/__init__.py",
+   "study/model.py"
+  ],
+  "study/pdf_engine.py": [],
+  "study/pdf_worker.py": [],
+  "study/preprocess.py": [
+   "study/__init__.py"
+  ],
+  "study/retrieval.py": [
+   "study/index.py",
+   "study/model.py"
+  ],
+  "study/service.py": [
+   "study/__init__.py",
+   "study/embeddings.py",
+   "study/highlight.py",
+   "study/index.py",
+   "study/indexer.py",
+   "study/model.py"
+  ],
+  "study/slides.py": [],
+  "study/taxonomy.py": [],
   "tools/__init__.py": [],
   "tools/audio_probe.py": [],
   "tools/builtin.py": [
@@ -2624,6 +2752,7 @@
   "service/selfdev.py",
   "service/semantic.py",
   "service/state.py",
+  "service/study_actions.py",
   "service/system_context.py",
   "service/tv.py",
   "service/voice.py",
@@ -2661,6 +2790,28 @@
   "speech/wake_training.py",
   "speech/wake_zeus.py",
   "speech/worker.py",
+  "study/__init__.py",
+  "study/embed_worker.py",
+  "study/embeddings.py",
+  "study/figures.py",
+  "study/galaxy.py",
+  "study/goodnotes.py",
+  "study/handwriting_worker.py",
+  "study/highlight.py",
+  "study/index.py",
+  "study/indexer.py",
+  "study/intents.py",
+  "study/model.py",
+  "study/ocr.py",
+  "study/ocr_engines.py",
+  "study/parsers.py",
+  "study/pdf_engine.py",
+  "study/pdf_worker.py",
+  "study/preprocess.py",
+  "study/retrieval.py",
+  "study/service.py",
+  "study/slides.py",
+  "study/taxonomy.py",
   "tools/__init__.py",
   "tools/audio_probe.py",
   "tools/builtin.py",

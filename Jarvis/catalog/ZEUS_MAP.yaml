@@ -156,6 +156,7 @@ packages:
       - tests/test_skill_specification_generator.py
       - tests/test_stall_recovery.py
       - tests/test_static_check.py
+      - tests/test_umlaut_text.py
     - path: capabilities/artifacts.py
       purpose: Gates for a capability that claims to have produced something.
       lines: 156
@@ -227,6 +228,7 @@ packages:
       - tests/test_replan_semantic_equivalence.py
       - tests/test_semantic_acceptance.py
       - tests/test_semantic_plane.py
+      - tests/test_umlaut_text.py
     - path: capabilities/permissions.py
       purpose: ''
       lines: 38
@@ -279,6 +281,7 @@ packages:
       - tests/test_capability_acquisition_v04.py
       - tests/test_capability_first_architecture.py
       - tests/test_capability_teaching_loop.py
+      - tests/test_umlaut_text.py
     - path: capabilities/service.py
       purpose: 'Capabilities: things Jarvis can actually do, acquired when it cannot.'
       lines: 1309
@@ -717,6 +720,7 @@ packages:
       - tests/test_semantic_authority.py
       - tests/test_semantic_composition.py
       - tests/test_streaming.py
+      - tests/test_umlaut_text.py
       - tests/test_zero_cost_pool.py
       - tests/test_zero_cost_resilience.py
     - path: gateway/budget.py
@@ -751,7 +755,7 @@ packages:
       - tests/test_intelligence_flow.py
     - path: gateway/gateway.py
       purpose: 'The gateway itself: one call, every rule applied, in order.'
-      lines: 1656
+      lines: 1663
       public: 12
       tests:
       - tests/test_barge_in_and_provenance.py
@@ -787,6 +791,7 @@ packages:
       public: 5
       tests:
       - tests/test_intelligence_routing.py
+      - tests/test_umlaut_text.py
     - path: gateway/learning.py
       purpose: What ZEUS has learned about which role is good enough for what.
       lines: 219
@@ -981,7 +986,7 @@ packages:
       tests: []
     - path: jarvis/verify_ui.py
       purpose: Does the interface still work after Jarvis edited it?
-      lines: 364
+      lines: 370
       public: 11
       tests:
       - tests/test_ui_self_development.py
@@ -1596,6 +1601,7 @@ packages:
       - tests/test_stall_recovery.py
       - tests/test_state_foundations.py
       - tests/test_thoughts.py
+      - tests/test_umlaut_text.py
       - tests/test_zero_cost_pool.py
       - tests/test_zero_cost_resilience.py
     - path: runtime/action_generator.py
@@ -1744,11 +1750,12 @@ packages:
       - tests/test_provider_infra_v03.py
     - path: runtime/receipts.py
       purpose: 'Receipts: the only thing in this system allowed to say an action succeeded.'
-      lines: 298
+      lines: 306
       public: 7
       tests:
       - tests/test_action_receipts.py
       - tests/test_intelligence_flow.py
+      - tests/test_umlaut_text.py
     - path: runtime/runtime_state.py
       purpose: ''
       lines: 32
@@ -1861,8 +1868,13 @@ packages:
       - tests/test_semantic_plane.py
       - tests/test_service.py
       - tests/test_streaming.py
+      - tests/test_study.py
+      - tests/test_study_galaxy.py
+      - tests/test_study_routing.py
+      - tests/test_study_semantic.py
       - tests/test_supervisor.py
       - tests/test_thoughts.py
+      - tests/test_umlaut_text.py
       - tests/test_utterance_gate.py
       - tests/test_voice_service.py
       - tests/test_voice_session.py
@@ -1911,6 +1923,7 @@ packages:
       tests:
       - tests/test_action_receipts.py
       - tests/test_corrections.py
+      - tests/test_umlaut_text.py
     - path: service/coach.py
       purpose: 'The language coach: a real adaptive tutor inside the conversation.'
       lines: 219
@@ -1932,7 +1945,7 @@ packages:
       tests: []
     - path: service/core.py
       purpose: 'Jarvis Core: the system, with no user interface attached to it.'
-      lines: 9081
+      lines: 9224
       public: 2
       tests:
       - tests/test_action_receipts.py
@@ -2018,6 +2031,8 @@ packages:
       - tests/test_semantic_composition.py
       - tests/test_service.py
       - tests/test_streaming.py
+      - tests/test_study.py
+      - tests/test_study_routing.py
       - tests/test_utterance_gate.py
       - tests/test_voice_service.py
       - tests/test_voice_session.py
@@ -2031,7 +2046,7 @@ packages:
       - tests/test_filesystem.py
     - path: service/http.py
       purpose: The local HTTP + Server-Sent Events interface to Jarvis Core.
-      lines: 835
+      lines: 935
       public: 1
       tests:
       - tests/test_action_receipts.py
@@ -2039,6 +2054,8 @@ packages:
       - tests/test_identity.py
       - tests/test_knowledge_view.py
       - tests/test_service.py
+      - tests/test_study.py
+      - tests/test_study_galaxy.py
       - tests/test_voice_service.py
     - path: service/imagegen.py
       purpose: 'image.generate: local, free, and now FAST after the first image.'
@@ -2057,9 +2074,10 @@ packages:
       - tests/test_personality.py
       - tests/test_routing.py
       - tests/test_semantic_authority.py
+      - tests/test_umlaut_text.py
     - path: service/intents.py
       purpose: Top-level intent and typed action contracts, decided before any domain parser.
-      lines: 847
+      lines: 859
       public: 18
       tests:
       - tests/test_basics_sprint.py
@@ -2067,6 +2085,7 @@ packages:
       - tests/test_fs_intelligence.py
       - tests/test_intents.py
       - tests/test_jobs.py
+      - tests/test_umlaut_text.py
     - path: service/isolation.py
       purpose: 'Hard isolation for self-development: experimental code never touches the live tree.'
       lines: 494
@@ -2094,11 +2113,12 @@ packages:
       - tests/test_desktop_lifecycle.py
     - path: service/music.py
       purpose: Music as an intent, not as a provider.
-      lines: 1134
+      lines: 1164
       public: 16
       tests:
       - tests/test_music.py
       - tests/test_routing.py
+      - tests/test_umlaut_text.py
     - path: service/observer.py
       purpose: 'Desktop observation, the honest foundation: WHAT the owner uses, never a'
       lines: 182
@@ -2128,6 +2148,7 @@ packages:
       - tests/test_intents.py
       - tests/test_routing.py
       - tests/test_semantic_authority.py
+      - tests/test_umlaut_text.py
     - path: service/scitext.py
       purpose: Provider output, made safe to render -- without touching what it says.
       lines: 119
@@ -2163,6 +2184,13 @@ packages:
       - tests/test_barge_in_and_provenance.py
       - tests/test_service.py
       - tests/test_voice_session.py
+    - path: service/study_actions.py
+      purpose: 'Study actions in the conversation: find it, show it, or answer from it -- never from nowhere.'
+      lines: 664
+      public: 5
+      tests:
+      - tests/test_study_routing.py
+      - tests/test_study_semantic.py
     - path: service/system_context.py
       purpose: 'SystemContext: the bounded facts ZEUS knows about its own installation.'
       lines: 74
@@ -2403,6 +2431,154 @@ packages:
       purpose: 'The speech worker: runs inside the speech virtualenv, talks JSON over stdio.'
       lines: 249
       public: 2
+      tests: []
+  study:
+    purpose: 'Studium: the owner''s study material as a searchable, locatable library.'
+    modules:
+    - path: study/__init__.py
+      purpose: 'Studium: the owner''s study material as a searchable, locatable library.'
+      lines: 15
+      public: 0
+      tests:
+      - tests/test_study.py
+      - tests/test_study_figures.py
+      - tests/test_study_galaxy.py
+      - tests/test_study_goodnotes.py
+      - tests/test_study_handwriting.py
+      - tests/test_study_indexing.py
+      - tests/test_study_ocr.py
+      - tests/test_study_routing.py
+      - tests/test_study_semantic.py
+      - tests/test_study_slides.py
+    - path: study/embed_worker.py
+      purpose: 'The embedding worker: a local ONNX text-embedding model in its own process.'
+      lines: 105
+      public: 1
+      tests: []
+    - path: study/embeddings.py
+      purpose: 'Semantic embeddings for Studium: which provider turns text into vectors, and the rule that keeps material
+        private.'
+      lines: 319
+      public: 8
+      tests: []
+    - path: study/figures.py
+      purpose: 'Figures, diagrams, tables and captions as located objects: a unit, a region, a caption.'
+      lines: 615
+      public: 12
+      tests: []
+    - path: study/galaxy.py
+      purpose: 'Studium as a sky: every study document one quiet point of light, clustered by subject.'
+      lines: 377
+      public: 2
+      tests: []
+    - path: study/goodnotes.py
+      purpose: 'GoodNotes: one source adapter that says exactly what it can read and what it cannot.'
+      lines: 625
+      public: 11
+      tests:
+      - tests/test_study_goodnotes.py
+    - path: study/handwriting_worker.py
+      purpose: 'The handwriting worker: a TrOCR line recogniser in its own low-priority process.'
+      lines: 120
+      public: 1
+      tests: []
+    - path: study/highlight.py
+      purpose: 'Highlight geometry: every match on a page, as few calm rectangles as the text allows.'
+      lines: 83
+      public: 3
+      tests:
+      - tests/test_study_semantic.py
+    - path: study/index.py
+      purpose: 'The study index: documents, units and chunks in SQLite, searchable by two FTS5 indexes.'
+      lines: 557
+      public: 2
+      tests:
+      - tests/test_study.py
+      - tests/test_study_figures.py
+    - path: study/indexer.py
+      purpose: 'Background indexing: every document ZEUS reads is a persisted job with real progress.'
+      lines: 301
+      public: 5
+      tests:
+      - tests/test_study_indexing.py
+    - path: study/intents.py
+      purpose: Study commands as typed actions, read without a model.
+      lines: 275
+      public: 1
+      tests:
+      - tests/test_study.py
+      - tests/test_study_routing.py
+    - path: study/model.py
+      purpose: The normalized representation every parser produces, whatever the file format.
+      lines: 95
+      public: 4
+      tests:
+      - tests/test_study_figures.py
+      - tests/test_study_handwriting.py
+      - tests/test_study_ocr.py
+      - tests/test_study_routing.py
+    - path: study/ocr.py
+      purpose: OCR for scanned pages and handwriting -- used only when a page carries no text of its own.
+      lines: 484
+      public: 18
+      tests: []
+    - path: study/ocr_engines.py
+      purpose: 'OCR engines behind one call: ``read_page(image) -> text, words, blocks`` for printed text and handwriting.'
+      lines: 1044
+      public: 19
+      tests: []
+    - path: study/parsers.py
+      purpose: 'Parsers: one per format, all producing a :class:`NormalizedDocument`.'
+      lines: 575
+      public: 9
+      tests:
+      - tests/test_study.py
+      - tests/test_study_figures.py
+      - tests/test_study_goodnotes.py
+      - tests/test_study_slides.py
+    - path: study/pdf_engine.py
+      purpose: The server-side client of the PDF page worker, with a pypdf fallback for text.
+      lines: 130
+      public: 2
+      tests:
+      - tests/test_study.py
+      - tests/test_study_semantic.py
+    - path: study/pdf_worker.py
+      purpose: 'The PDF page worker: renders pages and finds text rectangles with Qt''s PDF engine (PySide6.QtPdf).'
+      lines: 193
+      public: 1
+      tests: []
+    - path: study/preprocess.py
+      purpose: 'Image preparation for OCR: pure functions on numpy images, and ``prepare`` that chains them.'
+      lines: 635
+      public: 27
+      tests: []
+    - path: study/retrieval.py
+      purpose: 'Hybrid retrieval over the study index: what the owner asked about, where it is.'
+      lines: 599
+      public: 6
+      tests:
+      - tests/test_study.py
+      - tests/test_study_semantic.py
+    - path: study/service.py
+      purpose: 'The Studium service: import, connect, index, find, open.'
+      lines: 1103
+      public: 1
+      tests:
+      - tests/test_study.py
+      - tests/test_study_galaxy.py
+      - tests/test_study_indexing.py
+      - tests/test_study_semantic.py
+    - path: study/slides.py
+      purpose: 'PowerPoint slides: exact shape geometry from the file, real slide images from PowerPoint.'
+      lines: 567
+      public: 8
+      tests:
+      - tests/test_study_figures.py
+    - path: study/taxonomy.py
+      purpose: 'Where a document belongs: course, subject, semester, module, topic -- inferred, never forced.'
+      lines: 106
+      public: 4
       tests: []
   tools:
     purpose: 'Schach Analyse: a screen-watching chess assistant (board finder, piece recogniser, Stockfish, overlay).'
@@ -2831,6 +3007,8 @@ api_routes:
 - /api/library/note
 - /api/library/read
 - /api/library/tree
+- /api/media/control
+- /api/media/state
 - /api/message
 - /api/mission
 - /api/mission/cancel
@@ -2888,6 +3066,28 @@ api_routes:
 - /api/state
 - /api/status
 - /api/stop
+- /api/study/categories
+- /api/study/connect
+- /api/study/context
+- /api/study/delete
+- /api/study/document
+- /api/study/documents
+- /api/study/focus
+- /api/study/focus_state
+- /api/study/galaxy
+- /api/study/goodnotes
+- /api/study/import_path
+- /api/study/import_zeus
+- /api/study/indexing
+- /api/study/jobs/cancel
+- /api/study/locate
+- /api/study/render_slides
+- /api/study/scan
+- /api/study/search
+- /api/study/sections
+- /api/study/source/remove
+- /api/study/status
+- /api/study/unit
 - /api/supervisor
 - /api/thoughts
 - /api/thoughts/act
@@ -2921,16 +3121,23 @@ api_routes:
 ui_modules:
 - path: ui/app.js
   purpose: '* The client entry point: the shell of ONE product.  Subscribes to the event'
-  lines: 318
+  lines: 343
   imports:
   - core/api.js
   - core/bus.js
   - core/dom.js
+  - core/drawer.js
+  - core/history.js
+  - core/home.js
+  - core/presence.js
+  - core/scene.js
   - core/sidebar.js
   - core/state.js
+  - core/surfaces.js
   - core/views.js
   - core/worksurface.js
   - views/activity.js
+  - views/automations.js
   - views/calendar.js
   - views/capabilities.js
   - views/chat.js
@@ -2939,6 +3146,7 @@ ui_modules:
   - views/diagnostics.js
   - views/files.js
   - views/knowledge.js
+  - views/memory.js
   - views/missions.js
   - views/owner.js
   - views/palette.js
@@ -2946,6 +3154,7 @@ ui_modules:
   - views/projects.js
   - views/release.js
   - views/settings.js
+  - views/study.js
   - views/thoughts.js
   - views/voice.js
   - voice/mic.js
@@ -2968,6 +3177,30 @@ ui_modules:
   purpose: DOM helpers. Every view builds nodes with these, so there is one place that
   lines: 85
   imports: []
+- path: ui/core/drawer.js
+  purpose: 'The navigation on a narrow window: a drawer over the content, never beside it.'
+  lines: 100
+  imports: []
+- path: ui/core/history.js
+  purpose: 'The conversation archive, where Chat keeps it: a quiet panel, not a column.'
+  lines: 208
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+- path: ui/core/home.js
+  purpose: 'Home and Chat: the same place in two moods.'
+  lines: 107
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+  - history.js
+  - views.js
+- path: ui/core/indexing.js
+  purpose: 'The Studium indexing line: what the background indexer is doing, in words.'
+  lines: 84
+  imports: []
 - path: ui/core/markdown.js
   purpose: Stream-safe Markdown for the conversation.
   lines: 226
@@ -2977,6 +3210,10 @@ ui_modules:
   purpose: A LaTeX subset, rendered deterministically to HTML -- no fonts, no library,
   lines: 186
   imports: []
+- path: ui/core/pagerender.js
+  purpose: 'Sharp pages, quickly: the rendering plan of the Studium PDF viewer, and its bounded bitmap cache.'
+  lines: 127
+  imports: []
 - path: ui/core/performance.js
   purpose: 'The ZEUS performance control: one compact selector in the composer instead'
   lines: 146
@@ -2985,19 +3222,49 @@ ui_modules:
   - bus.js
   - dom.js
   - state.js
+- path: ui/core/presence.js
+  purpose: 'ZeusPresence: the one place that decides what the ribbon shows.'
+  lines: 59
+  imports: []
+- path: ui/core/scene.js
+  purpose: 'The environment: a dark body of water at night, drawn once.'
+  lines: 178
+  imports: []
 - path: ui/core/sidebar.js
-  purpose: 'The persistent sidebar: one place to start a chat, find one, reach a'
-  lines: 331
+  purpose: 'The navigation: one thin column of destinations, and ZEUS''s status at the foot.'
+  lines: 125
   imports:
-  - api.js
   - bus.js
   - dom.js
+  - history.js
   - views.js
+- path: ui/core/sources.js
+  purpose: 'A source reference: where something is in the owner''s material, one click from the place itself.'
+  lines: 68
+  imports:
+  - dom.js
+  - views.js
+- path: ui/core/starfield.js
+  purpose: 'Starfield geometry: the pure parts of a pan/zoom point map, with no DOM.'
+  lines: 198
+  imports: []
 - path: ui/core/state.js
   purpose: 'One observable holding what the server last said: the state event, the'
   lines: 56
   imports:
   - bus.js
+- path: ui/core/surfaces.js
+  purpose: 'Active task surfaces: small, temporary, and only while something is happening.'
+  lines: 137
+  imports:
+  - api.js
+  - bus.js
+  - dom.js
+  - views.js
+- path: ui/core/textmarks.js
+  purpose: 'Finding phrases in text the way the owner reads it: case, accents and hyphenation do not matter.'
+  lines: 46
+  imports: []
 - path: ui/core/themes.js
   purpose: 'Visual themes: one accent system, not a random recolor.'
   lines: 28
@@ -3011,7 +3278,7 @@ ui_modules:
   - state.js
 - path: ui/core/worksurface.js
   purpose: 'The work surface: ZEUS never looks frozen.'
-  lines: 144
+  lines: 160
   imports:
   - api.js
   - bus.js
@@ -3022,8 +3289,8 @@ ui_modules:
   lines: 326
   imports: []
 - path: ui/orb.js
-  purpose: 'The ZEUS core: a procedural black hole.'
-  lines: 346
+  purpose: 'ZEUS presence: a ribbon of light, not an object.'
+  lines: 277
   imports: []
 - path: ui/views/activity.js
   purpose: 'Activity: the owner''s transparent operation log, request-centric. Rows'
@@ -3033,6 +3300,13 @@ ui_modules:
   - core/bus.js
   - core/dom.js
   - core/state.js
+  - core/views.js
+- path: ui/views/automations.js
+  purpose: 'Automationen: what ZEUS does without being asked.'
+  lines: 60
+  imports:
+  - core/api.js
+  - core/dom.js
   - core/views.js
 - path: ui/views/calendar.js
   purpose: 'Kalender: the owner''s local-first calendar.'
@@ -3052,13 +3326,14 @@ ui_modules:
   - core/views.js
 - path: ui/views/chat.js
   purpose: 'The conversation: turns, streaming tokens, receipts as evidence, the'
-  lines: 333
+  lines: 383
   imports:
   - core/api.js
   - core/bus.js
   - core/dom.js
   - core/markdown.js
   - core/performance.js
+  - core/sources.js
   - core/state.js
   - core/views.js
   - corrections.js
@@ -3105,6 +3380,13 @@ ui_modules:
   - core/dom.js
   - core/views.js
   - projects.js
+- path: ui/views/memory.js
+  purpose: 'Gedächtnis: what ZEUS keeps about the owner -- and only that.'
+  lines: 60
+  imports:
+  - core/api.js
+  - core/dom.js
+  - core/views.js
 - path: ui/views/missions.js
   purpose: 'Mission Control: every long-running autonomous job — self-development'
   lines: 230
@@ -3125,7 +3407,7 @@ ui_modules:
   - core/views.js
 - path: ui/views/palette.js
   purpose: 'The command palette (Ctrl+K) and universal search (Ctrl+P): ask ZEUS,'
-  lines: 156
+  lines: 159
   imports:
   - chat.js
   - core/api.js
@@ -3168,6 +3450,35 @@ ui_modules:
   - core/performance.js
   - core/state.js
   - core/views.js
+- path: ui/views/study.js
+  purpose: 'Studium: ask about the material, get the place.'
+  lines: 639
+  imports:
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/indexing.js
+  - core/sources.js
+  - core/views.js
+  - study_viewer.js
+- path: ui/views/study_galaxy.js
+  purpose: 'Studium, "Sterne": the library as a quiet sky.'
+  lines: 628
+  imports:
+  - core/api.js
+  - core/dom.js
+  - core/starfield.js
+- path: ui/views/study_viewer.js
+  purpose: 'The Studium viewer: the original material, opened at the place that was asked for.'
+  lines: 776
+  imports:
+  - core/api.js
+  - core/bus.js
+  - core/dom.js
+  - core/markdown.js
+  - core/pagerender.js
+  - core/textmarks.js
+  - core/views.js
 - path: ui/views/thoughts.js
   purpose: 'Thoughts: what ZEUS noticed on its own — typed observations with the'
   lines: 68
@@ -3186,7 +3497,7 @@ ui_modules:
   - voice/playback.js
 - path: ui/voice/mic.js
   purpose: 'Microphone: capture here, recognise on the server. The browser records and'
-  lines: 116
+  lines: 118
   imports:
   - core/api.js
   - core/dom.js
@@ -3194,13 +3505,13 @@ ui_modules:
   - views/chat.js
 - path: ui/voice/playback.js
   purpose: 'Speech playback: a queue of audio the server synthesised, played in order,'
-  lines: 75
+  lines: 101
   imports:
   - core/api.js
   - core/bus.js
 totals:
-  modules: 335
-  packages: 33
-  api_routes: 181
-  ui_modules: 35
-  tests: 132
+  modules: 358
+  packages: 34
+  api_routes: 205
+  ui_modules: 51
+  tests: 143

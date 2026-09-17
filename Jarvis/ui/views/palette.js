@@ -38,7 +38,10 @@ function commands() {
     { type: "view", label: "Dateien", sub: "dein Rechner, live", run: () => views.open("files") },
     { type: "view", label: "Persönlichkeit", sub: "wie ZEUS spricht und sich verhält", run: () => views.open("settings", { tab: "personality" }) },
     { type: "view", label: "Wissen", sub: "Übersicht, Bibliothek, Bearbeiten", run: () => views.open("knowledge") },
-    { type: "view", label: "Studium", sub: "Wissen als Ebenen", run: () => views.open("knowledge", { mode: "list" }) },
+    { type: "view", label: "Studium", sub: "deine Unterlagen – jede Stelle wiederfinden", run: () => views.open("study") },
+    { type: "view", label: "Wissen als Ebenen", sub: "der Wissensgraph als Liste", run: () => views.open("knowledge", { mode: "list" }) },
+    { type: "view", label: "Gedächtnis", sub: "was ZEUS über dich weiß", run: () => views.open("memory") },
+    { type: "view", label: "Automationen", sub: "Timer, Beobachtungen, Gewohnheiten", run: () => views.open("automations") },
     { type: "view", label: "Wissensgraph", sub: "als Netz", run: () => knowledge.openGraph("") },
     { type: "view", label: "Fortschritt", sub: "was ZEUS getan und geprüft hat", run: () => views.open("activity") },
     { type: "view", label: "Korrekturen", sub: "was du korrigiert hast", run: () => views.open("corrections") },
@@ -53,7 +56,7 @@ function commands() {
     { type: "action", label: "ZEUS vollständig beenden", sub: "Fenster, Stimme, Kern, alles", run: async () => { if (confirm("ZEUS vollständig beenden?")) api("/api/quit", { reason: "owner (palette)" }); } },
     { type: "action", label: state.ui.reducedMotion ? "Bewegung einschalten" : "Bewegung reduzieren", sub: "Barrierefreiheit", run: () => { setPref("reducedMotion", !state.ui.reducedMotion); document.body.classList.toggle("reduced-motion", state.ui.reducedMotion); } },
     { type: "action", label: "Kandidaten bauen und prüfen", sub: "Erweitert", run: () => api("/api/release/build", { verify: true }) },
-    { type: "action", label: "Zurück zu ZEUS", sub: "zum Chat", run: () => views.close(), keys: "Esc" },
+    { type: "action", label: "Zurück zu ZEUS", sub: "Home", run: () => views.close(), keys: "Esc" },
   ];
   list.push(
     { type: "graph", label: "Blockierte Projekte", sub: "nur blockierte", run: () => views.open("projects", { filter: "blocked" }) },

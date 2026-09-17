@@ -288,8 +288,8 @@ def test_a_provider_that_plays_the_wrong_track_is_not_verified(tmp_path):
     outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
 
     assert outcome.receipt.verified is False
-    failed_checks = [check.check for check in outcome.receipt.failures]
-    assert "the requested track is playing" in failed_checks
+    failed_checks = [check.key for check in outcome.receipt.failures]
+    assert "requested_track_playing" in failed_checks
 
 
 def test_a_provider_claiming_to_pause_while_playback_continues_is_not_verified(tmp_path):
@@ -299,7 +299,7 @@ def test_a_provider_claiming_to_pause_while_playback_continues_is_not_verified(t
     outcome = service.run(MusicRequest("pause"))
 
     assert outcome.receipt.verified is False
-    assert any("paused" in check.check for check in outcome.receipt.failures)
+    assert "playback_paused" in [check.key for check in outcome.receipt.failures]
 
 
 def test_playing_the_right_track_verifies(tmp_path):
@@ -336,7 +336,7 @@ def test_a_player_that_is_not_the_chosen_provider_fails_the_check(tmp_path):
     outcome = service.run(MusicRequest("play", query="Lose Yourself Eminem"))
 
     assert outcome.receipt.verified is False
-    assert any("Spotify" in check.check for check in outcome.receipt.failures)
+    assert "player_is_spotify" in [check.key for check in outcome.receipt.failures]
 
 
 def test_next_requires_the_track_to_actually_change(tmp_path):
@@ -348,7 +348,7 @@ def test_next_requires_the_track_to_actually_change(tmp_path):
     outcome = service.run(MusicRequest("next"))
 
     assert outcome.receipt.verified is False
-    assert any("changed" in check.check for check in outcome.receipt.failures)
+    assert "track_changed" in [check.key for check in outcome.receipt.failures]
 
 
 def test_a_provider_that_fails_is_reported_honestly(tmp_path):
@@ -934,4 +934,28 @@ def test_a_resolution_unrelated_to_the_request_still_fails(tmp_path):
     outcome = service.run(MusicRequest("play", query="Rammstein ohne mich", kind="track"))
 
     assert outcome.receipt.verified is False
-    assert "the requested track is playing" in [check.check for check in outcome.receipt.failures]
+    assert "requested_track_playing" in [check.key for check in outcome.receipt.failures]
+
+
+def test_a_track_with_several_artists_is_verified_by_the_first_one_windows_reports(tmp_path):
+    """Spotify resolved "Hips Don't Lie" to "Shakira, Ed Sheeran, Beéle"; Windows
+    reports the artist as "Shakira" alone. Live on 2026-09-17 that playing track
+    was called a failure."""
+
+    playing = MediaState(ok=True, app="Spotify.exe", status="Playing",
+                         title="Hips Don't Lie - Spotify Anniversary Version", artist="Shakira")
+    service = build(tmp_path, session=FakeSession(playing),
+                    execution=FakeExecution(ok=True, output={
+                        "ok": True, "title": "Hips Don't Lie - Spotify Anniversary Version",
+                        "artist": "Shakira, Ed Sheeran, Beéle"}))
+
+    outcome = service.run(MusicRequest("play", query="Hips Dont Lie", kind="track"))
+
+    assert outcome.receipt.verified is True
+
+
+def test_naming_only_the_player_asks_for_music_not_for_a_song_called_spotify():
+    assert extract_query("Spiele Spotify.") == ""
+    request = understand("Spiele Spotify.")
+    assert request is not None and request.action == "resume" and request.query == ""
+    assert understand("Spiel Spotify Wrapped").query == "Spotify Wrapped"

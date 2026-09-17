@@ -434,6 +434,7 @@ _VIEWS = {
     "einstellungen": "owner", "owner": "owner", "voice studio": "voice", "sprachstudio": "voice", "gedanken": "thoughts", "thoughts": "thoughts",
     "kalender": "calendar", "calendar": "calendar", "termine": "calendar",
     "capabilities": "capabilities", "faehigkeiten": "capabilities", "fähigkeiten": "capabilities", "release": "release",
+    "studium": "study", "study": "study", "lernbereich": "study",
 }
 _OPEN_VIEW = re.compile(r"\b(oeffne|öffne|zeig(?:e)?\s+mir|zeig|geh\s+(?:zu|in)|open|show\s+me|show|go\s+to)\b\s*(?:die|das|den|dem|the|mein(?:e[nmrs]?)?|unser(?:e[nmrs]?)?|my|our)?\s*(?P<view>[\w\s\-]+?)\s*(?:an|auf|bitte)?\s*[.!]?$", re.I)
 _STOP = re.compile(r"^\s*(stopp?|halt|stop|abbrechen|cancel|sei\s+still|ruhe|be\s+quiet|shut\s+up|hoer\s+auf|hör\s+auf)\b", re.I)
@@ -765,12 +766,15 @@ def is_self_repair_request(text: str) -> bool:
 # The decision
 # --------------------------------------------------------------------------
 
-def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = (), capability_names: Iterable[str] = ()) -> Understanding:
+def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = (), capability_names: Iterable[str] = (),
+               study_available: bool = False, study_probe: Any = None, study_context: bool = False) -> Understanding:
     """One TopIntent, and a typed ActionIntent where the operation is deterministic.
 
     ``route`` is :func:`service.routing.route`'s result for the same text,
     when the caller already has it; self-development, acquisition and
-    owner-core routes are honoured as they are.
+    owner-core routes are honoured as they are.  ``study_available`` says the
+    owner has study material: only then are study commands ("Zeig mir die Seite
+    zum ...", "Wo stand nochmal ...") read as such.
     """
 
     text = (text or "").strip()
@@ -786,6 +790,14 @@ def understand(text: str, *, route: Any = None, project_titles: Iterable[str] = 
         return Understanding(TopIntent.SELF_DEVELOPMENT, f"router: {top_value}", is_action_request=action_request)
     if top_value == "capability_acquisition":
         return Understanding(TopIntent.MISSION, "asks to acquire an ability", is_action_request=action_request)
+
+    if study_available:
+        from study.intents import parse_study_operation
+
+        # structured and local: action + scope + subject, the owner's library as the only evidence for a subject without scope
+        study = parse_study_operation(text, has_material=True, probe=study_probe, has_context=study_context)
+        if study is not None:
+            return Understanding(TopIntent.SYSTEM_CONTROL, study.reason, study, is_action_request=True)
 
     if is_action_request(text):
         from service.imagegen import parse_image_request

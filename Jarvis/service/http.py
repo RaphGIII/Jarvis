@@ -210,7 +210,12 @@ class JarvisHTTPServer:
             "/api/message": lambda body: self.core.send_message(
                 str(body.get("text", "")), scope=str(body.get("scope", "")),
                 meta={"source": str(body.get("source") or "text"), "mode": str(body.get("mode") or ""),
-                      "authorization": str(body.get("authorization") or "")},
+                      "authorization": str(body.get("authorization") or ""),
+                      # "Ask ZEUS" from the study viewer: the open page (or the owner's selection) is the question's only direct source
+                      **({"study_context": {"document_id": str(body["study_context"].get("document_id", ""))[:40],
+                                            "unit": int(body["study_context"].get("unit", 1) or 1),
+                                            "selection": str(body["study_context"].get("selection", ""))[:6000]}}
+                         if isinstance(body.get("study_context"), dict) and body["study_context"].get("document_id") else {})},
                 request_id=str(body.get("request_id", "")),
             ),
             "/api/status": lambda _: self.core.status(),
@@ -338,6 +343,44 @@ class JarvisHTTPServer:
                 category=str(body.get("category", "")),
             ),
             # The knowledge library: REAL files under one owner-visible root.
+            # the playback surface: the Windows media session, read and driven directly
+            "/api/media/state": lambda _: self.core.media_state(),
+            "/api/media/control": lambda body: self.core.media_control(str(body.get("action", ""))),
+            # Studium: the owner's study material (its own index; page-exact locations)
+            "/api/study/status": lambda _: self.core.study.status(),
+            "/api/study/galaxy": lambda _: self.core.study.galaxy(),
+            "/api/study/documents": lambda body: {"ok": True, "documents": self.core.study.documents(
+                limit=int(body.get("limit", 200) or 200), order=str(body.get("order", "recent") or "recent"))},
+            "/api/study/document": lambda body: self.core.study.document(str(body.get("id", ""))),
+            "/api/study/unit": lambda body: self.core.study.unit(str(body.get("id", "")), int(body.get("unit", 1) or 1)),
+            "/api/study/search": lambda body: self.core.study.search(str(body.get("query", "")), limit=int(body.get("limit", 8) or 8),
+                                                                     document_id=str(body.get("document_id", "")),
+                                                                     filters=dict(body.get("filters") or {}) if isinstance(body.get("filters"), dict) else None),
+            "/api/study/locate": lambda body: self.core.study.locate(str(body.get("id", "")), int(body.get("page", 1) or 1),
+                                                                     [str(p) for p in (body.get("phrases") or []) if str(p).strip()],
+                                                                     at=int(body["at"]) if str(body.get("at", "")).lstrip("-").isdigit() else None),
+            "/api/study/sections": lambda body: self.core.study.sections(str(body.get("id", ""))),
+            "/api/study/render_slides": lambda body: (self.core.study.schedule_slides(str(body.get("id", ""))) or {"ok": True, "scheduled": True}),
+            "/api/study/categories": lambda body: self.core.study.set_categories(str(body.get("id", "")), dict(body.get("changes") or {})),
+            # removing from Studium keeps the file; deleting the file itself must be asked for explicitly
+            "/api/study/delete": lambda body: self.core.study.delete(str(body.get("id", "")), delete_file=body.get("delete_file") is True),
+            "/api/study/indexing": lambda _: self.core.study.indexing(),
+            "/api/study/jobs/cancel": lambda body: self.core.study.indexer.cancel(str(body.get("job_id", ""))),
+            "/api/study/focus_state": lambda _: {"ok": True, "context": {k: v for k, v in self.core.study_actions.context().items() if k != "results"},
+                                                  "active": self.core.study_actions.has_context()},
+            "/api/study/import_path": lambda body: self.core.study.import_path(str(body.get("path", "")), provider="zeus_files", copy=False),
+            "/api/study/connect": lambda body: self.core.study_connect(str(body.get("path", "")), provider=str(body.get("provider", "folder") or "folder"),
+                                                                       label=str(body.get("label", ""))),
+            "/api/study/scan": lambda body: self.core.study_scan(str(body.get("source_id", ""))),
+            "/api/study/import_zeus": lambda _: self.core.study_scan("", zeus_files=True),
+            "/api/study/source/remove": lambda body: self.core.study.remove_source(str(body.get("id", "")), forget_documents=bool(body.get("forget", False))),
+            "/api/study/goodnotes": lambda _: self.core.study_goodnotes(),
+            "/api/study/focus": lambda body: self.core.study_actions.set_focus(
+                str(body.get("id", "")), int(body.get("unit", 1) or 1), selection=str(body.get("selection", "")), topic=str(body.get("topic", "")),
+                zoom=body.get("zoom"), mode=str(body.get("mode", "") or ""), paragraph=body.get("paragraph"), focus=str(body.get("focus", "") or ""),
+                at=body.get("at"), highlights=[str(h) for h in (body.get("highlights") or [])][:8], last_query=str(body.get("query", "") or "")),
+            "/api/study/context": lambda body: self.core.study.context(str(body.get("id", "")), int(body.get("unit", 1) or 1),
+                                                                       selection=str(body.get("selection", ""))),
             "/api/library/tree": lambda _: self.core.library.tree(),
             "/api/library/folder": lambda body: self.core.library.create_folder(str(body.get("path", ""))),
             "/api/library/note": lambda body: self.core.library_note(
@@ -611,6 +654,12 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                     return
                 self._serve_audio(path.rsplit("/", 1)[-1])
                 return
+            if path in {"/api/study/page.png", "/api/study/original"}:
+                if not app.authorised(self.headers, query):
+                    self._send_json(401, {"error": "unauthorised"})
+                    return
+                self._serve_study(path, query)
+                return
             if path == "/api/image/file":
                 # generated images render INSIDE ZEUS (chat thumbnails, the
                 # Work Center); fenced to the owner's generated-media roots
@@ -649,6 +698,19 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                     else:
                         result = app.core.wake_test(raw)
                 except Exception as exc:
+                    self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                self._send_json(200, result)
+                return
+
+            if parsed.path == "/api/study/upload":
+                # A study file is posted as its own bytes (a 60 MB script as base64 JSON would cost a third more and a copy).
+                name = (query.get("name") or [self.headers.get("X-Zeus-Filename") or ""])[0]
+                # wait=0: answer at once with an import id; progress arrives as study.progress events
+                wait = (query.get("wait") or ["1"])[0] not in {"0", "false", "no"}
+                try:
+                    result = app.core.study.import_bytes(name, raw, wait=wait)
+                except Exception as exc:  # noqa: BLE001
                     self._send_json(500, {"error": f"{type(exc).__name__}: {exc}"})
                     return
                 self._send_json(200, result)
@@ -695,6 +757,44 @@ def _make_handler(app: JarvisHTTPServer) -> type[BaseHTTPRequestHandler]:
                 return
             status, response = app.handle_api(parsed.path, payload)
             self._send_json(status, response)
+
+        def _serve_study(self, path: str, query: dict[str, list[str]]) -> None:
+            doc_id = (query.get("id") or [""])[0]
+            study = app.core.study
+            if path == "/api/study/page.png":
+                try:
+                    page = int((query.get("page") or ["1"])[0])
+                    width = int((query.get("w") or ["1400"])[0])
+                    clip_raw = (query.get("clip") or [""])[0]
+                    clip = [float(v) for v in clip_raw.split(",")] if clip_raw else None
+                    seq = int((query.get("seq") or ["0"])[0])
+                    priority = int((query.get("prio") or ["0"])[0])
+                except ValueError:
+                    self._send_json(400, {"error": "bad page"})
+                    return
+                if clip is not None and len(clip) != 4:
+                    self._send_json(400, {"error": "bad clip"})
+                    return
+                rendered = study.render_page(doc_id, page, width=width, clip=clip, session=(query.get("session") or [""])[0][:40], seq=seq, priority=priority)
+                if rendered.get("superseded"):
+                    # the viewer asked for another page meanwhile: this render was skipped, nothing to show
+                    self._send(204, b"", "image/png", extra={"Cache-Control": "no-store"})
+                    return
+                image = rendered.get("path")
+                if image is None:
+                    missing = study.original(doc_id) is None and study.index.document(doc_id) is not None
+                    self._send_json(404, {"error": "original file missing" if missing else "page image unavailable", "missing": missing})
+                    return
+                self._send(200, image.read_bytes(), "image/png", extra={"Cache-Control": "private, max-age=86400"})
+                return
+            original = study.original(doc_id)
+            if original is None:
+                self._send_json(404, {"error": "document unavailable"})
+                return
+            mime = mimetypes.guess_type(original.name)[0] or "application/octet-stream"
+            from urllib.parse import quote as _quote
+
+            self._send(200, original.read_bytes(), mime, extra={"Content-Disposition": f"inline; filename*=UTF-8''{_quote(original.name)}"})
 
         def _serve_generated_image(self, raw_path: str) -> None:
             from pathlib import Path as _P
